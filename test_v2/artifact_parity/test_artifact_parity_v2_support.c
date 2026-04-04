@@ -2,12 +2,15 @@
 
 #include "test_fs.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <io.h>
 #else
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -48,6 +51,15 @@ static bool artifact_parity_path_is_executable(const char *path) {
 #endif
 }
 
+static bool artifact_parity_make_executable(const char *path) {
+    if (!path || path[0] == '\0') return false;
+#if defined(_WIN32)
+    return true;
+#else
+    return chmod(path, 0755) == 0;
+#endif
+}
+
 static bool artifact_parity_sv_has_prefix(String_View sv, const char *prefix) {
     size_t prefix_len = prefix ? strlen(prefix) : 0;
     if (!prefix || sv.count < prefix_len) return false;
@@ -79,6 +91,7 @@ static const char *artifact_parity_capture_name(Artifact_Parity_Capture_Kind cap
     switch (capture) {
         case ARTIFACT_PARITY_CAPTURE_TREE: return "TREE";
         case ARTIFACT_PARITY_CAPTURE_FILE_TEXT: return "FILE_TEXT";
+        case ARTIFACT_PARITY_CAPTURE_FILE_SHA256: return "FILE_SHA256";
     }
     return "UNKNOWN";
 }
@@ -132,6 +145,17 @@ static bool artifact_parity_find_repo_probe_cmake(char out_path[_TINYDIR_PATH_MA
 
     nob_dir_entry_close(dir);
     return false;
+}
+
+static bool artifact_parity_find_sibling_tool(const char *tool_path,
+                                              const char *tool_name,
+                                              char out_path[_TINYDIR_PATH_MAX]) {
+    const char *tool_dir = NULL;
+    if (!tool_path || !tool_name || !out_path) return false;
+    tool_dir = nob_temp_dir_name(tool_path);
+    if (!tool_dir || tool_dir[0] == '\0') return false;
+    if (!test_fs_join_path(tool_dir, tool_name, out_path)) return false;
+    return artifact_parity_path_is_executable(out_path);
 }
 
 static bool artifact_parity_collect_tree_entries(Arena *arena,
@@ -265,6 +289,187 @@ static bool artifact_parity_append_file_text_manifest(Arena *arena,
     return true;
 }
 
+static uint32_t artifact_parity_load_be32(const unsigned char *p) {
+    return ((uint32_t)p[0] << 24) |
+           ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) |
+           ((uint32_t)p[3]);
+}
+
+static void artifact_parity_store_be32(unsigned char *p, uint32_t v) {
+    p[0] = (unsigned char)((v >> 24) & 0xFFU);
+    p[1] = (unsigned char)((v >> 16) & 0xFFU);
+    p[2] = (unsigned char)((v >> 8) & 0xFFU);
+    p[3] = (unsigned char)(v & 0xFFU);
+}
+
+static uint32_t artifact_parity_rotr32(uint32_t x, uint32_t n) {
+    return (x >> n) | (x << (32 - n));
+}
+
+static void artifact_parity_sha256_process_block(uint32_t state[8],
+                                                 const unsigned char block[64]) {
+    static const uint32_t k[64] = {
+        0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU, 0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U,
+        0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U, 0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U,
+        0xe49b69c1U, 0xefbe4786U, 0x0fc19dc6U, 0x240ca1ccU, 0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU,
+        0x983e5152U, 0xa831c66dU, 0xb00327c8U, 0xbf597fc7U, 0xc6e00bf3U, 0xd5a79147U, 0x06ca6351U, 0x14292967U,
+        0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU, 0x53380d13U, 0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U,
+        0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U, 0xd192e819U, 0xd6990624U, 0xf40e3585U, 0x106aa070U,
+        0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U, 0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU, 0x682e6ff3U,
+        0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U, 0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U
+    };
+
+    uint32_t w[64] = {0};
+    uint32_t a = 0;
+    uint32_t b = 0;
+    uint32_t c = 0;
+    uint32_t d = 0;
+    uint32_t e = 0;
+    uint32_t f = 0;
+    uint32_t g = 0;
+    uint32_t h = 0;
+
+    for (size_t i = 0; i < 16; i++) w[i] = artifact_parity_load_be32(block + (i * 4));
+    for (size_t i = 16; i < 64; i++) {
+        uint32_t s0 = artifact_parity_rotr32(w[i - 15], 7) ^
+                      artifact_parity_rotr32(w[i - 15], 18) ^
+                      (w[i - 15] >> 3);
+        uint32_t s1 = artifact_parity_rotr32(w[i - 2], 17) ^
+                      artifact_parity_rotr32(w[i - 2], 19) ^
+                      (w[i - 2] >> 10);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+
+    a = state[0];
+    b = state[1];
+    c = state[2];
+    d = state[3];
+    e = state[4];
+    f = state[5];
+    g = state[6];
+    h = state[7];
+
+    for (size_t i = 0; i < 64; i++) {
+        uint32_t s1 = artifact_parity_rotr32(e, 6) ^
+                      artifact_parity_rotr32(e, 11) ^
+                      artifact_parity_rotr32(e, 25);
+        uint32_t ch = (e & f) ^ ((~e) & g);
+        uint32_t temp1 = h + s1 + ch + k[i] + w[i];
+        uint32_t s0 = artifact_parity_rotr32(a, 2) ^
+                      artifact_parity_rotr32(a, 13) ^
+                      artifact_parity_rotr32(a, 22);
+        uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+        uint32_t temp2 = s0 + maj;
+
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2;
+    }
+
+    state[0] += a;
+    state[1] += b;
+    state[2] += c;
+    state[3] += d;
+    state[4] += e;
+    state[5] += f;
+    state[6] += g;
+    state[7] += h;
+}
+
+static void artifact_parity_sha256_compute(const unsigned char *msg,
+                                           size_t len,
+                                           unsigned char out[32]) {
+    static const uint32_t init_state[8] = {
+        0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU,
+        0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U
+    };
+    uint32_t state[8] = {0};
+    unsigned char tail[128] = {0};
+    size_t rem = 0;
+    size_t tail_len = 0;
+    uint64_t bits = 0;
+
+    memcpy(state, init_state, sizeof(state));
+
+    for (size_t i = 0; i + 64 <= len; i += 64) {
+        artifact_parity_sha256_process_block(state, msg + i);
+    }
+
+    rem = len % 64;
+    if (rem > 0) memcpy(tail, msg + (len - rem), rem);
+    tail[rem] = 0x80U;
+    tail_len = rem < 56 ? 64 : 128;
+    bits = ((uint64_t)len) * 8U;
+    for (size_t i = 0; i < 8; i++) {
+        tail[tail_len - 1 - i] = (unsigned char)((bits >> (8 * i)) & 0xFFU);
+    }
+    artifact_parity_sha256_process_block(state, tail);
+    if (tail_len == 128) artifact_parity_sha256_process_block(state, tail + 64);
+
+    for (size_t i = 0; i < 8; i++) artifact_parity_store_be32(out + (i * 4), state[i]);
+}
+
+static String_View artifact_parity_sha256_hex_to_arena(Arena *arena,
+                                                       const void *data,
+                                                       size_t size) {
+    static const char lut[] = "0123456789abcdef";
+    const unsigned char *bytes = (const unsigned char*)data;
+    unsigned char digest[32] = {0};
+    char *hex = NULL;
+
+    if (!arena || (!bytes && size > 0)) return nob_sv_from_cstr("");
+    artifact_parity_sha256_compute(bytes ? bytes : (const unsigned char*)"", size, digest);
+    hex = arena_alloc(arena, 65);
+    if (!hex) return nob_sv_from_cstr("");
+    for (size_t i = 0; i < sizeof(digest); i++) {
+        hex[i * 2 + 0] = lut[(digest[i] >> 4) & 0x0F];
+        hex[i * 2 + 1] = lut[digest[i] & 0x0F];
+    }
+    hex[64] = '\0';
+    return nob_sv_from_parts(hex, 64);
+}
+
+static String_View artifact_parity_hash_file_sha256_to_arena(Arena *arena, const char *path) {
+    Nob_String_Builder sb = {0};
+    String_View out = nob_sv_from_cstr("");
+    if (!arena || !path) return out;
+    if (!nob_read_entire_file(path, &sb)) return out;
+    out = artifact_parity_sha256_hex_to_arena(arena, sb.items ? sb.items : "", sb.count);
+    nob_sb_free(sb);
+    return out;
+}
+
+static bool artifact_parity_append_file_sha256_manifest(Arena *arena,
+                                                        Nob_String_Builder *sb,
+                                                        const char *abs_path) {
+    Test_Fs_Path_Info info = {0};
+    String_View hash = {0};
+    if (!arena || !sb || !abs_path) return false;
+    if (!test_fs_get_path_info(abs_path, &info)) return false;
+
+    if (!info.exists) {
+        nob_sb_append_cstr(sb, "STATUS MISSING\n");
+        return true;
+    }
+    if (info.is_dir) {
+        nob_sb_append_cstr(sb, "STATUS TYPE_MISMATCH actual=DIR\n");
+        return true;
+    }
+
+    hash = artifact_parity_hash_file_sha256_to_arena(arena, abs_path);
+    if (hash.count == 0) return false;
+    nob_sb_append_cstr(sb, "STATUS PRESENT\nSHA256 ");
+    test_snapshot_append_escaped_sv(sb, hash);
+    nob_sb_append_cstr(sb, "\n");
+    return true;
+}
+
 void artifact_parity_test_set_repo_root(const char *repo_root) {
     snprintf(s_artifact_parity_repo_root,
              sizeof(s_artifact_parity_repo_root),
@@ -273,6 +478,7 @@ void artifact_parity_test_set_repo_root(const char *repo_root) {
 }
 
 bool artifact_parity_resolve_cmake(Artifact_Parity_Cmake_Config *out_config,
+                                   bool require_cpack,
                                    char skip_reason[256]) {
     Nob_Cmd cmd = {0};
     char stdout_path[_TINYDIR_PATH_MAX] = {0};
@@ -359,7 +565,43 @@ bool artifact_parity_resolve_cmake(Artifact_Parity_Cmake_Config *out_config,
     }
 
     out_config->available = true;
+    if (artifact_parity_find_sibling_tool(out_config->cmake_bin, "cpack", out_config->cpack_bin)) {
+        out_config->cpack_available = true;
+    }
+    if (require_cpack && !out_config->cpack_available) {
+        snprintf(skip_reason,
+                 256,
+                 "package phase requires sibling cpack next to resolved cmake");
+    }
+
     arena_destroy(arena);
+    return true;
+}
+
+bool artifact_parity_resolve_nobify_bin(char out_path[_TINYDIR_PATH_MAX],
+                                        char error_reason[256]) {
+    const char *env_path = getenv(CMK2NOB_TEST_NOBIFY_BIN_ENV);
+    if (!out_path || !error_reason) return false;
+    out_path[0] = '\0';
+    error_reason[0] = '\0';
+
+    if (!env_path || env_path[0] == '\0') {
+        snprintf(error_reason,
+                 256,
+                 "%s is not set; artifact-parity requires a runner-built nobify tool",
+                 CMK2NOB_TEST_NOBIFY_BIN_ENV);
+        return false;
+    }
+
+    if (!artifact_parity_path_is_executable(env_path) ||
+        !artifact_parity_copy_string(env_path, out_path)) {
+        snprintf(error_reason,
+                 256,
+                 "%s does not point to an executable",
+                 CMK2NOB_TEST_NOBIFY_BIN_ENV);
+        return false;
+    }
+
     return true;
 }
 
@@ -371,42 +613,39 @@ bool artifact_parity_write_text_file(const char *path, const char *text) {
     return nob_write_entire_file(path, text, strlen(text));
 }
 
-bool artifact_parity_generate_nob(const char *script,
-                                  const Artifact_Parity_Nob_Config *config,
-                                  const char *output_path) {
-    Test_Semantic_Pipeline_Config pipeline_config = {0};
-    Test_Semantic_Pipeline_Fixture fixture = {0};
-    Arena *codegen_arena = NULL;
-    Nob_Codegen_Options opts = {0};
-    bool ok = false;
+bool artifact_parity_write_executable_file(const char *path, const char *text) {
+    if (!artifact_parity_write_text_file(path, text)) return false;
+    return artifact_parity_make_executable(path);
+}
 
-    if (!script || !config || !output_path) return false;
+bool artifact_parity_materialize_files(const char *root_dir,
+                                       const Artifact_Parity_File *files,
+                                       size_t file_count) {
+    char full_path[_TINYDIR_PATH_MAX] = {0};
+    if (!files && file_count > 0) return false;
 
-    codegen_arena = arena_create(8 * 1024 * 1024);
-    if (!codegen_arena) return false;
-
-    diag_reset();
-    diag_set_strict(false);
-    diag_telemetry_reset();
-
-    test_semantic_pipeline_config_init(&pipeline_config);
-    pipeline_config.current_file = config->current_file ? config->current_file : "CMakeLists.txt";
-    if (config->source_dir.data || config->source_dir.count > 0) pipeline_config.source_dir = config->source_dir;
-    if (config->binary_dir.data || config->binary_dir.count > 0) pipeline_config.binary_dir = config->binary_dir;
-
-    ok = test_semantic_pipeline_fixture_from_script(&fixture, script, &pipeline_config);
-    if (!ok || !fixture.build.freeze_ok || !fixture.build.model || diag_has_errors()) {
-        arena_destroy(codegen_arena);
-        test_semantic_pipeline_fixture_destroy(&fixture);
-        return false;
+    for (size_t i = 0; i < file_count; ++i) {
+        if (!files[i].path || !files[i].contents) return false;
+        if (root_dir && root_dir[0] != '\0') {
+            if (!test_fs_join_path(root_dir, files[i].path, full_path)) return false;
+        } else if (!artifact_parity_copy_string(files[i].path, full_path)) {
+            return false;
+        }
+        if (!artifact_parity_write_text_file(full_path, files[i].contents)) return false;
     }
 
-    opts.input_path = nob_sv_from_cstr(pipeline_config.current_file);
-    opts.output_path = nob_sv_from_cstr(output_path);
-    ok = nob_codegen_write_file(fixture.build.model, codegen_arena, &opts);
+    return true;
+}
 
-    arena_destroy(codegen_arena);
-    test_semantic_pipeline_fixture_destroy(&fixture);
+bool artifact_parity_run_nobify(const char *nobify_bin,
+                                const char *input_path,
+                                const char *output_path) {
+    Nob_Cmd cmd = {0};
+    bool ok = false;
+    if (!nobify_bin || !input_path || !output_path) return false;
+    nob_cmd_append(&cmd, nobify_bin, "--out", output_path, input_path);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
     return ok;
 }
 
@@ -483,6 +722,37 @@ bool artifact_parity_run_cmake_build(const Artifact_Parity_Cmake_Config *config,
     return ok;
 }
 
+bool artifact_parity_run_cmake_install(const Artifact_Parity_Cmake_Config *config,
+                                       const char *binary_dir,
+                                       const char *prefix_dir) {
+    Nob_Cmd cmd = {0};
+    bool ok = false;
+    if (!config || !config->available || !binary_dir || !prefix_dir) return false;
+    nob_cmd_append(&cmd, config->cmake_bin, "--install", binary_dir, "--prefix", prefix_dir);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
+}
+
+bool artifact_parity_run_cmake_package(const Artifact_Parity_Cmake_Config *config,
+                                       const char *binary_dir) {
+    Nob_Cmd cmd = {0};
+    char prev_cwd[_TINYDIR_PATH_MAX] = {0};
+    const char *cwd = nob_get_current_dir_temp();
+    bool ok = false;
+
+    if (!config || !config->available || !config->cpack_available || !binary_dir || !cwd) return false;
+    if (strlen(cwd) + 1 > sizeof(prev_cwd)) return false;
+    memcpy(prev_cwd, cwd, strlen(cwd) + 1);
+
+    if (!nob_set_current_dir(binary_dir)) return false;
+    nob_cmd_append(&cmd, config->cpack_bin);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    if (!nob_set_current_dir(prev_cwd)) return false;
+    return ok;
+}
+
 bool artifact_parity_capture_manifest(
     Arena *arena,
     const char *base_dir,
@@ -517,15 +787,30 @@ bool artifact_parity_capture_manifest(
             nob_sb_free(sb);
             return false;
         }
-        if (request->capture == ARTIFACT_PARITY_CAPTURE_TREE) {
-            if (!artifact_parity_append_tree_manifest(arena, &sb, abs_path)) {
-                nob_sb_free(sb);
-                return false;
-            }
-        } else if (!artifact_parity_append_file_text_manifest(arena, &sb, abs_path)) {
-            nob_sb_free(sb);
-            return false;
+
+        switch (request->capture) {
+            case ARTIFACT_PARITY_CAPTURE_TREE:
+                if (!artifact_parity_append_tree_manifest(arena, &sb, abs_path)) {
+                    nob_sb_free(sb);
+                    return false;
+                }
+                break;
+
+            case ARTIFACT_PARITY_CAPTURE_FILE_TEXT:
+                if (!artifact_parity_append_file_text_manifest(arena, &sb, abs_path)) {
+                    nob_sb_free(sb);
+                    return false;
+                }
+                break;
+
+            case ARTIFACT_PARITY_CAPTURE_FILE_SHA256:
+                if (!artifact_parity_append_file_sha256_manifest(arena, &sb, abs_path)) {
+                    nob_sb_free(sb);
+                    return false;
+                }
+                break;
         }
+
         nob_sb_append_cstr(&sb, "END SECTION\n");
         if (i + 1 < request_count) nob_sb_append_cstr(&sb, "\n");
     }

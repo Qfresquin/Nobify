@@ -23,6 +23,22 @@ refactors must preserve:
 - incremental test builds and captured stdout/stderr logs
 - preserved failed workspaces for debugging
 
+## Artifact Parity Harness
+
+The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`.
+
+- ownership:
+  runner-owned tool/env setup in `src_v2/build/nob_test.c`
+  suite-owned parity fixtures and manifest assertions in `test_v2/artifact_parity/`
+- required external tools:
+  real `cmake 3.28.x`
+  sibling `cpack` only for package-phase cases
+  runner-provided `CMK2NOB_TEST_NOBIFY_BIN` so the suite uses a freshly built
+  `nobify` from the current workspace sources
+- execution policy:
+  explicit-only via `./build/nob_test test-artifact-parity`
+  not part of the default `./build/nob_test test-v2` smoke aggregate
+
 ## Canonical Documents
 
 - [Tests architecture](./tests_architecture.md)

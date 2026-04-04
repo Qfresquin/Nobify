@@ -94,9 +94,12 @@ code.
   Current aggregate status: included.
 
 - `artifact-parity`
-  Focus: real `cmake 3.28.x` versus generated Nob artifact comparison through
-  structured manifests over build outputs and generated files, with manifest
-  domains reserved for install, export, and package parity growth.
+  Focus: real `cmake 3.28.x` versus `nobify -> generated Nob` artifact
+  comparison through the explicit harness under `test_v2/artifact_parity/`.
+  The current `P0` fixture set proves build outputs, generated files, install
+  trees, and empty export/package manifest domains through structured
+  `TREE`/`FILE_TEXT`/`FILE_SHA256` capture. The suite requires a real
+  `cmake 3.28.x` plus the runner-provided `CMK2NOB_TEST_NOBIFY_BIN` tool path.
   Current aggregate status: excluded from the default aggregate path.
 
 - `evaluator-integration`

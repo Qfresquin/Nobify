@@ -80,6 +80,7 @@ static void append_test_evaluator_integration_all_sources(Nob_Cmd *cmd);
 static void append_test_pipeline_all_sources(Nob_Cmd *cmd);
 static void append_test_codegen_all_sources(Nob_Cmd *cmd);
 static void append_test_artifact_parity_all_sources(Nob_Cmd *cmd);
+static void append_test_nobify_all_sources(Nob_Cmd *cmd);
 static void append_v2_pcre_sources(Nob_Cmd *cmd);
 static void append_platform_link_flags(Nob_Cmd *cmd);
 static void report_captured_test_output(const Test_Module *module,
@@ -667,6 +668,11 @@ static void append_v2_build_model_test_sources(Nob_Cmd *cmd) {
         "test_v2/build_model/test_build_model_v2_suite.c");
 }
 
+static void append_v2_nobify_app_sources(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+        "src_v2/app/nobify.c");
+}
+
 static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/test_host_fixture_support.c",
@@ -848,6 +854,10 @@ static const char *test_dep_path_temp(const char *source_path, const Test_Profil
 
 static const char *test_binary_output_path_temp(const Test_Module *module, const Test_Profile *profile) {
     return nob_temp_sprintf("%s/test_%s", test_profile_bin_dir_temp(profile), module->name);
+}
+
+static const char *test_nobify_output_path_temp(const Test_Profile *profile) {
+    return nob_temp_sprintf("%s/nobify_tool", test_profile_bin_dir_temp(profile));
 }
 
 static const char *test_build_lock_path_temp(const Test_Profile *profile) {
@@ -1180,6 +1190,14 @@ static void append_test_codegen_all_sources(Nob_Cmd *cmd) {
 
 static void append_test_artifact_parity_all_sources(Nob_Cmd *cmd) {
     append_v2_artifact_parity_test_sources(cmd);
+    append_v2_evaluator_runtime_sources(cmd);
+    append_v2_build_model_runtime_sources(cmd);
+    append_v2_codegen_runtime_sources(cmd);
+    append_v2_pcre_sources(cmd);
+}
+
+static void append_test_nobify_all_sources(Nob_Cmd *cmd) {
+    append_v2_nobify_app_sources(cmd);
     append_v2_evaluator_runtime_sources(cmd);
     append_v2_build_model_runtime_sources(cmd);
     append_v2_codegen_runtime_sources(cmd);
@@ -1588,9 +1606,11 @@ static bool run_binary_in_workspace(const Test_Module *module,
     char binary_abs[_TINYDIR_PATH_MAX] = {0};
     char stdout_log_abs[_TINYDIR_PATH_MAX] = {0};
     char stderr_log_abs[_TINYDIR_PATH_MAX] = {0};
+    char nobify_tool_abs[_TINYDIR_PATH_MAX] = {0};
     char *prev_runner = NULL;
     char *prev_reuse_cwd = NULL;
     char *prev_repo_root = NULL;
+    char *prev_nobify_bin = NULL;
     char *prev_asan_options = NULL;
     char *prev_ubsan_options = NULL;
     char *prev_msan_options = NULL;
@@ -1598,6 +1618,7 @@ static bool run_binary_in_workspace(const Test_Module *module,
     bool had_prev_runner = false;
     bool had_prev_reuse_cwd = false;
     bool had_prev_repo_root = false;
+    bool had_prev_nobify_bin = false;
     bool had_prev_asan_options = false;
     bool had_prev_ubsan_options = false;
     bool had_prev_msan_options = false;
@@ -1617,6 +1638,7 @@ static bool run_binary_in_workspace(const Test_Module *module,
     if (!preserve_env_for_restore(CMK2NOB_TEST_RUNNER_ENV, &prev_runner, &had_prev_runner)) goto defer;
     if (!preserve_env_for_restore(CMK2NOB_TEST_WS_REUSE_CWD_ENV, &prev_reuse_cwd, &had_prev_reuse_cwd)) goto defer;
     if (!preserve_env_for_restore(CMK2NOB_TEST_REPO_ROOT_ENV, &prev_repo_root, &had_prev_repo_root)) goto defer;
+    if (!preserve_env_for_restore(CMK2NOB_TEST_NOBIFY_BIN_ENV, &prev_nobify_bin, &had_prev_nobify_bin)) goto defer;
     if (!preserve_env_for_restore("ASAN_OPTIONS", &prev_asan_options, &had_prev_asan_options)) goto defer;
     if (!preserve_env_for_restore("UBSAN_OPTIONS", &prev_ubsan_options, &had_prev_ubsan_options)) goto defer;
     if (!preserve_env_for_restore("MSAN_OPTIONS", &prev_msan_options, &had_prev_msan_options)) goto defer;
@@ -1624,11 +1646,24 @@ static bool run_binary_in_workspace(const Test_Module *module,
     (void)had_prev_runner;
     (void)had_prev_reuse_cwd;
     (void)had_prev_repo_root;
+    (void)had_prev_nobify_bin;
+
+    if (module && strcmp(module->name, "artifact-parity") == 0) {
+        const char *nobify_rel_path = test_nobify_output_path_temp(profile);
+        if (!build_incremental_test_binary(nobify_rel_path,
+                                           append_test_nobify_all_sources,
+                                           profile)) {
+            goto defer;
+        }
+        if (!build_abs_path(cwd, nobify_rel_path, nobify_tool_abs)) goto defer;
+    }
 
     if (!nob_set_current_dir(workspace.root)) goto defer;
     set_env_or_unset(CMK2NOB_TEST_RUNNER_ENV, "1");
     set_env_or_unset(CMK2NOB_TEST_WS_REUSE_CWD_ENV, "1");
     set_env_or_unset(CMK2NOB_TEST_REPO_ROOT_ENV, cwd);
+    set_env_or_unset(CMK2NOB_TEST_NOBIFY_BIN_ENV,
+                     nobify_tool_abs[0] != '\0' ? nobify_tool_abs : NULL);
     if (!had_prev_asan_options && profile && profile->asan_options_default) {
         set_env_or_unset("ASAN_OPTIONS", profile->asan_options_default);
     }
@@ -1675,6 +1710,8 @@ defer:
     set_env_or_unset(CMK2NOB_TEST_RUNNER_ENV, prev_runner);
     set_env_or_unset(CMK2NOB_TEST_WS_REUSE_CWD_ENV, prev_reuse_cwd);
     set_env_or_unset(CMK2NOB_TEST_REPO_ROOT_ENV, prev_repo_root);
+    set_env_or_unset(CMK2NOB_TEST_NOBIFY_BIN_ENV,
+                     had_prev_nobify_bin ? prev_nobify_bin : NULL);
     if (profile && profile->asan_options_default) {
         set_env_or_unset("ASAN_OPTIONS", had_prev_asan_options ? prev_asan_options : NULL);
     }
@@ -1690,6 +1727,7 @@ defer:
     free(prev_runner);
     free(prev_reuse_cwd);
     free(prev_repo_root);
+    free(prev_nobify_bin);
     free(prev_asan_options);
     free(prev_ubsan_options);
     free(prev_msan_options);

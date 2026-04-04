@@ -157,6 +157,20 @@ static String_View cg_dirname_to_arena(Arena *scratch, String_View path) {
     return nob_sv_from_parts(path.data, end - 1);
 }
 
+static String_View cg_basename_to_arena(Arena *scratch, String_View path) {
+    (void)scratch;
+    size_t end = path.count;
+    size_t start = 0;
+    while (end > 1 && path.data[end - 1] == '/') end--;
+    for (size_t i = end; i > 0; --i) {
+        if (path.data[i - 1] == '/') {
+            start = i;
+            break;
+        }
+    }
+    return nob_sv_from_parts(path.data + start, end - start);
+}
+
 static bool cg_normalize_path_to_arena(Arena *scratch, String_View path, String_View *out) {
     String_View *segments = NULL;
     bool absolute = cg_path_is_abs(path);
@@ -528,6 +542,13 @@ static bool cg_collect_unique_target(Arena *scratch, BM_Target_Id **list, BM_Tar
     return arena_arr_push(scratch, *list, value);
 }
 
+static bool cg_collect_unique_path(Arena *scratch, String_View **list, String_View value) {
+    for (size_t i = 0; i < arena_arr_len(*list); ++i) {
+        if (nob_sv_eq((*list)[i], value)) return true;
+    }
+    return arena_arr_push(scratch, *list, value);
+}
+
 static bool cg_target_has_cxx_sources(CG_Context *ctx, BM_Target_Id id, bool *out) {
     BM_String_Span sources = {0};
     if (out) *out = false;
@@ -840,13 +861,8 @@ static bool cg_emit_support_helpers(Nob_String_Builder *out) {
         "    return ok;\n"
         "}\n"
         "\n"
-        "static bool clean_all(void) {\n"
-        "    Nob_Cmd cmd = {0};\n"
-        "    bool ok = false;\n"
-        "    nob_cmd_append(&cmd, \"rm\", \"-rf\", \"build\");\n"
-        "    ok = nob_cmd_run(&cmd);\n"
-        "    nob_cmd_free(cmd);\n"
-        "    return ok;\n"
+        "static bool install_copy_file(const char *src_path, const char *dst_path) {\n"
+        "    return nob_copy_file(src_path, dst_path);\n"
         "}\n"
         "\n");
     return true;
@@ -1105,12 +1121,176 @@ static bool cg_emit_build_request(CG_Context *ctx, Nob_String_Builder *out) {
     return true;
 }
 
+static bool cg_emit_clean_function(CG_Context *ctx, Nob_String_Builder *out) {
+    String_View *dirs = NULL;
+    if (!ctx || !out) return false;
+
+    if (!cg_collect_unique_path(ctx->scratch, &dirs, nob_sv_from_cstr("build")) ||
+        !cg_collect_unique_path(ctx->scratch, &dirs, nob_sv_from_cstr("install"))) {
+        return false;
+    }
+
+    for (size_t i = 0; i < ctx->target_count; ++i) {
+        String_View dir = {0};
+        if (!ctx->targets[i].emits_artifact) continue;
+        dir = cg_dirname_to_arena(ctx->scratch, ctx->targets[i].artifact_path);
+        if (dir.count == 0 ||
+            cg_sv_eq_lit(dir, ".") ||
+            cg_sv_eq_lit(dir, "/")) {
+            continue;
+        }
+        if (!cg_collect_unique_path(ctx->scratch, &dirs, dir)) return false;
+    }
+
+    nob_sb_append_cstr(out, "static bool clean_all(void) {\n");
+    nob_sb_append_cstr(out, "    Nob_Cmd cmd = {0};\n");
+    nob_sb_append_cstr(out, "    bool ok = false;\n");
+    nob_sb_append_cstr(out, "    nob_cmd_append(&cmd, \"rm\", \"-rf\"");
+    for (size_t i = 0; i < arena_arr_len(dirs); ++i) {
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, dirs[i])) return false;
+    }
+    nob_sb_append_cstr(out, ");\n");
+    nob_sb_append_cstr(out, "    ok = nob_cmd_run(&cmd);\n");
+    nob_sb_append_cstr(out, "    nob_cmd_free(cmd);\n");
+    nob_sb_append_cstr(out, "    return ok;\n");
+    nob_sb_append_cstr(out, "}\n\n");
+    return true;
+}
+
+static bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
+    size_t rule_count = 0;
+    if (!ctx || !out) return false;
+
+    rule_count = bm_query_install_rule_count(ctx->model);
+    nob_sb_append_cstr(out, "static bool install_all(void) {\n");
+    if (rule_count == 0) {
+        nob_sb_append_cstr(out, "    return true;\n");
+        nob_sb_append_cstr(out, "}\n\n");
+        return true;
+    }
+
+    nob_sb_append_cstr(out, "    if (!ensure_dir(\"install\")) return false;\n");
+    for (size_t i = 0; i < rule_count; ++i) {
+        BM_Install_Rule_Id id = (BM_Install_Rule_Id)i;
+        BM_Install_Rule_Kind kind = bm_query_install_rule_kind(ctx->model, id);
+        String_View destination = bm_query_install_rule_destination(ctx->model, id);
+        String_View install_dir = nob_sv_from_cstr("install");
+
+        if (destination.count > 0 &&
+            !cg_join_paths_to_arena(ctx->scratch,
+                                    nob_sv_from_cstr("install"),
+                                    destination,
+                                    &install_dir)) {
+            return false;
+        }
+
+        if (kind == BM_INSTALL_RULE_TARGET) {
+            BM_Target_Id target_id = bm_query_install_rule_target(ctx->model, id);
+            const CG_Target_Info *info = cg_target_info(ctx, target_id);
+            String_View basename = {0};
+            String_View install_path = {0};
+            if (!info || !info->emits_artifact) {
+                nob_log(NOB_ERROR, "codegen: unsupported install target rule");
+                return false;
+            }
+            basename = cg_basename_to_arena(ctx->scratch, info->artifact_path);
+            if (!cg_join_paths_to_arena(ctx->scratch, install_dir, basename, &install_path)) return false;
+
+            nob_sb_append_cstr(out, "    if (!build_");
+            nob_sb_append_cstr(out, info->ident);
+            nob_sb_append_cstr(out, "()) return false;\n");
+            nob_sb_append_cstr(out, "    if (!ensure_dir(");
+            if (!cg_sb_append_c_string(out, install_dir)) return false;
+            nob_sb_append_cstr(out, ")) return false;\n");
+            nob_sb_append_cstr(out, "    if (!install_copy_file(");
+            if (!cg_sb_append_c_string(out, info->artifact_path)) return false;
+            nob_sb_append_cstr(out, ", ");
+            if (!cg_sb_append_c_string(out, install_path)) return false;
+            nob_sb_append_cstr(out, ")) return false;\n");
+            continue;
+        }
+
+        if (kind == BM_INSTALL_RULE_FILE) {
+            BM_Directory_Id owner = bm_query_install_rule_owner_directory(ctx->model, id);
+            String_View owner_source_dir = bm_query_directory_source_dir(ctx->model, owner);
+            String_View item = bm_query_install_rule_item_raw(ctx->model, id);
+            String_View src_path = {0};
+            String_View basename = {0};
+            String_View install_path = {0};
+
+            if (!cg_check_no_genex("install(FILES)", item)) return false;
+            if (cg_sv_has_prefix(item, "SCRIPT::") ||
+                cg_sv_has_prefix(item, "CODE::") ||
+                cg_sv_has_prefix(item, "EXPORT::") ||
+                cg_sv_has_prefix(item, "EXPORT_ANDROID_MK::")) {
+                nob_log(NOB_ERROR,
+                        "codegen: unsupported install(FILES) pseudo-item: %.*s",
+                        (int)item.count,
+                        item.data ? item.data : "");
+                return false;
+            }
+
+            if (!cg_rebase_from_base(ctx, item, owner_source_dir, &src_path)) return false;
+            basename = cg_basename_to_arena(ctx->scratch, item);
+            if (!cg_join_paths_to_arena(ctx->scratch, install_dir, basename, &install_path)) return false;
+
+            nob_sb_append_cstr(out, "    if (!ensure_dir(");
+            if (!cg_sb_append_c_string(out, install_dir)) return false;
+            nob_sb_append_cstr(out, ")) return false;\n");
+            nob_sb_append_cstr(out, "    if (!install_copy_file(");
+            if (!cg_sb_append_c_string(out, src_path)) return false;
+            nob_sb_append_cstr(out, ", ");
+            if (!cg_sb_append_c_string(out, install_path)) return false;
+            nob_sb_append_cstr(out, ")) return false;\n");
+            continue;
+        }
+
+        nob_log(NOB_ERROR,
+                "codegen: unsupported install rule kind in minimal backend: %d",
+                (int)kind);
+        return false;
+    }
+
+    nob_sb_append_cstr(out, "    return true;\n");
+    nob_sb_append_cstr(out, "}\n\n");
+    return true;
+}
+
+static bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
+    bool has_package_data = false;
+    if (!ctx || !out) return false;
+
+    has_package_data =
+        bm_query_package_count(ctx->model) > 0 ||
+        bm_query_cpack_install_type_count(ctx->model) > 0 ||
+        bm_query_cpack_component_group_count(ctx->model) > 0 ||
+        bm_query_cpack_component_count(ctx->model) > 0;
+
+    nob_sb_append_cstr(out, "static bool package_all(void) {\n");
+    if (!has_package_data) {
+        nob_sb_append_cstr(out, "    return true;\n");
+    } else {
+        nob_sb_append_cstr(out,
+            "    nob_log(NOB_ERROR, \"codegen: package command is not implemented in the minimal backend\");\n"
+            "    return false;\n");
+    }
+    nob_sb_append_cstr(out, "}\n\n");
+    return true;
+}
+
 static bool cg_emit_main(CG_Context *ctx, Nob_String_Builder *out) {
     if (!ctx || !out) return false;
     nob_sb_append_cstr(out,
         "int main(int argc, char **argv) {\n"
         "    if (argc > 1 && strcmp(argv[1], \"clean\") == 0) {\n"
         "        return clean_all() ? 0 : 1;\n"
+        "    }\n"
+        "    if (argc > 1 && strcmp(argv[1], \"install\") == 0) {\n"
+        "        return install_all() ? 0 : 1;\n"
+        "    }\n"
+        "    if (argc > 1 && strcmp(argv[1], \"package\") == 0) {\n"
+        "        return package_all() ? 0 : 1;\n"
         "    }\n"
         "    if (argc > 1) {\n"
         "        for (int i = 1; i < argc; ++i) {\n"
@@ -1187,6 +1367,9 @@ bool nob_codegen_render(const Build_Model *model,
     }
 
     if (!cg_emit_build_request(&ctx, out) ||
+        !cg_emit_clean_function(&ctx, out) ||
+        !cg_emit_install_function(&ctx, out) ||
+        !cg_emit_package_function(&ctx, out) ||
         !cg_emit_main(&ctx, out)) {
         return false;
     }

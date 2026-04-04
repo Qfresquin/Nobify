@@ -67,8 +67,11 @@ The roadmap starts from the current repository reality:
   same way as targets, install rules, packages, or CPack objects
 - codegen is still a minimal POSIX-oriented backend and rejects several
   semantically important downstream cases
-- the default `test-v2` smoke path is not yet fully green, so the project does
-  not have a fully trustworthy artifact-parity proof loop today
+- the default `test-v2` smoke path is green again and is once more the trusted
+  aggregate smoke baseline
+- the repo now has an explicit-only artifact-parity harness under
+  `test_v2/artifact_parity/`, but the fixture corpus is still intentionally
+  narrow and does not yet prove later-wave export or packaging parity
 
 ## 5. Frozen Definition Of Artifact Equivalence
 
@@ -157,7 +160,22 @@ Real-project proof demonstrates:
 ### P0 Baseline And Proof Harness
 
 Status:
-- next active wave
+- completed on April 4, 2026
+- delivered:
+  green `test-v2` smoke after fixing the immediate `pipeline` and `codegen`
+  blockers
+  explicit-only `artifact-parity` harness under `test_v2/artifact_parity/`
+  that runs real `cmake` versus `nobify -> generated nob.c -> generated Nob`
+  flows
+  table-driven fixture execution with explicit `configure`, `build`, and
+  `install` phase ownership plus reserved `package` orchestration
+  structured manifest capture for `TREE`, `FILE_TEXT`, and `FILE_SHA256`
+  across build, generated-file, install, export, package-file, and
+  package-metadata domains
+  runner-owned `CMK2NOB_TEST_NOBIFY_BIN` delivery so the parity harness uses a
+  freshly built `nobify` from the current workspace sources
+  generated `nob.c` CLI support for reserved `clean`, `install`, and `package`
+  commands, with minimal install execution for focused `P0` fixtures
 
 Deliverables:
 - restore trust in the default `test-v2` smoke path by fixing the current smoke
@@ -186,6 +204,11 @@ Exit criteria:
 - at least one canonical parity suite compares CMake and generated Nob
   artifacts for a focused fixture set
 - the harness can report structured diffs instead of only pass/fail text
+
+Evidence delivered:
+- `./build/nob_test test-v2`
+- `./build/nob_test test-codegen`
+- `./build/nob_test test-artifact-parity`
 
 ### P1 Local Build Artifact Parity
 
