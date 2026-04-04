@@ -2,18 +2,23 @@
 
 TEST(codegen_simple_executable_generates_compilable_nob) {
     Nob_String_Builder sb = {0};
-    ASSERT(codegen_render_script(
+    Codegen_Test_Config config = {
+        .input_path = "render_src/CMakeLists.txt",
+        .output_path = "render_src/nob.c",
+        .source_dir = "render_src",
+        .binary_dir = "render_build",
+    };
+    ASSERT(codegen_render_script_with_config(
         "project(Test C)\n"
         "add_executable(app main.c)\n",
-        "CMakeLists.txt",
-        "nob.c",
+        &config,
         &sb));
 
     char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items ? sb.items : "");
     ASSERT(strstr(output, "#define NOB_IMPLEMENTATION") != NULL);
     ASSERT(strstr(output, "#include \"nob.h\"") != NULL);
     ASSERT(strstr(output, "int main(int argc, char **argv)") != NULL);
-    ASSERT(strstr(output, "build/app") != NULL);
+    ASSERT(strstr(output, "../render_build/app") != NULL);
     nob_sb_free(sb);
     TEST_PASS();
 }
@@ -46,7 +51,7 @@ TEST(codegen_static_interface_alias_usage_propagates_flags) {
     ASSERT(strstr(output, "-Llibs") != NULL);
     ASSERT(strstr(output, "-lm") != NULL);
     ASSERT(strstr(output, "-lpthread") != NULL);
-    ASSERT(strstr(output, "build/libcore.a") != NULL);
+    ASSERT(strstr(output, "libcore.a") != NULL);
     nob_sb_free(sb);
     TEST_PASS();
 }

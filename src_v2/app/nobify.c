@@ -18,7 +18,9 @@
 #include <string.h>
 
 static void print_usage(const char *program) {
-    nob_log(NOB_INFO, "Usage: %s [--strict] [--tokens] [--ast] [--events] [--out path] [input]", program);
+    nob_log(NOB_INFO,
+            "Usage: %s [--strict] [--tokens] [--ast] [--events] [--source-root path] [--binary-root path] [--out path] [input]",
+            program);
 }
 
 static bool token_list_append(Arena *arena, Token_List *list, Token token) {
@@ -71,6 +73,8 @@ int main(int argc, char **argv) {
     bool print_events = false;
     const char *input_path = "CMakeLists.txt";
     const char *output_path = NULL;
+    const char *source_root_path = NULL;
+    const char *binary_root_path = NULL;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--strict") == 0) {
@@ -96,6 +100,24 @@ int main(int argc, char **argv) {
                 return 1;
             }
             output_path = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--source-root") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --source-root");
+                print_usage(argv[0]);
+                return 1;
+            }
+            source_root_path = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--binary-root") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --binary-root");
+                print_usage(argv[0]);
+                return 1;
+            }
+            binary_root_path = argv[++i];
             continue;
         }
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -141,8 +163,17 @@ int main(int argc, char **argv) {
 
     String_View content = nob_sv_from_parts(content_cstr, strlen(content_cstr));
     char *input_dir = arena_strdup(arena, nob_temp_dir_name(input_path));
+    char *source_root = NULL;
+    char *binary_root = NULL;
     if (!input_dir) {
         nob_log(NOB_ERROR, "Failed to resolve input directory");
+        arena_destroy(arena);
+        return 1;
+    }
+    source_root = arena_strdup(arena, source_root_path ? source_root_path : input_dir);
+    binary_root = arena_strdup(arena, binary_root_path ? binary_root_path : source_root);
+    if (!source_root || !binary_root) {
+        nob_log(NOB_ERROR, "Failed to resolve effective roots");
         arena_destroy(arena);
         return 1;
     }
@@ -216,8 +247,8 @@ int main(int argc, char **argv) {
 
     EvalSession_Config session_cfg = {0};
     session_cfg.persistent_arena = event_arena;
-    session_cfg.source_root = sv_from_cstr(input_dir);
-    session_cfg.binary_root = sv_from_cstr(input_dir);
+    session_cfg.source_root = sv_from_cstr(source_root);
+    session_cfg.binary_root = sv_from_cstr(binary_root);
 
     EvalSession *session = eval_session_create(&session_cfg);
     if (!session) {
@@ -230,8 +261,8 @@ int main(int argc, char **argv) {
 
     EvalExec_Request eval_request = {0};
     eval_request.scratch_arena = eval_arena;
-    eval_request.source_dir = sv_from_cstr(input_dir);
-    eval_request.binary_dir = sv_from_cstr(input_dir);
+    eval_request.source_dir = sv_from_cstr(source_root);
+    eval_request.binary_dir = sv_from_cstr(binary_root);
     eval_request.list_file = input_path;
     eval_request.stream = stream;
 
@@ -382,6 +413,8 @@ int main(int argc, char **argv) {
     Nob_Codegen_Options codegen_opts = {
         .input_path = nob_sv_from_cstr(input_path),
         .output_path = nob_sv_from_cstr(output_path),
+        .source_root = sv_from_cstr(source_root),
+        .binary_root = sv_from_cstr(binary_root),
     };
     if (!nob_codegen_write_file(model, codegen_arena, &codegen_opts)) {
         nob_log(NOB_ERROR, "Codegen failed while writing %s", output_path);

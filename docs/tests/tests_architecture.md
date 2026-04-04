@@ -90,7 +90,9 @@ code.
 
 - `codegen`
   Focus: generated `nob` output, host compiler execution, and generated-binary
-  behavior. This suite crosses semantic and host/toolchain boundaries.
+  behavior. This suite crosses semantic and host/toolchain boundaries and now
+  owns the aggregate-safe out-of-source `P1` smoke coverage for local build
+  artifact placement.
   Current aggregate status: included.
 
 - `artifact-parity`
@@ -98,8 +100,10 @@ code.
   comparison through the explicit harness under `test_v2/artifact_parity/`.
   The current `P0` fixture set proves build outputs, generated files, install
   trees, and empty export/package manifest domains through structured
-  `TREE`/`FILE_TEXT`/`FILE_SHA256` capture. The suite requires a real
-  `cmake 3.28.x` plus the runner-provided `CMK2NOB_TEST_NOBIFY_BIN` tool path.
+  `TREE`/`FILE_TEXT`/`FILE_SHA256` capture. `P1` extends that harness with
+  explicit out-of-source build parity fixtures while keeping it outside the
+  default aggregate. The suite requires a real `cmake 3.28.x` plus the
+  runner-provided `CMK2NOB_TEST_NOBIFY_BIN` tool path.
   Current aggregate status: excluded from the default aggregate path.
 
 - `evaluator-integration`

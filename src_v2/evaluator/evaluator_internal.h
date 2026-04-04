@@ -1537,7 +1537,7 @@ static inline bool eval_emit_include_end(EvalExecContext *ctx,
     ev.h.origin = origin;
     ev.as.include_end.path = sv_copy_to_event_arena(ctx, path);
     ev.as.include_end.success = success;
-    return emit_event(ctx, ev);
+    return eval_emit_event_allow_stopped(ctx, ev);
 }
 static inline bool eval_emit_add_subdirectory_begin(EvalExecContext *ctx,
                                                     Event_Origin origin,
@@ -1565,7 +1565,7 @@ static inline bool eval_emit_add_subdirectory_end(EvalExecContext *ctx,
     ev.as.add_subdirectory_end.source_dir = sv_copy_to_event_arena(ctx, source_dir);
     ev.as.add_subdirectory_end.binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
     ev.as.add_subdirectory_end.success = success;
-    return emit_event(ctx, ev);
+    return eval_emit_event_allow_stopped(ctx, ev);
 }
 static inline bool eval_emit_directory_property_mutate(EvalExecContext *ctx,
                                                        Event_Origin origin,
@@ -1621,7 +1621,7 @@ static inline bool eval_emit_dir_pop(EvalExecContext *ctx,
     ev.h.origin = origin;
     ev.as.dir_pop.source_dir = sv_copy_to_event_arena(ctx, source_dir);
     ev.as.dir_pop.binary_dir = sv_copy_to_event_arena(ctx, binary_dir);
-    return emit_event(ctx, ev);
+    return eval_emit_event_allow_stopped(ctx, ev);
 }
 static inline bool eval_emit_command_begin(EvalExecContext *ctx,
                                            Event_Origin origin,

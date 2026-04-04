@@ -6,6 +6,8 @@
 typedef struct Nob_Codegen_Options {
     String_View input_path;
     String_View output_path;
+    String_View source_root;
+    String_View binary_root;
 } Nob_Codegen_Options;
 
 bool nob_codegen_render(const Build_Model *model,

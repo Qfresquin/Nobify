@@ -37,6 +37,8 @@ typedef struct {
     Arena *scratch;
     Nob_Codegen_Options opts;
     String_View cwd_abs;
+    String_View source_root_abs;
+    String_View binary_root_abs;
     String_View emit_path_abs;
     String_View emit_dir_abs;
     CG_Target_Info *targets;
@@ -244,6 +246,21 @@ static bool cg_absolute_from_cwd(CG_Context *ctx, String_View path, String_View 
     return cg_join_paths_to_arena(ctx->scratch, ctx->cwd_abs, path, out);
 }
 
+static bool cg_absolute_from_base(CG_Context *ctx,
+                                  String_View base_dir,
+                                  String_View path,
+                                  String_View *out) {
+    String_View base_abs = {0};
+    if (!ctx || !out) return false;
+    if (cg_path_is_abs(path)) return cg_normalize_path_to_arena(ctx->scratch, path, out);
+    if (cg_path_is_abs(base_dir)) {
+        if (!cg_normalize_path_to_arena(ctx->scratch, base_dir, &base_abs)) return false;
+    } else {
+        if (!cg_absolute_from_cwd(ctx, base_dir, &base_abs)) return false;
+    }
+    return cg_join_paths_to_arena(ctx->scratch, base_abs, path, out);
+}
+
 static bool cg_relative_path_to_arena(Arena *scratch,
                                       String_View from_dir_abs,
                                       String_View to_path_abs,
@@ -310,13 +327,7 @@ static bool cg_rebase_from_base(CG_Context *ctx,
                                 String_View *out) {
     String_View absolute = {0};
     if (!ctx || !out) return false;
-    if (cg_path_is_abs(value)) {
-        if (!cg_normalize_path_to_arena(ctx->scratch, value, &absolute)) return false;
-    } else {
-        String_View base_abs = {0};
-        if (!cg_absolute_from_cwd(ctx, base_dir, &base_abs)) return false;
-        if (!cg_join_paths_to_arena(ctx->scratch, base_abs, value, &absolute)) return false;
-    }
+    if (!cg_absolute_from_base(ctx, base_dir, value, &absolute)) return false;
     return cg_relative_path_to_arena(ctx->scratch, ctx->emit_dir_abs, absolute, out);
 }
 
@@ -328,6 +339,55 @@ static bool cg_rebase_from_provenance(CG_Context *ctx,
         ? cg_dirname_to_arena(ctx->scratch, provenance.file_path)
         : ctx->cwd_abs;
     return cg_rebase_from_base(ctx, value, base_dir, out);
+}
+
+static bool cg_rebase_path_from_cwd(CG_Context *ctx, String_View value, String_View *out) {
+    return cg_rebase_from_base(ctx, value, ctx->cwd_abs, out);
+}
+
+static bool cg_rebase_from_binary_root(CG_Context *ctx, String_View value, String_View *out) {
+    return cg_rebase_from_base(ctx, value, ctx->binary_root_abs, out);
+}
+
+static bool cg_absolute_from_emit(CG_Context *ctx, String_View value, String_View *out) {
+    return cg_absolute_from_base(ctx, ctx->emit_dir_abs, value, out);
+}
+
+static bool cg_effective_owner_binary_dir(CG_Context *ctx,
+                                          BM_Directory_Id owner,
+                                          String_View *out_abs) {
+    String_View owner_binary_dir = {0};
+    String_View owner_source_dir = {0};
+    String_View owner_binary_abs = {0};
+    String_View owner_source_abs = {0};
+    String_View owner_rel_from_source_root = {0};
+    if (!ctx || !out_abs) return false;
+
+    owner_binary_dir = bm_query_directory_binary_dir(ctx->model, owner);
+    owner_source_dir = bm_query_directory_source_dir(ctx->model, owner);
+    if (!cg_absolute_from_cwd(ctx, owner_binary_dir, &owner_binary_abs) ||
+        !cg_absolute_from_cwd(ctx, owner_source_dir, &owner_source_abs)) {
+        return false;
+    }
+
+    *out_abs = owner_binary_abs;
+    if (!nob_sv_eq(owner_binary_abs, ctx->binary_root_abs)) return true;
+    if (!cg_relative_path_to_arena(ctx->scratch,
+                                   ctx->source_root_abs,
+                                   owner_source_abs,
+                                   &owner_rel_from_source_root)) {
+        return false;
+    }
+    if (owner_rel_from_source_root.count == 0 ||
+        cg_sv_eq_lit(owner_rel_from_source_root, ".") ||
+        cg_sv_has_prefix(owner_rel_from_source_root, "..")) {
+        return true;
+    }
+
+    return cg_join_paths_to_arena(ctx->scratch,
+                                  ctx->binary_root_abs,
+                                  owner_rel_from_source_root,
+                                  out_abs);
 }
 
 static const char *cg_make_identifier(Arena *scratch, String_View name, size_t suffix) {
@@ -403,7 +463,7 @@ static bool cg_classify_source_lang(String_View src, CG_Source_Lang *out_lang) {
 static bool cg_compute_target_artifact_path(CG_Context *ctx, BM_Target_Id id, String_View *out) {
     BM_Target_Kind kind = bm_query_target_kind(ctx->model, id);
     BM_Directory_Id owner = bm_query_target_owner_directory(ctx->model, id);
-    String_View owner_binary_dir = bm_query_directory_binary_dir(ctx->model, owner);
+    String_View owner_binary_dir_abs = {0};
     String_View output_name = bm_query_target_output_name(ctx->model, id);
     String_View prefix = bm_query_target_prefix(ctx->model, id);
     String_View suffix = bm_query_target_suffix(ctx->model, id);
@@ -423,12 +483,10 @@ static bool cg_compute_target_artifact_path(CG_Context *ctx, BM_Target_Id id, St
 
     if (kind == BM_TARGET_EXECUTABLE) {
         output_dir = bm_query_target_runtime_output_directory(ctx->model, id);
-        if (output_dir.count == 0) output_dir = nob_sv_from_cstr("build");
         if (output_name.count == 0) output_name = bm_query_target_name(ctx->model, id);
         nob_sb_append_buf(&name_sb, output_name.data ? output_name.data : "", output_name.count);
     } else if (kind == BM_TARGET_STATIC_LIBRARY) {
         output_dir = bm_query_target_archive_output_directory(ctx->model, id);
-        if (output_dir.count == 0) output_dir = nob_sv_from_cstr("build");
         if (output_name.count == 0) output_name = bm_query_target_name(ctx->model, id);
         if (prefix.count == 0) prefix = nob_sv_from_cstr("lib");
         if (suffix.count == 0) suffix = nob_sv_from_cstr(".a");
@@ -437,7 +495,6 @@ static bool cg_compute_target_artifact_path(CG_Context *ctx, BM_Target_Id id, St
         nob_sb_append_buf(&name_sb, suffix.data ? suffix.data : "", suffix.count);
     } else if (kind == BM_TARGET_SHARED_LIBRARY || kind == BM_TARGET_MODULE_LIBRARY) {
         output_dir = bm_query_target_library_output_directory(ctx->model, id);
-        if (output_dir.count == 0) output_dir = nob_sv_from_cstr("build");
         if (output_name.count == 0) output_name = bm_query_target_name(ctx->model, id);
         if (prefix.count == 0) prefix = nob_sv_from_cstr("lib");
         if (suffix.count == 0) suffix = nob_sv_from_cstr(".so");
@@ -450,7 +507,7 @@ static bool cg_compute_target_artifact_path(CG_Context *ctx, BM_Target_Id id, St
         return true;
     }
 
-    if (!cg_check_no_genex("target output directory", output_dir)) {
+    if (output_dir.count > 0 && !cg_check_no_genex("target output directory", output_dir)) {
         nob_sb_free(name_sb);
         return false;
     }
@@ -460,7 +517,14 @@ static bool cg_compute_target_artifact_path(CG_Context *ctx, BM_Target_Id id, St
     if (!copy) return false;
     basename = nob_sv_from_cstr(copy);
 
-    if (!cg_rebase_from_base(ctx, output_dir, owner_binary_dir, &rebased_dir)) return false;
+    if (!cg_effective_owner_binary_dir(ctx, owner, &owner_binary_dir_abs)) return false;
+    if (output_dir.count == 0) {
+        if (!cg_relative_path_to_arena(ctx->scratch, ctx->emit_dir_abs, owner_binary_dir_abs, &rebased_dir)) {
+            return false;
+        }
+    } else {
+        if (!cg_rebase_from_base(ctx, output_dir, owner_binary_dir_abs, &rebased_dir)) return false;
+    }
     return cg_join_paths_to_arena(ctx->scratch, rebased_dir, basename, out);
 }
 
@@ -639,8 +703,6 @@ static bool cg_collect_build_dependencies(CG_Context *ctx, BM_Target_Id id, BM_T
 
 static bool cg_collect_compile_sources(CG_Context *ctx, BM_Target_Id id, CG_Source_Info **out) {
     BM_String_Span sources = bm_query_target_sources_raw(ctx->model, id);
-    BM_Directory_Id owner = bm_query_target_owner_directory(ctx->model, id);
-    String_View owner_source_dir = bm_query_directory_source_dir(ctx->model, owner);
 
     for (size_t i = 0; i < sources.count; ++i) {
         String_View src = sources.items[i];
@@ -658,7 +720,7 @@ static bool cg_collect_compile_sources(CG_Context *ctx, BM_Target_Id id, CG_Sour
             return false;
         }
 
-        if (!cg_rebase_from_base(ctx, src, owner_source_dir, &rebased)) return false;
+        if (!cg_rebase_path_from_cwd(ctx, src, &rebased)) return false;
         for (size_t j = 0; j < arena_arr_len(*out); ++j) {
             if (nob_sv_eq((*out)[j].path, rebased)) {
                 dup = true;
@@ -935,10 +997,19 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
     needs_cxx_linker = info->needs_cxx_linker;
     needs_pic = cg_target_needs_pic(info->kind);
 
-    if (!cg_join_paths_to_arena(ctx->scratch,
-                                nob_sv_from_cstr("build/obj"),
-                                nob_sv_from_cstr(info->ident),
-                                &object_dir)) {
+    {
+        String_View object_subdir = {0};
+        if (!cg_join_paths_to_arena(ctx->scratch,
+                                    nob_sv_from_cstr(".nob/obj"),
+                                    nob_sv_from_cstr(info->ident),
+                                    &object_subdir)) {
+            return false;
+        }
+        if (!cg_rebase_from_binary_root(ctx, object_subdir, &object_dir)) {
+            return false;
+        }
+    }
+    if (object_dir.count == 0) {
         return false;
     }
     artifact_dir = cg_dirname_to_arena(ctx->scratch, info->artifact_path);
@@ -1122,33 +1193,46 @@ static bool cg_emit_build_request(CG_Context *ctx, Nob_String_Builder *out) {
 }
 
 static bool cg_emit_clean_function(CG_Context *ctx, Nob_String_Builder *out) {
-    String_View *dirs = NULL;
+    String_View *paths = NULL;
     if (!ctx || !out) return false;
 
-    if (!cg_collect_unique_path(ctx->scratch, &dirs, nob_sv_from_cstr("build")) ||
-        !cg_collect_unique_path(ctx->scratch, &dirs, nob_sv_from_cstr("install"))) {
-        return false;
+    {
+        String_View backend_root = {0};
+        if (!cg_rebase_from_binary_root(ctx, nob_sv_from_cstr(".nob"), &backend_root) ||
+            !cg_collect_unique_path(ctx->scratch, &paths, backend_root)) {
+            return false;
+        }
     }
 
     for (size_t i = 0; i < ctx->target_count; ++i) {
         String_View dir = {0};
+        String_View dir_abs = {0};
         if (!ctx->targets[i].emits_artifact) continue;
         dir = cg_dirname_to_arena(ctx->scratch, ctx->targets[i].artifact_path);
-        if (dir.count == 0 ||
-            cg_sv_eq_lit(dir, ".") ||
-            cg_sv_eq_lit(dir, "/")) {
+        if (dir.count == 0 || cg_sv_eq_lit(dir, "/")) {
+            if (!cg_collect_unique_path(ctx->scratch, &paths, ctx->targets[i].artifact_path)) return false;
             continue;
         }
-        if (!cg_collect_unique_path(ctx->scratch, &dirs, dir)) return false;
+        if (!cg_absolute_from_emit(ctx, dir, &dir_abs)) return false;
+        if (nob_sv_eq(dir_abs, ctx->binary_root_abs) || cg_sv_eq_lit(dir, ".")) {
+            if (!cg_collect_unique_path(ctx->scratch, &paths, ctx->targets[i].artifact_path)) return false;
+            continue;
+        }
+        if (!cg_collect_unique_path(ctx->scratch, &paths, dir)) return false;
     }
 
     nob_sb_append_cstr(out, "static bool clean_all(void) {\n");
+    if (arena_arr_len(paths) == 0) {
+        nob_sb_append_cstr(out, "    return true;\n");
+        nob_sb_append_cstr(out, "}\n\n");
+        return true;
+    }
     nob_sb_append_cstr(out, "    Nob_Cmd cmd = {0};\n");
     nob_sb_append_cstr(out, "    bool ok = false;\n");
     nob_sb_append_cstr(out, "    nob_cmd_append(&cmd, \"rm\", \"-rf\"");
-    for (size_t i = 0; i < arena_arr_len(dirs); ++i) {
+    for (size_t i = 0; i < arena_arr_len(paths); ++i) {
         nob_sb_append_cstr(out, ", ");
-        if (!cg_sb_append_c_string(out, dirs[i])) return false;
+        if (!cg_sb_append_c_string(out, paths[i])) return false;
     }
     nob_sb_append_cstr(out, ");\n");
     nob_sb_append_cstr(out, "    ok = nob_cmd_run(&cmd);\n");
@@ -1212,9 +1296,9 @@ static bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
         }
 
         if (kind == BM_INSTALL_RULE_FILE) {
-            BM_Directory_Id owner = bm_query_install_rule_owner_directory(ctx->model, id);
-            String_View owner_source_dir = bm_query_directory_source_dir(ctx->model, owner);
+            BM_Directory_Id owner_dir = bm_query_install_rule_owner_directory(ctx->model, id);
             String_View item = bm_query_install_rule_item_raw(ctx->model, id);
+            String_View owner_source_dir = bm_query_directory_source_dir(ctx->model, owner_dir);
             String_View src_path = {0};
             String_View basename = {0};
             String_View install_path = {0};
@@ -1318,11 +1402,31 @@ static bool cg_init_context(CG_Context *ctx,
                             Arena *scratch,
                             const Nob_Codegen_Options *opts) {
     const char *cwd = NULL;
+    String_View input_path = {0};
+    String_View output_path = {0};
+    String_View input_dir = {0};
+    String_View source_root = {0};
+    String_View binary_root = {0};
     if (!ctx || !model || !scratch || !opts) return false;
     memset(ctx, 0, sizeof(*ctx));
     ctx->model = model;
     ctx->scratch = scratch;
-    ctx->opts = *opts;
+
+    input_path = opts->input_path.count > 0 ? opts->input_path : nob_sv_from_cstr("CMakeLists.txt");
+    input_dir = cg_dirname_to_arena(scratch, input_path);
+    output_path = opts->output_path;
+    if (output_path.count == 0) {
+        if (!cg_join_paths_to_arena(scratch, input_dir, nob_sv_from_cstr("nob.c"), &output_path)) return false;
+    }
+    source_root = opts->source_root.count > 0 ? opts->source_root : input_dir;
+    binary_root = opts->binary_root.count > 0 ? opts->binary_root : source_root;
+
+    ctx->opts = (Nob_Codegen_Options){
+        .input_path = input_path,
+        .output_path = output_path,
+        .source_root = source_root,
+        .binary_root = binary_root,
+    };
 
     cwd = nob_get_current_dir_temp();
     if (!cwd) {
@@ -1331,7 +1435,9 @@ static bool cg_init_context(CG_Context *ctx,
     }
 
     if (!cg_absolute_from_cwd(ctx, nob_sv_from_cstr(cwd), &ctx->cwd_abs) ||
-        !cg_absolute_from_cwd(ctx, opts->output_path, &ctx->emit_path_abs)) {
+        !cg_absolute_from_cwd(ctx, ctx->opts.source_root, &ctx->source_root_abs) ||
+        !cg_absolute_from_cwd(ctx, ctx->opts.binary_root, &ctx->binary_root_abs) ||
+        !cg_absolute_from_cwd(ctx, ctx->opts.output_path, &ctx->emit_path_abs)) {
         return false;
     }
 

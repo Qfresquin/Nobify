@@ -27,6 +27,24 @@ typedef struct {
 
 static char s_artifact_parity_repo_root[_TINYDIR_PATH_MAX] = {0};
 
+static bool artifact_parity_mkdirs(const char *path) {
+    char buf[_TINYDIR_PATH_MAX] = {0};
+    size_t len = 0;
+    if (!path || path[0] == '\0' || strcmp(path, ".") == 0) return true;
+    len = strlen(path);
+    if (len >= sizeof(buf)) return false;
+    memcpy(buf, path, len + 1);
+
+    for (size_t i = 1; i < len; ++i) {
+        if (buf[i] != '/') continue;
+        buf[i] = '\0';
+        if (buf[0] != '\0' && !nob_mkdir_if_not_exists(buf)) return false;
+        buf[i] = '/';
+    }
+
+    return nob_mkdir_if_not_exists(buf);
+}
+
 static bool artifact_parity_copy_string(const char *src,
                                         char out[_TINYDIR_PATH_MAX]) {
     int n = 0;
@@ -609,7 +627,7 @@ bool artifact_parity_write_text_file(const char *path, const char *text) {
     const char *dir = NULL;
     if (!path || !text) return false;
     dir = nob_temp_dir_name(path);
-    if (dir && strcmp(dir, ".") != 0 && !nob_mkdir_if_not_exists(dir)) return false;
+    if (dir && strcmp(dir, ".") != 0 && !artifact_parity_mkdirs(dir)) return false;
     return nob_write_entire_file(path, text, strlen(text));
 }
 
@@ -639,11 +657,20 @@ bool artifact_parity_materialize_files(const char *root_dir,
 
 bool artifact_parity_run_nobify(const char *nobify_bin,
                                 const char *input_path,
-                                const char *output_path) {
+                                const char *output_path,
+                                const char *source_root,
+                                const char *binary_root) {
     Nob_Cmd cmd = {0};
     bool ok = false;
     if (!nobify_bin || !input_path || !output_path) return false;
-    nob_cmd_append(&cmd, nobify_bin, "--out", output_path, input_path);
+    nob_cmd_append(&cmd, nobify_bin);
+    if (source_root && source_root[0] != '\0') {
+        nob_cmd_append(&cmd, "--source-root", source_root);
+    }
+    if (binary_root && binary_root[0] != '\0') {
+        nob_cmd_append(&cmd, "--binary-root", binary_root);
+    }
+    nob_cmd_append(&cmd, "--out", output_path, input_path);
     ok = nob_cmd_run(&cmd);
     nob_cmd_free(cmd);
     return ok;

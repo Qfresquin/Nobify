@@ -213,7 +213,24 @@ Evidence delivered:
 ### P1 Local Build Artifact Parity
 
 Status:
-- planned
+- completed on April 4, 2026
+- delivered:
+  public `nobify` root flags `--source-root` and `--binary-root`, with legacy
+  in-source defaults preserved when the flags are omitted
+  explicit source/binary-root plumbing through the evaluator session, root
+  execution request, wrapped directory events, and `Nob_Codegen_Options`
+  backend path rules that place default final artifacts in the owner
+  directory's binary dir and interpret relative output-directory properties
+  from that same owner binary dir
+  backend-private object staging rooted under `<binary_root>/.nob/obj/...`
+  instead of hardcoded `build/obj`
+  `clean` behavior narrowed to backend-private staging plus discovered emitted
+  artifact paths instead of deleting an entire build tree
+  evaluator/build-model fixes so `add_subdirectory()` default binary-dir
+  rebasing now reaches downstream consumers in the correct event order and
+  target-owner directory assignment
+  aggregate-safe out-of-source smoke coverage in `test_v2/codegen/` and
+  explicit real-CMake out-of-source parity cases in `test_v2/artifact_parity/`
 
 Deliverables:
 - close the local build-output gaps for executables, static libraries, shared
@@ -233,6 +250,12 @@ Exit criteria:
 - parity fixtures cover the supported target kinds and output layout rules
 - `test-v2` includes stable smoke coverage for out-of-source build cases
 - artifact manifests match CMake for the supported POSIX/Linux build fixtures
+
+Evidence delivered:
+- `./build/nob_test test-build-model`
+- `./build/nob_test test-codegen`
+- `./build/nob_test test-artifact-parity`
+- `./build/nob_test test-v2`
 
 ### P2 Generated-File And Build-Graph Semantics
 

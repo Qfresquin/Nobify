@@ -64,6 +64,11 @@ typedef struct {
     size_t nob_command_count;
     const Artifact_Parity_Manifest_Request *manifest_requests;
     size_t manifest_request_count;
+    const char *source_root;
+    const char *cmake_binary_dir;
+    const char *nob_binary_dir;
+    const char *generated_nob_path;
+    const char *nob_run_dir;
     const char *cmake_build_target;
     const char *cmake_base_dir;
     const char *nob_base_dir;
@@ -92,7 +97,9 @@ bool artifact_parity_materialize_files(const char *root_dir,
                                        size_t file_count);
 bool artifact_parity_run_nobify(const char *nobify_bin,
                                 const char *input_path,
-                                const char *output_path);
+                                const char *output_path,
+                                const char *source_root,
+                                const char *binary_root);
 bool artifact_parity_compile_generated_nob(const char *generated_path,
                                            const char *output_path);
 bool artifact_parity_run_binary_in_dir(const char *dir,

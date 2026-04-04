@@ -479,8 +479,10 @@ Eval_Result eval_handle_add_subdirectory(EvalExecContext *ctx, const Node *node)
     }
 
     String_View full_path = eval_sv_path_join(eval_temp_arena(ctx), source_dir, nob_sv_from_cstr("CMakeLists.txt"));
-
-    String_View scope_binary = binary_dir.count > 0 ? binary_dir : source_dir;
+    String_View scope_binary = binary_dir.count > 0
+        ? binary_dir
+        : eval_path_resolve_for_cmake_arg(ctx, a[0], current_bin, false);
+    if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (!eval_emit_add_subdirectory_begin(ctx, o, source_dir, scope_binary, exclude_from_all, system)) {
         return eval_result_from_ctx(ctx);
     }
@@ -497,7 +499,7 @@ Eval_Result eval_handle_add_subdirectory(EvalExecContext *ctx, const Node *node)
         }
     }
 
-    Eval_Result exec_res = eval_execute_file(ctx, full_path, true, binary_dir);
+    Eval_Result exec_res = eval_execute_file(ctx, full_path, true, scope_binary);
     bool success = !eval_result_is_fatal(exec_res);
 
     if (system) {

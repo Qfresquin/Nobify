@@ -460,6 +460,16 @@ static bool eval_emit_event_direct(EvalExecContext *ctx, Event ev) {
     return true;
 }
 
+static bool eval_tx_event_emits_immediately(Event_Kind kind) {
+    return kind == EVENT_COMMAND_BEGIN ||
+           kind == EVENT_INCLUDE_BEGIN ||
+           kind == EVENT_INCLUDE_END ||
+           kind == EVENT_ADD_SUBDIRECTORY_BEGIN ||
+           kind == EVENT_ADD_SUBDIRECTORY_END ||
+           kind == EVENT_DIRECTORY_ENTER ||
+           kind == EVENT_DIRECTORY_LEAVE;
+}
+
 static bool eval_tx_snapshot_bytes(EvalExecContext *ctx,
                                    const void *src,
                                    size_t elem_size,
@@ -880,7 +890,7 @@ bool eval_command_tx_push_event(EvalExecContext *ctx, const Event *ev, bool allo
         return eval_emit_event_direct(ctx, buffered);
     }
 
-    if (buffered.h.kind == EVENT_COMMAND_BEGIN) {
+    if (eval_tx_event_emits_immediately(buffered.h.kind)) {
         return eval_emit_event_direct(ctx, buffered);
     }
 

@@ -30,6 +30,10 @@ The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`
 - ownership:
   runner-owned tool/env setup in `src_v2/build/nob_test.c`
   suite-owned parity fixtures and manifest assertions in `test_v2/artifact_parity/`
+- `P1` proof split:
+  `test_v2/codegen/` owns aggregate-safe out-of-source smoke coverage
+  `test_v2/artifact_parity/` stays explicit-only and owns real-CMake
+  end-to-end parity checks
 - required external tools:
   real `cmake 3.28.x`
   sibling `cpack` only for package-phase cases

@@ -2,6 +2,88 @@
 
 static char s_codegen_repo_root[_TINYDIR_PATH_MAX] = {0};
 
+static bool codegen_mkdirs(const char *path) {
+    char buf[_TINYDIR_PATH_MAX] = {0};
+    size_t len = 0;
+    if (!path || path[0] == '\0' || strcmp(path, ".") == 0) return true;
+    len = strlen(path);
+    if (len >= sizeof(buf)) return false;
+    memcpy(buf, path, len + 1);
+
+    for (size_t i = 1; i < len; ++i) {
+        if (buf[i] != '/') continue;
+        buf[i] = '\0';
+        if (buf[0] != '\0' && !nob_mkdir_if_not_exists(buf)) return false;
+        buf[i] = '/';
+    }
+
+    return nob_mkdir_if_not_exists(buf);
+}
+
+static bool codegen_render_or_write_script(const char *script,
+                                           const Codegen_Test_Config *config,
+                                           Nob_String_Builder *out,
+                                           bool write_file) {
+    Test_Semantic_Pipeline_Config pipeline_config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *codegen_arena = arena_create(8 * 1024 * 1024);
+    const char *effective_input_path = NULL;
+    const char *effective_output_path = NULL;
+    const char *effective_source_dir = NULL;
+    const char *effective_binary_dir = NULL;
+    bool ok = false;
+    if (!codegen_arena) return false;
+
+    effective_input_path =
+        (config && config->input_path && config->input_path[0] != '\0')
+            ? config->input_path
+            : "CMakeLists.txt";
+    effective_output_path =
+        (config && config->output_path && config->output_path[0] != '\0')
+            ? config->output_path
+            : nob_temp_sprintf("%s/nob.c", nob_temp_dir_name(effective_input_path));
+    effective_source_dir =
+        (config && config->source_dir && config->source_dir[0] != '\0')
+            ? config->source_dir
+            : nob_temp_dir_name(effective_input_path);
+    effective_binary_dir =
+        (config && config->binary_dir && config->binary_dir[0] != '\0')
+            ? config->binary_dir
+            : effective_source_dir;
+
+    diag_reset();
+    diag_set_strict(false);
+    diag_telemetry_reset();
+
+    test_semantic_pipeline_config_init(&pipeline_config);
+    pipeline_config.current_file = effective_input_path;
+    pipeline_config.source_dir = nob_sv_from_cstr(effective_source_dir);
+    pipeline_config.binary_dir = nob_sv_from_cstr(effective_binary_dir);
+
+    ok = test_semantic_pipeline_fixture_from_script(&fixture, script, &pipeline_config);
+    if (!ok || !fixture.build.freeze_ok || !fixture.build.model || diag_has_errors()) {
+        arena_destroy(codegen_arena);
+        test_semantic_pipeline_fixture_destroy(&fixture);
+        return false;
+    }
+
+    {
+        Nob_Codegen_Options opts = {
+            .input_path = nob_sv_from_cstr(effective_input_path),
+            .output_path = nob_sv_from_cstr(effective_output_path),
+            .source_root = nob_sv_from_cstr(effective_source_dir),
+            .binary_root = nob_sv_from_cstr(effective_binary_dir),
+        };
+        ok = write_file
+            ? nob_codegen_write_file(fixture.build.model, codegen_arena, &opts)
+            : nob_codegen_render(fixture.build.model, codegen_arena, &opts, out);
+    }
+
+    arena_destroy(codegen_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    return ok;
+}
+
 static bool codegen_run_binary(const char *binary_path, const char *arg1, const char *arg2) {
     Nob_Cmd cmd = {0};
     bool ok = false;
@@ -22,69 +104,36 @@ bool codegen_render_script(const char *script,
                            const char *input_path,
                            const char *output_path,
                            Nob_String_Builder *out) {
-    Test_Semantic_Pipeline_Config config = {0};
-    Test_Semantic_Pipeline_Fixture fixture = {0};
-    Arena *codegen_arena = arena_create(8 * 1024 * 1024);
-    bool ok = false;
-    if (!codegen_arena) return false;
-
-    diag_reset();
-    diag_set_strict(false);
-    diag_telemetry_reset();
-
-    test_semantic_pipeline_config_init(&config);
-    config.current_file = input_path ? input_path : "CMakeLists.txt";
-
-    ok = test_semantic_pipeline_fixture_from_script(&fixture, script, &config);
-    if (!ok || !fixture.build.freeze_ok || !fixture.build.model || diag_has_errors()) {
-        arena_destroy(codegen_arena);
-        test_semantic_pipeline_fixture_destroy(&fixture);
-        return false;
-    }
-
-    Nob_Codegen_Options opts = {
-        .input_path = nob_sv_from_cstr(input_path),
-        .output_path = nob_sv_from_cstr(output_path),
+    Codegen_Test_Config config = {
+        .input_path = input_path,
+        .output_path = output_path,
+        .source_dir = NULL,
+        .binary_dir = NULL,
     };
-    ok = nob_codegen_render(fixture.build.model, codegen_arena, &opts, out);
+    return codegen_render_or_write_script(script, &config, out, false);
+}
 
-    arena_destroy(codegen_arena);
-    test_semantic_pipeline_fixture_destroy(&fixture);
-    return ok;
+bool codegen_render_script_with_config(const char *script,
+                                       const Codegen_Test_Config *config,
+                                       Nob_String_Builder *out) {
+    return codegen_render_or_write_script(script, config, out, false);
 }
 
 bool codegen_write_script(const char *script,
                           const char *input_path,
                           const char *output_path) {
-    Test_Semantic_Pipeline_Config config = {0};
-    Test_Semantic_Pipeline_Fixture fixture = {0};
-    Arena *codegen_arena = arena_create(8 * 1024 * 1024);
-    bool ok = false;
-    if (!codegen_arena) return false;
-
-    diag_reset();
-    diag_set_strict(false);
-    diag_telemetry_reset();
-
-    test_semantic_pipeline_config_init(&config);
-    config.current_file = input_path ? input_path : "CMakeLists.txt";
-
-    ok = test_semantic_pipeline_fixture_from_script(&fixture, script, &config);
-    if (!ok || !fixture.build.freeze_ok || !fixture.build.model || diag_has_errors()) {
-        arena_destroy(codegen_arena);
-        test_semantic_pipeline_fixture_destroy(&fixture);
-        return false;
-    }
-
-    Nob_Codegen_Options opts = {
-        .input_path = nob_sv_from_cstr(input_path),
-        .output_path = nob_sv_from_cstr(output_path),
+    Codegen_Test_Config config = {
+        .input_path = input_path,
+        .output_path = output_path,
+        .source_dir = NULL,
+        .binary_dir = NULL,
     };
-    ok = nob_codegen_write_file(fixture.build.model, codegen_arena, &opts);
+    return codegen_render_or_write_script(script, &config, NULL, true);
+}
 
-    arena_destroy(codegen_arena);
-    test_semantic_pipeline_fixture_destroy(&fixture);
-    return ok;
+bool codegen_write_script_with_config(const char *script,
+                                      const Codegen_Test_Config *config) {
+    return codegen_render_or_write_script(script, config, NULL, true);
 }
 
 bool codegen_load_text_file_to_arena(Arena *arena, const char *path, String_View *out) {
@@ -131,7 +180,7 @@ bool codegen_write_text_file(const char *path, const char *text) {
     const char *dir = NULL;
     if (!path || !text) return false;
     dir = nob_temp_dir_name(path);
-    if (dir && strcmp(dir, ".") != 0 && !nob_mkdir_if_not_exists(dir)) return false;
+    if (dir && strcmp(dir, ".") != 0 && !codegen_mkdirs(dir)) return false;
     return nob_write_entire_file(path, text, strlen(text));
 }
 

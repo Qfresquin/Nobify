@@ -1,10 +1,37 @@
 #include "test_v2_assert.h"
+#include "test_fs.h"
 #include "test_semantic_pipeline.h"
 #include "test_v2_suite.h"
 #include "test_workspace.h"
 
 #include "arena.h"
 #include "build_model_query.h"
+
+static bool build_model_mkdirs(const char *path) {
+    char buf[_TINYDIR_PATH_MAX] = {0};
+    size_t len = 0;
+    if (!path || path[0] == '\0' || strcmp(path, ".") == 0) return true;
+    len = strlen(path);
+    if (len >= sizeof(buf)) return false;
+    memcpy(buf, path, len + 1);
+
+    for (size_t i = 1; i < len; ++i) {
+        if (buf[i] != '/') continue;
+        buf[i] = '\0';
+        if (buf[0] != '\0' && !nob_mkdir_if_not_exists(buf)) return false;
+        buf[i] = '/';
+    }
+
+    return nob_mkdir_if_not_exists(buf);
+}
+
+static bool build_model_write_text_file(const char *path, const char *text) {
+    const char *dir = NULL;
+    if (!path || !text) return false;
+    dir = nob_temp_dir_name(path);
+    if (dir && strcmp(dir, ".") != 0 && !build_model_mkdirs(dir)) return false;
+    return nob_write_entire_file(path, text, strlen(text));
+}
 
 static void build_model_init_event(Event *ev, Event_Kind kind, size_t line) {
     *ev = (Event){0};
@@ -153,6 +180,75 @@ TEST(build_model_validate_does_not_infer_link_library_targets) {
     TEST_PASS();
 }
 
+TEST(build_model_add_subdirectory_defaults_rebase_binary_dirs_out_of_source) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    BM_Directory_Id root_dir = BM_DIRECTORY_ID_INVALID;
+    BM_Directory_Id lib_dir = BM_DIRECTORY_ID_INVALID;
+    BM_Directory_Id app_dir = BM_DIRECTORY_ID_INVALID;
+    BM_Target_Id core_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id shared_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id plugin_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    const Build_Model *model = NULL;
+
+    ASSERT(build_model_write_text_file(
+        "subdir_src/lib/CMakeLists.txt",
+        "add_library(core STATIC core.c)\n"
+        "add_library(shared SHARED shared.c)\n"
+        "add_library(plugin MODULE plugin.c)\n"));
+    ASSERT(build_model_write_text_file(
+        "subdir_src/app/CMakeLists.txt",
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE core)\n"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "subdir_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("subdir_src");
+    config.binary_dir = nob_sv_from_cstr("subdir_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test C)\n"
+        "add_subdirectory(lib)\n"
+        "add_subdirectory(app)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    root_dir = build_model_find_directory_id(model,
+                                             nob_sv_from_cstr("subdir_src"),
+                                             nob_sv_from_cstr("subdir_build"));
+    lib_dir = build_model_find_directory_id(model,
+                                            nob_sv_from_cstr("subdir_src/lib"),
+                                            nob_sv_from_cstr("subdir_build/lib"));
+    app_dir = build_model_find_directory_id(model,
+                                            nob_sv_from_cstr("subdir_src/app"),
+                                            nob_sv_from_cstr("subdir_build/app"));
+    ASSERT(root_dir != BM_DIRECTORY_ID_INVALID);
+    ASSERT(lib_dir != BM_DIRECTORY_ID_INVALID);
+    ASSERT(app_dir != BM_DIRECTORY_ID_INVALID);
+
+    core_id = bm_query_target_by_name(model, nob_sv_from_cstr("core"));
+    shared_id = bm_query_target_by_name(model, nob_sv_from_cstr("shared"));
+    plugin_id = bm_query_target_by_name(model, nob_sv_from_cstr("plugin"));
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    ASSERT(core_id != BM_TARGET_ID_INVALID);
+    ASSERT(shared_id != BM_TARGET_ID_INVALID);
+    ASSERT(plugin_id != BM_TARGET_ID_INVALID);
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+
+    ASSERT(bm_query_target_owner_directory(model, core_id) == lib_dir);
+    ASSERT(bm_query_target_owner_directory(model, shared_id) == lib_dir);
+    ASSERT(bm_query_target_owner_directory(model, plugin_id) == lib_dir);
+    ASSERT(bm_query_target_owner_directory(model, app_id) == app_dir);
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -175,6 +271,7 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
 
     test_build_model_builder_directory_scope_events(passed, failed, skipped);
     test_build_model_validate_does_not_infer_link_library_targets(passed, failed, skipped);
+    test_build_model_add_subdirectory_defaults_rebase_binary_dirs_out_of_source(passed, failed, skipped);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;
