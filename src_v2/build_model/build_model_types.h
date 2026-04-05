@@ -31,6 +31,7 @@ typedef struct Diag_Sink {
 
 typedef uint32_t BM_Directory_Id;
 typedef uint32_t BM_Target_Id;
+typedef uint32_t BM_Build_Step_Id;
 typedef uint32_t BM_Test_Id;
 typedef uint32_t BM_Install_Rule_Id;
 typedef uint32_t BM_Package_Id;
@@ -40,6 +41,7 @@ typedef uint32_t BM_CPack_Component_Id;
 
 #define BM_DIRECTORY_ID_INVALID ((BM_Directory_Id)UINT32_MAX)
 #define BM_TARGET_ID_INVALID ((BM_Target_Id)UINT32_MAX)
+#define BM_BUILD_STEP_ID_INVALID ((BM_Build_Step_Id)UINT32_MAX)
 #define BM_TEST_ID_INVALID ((BM_Test_Id)UINT32_MAX)
 #define BM_INSTALL_RULE_ID_INVALID ((BM_Install_Rule_Id)UINT32_MAX)
 #define BM_PACKAGE_ID_INVALID ((BM_Package_Id)UINT32_MAX)
@@ -56,6 +58,11 @@ typedef struct {
     const BM_Target_Id *items;
     size_t count;
 } BM_Target_Id_Span;
+
+typedef struct {
+    const BM_Build_Step_Id *items;
+    size_t count;
+} BM_Build_Step_Id_Span;
 
 typedef struct {
     const BM_CPack_Component_Id *items;
@@ -84,6 +91,14 @@ typedef enum {
     BM_TARGET_OBJECT_LIBRARY,
     BM_TARGET_UTILITY,
 } BM_Target_Kind;
+
+typedef enum {
+    BM_BUILD_STEP_OUTPUT_RULE = 0,
+    BM_BUILD_STEP_CUSTOM_TARGET,
+    BM_BUILD_STEP_TARGET_PRE_BUILD,
+    BM_BUILD_STEP_TARGET_PRE_LINK,
+    BM_BUILD_STEP_TARGET_POST_BUILD,
+} BM_Build_Step_Kind;
 
 typedef enum {
     BM_VISIBILITY_PRIVATE = 0,

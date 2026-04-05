@@ -1,4 +1,5 @@
 #include "eval_target_internal.h"
+#include "eval_expr.h"
 
 static bool define_property_keyword(String_View tok) {
     return eval_sv_eq_ci_lit(tok, "PROPERTY") ||
@@ -23,6 +24,79 @@ static bool eval_property_write_current_directory_shadow(EvalExecContext *ctx,
     if (eval_should_stop(ctx)) return false;
     return eval_property_write(
         ctx, origin, scope_upper, scoped_object, property_name, value, op, emit_var_event);
+}
+
+static bool eval_emit_generated_source_mark_for_directory(EvalExecContext *ctx,
+                                                          Event_Origin origin,
+                                                          String_View source_file,
+                                                          String_View directory_source_dir,
+                                                          bool generated) {
+    String_View directory_binary_dir = nob_sv_from_cstr("");
+    String_View resolved_path = nob_sv_from_cstr("");
+    if (!ctx || directory_source_dir.count == 0 || source_file.count == 0) return false;
+    if (!eval_directory_binary_dir(ctx, directory_source_dir, &directory_binary_dir)) return false;
+    if (directory_binary_dir.count == 0 &&
+        svu_eq_ci_sv(directory_source_dir, eval_current_source_dir_for_paths(ctx))) {
+        directory_binary_dir = eval_current_binary_dir(ctx);
+    }
+    if (directory_binary_dir.count == 0) directory_binary_dir = directory_source_dir;
+    resolved_path = eval_path_resolve_for_cmake_arg(ctx, source_file, directory_source_dir, true);
+    if (eval_should_stop(ctx)) return false;
+    return eval_emit_source_mark_generated(ctx,
+                                           origin,
+                                           resolved_path,
+                                           directory_source_dir,
+                                           directory_binary_dir,
+                                           generated);
+}
+
+static bool eval_emit_generated_source_marks_for_scope(EvalExecContext *ctx,
+                                                       Event_Origin origin,
+                                                       String_View source_file,
+                                                       String_View value,
+                                                       const SV_List *dirs,
+                                                       const SV_List *target_dirs) {
+    bool generated = false;
+    if (!ctx || source_file.count == 0) return false;
+    generated = eval_truthy(ctx, value);
+
+    if ((!dirs || arena_arr_len(*dirs) == 0) &&
+        (!target_dirs || arena_arr_len(*target_dirs) == 0)) {
+        return eval_emit_generated_source_mark_for_directory(ctx,
+                                                             origin,
+                                                             source_file,
+                                                             eval_current_source_dir_for_paths(ctx),
+                                                             generated);
+    }
+
+    if (dirs) {
+        for (size_t i = 0; i < arena_arr_len(*dirs); ++i) {
+            if (!eval_emit_generated_source_mark_for_directory(ctx,
+                                                               origin,
+                                                               source_file,
+                                                               (*dirs)[i],
+                                                               generated)) {
+                return false;
+            }
+        }
+    }
+
+    if (target_dirs) {
+        for (size_t i = 0; i < arena_arr_len(*target_dirs); ++i) {
+            String_View declared_dir = nob_sv_from_cstr("");
+            if (!eval_target_declared_dir(ctx, (*target_dirs)[i], &declared_dir)) return false;
+            if (eval_should_stop(ctx)) return false;
+            if (!eval_emit_generated_source_mark_for_directory(ctx,
+                                                               origin,
+                                                               source_file,
+                                                               declared_dir,
+                                                               generated)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
 
 Eval_Result eval_handle_set_directory_properties(EvalExecContext *ctx, const Node *node) {
@@ -132,6 +206,15 @@ Eval_Result eval_handle_set_source_files_properties(EvalExecContext *ctx, const 
                                          true)) {
                     return eval_result_from_ctx(ctx);
                 }
+                if (eval_sv_eq_ci_lit(a[pi], "GENERATED") &&
+                    !eval_emit_generated_source_marks_for_scope(ctx,
+                                                                o,
+                                                                files[fi],
+                                                                a[pi + 1],
+                                                                NULL,
+                                                                NULL)) {
+                    return eval_result_from_ctx(ctx);
+                }
             }
             continue;
         }
@@ -174,6 +257,18 @@ Eval_Result eval_handle_set_source_files_properties(EvalExecContext *ctx, const 
                                          true)) {
                     return eval_result_from_ctx(ctx);
                 }
+            }
+        }
+
+        for (size_t pi = i; pi + 1 < arena_arr_len(a); pi += 2) {
+            if (!eval_sv_eq_ci_lit(a[pi], "GENERATED")) continue;
+            if (!eval_emit_generated_source_marks_for_scope(ctx,
+                                                            o,
+                                                            files[fi],
+                                                            a[pi + 1],
+                                                            &dirs,
+                                                            &target_dirs)) {
+                return eval_result_from_ctx(ctx);
             }
         }
     }
@@ -720,6 +815,15 @@ Eval_Result eval_handle_set_property(EvalExecContext *ctx, const Node *node) {
                         return eval_result_from_ctx(ctx);
                     }
                 }
+                if (eval_sv_eq_ci_lit(key, "GENERATED") &&
+                    !eval_emit_generated_source_marks_for_scope(ctx,
+                                                                o,
+                                                                objects[oi],
+                                                                value,
+                                                                &source_dirs,
+                                                                &source_target_dirs)) {
+                    return eval_result_from_ctx(ctx);
+                }
             }
             return eval_result_from_ctx(ctx);
         }
@@ -733,6 +837,15 @@ Eval_Result eval_handle_set_property(EvalExecContext *ctx, const Node *node) {
                                      value,
                                      op,
                                      true)) {
+                return eval_result_from_ctx(ctx);
+            }
+            if (eval_sv_eq_ci_lit(key, "GENERATED") &&
+                !eval_emit_generated_source_marks_for_scope(ctx,
+                                                            o,
+                                                            objects[oi],
+                                                            value,
+                                                            NULL,
+                                                            NULL)) {
                 return eval_result_from_ctx(ctx);
             }
         }

@@ -531,6 +531,175 @@ static const Artifact_Parity_Case s_out_of_source_subdir_case = {
     .subject = "out_of_source_subdirectory_binary_dirs",
 };
 
+static const Artifact_Parity_Manifest_Request s_p2_generated_source_manifest_requests[] = {
+    {ARTIFACT_PARITY_DOMAIN_BUILD_OUTPUTS, ARTIFACT_PARITY_CAPTURE_TREE, "build_outputs", "artifacts"},
+    {ARTIFACT_PARITY_DOMAIN_GENERATED_FILES, ARTIFACT_PARITY_CAPTURE_TREE, "generated_tree", "generated"},
+    {ARTIFACT_PARITY_DOMAIN_GENERATED_FILES, ARTIFACT_PARITY_CAPTURE_FILE_SHA256, "generated_c_sha256", "generated/generated.c"},
+};
+
+static const Artifact_Parity_File s_p2_generated_source_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityP2Generated LANGUAGES C)\n"
+        "add_custom_command(\n"
+        "  OUTPUT generated/generated.c generated/generated.h\n"
+        "  COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated\n"
+        "  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/src/template_generated.c ${CMAKE_CURRENT_BINARY_DIR}/generated/generated.c\n"
+        "  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/src/template_generated.h ${CMAKE_CURRENT_BINARY_DIR}/generated/generated.h\n"
+        "  COMMAND ${CMAKE_COMMAND} -E touch ${CMAKE_CURRENT_BINARY_DIR}/generated/generated.log\n"
+        "  DEPENDS src/template_generated.c src/template_generated.h\n"
+        "  BYPRODUCTS generated/generated.log)\n"
+        "add_executable(app src/main.c ${CMAKE_CURRENT_BINARY_DIR}/generated/generated.c)\n"
+        "target_include_directories(app PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n",
+    },
+    {
+        "src/template_generated.c",
+        "#include \"generated.h\"\n"
+        "int generated_value(void) { return GENERATED_VALUE; }\n",
+    },
+    {
+        "src/template_generated.h",
+        "#define GENERATED_VALUE 61\n",
+    },
+    {
+        "src/main.c",
+        "int generated_value(void);\n"
+        "int main(void) { return generated_value() == 61 ? 0 : 1; }\n",
+    },
+};
+
+static const Artifact_Parity_Nob_Command s_p2_generated_source_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, "app"},
+};
+
+static const Artifact_Parity_Case s_p2_generated_source_case = {
+    .name = "p2_generated_source_consumer",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE | ARTIFACT_PARITY_PHASE_BUILD,
+    .files = s_p2_generated_source_files,
+    .file_count = NOB_ARRAY_LEN(s_p2_generated_source_files),
+    .nob_commands = s_p2_generated_source_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_p2_generated_source_commands),
+    .manifest_requests = s_p2_generated_source_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_p2_generated_source_manifest_requests),
+    .source_root = "p2_gen_source",
+    .cmake_binary_dir = "p2_gen_cmake_build",
+    .nob_binary_dir = "p2_gen_nob_build",
+    .generated_nob_path = "p2_gen_nob.c",
+    .nob_run_dir = ".",
+    .cmake_build_target = "app",
+    .cmake_base_dir = "p2_gen_cmake_build",
+    .nob_base_dir = "p2_gen_nob_build",
+    .clean_absence_relpath = NULL,
+    .subject = "p2_generated_source_consumer",
+};
+
+static const Artifact_Parity_Manifest_Request s_p2_custom_target_manifest_requests[] = {
+    {ARTIFACT_PARITY_DOMAIN_BUILD_OUTPUTS, ARTIFACT_PARITY_CAPTURE_TREE, "build_outputs", "artifacts"},
+    {ARTIFACT_PARITY_DOMAIN_GENERATED_FILES, ARTIFACT_PARITY_CAPTURE_TREE, "generated_tree", "generated"},
+    {ARTIFACT_PARITY_DOMAIN_GENERATED_FILES, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "prepared_text", "generated/prepared.txt"},
+};
+
+static const Artifact_Parity_File s_p2_custom_target_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityP2CustomTarget LANGUAGES C)\n"
+        "add_custom_target(prepare\n"
+        "  COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated\n"
+        "  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/src/prepared.txt.in ${CMAKE_CURRENT_BINARY_DIR}/generated/prepared.txt)\n"
+        "add_executable(app src/main.c)\n"
+        "add_dependencies(app prepare)\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n",
+    },
+    {
+        "src/prepared.txt.in",
+        "ready",
+    },
+    {
+        "src/main.c",
+        "int main(void) { return 0; }\n",
+    },
+};
+
+static const Artifact_Parity_Nob_Command s_p2_custom_target_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, "app"},
+};
+
+static const Artifact_Parity_Case s_p2_custom_target_case = {
+    .name = "p2_custom_target_dependency",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE | ARTIFACT_PARITY_PHASE_BUILD,
+    .files = s_p2_custom_target_files,
+    .file_count = NOB_ARRAY_LEN(s_p2_custom_target_files),
+    .nob_commands = s_p2_custom_target_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_p2_custom_target_commands),
+    .manifest_requests = s_p2_custom_target_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_p2_custom_target_manifest_requests),
+    .source_root = "p2_custom_source",
+    .cmake_binary_dir = "p2_custom_cmake_build",
+    .nob_binary_dir = "p2_custom_nob_build",
+    .generated_nob_path = "p2_custom_nob.c",
+    .nob_run_dir = ".",
+    .cmake_build_target = "app",
+    .cmake_base_dir = "p2_custom_cmake_build",
+    .nob_base_dir = "p2_custom_nob_build",
+    .clean_absence_relpath = NULL,
+    .subject = "p2_custom_target_dependency",
+};
+
+static const Artifact_Parity_Manifest_Request s_p2_post_build_manifest_requests[] = {
+    {ARTIFACT_PARITY_DOMAIN_BUILD_OUTPUTS, ARTIFACT_PARITY_CAPTURE_TREE, "build_outputs", "artifacts"},
+    {ARTIFACT_PARITY_DOMAIN_BUILD_OUTPUTS, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "post_text", "artifacts/sidecar/post.txt"},
+};
+
+static const Artifact_Parity_File s_p2_post_build_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityP2PostBuild LANGUAGES C)\n"
+        "add_executable(app src/main.c)\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n"
+        "add_custom_command(TARGET app POST_BUILD\n"
+        "  COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/artifacts/sidecar\n"
+        "  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/src/post.txt.in ${CMAKE_CURRENT_BINARY_DIR}/artifacts/sidecar/post.txt\n"
+        "  BYPRODUCTS artifacts/sidecar/post.txt)\n",
+    },
+    {
+        "src/post.txt.in",
+        "post",
+    },
+    {
+        "src/main.c",
+        "int main(void) { return 0; }\n",
+    },
+};
+
+static const Artifact_Parity_Nob_Command s_p2_post_build_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, "app"},
+};
+
+static const Artifact_Parity_Case s_p2_post_build_case = {
+    .name = "p2_post_build_sidecar",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE | ARTIFACT_PARITY_PHASE_BUILD,
+    .files = s_p2_post_build_files,
+    .file_count = NOB_ARRAY_LEN(s_p2_post_build_files),
+    .nob_commands = s_p2_post_build_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_p2_post_build_commands),
+    .manifest_requests = s_p2_post_build_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_p2_post_build_manifest_requests),
+    .source_root = "p2_post_source",
+    .cmake_binary_dir = "p2_post_cmake_build",
+    .nob_binary_dir = "p2_post_nob_build",
+    .generated_nob_path = "p2_post_nob.c",
+    .nob_run_dir = ".",
+    .cmake_build_target = "app",
+    .cmake_base_dir = "p2_post_cmake_build",
+    .nob_base_dir = "p2_post_nob_build",
+    .clean_absence_relpath = NULL,
+    .subject = "p2_post_build_sidecar",
+};
+
 TEST(artifact_parity_build_and_generated_manifest_matches_cmake_via_nobify) {
     if (!s_artifact_parity_cmake.available) {
         TEST_SKIP(s_artifact_parity_skip_reason[0]
@@ -583,6 +752,39 @@ TEST(artifact_parity_out_of_source_subdirectory_build_outputs_match_cmake) {
     }
 
     ASSERT(artifact_parity_run_case(&s_out_of_source_subdir_case));
+    TEST_PASS();
+}
+
+TEST(artifact_parity_generated_source_consumer_matches_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_p2_generated_source_case));
+    TEST_PASS();
+}
+
+TEST(artifact_parity_custom_target_dependency_matches_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_p2_custom_target_case));
+    TEST_PASS();
+}
+
+TEST(artifact_parity_post_build_sidecar_matches_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_p2_post_build_case));
     TEST_PASS();
 }
 
@@ -717,6 +919,9 @@ void run_artifact_parity_v2_tests(int *passed, int *failed, int *skipped) {
         test_artifact_parity_emits_empty_export_and_package_manifest_sections(passed, failed, skipped);
         test_artifact_parity_out_of_source_top_level_build_outputs_match_cmake(passed, failed, skipped);
         test_artifact_parity_out_of_source_subdirectory_build_outputs_match_cmake(passed, failed, skipped);
+        test_artifact_parity_generated_source_consumer_matches_cmake(passed, failed, skipped);
+        test_artifact_parity_custom_target_dependency_matches_cmake(passed, failed, skipped);
+        test_artifact_parity_post_build_sidecar_matches_cmake(passed, failed, skipped);
     }
 
     test_artifact_parity_skips_when_cmake_env_points_to_missing_binary(passed, failed, skipped);

@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "nob.h"
 #include "arena.h"
@@ -539,6 +540,7 @@ typedef struct {
     Eval_Deferred_Dir_Frame_Stack deferred_dirs;
     SV_List generated_deferred_ids;
     size_t next_deferred_call_id;
+    size_t next_build_step_id;
 } Eval_File_State;
 
 typedef struct {
@@ -1183,6 +1185,120 @@ static inline String_View *eval_sv_list_copy_to_event_arena(EvalExecContext *ctx
         if (eval_should_stop(ctx)) return NULL;
     }
     return items;
+}
+
+static inline String_View eval_alloc_build_step_key(EvalExecContext *ctx) {
+    if (!ctx) return nob_sv_from_cstr("");
+    char *tmp = nob_temp_sprintf("step_%zu", ctx->file_state.next_build_step_id++);
+    char *buf = tmp ? arena_strndup(eval_event_arena(ctx), tmp, strlen(tmp)) : NULL;
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    return nob_sv_from_cstr(buf);
+}
+
+static inline bool eval_emit_source_mark_generated(EvalExecContext *ctx,
+                                                   Event_Origin origin,
+                                                   String_View path,
+                                                   String_View directory_source_dir,
+                                                   String_View directory_binary_dir,
+                                                   bool generated) {
+    Event ev = {0};
+    ev.h.kind = EVENT_SOURCE_MARK_GENERATED;
+    ev.h.origin = origin;
+    ev.as.source_mark_generated.path = sv_copy_to_event_arena(ctx, path);
+    ev.as.source_mark_generated.directory_source_dir = sv_copy_to_event_arena(ctx, directory_source_dir);
+    ev.as.source_mark_generated.directory_binary_dir = sv_copy_to_event_arena(ctx, directory_binary_dir);
+    ev.as.source_mark_generated.generated = generated;
+    return emit_event(ctx, ev);
+}
+
+static inline bool eval_emit_build_step_declare(EvalExecContext *ctx,
+                                                Event_Origin origin,
+                                                String_View step_key,
+                                                Event_Build_Step_Kind step_kind,
+                                                String_View owner_target_name,
+                                                bool append,
+                                                bool verbatim,
+                                                bool uses_terminal,
+                                                bool command_expand_lists,
+                                                bool depends_explicit_only,
+                                                bool codegen,
+                                                String_View working_directory,
+                                                String_View comment,
+                                                String_View main_dependency,
+                                                String_View depfile,
+                                                String_View job_pool,
+                                                String_View job_server_aware) {
+    Event ev = {0};
+    ev.h.kind = EVENT_BUILD_STEP_DECLARE;
+    ev.h.origin = origin;
+    ev.as.build_step_declare.step_key = sv_copy_to_event_arena(ctx, step_key);
+    ev.as.build_step_declare.step_kind = step_kind;
+    ev.as.build_step_declare.owner_target_name = sv_copy_to_event_arena(ctx, owner_target_name);
+    ev.as.build_step_declare.append = append;
+    ev.as.build_step_declare.verbatim = verbatim;
+    ev.as.build_step_declare.uses_terminal = uses_terminal;
+    ev.as.build_step_declare.command_expand_lists = command_expand_lists;
+    ev.as.build_step_declare.depends_explicit_only = depends_explicit_only;
+    ev.as.build_step_declare.codegen = codegen;
+    ev.as.build_step_declare.working_directory = sv_copy_to_event_arena(ctx, working_directory);
+    ev.as.build_step_declare.comment = sv_copy_to_event_arena(ctx, comment);
+    ev.as.build_step_declare.main_dependency = sv_copy_to_event_arena(ctx, main_dependency);
+    ev.as.build_step_declare.depfile = sv_copy_to_event_arena(ctx, depfile);
+    ev.as.build_step_declare.job_pool = sv_copy_to_event_arena(ctx, job_pool);
+    ev.as.build_step_declare.job_server_aware = sv_copy_to_event_arena(ctx, job_server_aware);
+    return emit_event(ctx, ev);
+}
+
+static inline bool eval_emit_build_step_add_output(EvalExecContext *ctx,
+                                                   Event_Origin origin,
+                                                   String_View step_key,
+                                                   String_View path) {
+    Event ev = {0};
+    ev.h.kind = EVENT_BUILD_STEP_ADD_OUTPUT;
+    ev.h.origin = origin;
+    ev.as.build_step_add_output.step_key = sv_copy_to_event_arena(ctx, step_key);
+    ev.as.build_step_add_output.path = sv_copy_to_event_arena(ctx, path);
+    return emit_event(ctx, ev);
+}
+
+static inline bool eval_emit_build_step_add_byproduct(EvalExecContext *ctx,
+                                                      Event_Origin origin,
+                                                      String_View step_key,
+                                                      String_View path) {
+    Event ev = {0};
+    ev.h.kind = EVENT_BUILD_STEP_ADD_BYPRODUCT;
+    ev.h.origin = origin;
+    ev.as.build_step_add_byproduct.step_key = sv_copy_to_event_arena(ctx, step_key);
+    ev.as.build_step_add_byproduct.path = sv_copy_to_event_arena(ctx, path);
+    return emit_event(ctx, ev);
+}
+
+static inline bool eval_emit_build_step_add_dependency(EvalExecContext *ctx,
+                                                       Event_Origin origin,
+                                                       String_View step_key,
+                                                       String_View item) {
+    Event ev = {0};
+    ev.h.kind = EVENT_BUILD_STEP_ADD_DEPENDENCY;
+    ev.h.origin = origin;
+    ev.as.build_step_add_dependency.step_key = sv_copy_to_event_arena(ctx, step_key);
+    ev.as.build_step_add_dependency.item = sv_copy_to_event_arena(ctx, item);
+    return emit_event(ctx, ev);
+}
+
+static inline bool eval_emit_build_step_add_command(EvalExecContext *ctx,
+                                                    Event_Origin origin,
+                                                    String_View step_key,
+                                                    uint32_t command_index,
+                                                    const SV_List *argv) {
+    Event ev = {0};
+    ev.h.kind = EVENT_BUILD_STEP_ADD_COMMAND;
+    ev.h.origin = origin;
+    ev.as.build_step_add_command.step_key = sv_copy_to_event_arena(ctx, step_key);
+    ev.as.build_step_add_command.command_index = command_index;
+    ev.as.build_step_add_command.argc = argv ? arena_arr_len(*argv) : 0;
+    ev.as.build_step_add_command.argv = eval_sv_list_copy_to_event_arena(ctx, argv);
+    if (eval_should_stop(ctx)) return false;
+    return emit_event(ctx, ev);
 }
 
 static inline bool eval_emit_target_prop_set(EvalExecContext *ctx,

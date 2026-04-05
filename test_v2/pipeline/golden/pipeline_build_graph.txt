@@ -1,0 +1,22 @@
+MODULE pipeline_build_graph
+CASES 1
+
+=== CASE build_graph_generated_source_and_hooks ===
+EVAL_OK 1
+BUILDER_OK 1
+FREEZE_OK 1
+DIAG errors=1 warnings=0
+EVENTS count=50
+BUILD_STEPS count=5
+STEP[0] kind=OUTPUT_RULE owner_target='' outputs=1 byproducts=1 target_deps=0 producer_deps=0 file_deps=1 commands=1
+STEP[1] kind=CUSTOM_TARGET owner_target='prepare' outputs=0 byproducts=1 target_deps=1 producer_deps=1 file_deps=1 commands=0
+STEP[2] kind=TARGET_PRE_BUILD owner_target='app' outputs=0 byproducts=1 target_deps=0 producer_deps=0 file_deps=0 commands=1
+STEP[3] kind=TARGET_PRE_LINK owner_target='app' outputs=0 byproducts=1 target_deps=0 producer_deps=0 file_deps=0 commands=1
+STEP[4] kind=TARGET_POST_BUILD owner_target='app' outputs=0 byproducts=1 target_deps=0 producer_deps=0 file_deps=0 commands=1
+TARGET name='helper' source_count=1
+SOURCE[0] generated=0 producer=INVALID effective='graph_src/helper.c'
+TARGET name='prepare' source_count=0
+TARGET name='app' source_count=2
+SOURCE[0] generated=0 producer=INVALID effective='graph_src/main.c'
+SOURCE[1] generated=1 producer=0 effective='graph_build/generated.c'
+=== END CASE ===

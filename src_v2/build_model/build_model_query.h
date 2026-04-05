@@ -5,12 +5,14 @@
 
 bool bm_model_has_project(const Build_Model *model);
 bool bm_target_id_is_valid(BM_Target_Id id);
+bool bm_build_step_id_is_valid(BM_Build_Step_Id id);
 bool bm_directory_id_is_valid(BM_Directory_Id id);
 bool bm_test_id_is_valid(BM_Test_Id id);
 bool bm_package_id_is_valid(BM_Package_Id id);
 
 size_t bm_query_directory_count(const Build_Model *model);
 size_t bm_query_target_count(const Build_Model *model);
+size_t bm_query_build_step_count(const Build_Model *model);
 size_t bm_query_test_count(const Build_Model *model);
 size_t bm_query_install_rule_count(const Build_Model *model);
 size_t bm_query_package_count(const Build_Model *model);
@@ -50,6 +52,11 @@ bool bm_query_target_is_alias(const Build_Model *model, BM_Target_Id id);
 BM_Target_Id bm_query_target_alias_of(const Build_Model *model, BM_Target_Id id);
 bool bm_query_target_exclude_from_all(const Build_Model *model, BM_Target_Id id);
 BM_String_Span bm_query_target_sources_raw(const Build_Model *model, BM_Target_Id id);
+size_t bm_query_target_source_count(const Build_Model *model, BM_Target_Id id);
+String_View bm_query_target_source_raw(const Build_Model *model, BM_Target_Id id, size_t source_index);
+String_View bm_query_target_source_effective(const Build_Model *model, BM_Target_Id id, size_t source_index);
+bool bm_query_target_source_generated(const Build_Model *model, BM_Target_Id id, size_t source_index);
+BM_Build_Step_Id bm_query_target_source_producer_step(const Build_Model *model, BM_Target_Id id, size_t source_index);
 BM_Target_Id_Span bm_query_target_dependencies_explicit(const Build_Model *model, BM_Target_Id id);
 BM_String_Item_Span bm_query_target_link_libraries_raw(const Build_Model *model, BM_Target_Id id);
 BM_String_Item_Span bm_query_target_include_directories_raw(const Build_Model *model, BM_Target_Id id);
@@ -64,6 +71,32 @@ String_View bm_query_target_archive_output_directory(const Build_Model *model, B
 String_View bm_query_target_library_output_directory(const Build_Model *model, BM_Target_Id id);
 String_View bm_query_target_runtime_output_directory(const Build_Model *model, BM_Target_Id id);
 String_View bm_query_target_folder(const Build_Model *model, BM_Target_Id id);
+
+BM_Build_Step_Kind bm_query_build_step_kind(const Build_Model *model, BM_Build_Step_Id id);
+BM_Directory_Id bm_query_build_step_owner_directory(const Build_Model *model, BM_Build_Step_Id id);
+BM_Target_Id bm_query_build_step_owner_target(const Build_Model *model, BM_Build_Step_Id id);
+bool bm_query_build_step_append(const Build_Model *model, BM_Build_Step_Id id);
+bool bm_query_build_step_verbatim(const Build_Model *model, BM_Build_Step_Id id);
+bool bm_query_build_step_uses_terminal(const Build_Model *model, BM_Build_Step_Id id);
+bool bm_query_build_step_command_expand_lists(const Build_Model *model, BM_Build_Step_Id id);
+bool bm_query_build_step_depends_explicit_only(const Build_Model *model, BM_Build_Step_Id id);
+bool bm_query_build_step_codegen(const Build_Model *model, BM_Build_Step_Id id);
+String_View bm_query_build_step_working_directory(const Build_Model *model, BM_Build_Step_Id id);
+String_View bm_query_build_step_comment(const Build_Model *model, BM_Build_Step_Id id);
+String_View bm_query_build_step_main_dependency(const Build_Model *model, BM_Build_Step_Id id);
+String_View bm_query_build_step_depfile(const Build_Model *model, BM_Build_Step_Id id);
+String_View bm_query_build_step_job_pool(const Build_Model *model, BM_Build_Step_Id id);
+String_View bm_query_build_step_job_server_aware(const Build_Model *model, BM_Build_Step_Id id);
+BM_String_Span bm_query_build_step_outputs_raw(const Build_Model *model, BM_Build_Step_Id id);
+BM_String_Span bm_query_build_step_outputs(const Build_Model *model, BM_Build_Step_Id id);
+BM_String_Span bm_query_build_step_byproducts_raw(const Build_Model *model, BM_Build_Step_Id id);
+BM_String_Span bm_query_build_step_byproducts(const Build_Model *model, BM_Build_Step_Id id);
+BM_String_Span bm_query_build_step_dependency_tokens_raw(const Build_Model *model, BM_Build_Step_Id id);
+BM_Target_Id_Span bm_query_build_step_target_dependencies(const Build_Model *model, BM_Build_Step_Id id);
+BM_Build_Step_Id_Span bm_query_build_step_producer_dependencies(const Build_Model *model, BM_Build_Step_Id id);
+BM_String_Span bm_query_build_step_file_dependencies(const Build_Model *model, BM_Build_Step_Id id);
+size_t bm_query_build_step_command_count(const Build_Model *model, BM_Build_Step_Id id);
+BM_String_Span bm_query_build_step_command_argv(const Build_Model *model, BM_Build_Step_Id id, size_t command_index);
 
 bool bm_query_target_effective_include_directories_items(const Build_Model *model,
                                                          BM_Target_Id id,

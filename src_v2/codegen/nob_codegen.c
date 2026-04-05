@@ -18,9 +18,20 @@ typedef struct {
     String_View name;
     const char *ident;
     String_View artifact_path;
+    String_View state_path;
     bool needs_cxx_linker_known;
     bool needs_cxx_linker;
 } CG_Target_Info;
+
+typedef struct {
+    BM_Build_Step_Id id;
+    BM_Build_Step_Kind kind;
+    BM_Directory_Id owner_directory_id;
+    BM_Target_Id owner_target_id;
+    const char *ident;
+    String_View sentinel_path;
+    bool uses_stamp;
+} CG_Build_Step_Info;
 
 typedef enum {
     CG_SOURCE_LANG_C = 0,
@@ -30,6 +41,7 @@ typedef enum {
 typedef struct {
     String_View path;
     CG_Source_Lang lang;
+    BM_Build_Step_Id producer_step_id;
 } CG_Source_Info;
 
 typedef struct {
@@ -43,9 +55,12 @@ typedef struct {
     String_View emit_dir_abs;
     CG_Target_Info *targets;
     size_t target_count;
+    CG_Build_Step_Info *build_steps;
+    size_t build_step_count;
 } CG_Context;
 
 static const CG_Target_Info *cg_target_info(const CG_Context *ctx, BM_Target_Id id);
+static const CG_Build_Step_Info *cg_build_step_info(const CG_Context *ctx, BM_Build_Step_Id id);
 static bool cg_target_needs_cxx_linker_recursive(CG_Context *ctx, BM_Target_Id id, bool *out);
 
 static bool cg_sv_eq_lit(String_View sv, const char *lit) {
@@ -426,7 +441,8 @@ static bool cg_target_is_supported_concrete(BM_Target_Kind kind) {
 }
 
 static bool cg_target_is_non_emitting(BM_Target_Kind kind) {
-    return kind == BM_TARGET_INTERFACE_LIBRARY;
+    return kind == BM_TARGET_INTERFACE_LIBRARY ||
+           kind == BM_TARGET_UTILITY;
 }
 
 static bool cg_target_needs_pic(BM_Target_Kind kind) {
@@ -528,6 +544,28 @@ static bool cg_compute_target_artifact_path(CG_Context *ctx, BM_Target_Id id, St
     return cg_join_paths_to_arena(ctx->scratch, rebased_dir, basename, out);
 }
 
+static bool cg_compute_target_state_path(CG_Context *ctx,
+                                         const CG_Target_Info *info,
+                                         String_View *out) {
+    String_View subpath = {0};
+    if (!ctx || !info || !out) return false;
+    if (info->emits_artifact) {
+        *out = info->artifact_path;
+        return true;
+    }
+    if (info->alias || info->imported || info->kind != BM_TARGET_UTILITY) {
+        *out = nob_sv_from_cstr("");
+        return true;
+    }
+    if (!cg_join_paths_to_arena(ctx->scratch,
+                                nob_sv_from_cstr(".nob/targets"),
+                                nob_sv_from_cstr(nob_temp_sprintf("%s.stamp", info->ident)),
+                                &subpath)) {
+        return false;
+    }
+    return cg_rebase_from_binary_root(ctx, subpath, out);
+}
+
 static bool cg_init_targets(CG_Context *ctx) {
     ctx->target_count = bm_query_target_count(ctx->model);
     ctx->targets = arena_alloc_array_zero(ctx->scratch, CG_Target_Info, ctx->target_count);
@@ -562,6 +600,7 @@ static bool cg_init_targets(CG_Context *ctx) {
 
         info->emits_artifact = !info->alias && !info->imported && cg_target_is_supported_concrete(info->kind);
         if (info->emits_artifact && !cg_compute_target_artifact_path(ctx, id, &info->artifact_path)) return false;
+        if (!cg_compute_target_state_path(ctx, info, &info->state_path)) return false;
     }
 
     for (size_t i = 0; i < ctx->target_count; ++i) {
@@ -572,6 +611,7 @@ static bool cg_init_targets(CG_Context *ctx) {
         ctx->targets[i].kind = ctx->targets[resolved].kind;
         ctx->targets[i].imported = ctx->targets[resolved].imported;
         ctx->targets[i].emits_artifact = ctx->targets[resolved].emits_artifact;
+        ctx->targets[i].state_path = ctx->targets[resolved].state_path;
     }
 
     for (size_t i = 0; i < ctx->target_count; ++i) {
@@ -589,6 +629,56 @@ static const CG_Target_Info *cg_target_info(const CG_Context *ctx, BM_Target_Id 
     return &ctx->targets[id];
 }
 
+static bool cg_compute_step_sentinel_path(CG_Context *ctx, BM_Build_Step_Id id, String_View *out, bool *out_uses_stamp) {
+    BM_String_Span outputs = {0};
+    String_View subpath = {0};
+    if (out) *out = nob_sv_from_cstr("");
+    if (out_uses_stamp) *out_uses_stamp = false;
+    if (!ctx || !out) return false;
+
+    outputs = bm_query_build_step_outputs(ctx->model, id);
+    if (outputs.count > 0) {
+        if (!cg_rebase_path_from_cwd(ctx, outputs.items[0], out)) return false;
+        return true;
+    }
+
+    if (!cg_join_paths_to_arena(ctx->scratch,
+                                nob_sv_from_cstr(".nob/steps"),
+                                nob_sv_from_cstr(nob_temp_sprintf("%u.stamp", (unsigned)id)),
+                                &subpath) ||
+        !cg_rebase_from_binary_root(ctx, subpath, out)) {
+        return false;
+    }
+    if (out_uses_stamp) *out_uses_stamp = true;
+    return true;
+}
+
+static bool cg_init_build_steps(CG_Context *ctx) {
+    if (!ctx) return false;
+    ctx->build_step_count = bm_query_build_step_count(ctx->model);
+    ctx->build_steps = arena_alloc_array_zero(ctx->scratch, CG_Build_Step_Info, ctx->build_step_count);
+    if (ctx->build_step_count > 0 && !ctx->build_steps) return false;
+
+    for (size_t i = 0; i < ctx->build_step_count; ++i) {
+        BM_Build_Step_Id id = (BM_Build_Step_Id)i;
+        CG_Build_Step_Info *info = &ctx->build_steps[i];
+        info->id = id;
+        info->kind = bm_query_build_step_kind(ctx->model, id);
+        info->owner_directory_id = bm_query_build_step_owner_directory(ctx->model, id);
+        info->owner_target_id = bm_query_build_step_owner_target(ctx->model, id);
+        if (bm_query_build_step_append(ctx->model, id)) {
+            nob_log(NOB_ERROR, "codegen: APPEND custom-command steps are not supported yet");
+            return false;
+        }
+        info->ident = cg_make_identifier(ctx->scratch,
+                                         nob_sv_from_cstr(nob_temp_sprintf("step_%u", (unsigned)id)),
+                                         i);
+        if (!info->ident) return false;
+        if (!cg_compute_step_sentinel_path(ctx, id, &info->sentinel_path, &info->uses_stamp)) return false;
+    }
+    return true;
+}
+
 static bool cg_resolve_link_item_target(CG_Context *ctx, String_View item, BM_Target_Id *out) {
     BM_Target_Id id = bm_query_target_by_name(ctx->model, item);
     if (out) *out = BM_TARGET_ID_INVALID;
@@ -597,6 +687,11 @@ static bool cg_resolve_link_item_target(CG_Context *ctx, String_View item, BM_Ta
     if (!bm_target_id_is_valid(id)) return false;
     if (out) *out = id;
     return true;
+}
+
+static const CG_Build_Step_Info *cg_build_step_info(const CG_Context *ctx, BM_Build_Step_Id id) {
+    if (!ctx || !bm_build_step_id_is_valid(id) || (size_t)id >= ctx->build_step_count) return NULL;
+    return &ctx->build_steps[id];
 }
 
 static bool cg_collect_unique_target(Arena *scratch, BM_Target_Id **list, BM_Target_Id value) {
@@ -701,11 +796,43 @@ static bool cg_collect_build_dependencies(CG_Context *ctx, BM_Target_Id id, BM_T
     return true;
 }
 
-static bool cg_collect_compile_sources(CG_Context *ctx, BM_Target_Id id, CG_Source_Info **out) {
-    BM_String_Span sources = bm_query_target_sources_raw(ctx->model, id);
+static bool cg_collect_target_steps(CG_Context *ctx,
+                                    BM_Target_Id id,
+                                    BM_Build_Step_Kind kind,
+                                    BM_Build_Step_Id **out) {
+    if (!ctx || !out) return false;
+    for (size_t i = 0; i < ctx->build_step_count; ++i) {
+        if (bm_query_build_step_owner_target(ctx->model, (BM_Build_Step_Id)i) != id) continue;
+        if (bm_query_build_step_kind(ctx->model, (BM_Build_Step_Id)i) != kind) continue;
+        if (!arena_arr_push(ctx->scratch, *out, (BM_Build_Step_Id)i)) return false;
+    }
+    return true;
+}
 
-    for (size_t i = 0; i < sources.count; ++i) {
-        String_View src = sources.items[i];
+static bool cg_collect_unique_build_step(Arena *scratch, BM_Build_Step_Id **list, BM_Build_Step_Id value) {
+    for (size_t i = 0; i < arena_arr_len(*list); ++i) {
+        if ((*list)[i] == value) return true;
+    }
+    return arena_arr_push(scratch, *list, value);
+}
+
+static bool cg_collect_generated_source_steps(CG_Context *ctx,
+                                              const CG_Source_Info *sources,
+                                              size_t source_count,
+                                              BM_Build_Step_Id **out) {
+    if (!ctx || !out) return false;
+    for (size_t i = 0; i < source_count; ++i) {
+        if (!bm_build_step_id_is_valid(sources[i].producer_step_id)) continue;
+        if (!cg_collect_unique_build_step(ctx->scratch, out, sources[i].producer_step_id)) return false;
+    }
+    return true;
+}
+
+static bool cg_collect_compile_sources(CG_Context *ctx, BM_Target_Id id, CG_Source_Info **out) {
+    size_t source_count = bm_query_target_source_count(ctx->model, id);
+
+    for (size_t i = 0; i < source_count; ++i) {
+        String_View src = bm_query_target_source_effective(ctx->model, id, i);
         String_View rebased = {0};
         CG_Source_Lang lang = CG_SOURCE_LANG_C;
         bool dup = false;
@@ -727,7 +854,11 @@ static bool cg_collect_compile_sources(CG_Context *ctx, BM_Target_Id id, CG_Sour
                 break;
             }
         }
-        if (!dup && !arena_arr_push(ctx->scratch, *out, ((CG_Source_Info){.path = rebased, .lang = lang}))) {
+        if (!dup && !arena_arr_push(ctx->scratch, *out, ((CG_Source_Info){
+                .path = rebased,
+                .lang = lang,
+                .producer_step_id = bm_query_target_source_producer_step(ctx->model, id, i),
+            }))) {
             return false;
         }
     }
@@ -905,6 +1036,17 @@ static bool cg_emit_target_forward_decls(CG_Context *ctx, Nob_String_Builder *ou
     return true;
 }
 
+static bool cg_emit_step_forward_decls(CG_Context *ctx, Nob_String_Builder *out) {
+    if (!ctx || !out) return false;
+    for (size_t i = 0; i < ctx->build_step_count; ++i) {
+        nob_sb_append_cstr(out, "static bool run_");
+        nob_sb_append_cstr(out, ctx->build_steps[i].ident);
+        nob_sb_append_cstr(out, "(void);\n");
+    }
+    nob_sb_append_cstr(out, "\n");
+    return true;
+}
+
 static bool cg_emit_support_helpers(Nob_String_Builder *out) {
     if (!out) return false;
     nob_sb_append_cstr(out,
@@ -923,6 +1065,43 @@ static bool cg_emit_support_helpers(Nob_String_Builder *out) {
         "    return ok;\n"
         "}\n"
         "\n"
+        "static bool ensure_parent_dir(const char *path) {\n"
+        "    const char *dir = nob_temp_dir_name(path);\n"
+        "    if (!dir || strcmp(dir, \".\") == 0) return true;\n"
+        "    return ensure_dir(dir);\n"
+        "}\n"
+        "\n"
+        "static bool run_cmd_in_dir(const char *working_dir, Nob_Cmd *cmd) {\n"
+        "    const char *saved_dir = NULL;\n"
+        "    bool ok = false;\n"
+        "    if (working_dir && working_dir[0] != '\\0') {\n"
+        "        saved_dir = nob_get_current_dir_temp();\n"
+        "        if (!saved_dir) return false;\n"
+        "        saved_dir = nob_temp_strdup(saved_dir);\n"
+        "        if (!saved_dir) return false;\n"
+        "        if (!nob_set_current_dir(working_dir)) return false;\n"
+        "    }\n"
+        "    ok = nob_cmd_run(cmd);\n"
+        "    if (working_dir && working_dir[0] != '\\0') {\n"
+        "        if (!nob_set_current_dir(saved_dir)) return false;\n"
+        "    }\n"
+        "    return ok;\n"
+        "}\n"
+        "\n"
+        "static bool write_stamp(const char *path) {\n"
+        "    if (!ensure_parent_dir(path)) return false;\n"
+        "    return nob_write_entire_file(path, \"\", 0);\n"
+        "}\n"
+        "\n"
+        "static bool require_paths(const char *const *paths, size_t count) {\n"
+        "    for (size_t i = 0; i < count; ++i) {\n"
+        "        if (nob_file_exists(paths[i])) continue;\n"
+        "        nob_log(NOB_ERROR, \"codegen: declared build output is missing: %s\", paths[i]);\n"
+        "        return false;\n"
+        "    }\n"
+        "    return true;\n"
+        "}\n"
+        "\n"
         "static bool install_copy_file(const char *src_path, const char *dst_path) {\n"
         "    return nob_copy_file(src_path, dst_path);\n"
         "}\n"
@@ -930,8 +1109,166 @@ static bool cg_emit_support_helpers(Nob_String_Builder *out) {
     return true;
 }
 
+static bool cg_emit_step_function(CG_Context *ctx,
+                                  const CG_Build_Step_Info *info,
+                                  Nob_String_Builder *out) {
+    BM_Target_Id_Span target_deps = {0};
+    BM_Build_Step_Id_Span producer_deps = {0};
+    BM_String_Span file_deps = {0};
+    BM_String_Span outputs = {0};
+    BM_String_Span byproducts = {0};
+    String_View working_dir = {0};
+    size_t rebuild_input_count = 1;
+    if (!ctx || !info || !out) return false;
+
+    target_deps = bm_query_build_step_target_dependencies(ctx->model, info->id);
+    producer_deps = bm_query_build_step_producer_dependencies(ctx->model, info->id);
+    file_deps = bm_query_build_step_file_dependencies(ctx->model, info->id);
+    outputs = bm_query_build_step_outputs(ctx->model, info->id);
+    byproducts = bm_query_build_step_byproducts(ctx->model, info->id);
+    working_dir = bm_query_build_step_working_directory(ctx->model, info->id);
+
+    nob_sb_append_cstr(out, "static bool run_");
+    nob_sb_append_cstr(out, info->ident);
+    nob_sb_append_cstr(out, "(void) {\n");
+    nob_sb_append_cstr(out, "    static int step_state = 0;\n");
+    nob_sb_append_cstr(out, "    if (step_state == 2) return true;\n");
+    nob_sb_append_cstr(out, "    if (step_state == 1) {\n");
+    nob_sb_append_cstr(out, "        nob_log(NOB_ERROR, \"codegen: build-step dependency cycle detected\");\n");
+    nob_sb_append_cstr(out, "        return false;\n");
+    nob_sb_append_cstr(out, "    }\n");
+    nob_sb_append_cstr(out, "    step_state = 1;\n");
+
+    if (bm_query_build_step_append(ctx->model, info->id)) {
+        nob_sb_append_cstr(out, "    nob_log(NOB_ERROR, \"codegen: APPEND custom-command steps are not supported yet\");\n");
+        nob_sb_append_cstr(out, "    return false;\n");
+        nob_sb_append_cstr(out, "}\n\n");
+        return true;
+    }
+
+    for (size_t i = 0; i < target_deps.count; ++i) {
+        const CG_Target_Info *dep = cg_target_info(ctx, target_deps.items[i]);
+        if (!dep) return false;
+        nob_sb_append_cstr(out, "    if (!build_");
+        nob_sb_append_cstr(out, dep->ident);
+        nob_sb_append_cstr(out, "()) return false;\n");
+    }
+    for (size_t i = 0; i < producer_deps.count; ++i) {
+        const CG_Build_Step_Info *dep = cg_build_step_info(ctx, producer_deps.items[i]);
+        if (!dep) return false;
+        nob_sb_append_cstr(out, "    if (!run_");
+        nob_sb_append_cstr(out, dep->ident);
+        nob_sb_append_cstr(out, "()) return false;\n");
+    }
+
+    nob_sb_append_cstr(out, "    if (nob_needs_rebuild(");
+    if (!cg_sb_append_c_string(out, info->sentinel_path)) return false;
+    nob_sb_append_cstr(out, ", (const char*[]){__FILE__");
+    for (size_t i = 0; i < target_deps.count; ++i) {
+        const CG_Target_Info *dep = cg_target_info(ctx, target_deps.items[i]);
+        if (!dep || dep->state_path.count == 0) continue;
+        rebuild_input_count++;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, dep->state_path)) return false;
+    }
+    for (size_t i = 0; i < producer_deps.count; ++i) {
+        const CG_Build_Step_Info *dep = cg_build_step_info(ctx, producer_deps.items[i]);
+        if (!dep) return false;
+        rebuild_input_count++;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, dep->sentinel_path)) return false;
+    }
+    for (size_t i = 0; i < file_deps.count; ++i) {
+        String_View path = {0};
+        if (!cg_rebase_path_from_cwd(ctx, file_deps.items[i], &path)) return false;
+        rebuild_input_count++;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, path)) return false;
+    }
+    nob_sb_append_cstr(out, "}, ");
+    nob_sb_append_cstr(out, nob_temp_sprintf("%zu", rebuild_input_count));
+    nob_sb_append_cstr(out, ")) {\n");
+
+    if (info->uses_stamp) {
+        nob_sb_append_cstr(out, "        if (!ensure_parent_dir(");
+        if (!cg_sb_append_c_string(out, info->sentinel_path)) return false;
+        nob_sb_append_cstr(out, ")) return false;\n");
+    }
+    for (size_t i = 0; i < outputs.count; ++i) {
+        String_View path = {0};
+        if (!cg_rebase_path_from_cwd(ctx, outputs.items[i], &path)) return false;
+        nob_sb_append_cstr(out, "        if (!ensure_parent_dir(");
+        if (!cg_sb_append_c_string(out, path)) return false;
+        nob_sb_append_cstr(out, ")) return false;\n");
+    }
+    for (size_t i = 0; i < byproducts.count; ++i) {
+        String_View path = {0};
+        if (!cg_rebase_path_from_cwd(ctx, byproducts.items[i], &path)) return false;
+        nob_sb_append_cstr(out, "        if (!ensure_parent_dir(");
+        if (!cg_sb_append_c_string(out, path)) return false;
+        nob_sb_append_cstr(out, ")) return false;\n");
+    }
+
+    for (size_t cmd_index = 0; cmd_index < bm_query_build_step_command_count(ctx->model, info->id); ++cmd_index) {
+        BM_String_Span argv = bm_query_build_step_command_argv(ctx->model, info->id, cmd_index);
+        nob_sb_append_cstr(out, "        {\n");
+        nob_sb_append_cstr(out, "            Nob_Cmd step_cmd = {0};\n");
+        for (size_t arg = 0; arg < argv.count; ++arg) {
+            if (!cg_emit_cmd_append_sv(out, "step_cmd", argv.items[arg])) return false;
+        }
+        nob_sb_append_cstr(out, "            bool ok = run_cmd_in_dir(");
+        if (working_dir.count > 0) {
+            String_View rebased_working_dir = {0};
+            if (!cg_rebase_path_from_cwd(ctx, working_dir, &rebased_working_dir)) return false;
+            if (!cg_sb_append_c_string(out, rebased_working_dir)) return false;
+        } else {
+            nob_sb_append_cstr(out, "NULL");
+        }
+        nob_sb_append_cstr(out, ", &step_cmd);\n");
+        nob_sb_append_cstr(out, "            nob_cmd_free(step_cmd);\n");
+        nob_sb_append_cstr(out, "            if (!ok) return false;\n");
+        nob_sb_append_cstr(out, "        }\n");
+    }
+
+    if (outputs.count + byproducts.count > 0) {
+        nob_sb_append_cstr(out, "        if (!require_paths((const char*[]){");
+        bool first = true;
+        for (size_t i = 0; i < outputs.count; ++i) {
+            String_View path = {0};
+            if (!cg_rebase_path_from_cwd(ctx, outputs.items[i], &path)) return false;
+            if (!first) nob_sb_append_cstr(out, ", ");
+            if (!cg_sb_append_c_string(out, path)) return false;
+            first = false;
+        }
+        for (size_t i = 0; i < byproducts.count; ++i) {
+            String_View path = {0};
+            if (!cg_rebase_path_from_cwd(ctx, byproducts.items[i], &path)) return false;
+            if (!first) nob_sb_append_cstr(out, ", ");
+            if (!cg_sb_append_c_string(out, path)) return false;
+            first = false;
+        }
+        nob_sb_append_cstr(out, "}, ");
+        nob_sb_append_cstr(out, nob_temp_sprintf("%zu", outputs.count + byproducts.count));
+        nob_sb_append_cstr(out, ")) return false;\n");
+    }
+    if (info->uses_stamp) {
+        nob_sb_append_cstr(out, "        if (!write_stamp(");
+        if (!cg_sb_append_c_string(out, info->sentinel_path)) return false;
+        nob_sb_append_cstr(out, ")) return false;\n");
+    }
+    nob_sb_append_cstr(out, "    }\n");
+    nob_sb_append_cstr(out, "    step_state = 2;\n");
+    nob_sb_append_cstr(out, "    return true;\n");
+    nob_sb_append_cstr(out, "}\n\n");
+    return true;
+}
+
 static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info, Nob_String_Builder *out) {
     BM_Target_Id *deps = NULL;
+    BM_Build_Step_Id *pre_build_steps = NULL;
+    BM_Build_Step_Id *generated_steps = NULL;
+    BM_Build_Step_Id *pre_link_steps = NULL;
+    BM_Build_Step_Id *post_build_steps = NULL;
     CG_Source_Info *sources = NULL;
     String_View *compile_args = NULL;
     String_View *link_dir_args = NULL;
@@ -983,8 +1320,63 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         return true;
     }
 
-    if (!cg_collect_build_dependencies(ctx, info->id, &deps) ||
+    if (!cg_collect_build_dependencies(ctx, info->id, &deps)) return false;
+    for (size_t i = 0; i < arena_arr_len(deps); ++i) {
+        const CG_Target_Info *dep = cg_target_info(ctx, deps[i]);
+        if (!dep) return false;
+        nob_sb_append_cstr(out, "    if (!build_");
+        nob_sb_append_cstr(out, dep->ident);
+        nob_sb_append_cstr(out, "()) return false;\n");
+    }
+
+    if (info->kind == BM_TARGET_UTILITY) {
+        BM_Build_Step_Id *custom_steps = NULL;
+        size_t rebuild_input_count = 1;
+        if (!cg_collect_target_steps(ctx, info->id, BM_BUILD_STEP_CUSTOM_TARGET, &custom_steps)) return false;
+        for (size_t i = 0; i < arena_arr_len(custom_steps); ++i) {
+            const CG_Build_Step_Info *step = cg_build_step_info(ctx, custom_steps[i]);
+            if (!step) return false;
+            nob_sb_append_cstr(out, "    if (!run_");
+            nob_sb_append_cstr(out, step->ident);
+            nob_sb_append_cstr(out, "()) return false;\n");
+        }
+        if (info->state_path.count > 0) {
+            nob_sb_append_cstr(out, "    if (nob_needs_rebuild(");
+            if (!cg_sb_append_c_string(out, info->state_path)) return false;
+            nob_sb_append_cstr(out, ", (const char*[]){__FILE__");
+            for (size_t i = 0; i < arena_arr_len(deps); ++i) {
+                const CG_Target_Info *dep = cg_target_info(ctx, deps[i]);
+                if (!dep || dep->state_path.count == 0) continue;
+                rebuild_input_count++;
+                nob_sb_append_cstr(out, ", ");
+                if (!cg_sb_append_c_string(out, dep->state_path)) return false;
+            }
+            for (size_t i = 0; i < arena_arr_len(custom_steps); ++i) {
+                const CG_Build_Step_Info *step = cg_build_step_info(ctx, custom_steps[i]);
+                if (!step) return false;
+                rebuild_input_count++;
+                nob_sb_append_cstr(out, ", ");
+                if (!cg_sb_append_c_string(out, step->sentinel_path)) return false;
+            }
+            nob_sb_append_cstr(out, "}, ");
+            nob_sb_append_cstr(out, nob_temp_sprintf("%zu", rebuild_input_count));
+            nob_sb_append_cstr(out, ")) {\n");
+            nob_sb_append_cstr(out, "        if (!write_stamp(");
+            if (!cg_sb_append_c_string(out, info->state_path)) return false;
+            nob_sb_append_cstr(out, ")) return false;\n");
+            nob_sb_append_cstr(out, "    }\n");
+        }
+        nob_sb_append_cstr(out, "    build_state = 2;\n");
+        nob_sb_append_cstr(out, "    return true;\n");
+        nob_sb_append_cstr(out, "}\n\n");
+        return true;
+    }
+
+    if (!cg_collect_target_steps(ctx, info->id, BM_BUILD_STEP_TARGET_PRE_BUILD, &pre_build_steps) ||
+        !cg_collect_target_steps(ctx, info->id, BM_BUILD_STEP_TARGET_PRE_LINK, &pre_link_steps) ||
+        !cg_collect_target_steps(ctx, info->id, BM_BUILD_STEP_TARGET_POST_BUILD, &post_build_steps) ||
         !cg_collect_compile_sources(ctx, info->id, &sources) ||
+        !cg_collect_generated_source_steps(ctx, sources, arena_arr_len(sources), &generated_steps) ||
         !cg_collect_compile_args(ctx, info->id, &compile_args)) {
         return false;
     }
@@ -1014,11 +1406,18 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
     }
     artifact_dir = cg_dirname_to_arena(ctx->scratch, info->artifact_path);
 
-    for (size_t i = 0; i < arena_arr_len(deps); ++i) {
-        const CG_Target_Info *dep = cg_target_info(ctx, deps[i]);
-        if (!dep) return false;
-        nob_sb_append_cstr(out, "    if (!build_");
-        nob_sb_append_cstr(out, dep->ident);
+    for (size_t i = 0; i < arena_arr_len(pre_build_steps); ++i) {
+        const CG_Build_Step_Info *step = cg_build_step_info(ctx, pre_build_steps[i]);
+        if (!step) return false;
+        nob_sb_append_cstr(out, "    if (!run_");
+        nob_sb_append_cstr(out, step->ident);
+        nob_sb_append_cstr(out, "()) return false;\n");
+    }
+    for (size_t i = 0; i < arena_arr_len(generated_steps); ++i) {
+        const CG_Build_Step_Info *step = cg_build_step_info(ctx, generated_steps[i]);
+        if (!step) return false;
+        nob_sb_append_cstr(out, "    if (!run_");
+        nob_sb_append_cstr(out, step->ident);
         nob_sb_append_cstr(out, "()) return false;\n");
     }
 
@@ -1061,6 +1460,14 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         nob_sb_append_cstr(out, "            if (!ok) return false;\n");
         nob_sb_append_cstr(out, "        }\n");
         nob_sb_append_cstr(out, "    }\n");
+    }
+
+    for (size_t i = 0; i < arena_arr_len(pre_link_steps); ++i) {
+        const CG_Build_Step_Info *step = cg_build_step_info(ctx, pre_link_steps[i]);
+        if (!step) return false;
+        nob_sb_append_cstr(out, "    if (!run_");
+        nob_sb_append_cstr(out, step->ident);
+        nob_sb_append_cstr(out, "()) return false;\n");
     }
 
     if (info->kind == BM_TARGET_STATIC_LIBRARY) {
@@ -1167,6 +1574,14 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         nob_sb_append_cstr(out, "            if (!ok) return false;\n");
         nob_sb_append_cstr(out, "        }\n");
         nob_sb_append_cstr(out, "    }\n");
+    }
+
+    for (size_t i = 0; i < arena_arr_len(post_build_steps); ++i) {
+        const CG_Build_Step_Info *step = cg_build_step_info(ctx, post_build_steps[i]);
+        if (!step) return false;
+        nob_sb_append_cstr(out, "    if (!run_");
+        nob_sb_append_cstr(out, step->ident);
+        nob_sb_append_cstr(out, "()) return false;\n");
     }
 
     nob_sb_append_cstr(out, "    build_state = 2;\n");
@@ -1442,7 +1857,7 @@ static bool cg_init_context(CG_Context *ctx,
     }
 
     ctx->emit_dir_abs = cg_dirname_to_arena(ctx->scratch, ctx->emit_path_abs);
-    return cg_init_targets(ctx);
+    return cg_init_targets(ctx) && cg_init_build_steps(ctx);
 }
 
 bool nob_codegen_render(const Build_Model *model,
@@ -1464,8 +1879,13 @@ bool nob_codegen_render(const Build_Model *model,
         "\n");
 
     if (!cg_emit_target_forward_decls(&ctx, out) ||
+        !cg_emit_step_forward_decls(&ctx, out) ||
         !cg_emit_support_helpers(out)) {
         return false;
+    }
+
+    for (size_t i = 0; i < ctx.build_step_count; ++i) {
+        if (!cg_emit_step_function(&ctx, &ctx.build_steps[i], out)) return false;
     }
 
     for (size_t i = 0; i < ctx.target_count; ++i) {

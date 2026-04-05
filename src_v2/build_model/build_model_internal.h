@@ -17,6 +17,57 @@ typedef struct {
 } BM_Name_Index_Entry;
 
 typedef struct {
+    String_View raw_path;
+    String_View effective_path;
+    bool generated;
+    BM_Build_Step_Id producer_step_id;
+    BM_Provenance provenance;
+} BM_Target_Source_Record;
+
+typedef struct {
+    String_View *argv;
+} BM_Build_Step_Command_Record;
+
+typedef struct {
+    BM_Build_Step_Id id;
+    String_View step_key;
+    BM_Directory_Id owner_directory_id;
+    BM_Provenance provenance;
+    BM_Build_Step_Kind kind;
+    String_View owner_target_name;
+    BM_Target_Id owner_target_id;
+    bool append;
+    bool verbatim;
+    bool uses_terminal;
+    bool command_expand_lists;
+    bool depends_explicit_only;
+    bool codegen;
+    String_View working_directory;
+    String_View comment;
+    String_View main_dependency;
+    String_View depfile;
+    String_View job_pool;
+    String_View job_server_aware;
+    String_View *raw_outputs;
+    String_View *effective_outputs;
+    String_View *raw_byproducts;
+    String_View *effective_byproducts;
+    String_View *raw_dependency_tokens;
+    BM_Target_Id *resolved_target_dependencies;
+    BM_Build_Step_Id *resolved_producer_dependencies;
+    String_View *resolved_file_dependencies;
+    BM_Build_Step_Command_Record *commands;
+} BM_Build_Step_Record;
+
+typedef struct {
+    String_View path;
+    String_View directory_source_dir;
+    String_View directory_binary_dir;
+    bool generated;
+    BM_Provenance provenance;
+} BM_Source_Generated_Mark_Record;
+
+typedef struct {
     String_View name;
     Event_Property_Mutate_Op op;
     uint32_t flags;
@@ -77,6 +128,7 @@ typedef struct {
     String_View alias_of_name;
     BM_Target_Id alias_of_id;
     String_View *sources;
+    BM_Target_Source_Record *source_records;
     String_View *explicit_dependency_names;
     BM_Target_Id *explicit_dependency_ids;
     BM_String_Item_View *link_libraries;
@@ -179,6 +231,8 @@ struct Build_Model_Draft {
     BM_Directory_Record *directories;
     BM_Directory_Id root_directory_id;
     BM_Target_Record *targets;
+    BM_Build_Step_Record *build_steps;
+    BM_Source_Generated_Mark_Record *generated_source_marks;
     BM_Test_Record *tests;
     BM_Install_Rule_Record *install_rules;
     BM_Package_Record *packages;
@@ -198,6 +252,7 @@ struct Build_Model {
     BM_Directory_Record *directories;
     BM_Directory_Id root_directory_id;
     BM_Target_Record *targets;
+    BM_Build_Step_Record *build_steps;
     BM_Test_Record *tests;
     BM_Install_Rule_Record *install_rules;
     BM_Package_Record *packages;
@@ -224,12 +279,19 @@ bool bm_add_name_index(Arena *arena, BM_Name_Index_Entry **index, String_View na
 bool bm_sv_eq_ci_lit(String_View sv, const char *lit);
 bool bm_sv_truthy(String_View sv);
 bool bm_string_view_is_empty(String_View sv);
+bool bm_path_is_abs(String_View path);
+bool bm_normalize_path(Arena *arena, String_View path, String_View *out);
+bool bm_path_join(Arena *arena, String_View lhs, String_View rhs, String_View *out);
+bool bm_path_rebase(Arena *arena, String_View base_dir, String_View path, String_View *out);
 BM_Target_Kind bm_target_kind_from_event(Cmake_Target_Type type);
+BM_Build_Step_Kind bm_build_step_kind_from_event(Event_Build_Step_Kind kind);
 BM_Visibility bm_visibility_from_event(Cmake_Visibility visibility);
 BM_Install_Rule_Kind bm_install_rule_kind_from_event(Cmake_Install_Rule_Type kind);
 BM_Directory_Id bm_builder_current_directory_id(const BM_Builder *builder);
 BM_Directory_Record *bm_draft_get_directory(Build_Model_Draft *draft, BM_Directory_Id id);
 const BM_Directory_Record *bm_draft_get_directory_const(const Build_Model_Draft *draft, BM_Directory_Id id);
+BM_Build_Step_Record *bm_draft_find_build_step(Build_Model_Draft *draft, String_View step_key);
+const BM_Build_Step_Record *bm_draft_find_build_step_const(const Build_Model_Draft *draft, String_View step_key);
 BM_Target_Record *bm_draft_find_target(Build_Model_Draft *draft, String_View name);
 const BM_Target_Record *bm_draft_find_target_const(const Build_Model_Draft *draft, String_View name);
 BM_Target_Id bm_draft_find_target_id(const Build_Model_Draft *draft, String_View name);
@@ -271,6 +333,7 @@ bool bm_record_raw_property(Arena *arena,
 bool bm_builder_handle_directory_event(BM_Builder *builder, const Event *ev);
 bool bm_builder_handle_project_event(BM_Builder *builder, const Event *ev);
 bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev);
+bool bm_builder_handle_build_graph_event(BM_Builder *builder, const Event *ev);
 bool bm_builder_handle_test_event(BM_Builder *builder, const Event *ev);
 bool bm_builder_handle_install_event(BM_Builder *builder, const Event *ev);
 bool bm_builder_handle_package_event(BM_Builder *builder, const Event *ev);

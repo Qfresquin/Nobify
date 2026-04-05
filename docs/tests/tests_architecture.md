@@ -17,6 +17,8 @@ As of April 4, 2026:
 - `build-model` is now a first-class runner module and aggregate participant
 - `artifact-parity` now exists as an explicit-only host/integration module for
   real-CMake versus generated-Nob artifact comparison
+- generated-file/build-graph proof is now split across `pipeline`,
+  `build-model`, `codegen`, and explicit-only `artifact-parity` coverage
 
 This file is the canonical baseline for test architecture, ownership, and suite
 taxonomy. The multi-wave change roadmap lives in
@@ -92,7 +94,9 @@ code.
   Focus: generated `nob` output, host compiler execution, and generated-binary
   behavior. This suite crosses semantic and host/toolchain boundaries and now
   owns the aggregate-safe out-of-source `P1` smoke coverage for local build
-  artifact placement.
+  artifact placement plus aggregate-safe `P2` smoke coverage for generated
+  sources, custom-target scheduling, hook ordering, and explicit `APPEND`
+  rejection.
   Current aggregate status: included.
 
 - `artifact-parity`
@@ -102,7 +106,9 @@ code.
   trees, and empty export/package manifest domains through structured
   `TREE`/`FILE_TEXT`/`FILE_SHA256` capture. `P1` extends that harness with
   explicit out-of-source build parity fixtures while keeping it outside the
-  default aggregate. The suite requires a real `cmake 3.28.x` plus the
+  default aggregate. `P2` extends it again with real-CMake parity fixtures for
+  generated-source consumers, custom-target dependency edges, and post-build
+  sidecar outputs. The suite requires a real `cmake 3.28.x` plus the
   runner-provided `CMK2NOB_TEST_NOBIFY_BIN` tool path.
   Current aggregate status: excluded from the default aggregate path.
 

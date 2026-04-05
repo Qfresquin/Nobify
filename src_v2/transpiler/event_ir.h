@@ -22,6 +22,7 @@ typedef enum {
     X(EVENT_FAMILY_TRACE, "trace") \
     X(EVENT_FAMILY_DIAG, "diag") \
     X(EVENT_FAMILY_DIRECTORY, "directory") \
+    X(EVENT_FAMILY_BUILD_GRAPH, "build_graph") \
     X(EVENT_FAMILY_FLOW, "flow") \
     X(EVENT_FAMILY_SCOPE, "scope") \
     X(EVENT_FAMILY_POLICY, "policy") \
@@ -126,7 +127,13 @@ typedef enum {
     X(EVENT_PROJECT_MINIMUM_REQUIRED, EVENT_FAMILY_PROJECT, "project_minimum_required", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TARGET_DECLARE, EVENT_FAMILY_TARGET, "target_declare", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TARGET_ADD_SOURCE, EVENT_FAMILY_TARGET, "target_add_source", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_SOURCE_MARK_GENERATED, EVENT_FAMILY_BUILD_GRAPH, "source_mark_generated", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TARGET_ADD_DEPENDENCY, EVENT_FAMILY_TARGET, "target_add_dependency", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_BUILD_STEP_DECLARE, EVENT_FAMILY_BUILD_GRAPH, "build_step_declare", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_BUILD_STEP_ADD_OUTPUT, EVENT_FAMILY_BUILD_GRAPH, "build_step_add_output", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_BUILD_STEP_ADD_BYPRODUCT, EVENT_FAMILY_BUILD_GRAPH, "build_step_add_byproduct", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_BUILD_STEP_ADD_DEPENDENCY, EVENT_FAMILY_BUILD_GRAPH, "build_step_add_dependency", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_BUILD_STEP_ADD_COMMAND, EVENT_FAMILY_BUILD_GRAPH, "build_step_add_command", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TARGET_PROP_SET, EVENT_FAMILY_TARGET, "target_prop_set", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TARGET_LINK_LIBRARIES, EVENT_FAMILY_TARGET, "target_link_libraries", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TARGET_LINK_OPTIONS, EVENT_FAMILY_TARGET, "target_link_options", EVENT_ROLE_BUILD_SEMANTIC) \
@@ -191,6 +198,14 @@ typedef enum {
     EVENT_COMMAND_STATUS_ERROR,
     EVENT_COMMAND_STATUS_UNSUPPORTED,
 } Event_Command_Status;
+
+typedef enum {
+    EVENT_BUILD_STEP_OUTPUT_RULE = 0,
+    EVENT_BUILD_STEP_CUSTOM_TARGET,
+    EVENT_BUILD_STEP_TARGET_PRE_BUILD,
+    EVENT_BUILD_STEP_TARGET_PRE_LINK,
+    EVENT_BUILD_STEP_TARGET_POST_BUILD,
+} Event_Build_Step_Kind;
 
 typedef enum {
     EVENT_PROPERTY_MUTATE_SET = 0,
@@ -637,9 +652,56 @@ typedef struct {
 } Event_Target_Add_Source;
 
 typedef struct {
+    String_View path;
+    String_View directory_source_dir;
+    String_View directory_binary_dir;
+    bool generated;
+} Event_Source_Mark_Generated;
+
+typedef struct {
     String_View target_name;
     String_View dependency_name;
 } Event_Target_Add_Dependency;
+
+typedef struct {
+    String_View step_key;
+    Event_Build_Step_Kind step_kind;
+    String_View owner_target_name;
+    bool append;
+    bool verbatim;
+    bool uses_terminal;
+    bool command_expand_lists;
+    bool depends_explicit_only;
+    bool codegen;
+    String_View working_directory;
+    String_View comment;
+    String_View main_dependency;
+    String_View depfile;
+    String_View job_pool;
+    String_View job_server_aware;
+} Event_Build_Step_Declare;
+
+typedef struct {
+    String_View step_key;
+    String_View path;
+} Event_Build_Step_Add_Output;
+
+typedef struct {
+    String_View step_key;
+    String_View path;
+} Event_Build_Step_Add_Byproduct;
+
+typedef struct {
+    String_View step_key;
+    String_View item;
+} Event_Build_Step_Add_Dependency;
+
+typedef struct {
+    String_View step_key;
+    uint32_t command_index;
+    String_View *argv;
+    size_t argc;
+} Event_Build_Step_Add_Command;
 
 typedef struct {
     String_View target_name;
@@ -821,7 +883,13 @@ typedef struct {
         Event_Project_Minimum_Required project_minimum_required;
         Event_Target_Declare target_declare;
         Event_Target_Add_Source target_add_source;
+        Event_Source_Mark_Generated source_mark_generated;
         Event_Target_Add_Dependency target_add_dependency;
+        Event_Build_Step_Declare build_step_declare;
+        Event_Build_Step_Add_Output build_step_add_output;
+        Event_Build_Step_Add_Byproduct build_step_add_byproduct;
+        Event_Build_Step_Add_Dependency build_step_add_dependency;
+        Event_Build_Step_Add_Command build_step_add_command;
         Event_Target_Prop_Set target_prop_set;
         Event_Target_Link_Libraries target_link_libraries;
         Event_Target_Link_Options target_link_options;

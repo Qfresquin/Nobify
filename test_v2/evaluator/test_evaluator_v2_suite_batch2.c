@@ -2236,6 +2236,310 @@ TEST(evaluator_add_custom_command_output_validates_conflicts) {
     TEST_PASS();
 }
 
+TEST(evaluator_add_custom_command_output_emits_build_graph_and_tokenized_commands) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(GEN_LIST \"alpha;beta\")\n"
+        "add_custom_command(OUTPUT gen/generated.c gen/generated.h\n"
+        "  COMMAND echo ${GEN_LIST}\n"
+        "  COMMAND python gen.py\n"
+        "  DEPENDS schema.idl\n"
+        "  BYPRODUCTS gen/generated.log\n"
+        "  MAIN_DEPENDENCY schema_main.idl\n"
+        "  WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}\n"
+        "  COMMENT \"generated rule\"\n"
+        "  VERBATIM USES_TERMINAL COMMAND_EXPAND_LISTS DEPENDS_EXPLICIT_ONLY CODEGEN)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    size_t declare_count = 0;
+    size_t output_count = 0;
+    size_t byproduct_count = 0;
+    size_t dependency_count = 0;
+    size_t command_count = 0;
+    size_t generated_count = 0;
+    bool saw_first_command = false;
+    bool saw_second_command = false;
+
+    for (size_t i = 0; i < stream->count; ++i) {
+        const Cmake_Event *ev = &stream->items[i];
+        switch (ev->h.kind) {
+            case EVENT_BUILD_STEP_DECLARE:
+                declare_count++;
+                ASSERT(ev->as.build_step_declare.step_kind == EVENT_BUILD_STEP_OUTPUT_RULE);
+                ASSERT(ev->as.build_step_declare.owner_target_name.count == 0);
+                ASSERT(ev->as.build_step_declare.verbatim);
+                ASSERT(ev->as.build_step_declare.uses_terminal);
+                ASSERT(ev->as.build_step_declare.command_expand_lists);
+                ASSERT(ev->as.build_step_declare.depends_explicit_only);
+                ASSERT(ev->as.build_step_declare.codegen);
+                ASSERT(nob_sv_eq(ev->as.build_step_declare.working_directory, nob_sv_from_cstr(".")));
+                ASSERT(nob_sv_eq(ev->as.build_step_declare.comment, nob_sv_from_cstr("generated rule")));
+                ASSERT(nob_sv_eq(ev->as.build_step_declare.main_dependency, nob_sv_from_cstr("schema_main.idl")));
+                break;
+
+            case EVENT_BUILD_STEP_ADD_OUTPUT:
+                output_count++;
+                break;
+
+            case EVENT_BUILD_STEP_ADD_BYPRODUCT:
+                byproduct_count++;
+                break;
+
+            case EVENT_BUILD_STEP_ADD_DEPENDENCY:
+                dependency_count++;
+                break;
+
+            case EVENT_BUILD_STEP_ADD_COMMAND:
+                command_count++;
+                if (ev->as.build_step_add_command.command_index == 0) {
+                    ASSERT(ev->as.build_step_add_command.argc == 3);
+                    ASSERT(nob_sv_eq(ev->as.build_step_add_command.argv[0], nob_sv_from_cstr("echo")));
+                    ASSERT(nob_sv_eq(ev->as.build_step_add_command.argv[1], nob_sv_from_cstr("alpha")));
+                    ASSERT(nob_sv_eq(ev->as.build_step_add_command.argv[2], nob_sv_from_cstr("beta")));
+                    saw_first_command = true;
+                } else if (ev->as.build_step_add_command.command_index == 1) {
+                    ASSERT(ev->as.build_step_add_command.argc == 2);
+                    ASSERT(nob_sv_eq(ev->as.build_step_add_command.argv[0], nob_sv_from_cstr("python")));
+                    ASSERT(nob_sv_eq(ev->as.build_step_add_command.argv[1], nob_sv_from_cstr("gen.py")));
+                    saw_second_command = true;
+                }
+                break;
+
+            case EVENT_SOURCE_MARK_GENERATED:
+                generated_count++;
+                ASSERT(ev->as.source_mark_generated.generated);
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    ASSERT(declare_count == 1);
+    ASSERT(output_count == 2);
+    ASSERT(byproduct_count == 1);
+    ASSERT(dependency_count == 2);
+    ASSERT(command_count == 2);
+    ASSERT(generated_count == 3);
+    ASSERT(saw_first_command);
+    ASSERT(saw_second_command);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_add_custom_target_emits_build_step_without_commands) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_custom_target(prepare DEPENDS input.txt BYPRODUCTS out.txt)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_target = false;
+    bool saw_step = false;
+    size_t dependency_count = 0;
+    size_t byproduct_count = 0;
+    size_t command_count = 0;
+    size_t generated_count = 0;
+
+    for (size_t i = 0; i < stream->count; ++i) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind == EVENT_TARGET_DECLARE &&
+            nob_sv_eq(ev->as.target_declare.name, nob_sv_from_cstr("prepare"))) {
+            saw_target = true;
+        } else if (ev->h.kind == EVENT_BUILD_STEP_DECLARE) {
+            ASSERT(ev->as.build_step_declare.step_kind == EVENT_BUILD_STEP_CUSTOM_TARGET);
+            ASSERT(nob_sv_eq(ev->as.build_step_declare.owner_target_name, nob_sv_from_cstr("prepare")));
+            saw_step = true;
+        } else if (ev->h.kind == EVENT_BUILD_STEP_ADD_DEPENDENCY) {
+            dependency_count++;
+        } else if (ev->h.kind == EVENT_BUILD_STEP_ADD_BYPRODUCT) {
+            byproduct_count++;
+        } else if (ev->h.kind == EVENT_BUILD_STEP_ADD_COMMAND) {
+            command_count++;
+        } else if (ev->h.kind == EVENT_SOURCE_MARK_GENERATED) {
+            generated_count++;
+        }
+    }
+
+    ASSERT(saw_target);
+    ASSERT(saw_step);
+    ASSERT(dependency_count == 1);
+    ASSERT(byproduct_count == 1);
+    ASSERT(command_count == 0);
+    ASSERT(generated_count == 1);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_add_custom_command_target_preserves_exact_stage_kinds) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_custom_target(gen)\n"
+        "add_custom_command(TARGET gen PRE_BUILD COMMAND echo pre BYPRODUCTS pre.txt)\n"
+        "add_custom_command(TARGET gen PRE_LINK COMMAND echo link BYPRODUCTS link.txt)\n"
+        "add_custom_command(TARGET gen POST_BUILD COMMAND echo post BYPRODUCTS post.txt)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_pre_build = false;
+    bool saw_pre_link = false;
+    bool saw_post_build = false;
+    size_t command_count = 0;
+    size_t generated_count = 0;
+
+    for (size_t i = 0; i < stream->count; ++i) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind == EVENT_BUILD_STEP_DECLARE) {
+            ASSERT(nob_sv_eq(ev->as.build_step_declare.owner_target_name, nob_sv_from_cstr("gen")));
+            if (ev->as.build_step_declare.step_kind == EVENT_BUILD_STEP_TARGET_PRE_BUILD) {
+                saw_pre_build = true;
+            } else if (ev->as.build_step_declare.step_kind == EVENT_BUILD_STEP_TARGET_PRE_LINK) {
+                saw_pre_link = true;
+            } else if (ev->as.build_step_declare.step_kind == EVENT_BUILD_STEP_TARGET_POST_BUILD) {
+                saw_post_build = true;
+            }
+        } else if (ev->h.kind == EVENT_BUILD_STEP_ADD_COMMAND) {
+            command_count++;
+        } else if (ev->h.kind == EVENT_SOURCE_MARK_GENERATED) {
+            generated_count++;
+        }
+    }
+
+    ASSERT(saw_pre_build);
+    ASSERT(saw_pre_link);
+    ASSERT(saw_post_build);
+    ASSERT(command_count == 3);
+    ASSERT(generated_count == 3);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_generated_source_property_apis_emit_source_marks) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set_source_files_properties(a.c PROPERTIES GENERATED 1)\n"
+        "set_property(SOURCE b.c PROPERTY GENERATED TRUE)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    size_t generated_count = 0;
+    bool saw_a = false;
+    bool saw_b = false;
+    for (size_t i = 0; i < stream->count; ++i) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EVENT_SOURCE_MARK_GENERATED) continue;
+        generated_count++;
+        ASSERT(ev->as.source_mark_generated.generated);
+        if (nob_sv_eq(ev->as.source_mark_generated.path, nob_sv_from_cstr("a.c"))) {
+            saw_a = true;
+        } else if (nob_sv_eq(ev->as.source_mark_generated.path, nob_sv_from_cstr("b.c"))) {
+            saw_b = true;
+        }
+    }
+    ASSERT(generated_count == 2);
+    ASSERT(saw_a);
+    ASSERT(saw_b);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 typedef struct {
     Event_Family family;
     const char *label;
@@ -2253,6 +2557,7 @@ TEST(evaluator_event_ir_taxonomy_is_frozen) {
         {EVENT_FAMILY_TRACE, "trace"},
         {EVENT_FAMILY_DIAG, "diag"},
         {EVENT_FAMILY_DIRECTORY, "directory"},
+        {EVENT_FAMILY_BUILD_GRAPH, "build_graph"},
         {EVENT_FAMILY_FLOW, "flow"},
         {EVENT_FAMILY_SCOPE, "scope"},
         {EVENT_FAMILY_POLICY, "policy"},
@@ -2349,7 +2654,13 @@ TEST(evaluator_event_ir_taxonomy_is_frozen) {
         {EVENT_PROJECT_MINIMUM_REQUIRED, EVENT_FAMILY_PROJECT, "project_minimum_required", EVENT_ROLE_BUILD_SEMANTIC},
         {EVENT_TARGET_DECLARE, EVENT_FAMILY_TARGET, "target_declare", EVENT_ROLE_BUILD_SEMANTIC},
         {EVENT_TARGET_ADD_SOURCE, EVENT_FAMILY_TARGET, "target_add_source", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_SOURCE_MARK_GENERATED, EVENT_FAMILY_BUILD_GRAPH, "source_mark_generated", EVENT_ROLE_BUILD_SEMANTIC},
         {EVENT_TARGET_ADD_DEPENDENCY, EVENT_FAMILY_TARGET, "target_add_dependency", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_BUILD_STEP_DECLARE, EVENT_FAMILY_BUILD_GRAPH, "build_step_declare", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_BUILD_STEP_ADD_OUTPUT, EVENT_FAMILY_BUILD_GRAPH, "build_step_add_output", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_BUILD_STEP_ADD_BYPRODUCT, EVENT_FAMILY_BUILD_GRAPH, "build_step_add_byproduct", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_BUILD_STEP_ADD_DEPENDENCY, EVENT_FAMILY_BUILD_GRAPH, "build_step_add_dependency", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_BUILD_STEP_ADD_COMMAND, EVENT_FAMILY_BUILD_GRAPH, "build_step_add_command", EVENT_ROLE_BUILD_SEMANTIC},
         {EVENT_TARGET_PROP_SET, EVENT_FAMILY_TARGET, "target_prop_set", EVENT_ROLE_BUILD_SEMANTIC},
         {EVENT_TARGET_LINK_LIBRARIES, EVENT_FAMILY_TARGET, "target_link_libraries", EVENT_ROLE_BUILD_SEMANTIC},
         {EVENT_TARGET_LINK_OPTIONS, EVENT_FAMILY_TARGET, "target_link_options", EVENT_ROLE_BUILD_SEMANTIC},
@@ -3180,6 +3491,10 @@ void run_evaluator_v2_batch2(int *passed, int *failed, int *skipped) {
     test_evaluator_target_compile_definitions_normalizes_dash_d_items(passed, failed, skipped);
     test_evaluator_add_custom_command_target_validates_signature_and_target(passed, failed, skipped);
     test_evaluator_add_custom_command_output_validates_conflicts(passed, failed, skipped);
+    test_evaluator_add_custom_command_output_emits_build_graph_and_tokenized_commands(passed, failed, skipped);
+    test_evaluator_add_custom_target_emits_build_step_without_commands(passed, failed, skipped);
+    test_evaluator_add_custom_command_target_preserves_exact_stage_kinds(passed, failed, skipped);
+    test_evaluator_generated_source_property_apis_emit_source_marks(passed, failed, skipped);
     test_evaluator_event_ir_taxonomy_is_frozen(passed, failed, skipped);
     test_evaluator_event_ir_metadata_and_stream_contract(passed, failed, skipped);
     test_evaluator_event_ir_directory_semantics_and_trace_surface(passed, failed, skipped);

@@ -34,6 +34,14 @@ The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`
   `test_v2/codegen/` owns aggregate-safe out-of-source smoke coverage
   `test_v2/artifact_parity/` stays explicit-only and owns real-CMake
   end-to-end parity checks
+- `P2` proof split:
+  `test_v2/pipeline/` snapshots build-graph golden coverage
+  `test_v2/build_model/` locks frozen build-step/query semantics
+  `test_v2/codegen/` owns aggregate-safe generated-file and hook scheduling
+  smoke
+  `test_v2/artifact_parity/` stays explicit-only and owns real-CMake
+  parity checks for generated sources, custom-target dependencies, and
+  post-build sidecar outputs
 - required external tools:
   real `cmake 3.28.x`
   sibling `cpack` only for package-phase cases

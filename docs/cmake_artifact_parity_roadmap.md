@@ -260,7 +260,24 @@ Evidence delivered:
 ### P2 Generated-File And Build-Graph Semantics
 
 Status:
-- planned
+- completed on April 4, 2026
+- delivered:
+  canonical Event IR build-graph families/events for output rules, custom
+  targets, target hooks, tokenized command argv, and generated-source marks
+  evaluator lowering that emits first-class build-step events for
+  `add_custom_command(OUTPUT ...)`, `add_custom_target(...)`,
+  `add_custom_command(TARGET ... PRE_BUILD|PRE_LINK|POST_BUILD ...)`, and
+  both `GENERATED` source-property APIs
+  frozen build-model/query support for build-step records, generated-source
+  identity, producer-step linkage, and dependency classification across
+  target, producer-step, and file edges
+  backend scheduling that materializes generated outputs before compilation,
+  attaches executable work to utility targets, preserves PRE_LINK/POST_BUILD
+  ordering, and rejects `APPEND` steps explicitly instead of mis-executing
+  them
+  dedicated proof coverage across evaluator, pipeline, build-model, codegen,
+  and explicit artifact-parity suites for generated sources, custom-target
+  dependencies, and post-build sidecar outputs
 
 Deliverables:
 - promote `add_custom_command(...)` and `add_custom_target(...)` build-relevant
@@ -282,6 +299,14 @@ Exit criteria:
   correct locations and order
 - build-model/query tests prove the canonical graph data needed by codegen
 - the backend no longer relies on ad hoc local knowledge for generated sources
+
+Evidence delivered:
+- `./build/nob_test test-evaluator`
+- `CMK2NOB_UPDATE_GOLDEN=1 ./build/nob_test test-pipeline`
+- `./build/nob_test test-build-model`
+- `./build/nob_test test-codegen`
+- `./build/nob_test test-artifact-parity`
+- `./build/nob_test test-v2`
 
 ### P3 Usage-Requirement And Link Parity
 

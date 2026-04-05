@@ -72,6 +72,17 @@ static const char *event_command_status_name(Event_Command_Status status) {
     return "unknown";
 }
 
+static const char *event_build_step_kind_name(Event_Build_Step_Kind kind) {
+    switch (kind) {
+        case EVENT_BUILD_STEP_OUTPUT_RULE: return "output_rule";
+        case EVENT_BUILD_STEP_CUSTOM_TARGET: return "custom_target";
+        case EVENT_BUILD_STEP_TARGET_PRE_BUILD: return "target_pre_build";
+        case EVENT_BUILD_STEP_TARGET_PRE_LINK: return "target_pre_link";
+        case EVENT_BUILD_STEP_TARGET_POST_BUILD: return "target_post_build";
+    }
+    return "unknown";
+}
+
 static const char *event_property_mutate_op_name(Event_Property_Mutate_Op op) {
     switch (op) {
         case EVENT_PROPERTY_MUTATE_SET: return "set";
@@ -364,9 +375,44 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.target_add_source.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_add_source.path)) return false;
             break;
+        case EVENT_SOURCE_MARK_GENERATED:
+            if (!event_copy_sv_inplace(arena, &ev->as.source_mark_generated.path)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.source_mark_generated.directory_source_dir)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.source_mark_generated.directory_binary_dir)) return false;
+            break;
         case EVENT_TARGET_ADD_DEPENDENCY:
             if (!event_copy_sv_inplace(arena, &ev->as.target_add_dependency.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_add_dependency.dependency_name)) return false;
+            break;
+        case EVENT_BUILD_STEP_DECLARE:
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_declare.step_key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_declare.owner_target_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_declare.working_directory)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_declare.comment)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_declare.main_dependency)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_declare.depfile)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_declare.job_pool)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_declare.job_server_aware)) return false;
+            break;
+        case EVENT_BUILD_STEP_ADD_OUTPUT:
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_add_output.step_key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_add_output.path)) return false;
+            break;
+        case EVENT_BUILD_STEP_ADD_BYPRODUCT:
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_add_byproduct.step_key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_add_byproduct.path)) return false;
+            break;
+        case EVENT_BUILD_STEP_ADD_DEPENDENCY:
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_add_dependency.step_key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_add_dependency.item)) return false;
+            break;
+        case EVENT_BUILD_STEP_ADD_COMMAND:
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_add_command.step_key)) return false;
+            if (!event_copy_sv_array_inplace(arena,
+                                             &ev->as.build_step_add_command.argv,
+                                             ev->as.build_step_add_command.argc)) {
+                return false;
+            }
             break;
         case EVENT_TARGET_PROP_SET:
             if (!event_copy_sv_inplace(arena, &ev->as.target_prop_set.target_name)) return false;
@@ -614,12 +660,54 @@ static void event_dump_one(const Event *ev) {
                    (int)ev->as.target_add_source.path.count,
                    ev->as.target_add_source.path.data ? ev->as.target_add_source.path.data : "");
             break;
+        case EVENT_SOURCE_MARK_GENERATED:
+            printf(" path=%.*s generated=%d",
+                   (int)ev->as.source_mark_generated.path.count,
+                   ev->as.source_mark_generated.path.data ? ev->as.source_mark_generated.path.data : "",
+                   (int)ev->as.source_mark_generated.generated);
+            break;
         case EVENT_TARGET_ADD_DEPENDENCY:
             printf(" target=%.*s dep=%.*s",
                    (int)ev->as.target_add_dependency.target_name.count,
                    ev->as.target_add_dependency.target_name.data ? ev->as.target_add_dependency.target_name.data : "",
                    (int)ev->as.target_add_dependency.dependency_name.count,
                    ev->as.target_add_dependency.dependency_name.data ? ev->as.target_add_dependency.dependency_name.data : "");
+            break;
+        case EVENT_BUILD_STEP_DECLARE:
+            printf(" step=%.*s kind=%s owner_target=%.*s",
+                   (int)ev->as.build_step_declare.step_key.count,
+                   ev->as.build_step_declare.step_key.data ? ev->as.build_step_declare.step_key.data : "",
+                   event_build_step_kind_name(ev->as.build_step_declare.step_kind),
+                   (int)ev->as.build_step_declare.owner_target_name.count,
+                   ev->as.build_step_declare.owner_target_name.data ? ev->as.build_step_declare.owner_target_name.data : "");
+            break;
+        case EVENT_BUILD_STEP_ADD_OUTPUT:
+            printf(" step=%.*s path=%.*s",
+                   (int)ev->as.build_step_add_output.step_key.count,
+                   ev->as.build_step_add_output.step_key.data ? ev->as.build_step_add_output.step_key.data : "",
+                   (int)ev->as.build_step_add_output.path.count,
+                   ev->as.build_step_add_output.path.data ? ev->as.build_step_add_output.path.data : "");
+            break;
+        case EVENT_BUILD_STEP_ADD_BYPRODUCT:
+            printf(" step=%.*s path=%.*s",
+                   (int)ev->as.build_step_add_byproduct.step_key.count,
+                   ev->as.build_step_add_byproduct.step_key.data ? ev->as.build_step_add_byproduct.step_key.data : "",
+                   (int)ev->as.build_step_add_byproduct.path.count,
+                   ev->as.build_step_add_byproduct.path.data ? ev->as.build_step_add_byproduct.path.data : "");
+            break;
+        case EVENT_BUILD_STEP_ADD_DEPENDENCY:
+            printf(" step=%.*s dep=%.*s",
+                   (int)ev->as.build_step_add_dependency.step_key.count,
+                   ev->as.build_step_add_dependency.step_key.data ? ev->as.build_step_add_dependency.step_key.data : "",
+                   (int)ev->as.build_step_add_dependency.item.count,
+                   ev->as.build_step_add_dependency.item.data ? ev->as.build_step_add_dependency.item.data : "");
+            break;
+        case EVENT_BUILD_STEP_ADD_COMMAND:
+            printf(" step=%.*s command_index=%u argc=%zu",
+                   (int)ev->as.build_step_add_command.step_key.count,
+                   ev->as.build_step_add_command.step_key.data ? ev->as.build_step_add_command.step_key.data : "",
+                   (unsigned)ev->as.build_step_add_command.command_index,
+                   ev->as.build_step_add_command.argc);
             break;
         case EVENT_TARGET_PROP_SET:
             printf(" target=%.*s key=%.*s",

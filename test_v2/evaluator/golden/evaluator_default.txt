@@ -1091,8 +1091,7 @@ EVENTS count=0
 
 === CASE dispatcher_custom_command_and_target ===
 DIAG errors=0 warnings=0
-EVENTS count=3
-EV[0] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=1 col=1 target='gen' key='EXCLUDE_FROM_ALL' value='0' op=SET
-EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=1 col=1 name='gen' type=LIB_UNKNOWN
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=7 col=1 target='gen' key='NOBIFY_CUSTOM_COMMAND_STAGE' value='POST_BUILD' op=SET
+EVENTS count=2
+EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=1 col=1 name='gen' type=LIB_UNKNOWN
+EV[1] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=1 col=1 target='gen' key='EXCLUDE_FROM_ALL' value='0' op=SET
 === END CASE ===

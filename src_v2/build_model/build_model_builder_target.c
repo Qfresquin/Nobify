@@ -51,6 +51,51 @@ static bool bm_target_record_raw_set(BM_Builder *builder,
                                   bm_provenance_from_event(builder->arena, ev));
 }
 
+static bool bm_target_append_source_record(BM_Builder *builder,
+                                           BM_Target_Record *target,
+                                           const Event *ev,
+                                           String_View raw_path) {
+    BM_Target_Source_Record record = {0};
+    if (!builder || !target || !ev) return false;
+    if (!bm_copy_string(builder->arena, raw_path, &record.raw_path)) {
+        return bm_builder_error(builder, ev, "failed to copy target source path", "increase arena capacity");
+    }
+    record.producer_step_id = BM_BUILD_STEP_ID_INVALID;
+    record.provenance = bm_provenance_from_event(builder->arena, ev);
+    if (!arena_arr_push(builder->arena, target->source_records, record)) {
+        return bm_builder_error(builder, ev, "failed to append target source record", "increase arena capacity");
+    }
+    return true;
+}
+
+static bool bm_build_step_append_string(BM_Builder *builder,
+                                        const Event *ev,
+                                        String_View **dest,
+                                        String_View value) {
+    String_View owned = {0};
+    if (!bm_copy_string(builder->arena, value, &owned) ||
+        !arena_arr_push(builder->arena, *dest, owned)) {
+        return bm_builder_error(builder, ev, "failed to append build step item", "increase arena capacity");
+    }
+    return true;
+}
+
+static bool bm_build_step_append_command(BM_Builder *builder,
+                                         const Event *ev,
+                                         BM_Build_Step_Record *step,
+                                         const String_View *argv,
+                                         size_t argc) {
+    BM_Build_Step_Command_Record command = {0};
+    if (!builder || !ev || !step) return false;
+    for (size_t i = 0; i < argc; ++i) {
+        if (!bm_build_step_append_string(builder, ev, &command.argv, argv[i])) return false;
+    }
+    if (!arena_arr_push(builder->arena, step->commands, command)) {
+        return bm_builder_error(builder, ev, "failed to append build step command", "increase arena capacity");
+    }
+    return true;
+}
+
 bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
     Build_Model_Draft *draft = builder ? builder->draft : NULL;
     if (!builder || !draft || !ev) return false;
@@ -91,6 +136,7 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
                 !arena_arr_push(builder->arena, target->sources, owned)) {
                 return bm_builder_error(builder, ev, "failed to append target source", "increase arena capacity");
             }
+            if (!bm_target_append_source_record(builder, target, ev, ev->as.target_add_source.path)) return false;
             return true;
         }
 
@@ -215,5 +261,92 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
         case EVENT_KIND_COUNT:
         default:
             return bm_builder_error(builder, ev, "unexpected target handler event", "fix build model target dispatch");
+    }
+}
+
+bool bm_builder_handle_build_graph_event(BM_Builder *builder, const Event *ev) {
+    Build_Model_Draft *draft = builder ? builder->draft : NULL;
+    if (!builder || !draft || !ev) return false;
+
+    switch (ev->h.kind) {
+        case EVENT_SOURCE_MARK_GENERATED: {
+            BM_Source_Generated_Mark_Record mark = {0};
+            mark.generated = ev->as.source_mark_generated.generated;
+            mark.provenance = bm_provenance_from_event(builder->arena, ev);
+            if (!bm_copy_string(builder->arena, ev->as.source_mark_generated.path, &mark.path) ||
+                !bm_copy_string(builder->arena, ev->as.source_mark_generated.directory_source_dir, &mark.directory_source_dir) ||
+                !bm_copy_string(builder->arena, ev->as.source_mark_generated.directory_binary_dir, &mark.directory_binary_dir) ||
+                !arena_arr_push(builder->arena, draft->generated_source_marks, mark)) {
+                return bm_builder_error(builder, ev, "failed to append generated source mark", "increase arena capacity");
+            }
+            return true;
+        }
+
+        case EVENT_BUILD_STEP_DECLARE: {
+            BM_Build_Step_Record step = {0};
+            BM_Directory_Id owner_directory_id = bm_builder_current_directory_id(builder);
+            if (owner_directory_id == BM_DIRECTORY_ID_INVALID) {
+                return bm_builder_error(builder, ev, "build step declaration without an active directory", "emit directory enter before build steps");
+            }
+            if (bm_draft_find_build_step_const(draft, ev->as.build_step_declare.step_key)) {
+                return bm_builder_error(builder, ev, "duplicate build step key", "build step keys must be unique");
+            }
+            step.id = (BM_Build_Step_Id)arena_arr_len(draft->build_steps);
+            step.owner_directory_id = owner_directory_id;
+            step.provenance = bm_provenance_from_event(builder->arena, ev);
+            step.kind = bm_build_step_kind_from_event(ev->as.build_step_declare.step_kind);
+            step.owner_target_id = BM_TARGET_ID_INVALID;
+            step.append = ev->as.build_step_declare.append;
+            step.verbatim = ev->as.build_step_declare.verbatim;
+            step.uses_terminal = ev->as.build_step_declare.uses_terminal;
+            step.command_expand_lists = ev->as.build_step_declare.command_expand_lists;
+            step.depends_explicit_only = ev->as.build_step_declare.depends_explicit_only;
+            step.codegen = ev->as.build_step_declare.codegen;
+            if (!bm_copy_string(builder->arena, ev->as.build_step_declare.step_key, &step.step_key) ||
+                !bm_copy_string(builder->arena, ev->as.build_step_declare.owner_target_name, &step.owner_target_name) ||
+                !bm_copy_string(builder->arena, ev->as.build_step_declare.working_directory, &step.working_directory) ||
+                !bm_copy_string(builder->arena, ev->as.build_step_declare.comment, &step.comment) ||
+                !bm_copy_string(builder->arena, ev->as.build_step_declare.main_dependency, &step.main_dependency) ||
+                !bm_copy_string(builder->arena, ev->as.build_step_declare.depfile, &step.depfile) ||
+                !bm_copy_string(builder->arena, ev->as.build_step_declare.job_pool, &step.job_pool) ||
+                !bm_copy_string(builder->arena, ev->as.build_step_declare.job_server_aware, &step.job_server_aware) ||
+                !arena_arr_push(builder->arena, draft->build_steps, step)) {
+                return bm_builder_error(builder, ev, "failed to append build step", "increase arena capacity");
+            }
+            return true;
+        }
+
+        case EVENT_BUILD_STEP_ADD_OUTPUT:
+        case EVENT_BUILD_STEP_ADD_BYPRODUCT:
+        case EVENT_BUILD_STEP_ADD_DEPENDENCY:
+        case EVENT_BUILD_STEP_ADD_COMMAND: {
+            BM_Build_Step_Record *step = NULL;
+            String_View step_key = nob_sv_from_cstr("");
+            if (ev->h.kind == EVENT_BUILD_STEP_ADD_OUTPUT) step_key = ev->as.build_step_add_output.step_key;
+            if (ev->h.kind == EVENT_BUILD_STEP_ADD_BYPRODUCT) step_key = ev->as.build_step_add_byproduct.step_key;
+            if (ev->h.kind == EVENT_BUILD_STEP_ADD_DEPENDENCY) step_key = ev->as.build_step_add_dependency.step_key;
+            if (ev->h.kind == EVENT_BUILD_STEP_ADD_COMMAND) step_key = ev->as.build_step_add_command.step_key;
+            step = bm_draft_find_build_step(draft, step_key);
+            if (!step) return bm_builder_error(builder, ev, "build step item references an unknown step key", "emit build step declaration before step items");
+
+            if (ev->h.kind == EVENT_BUILD_STEP_ADD_OUTPUT) {
+                return bm_build_step_append_string(builder, ev, &step->raw_outputs, ev->as.build_step_add_output.path);
+            }
+            if (ev->h.kind == EVENT_BUILD_STEP_ADD_BYPRODUCT) {
+                return bm_build_step_append_string(builder, ev, &step->raw_byproducts, ev->as.build_step_add_byproduct.path);
+            }
+            if (ev->h.kind == EVENT_BUILD_STEP_ADD_DEPENDENCY) {
+                return bm_build_step_append_string(builder, ev, &step->raw_dependency_tokens, ev->as.build_step_add_dependency.item);
+            }
+            return bm_build_step_append_command(builder,
+                                                ev,
+                                                step,
+                                                ev->as.build_step_add_command.argv,
+                                                ev->as.build_step_add_command.argc);
+        }
+
+        case EVENT_KIND_COUNT:
+        default:
+            return bm_builder_error(builder, ev, "unexpected build graph handler event", "fix build graph dispatch");
     }
 }

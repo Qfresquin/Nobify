@@ -55,7 +55,13 @@ static bool bm_is_supported_build_event(Event_Kind kind) {
         case EVENT_GLOBAL_PROPERTY_MUTATE:
         case EVENT_TARGET_DECLARE:
         case EVENT_TARGET_ADD_SOURCE:
+        case EVENT_SOURCE_MARK_GENERATED:
         case EVENT_TARGET_ADD_DEPENDENCY:
+        case EVENT_BUILD_STEP_DECLARE:
+        case EVENT_BUILD_STEP_ADD_OUTPUT:
+        case EVENT_BUILD_STEP_ADD_BYPRODUCT:
+        case EVENT_BUILD_STEP_ADD_DEPENDENCY:
+        case EVENT_BUILD_STEP_ADD_COMMAND:
         case EVENT_TARGET_PROP_SET:
         case EVENT_TARGET_LINK_LIBRARIES:
         case EVENT_TARGET_LINK_OPTIONS:
@@ -165,6 +171,79 @@ bool bm_string_view_is_empty(String_View sv) {
     return !sv.data || sv.count == 0;
 }
 
+bool bm_path_is_abs(String_View path) {
+    return path.count > 0 && path.data && path.data[0] == '/';
+}
+
+bool bm_normalize_path(Arena *arena, String_View path, String_View *out) {
+    String_View *segments = NULL;
+    bool absolute = bm_path_is_abs(path);
+    size_t i = 0;
+    Nob_String_Builder sb = {0};
+    char *copy = NULL;
+    if (!arena || !out) return false;
+
+    while (i < path.count) {
+        while (i < path.count && path.data[i] == '/') i++;
+        size_t start = i;
+        while (i < path.count && path.data[i] != '/') i++;
+        if (i == start) continue;
+
+        String_View seg = nob_sv_from_parts(path.data + start, i - start);
+        if (nob_sv_eq(seg, nob_sv_from_cstr("."))) continue;
+        if (nob_sv_eq(seg, nob_sv_from_cstr(".."))) {
+            if (!arena_arr_empty(segments) && !nob_sv_eq(arena_arr_last(segments), nob_sv_from_cstr(".."))) {
+                arena_arr_set_len(segments, arena_arr_len(segments) - 1);
+            } else if (!absolute) {
+                if (!arena_arr_push(arena, segments, seg)) {
+                    nob_sb_free(sb);
+                    return false;
+                }
+            }
+            continue;
+        }
+        if (!arena_arr_push(arena, segments, seg)) {
+            nob_sb_free(sb);
+            return false;
+        }
+    }
+
+    if (absolute) nob_sb_append(&sb, '/');
+    for (size_t idx = 0; idx < arena_arr_len(segments); ++idx) {
+        if (idx > 0) nob_sb_append(&sb, '/');
+        nob_sb_append_buf(&sb, segments[idx].data, segments[idx].count);
+    }
+    if (sb.count == 0) {
+        if (absolute) nob_sb_append(&sb, '/');
+        else nob_sb_append(&sb, '.');
+    }
+
+    copy = arena_strndup(arena, sb.items ? sb.items : "", sb.count);
+    nob_sb_free(sb);
+    if (!copy) return false;
+    *out = nob_sv_from_cstr(copy);
+    return true;
+}
+
+bool bm_path_join(Arena *arena, String_View lhs, String_View rhs, String_View *out) {
+    Nob_String_Builder sb = {0};
+    char *copy = NULL;
+    if (!arena || !out) return false;
+    nob_sb_append_buf(&sb, lhs.data ? lhs.data : "", lhs.count);
+    if (sb.count > 0 && sb.items[sb.count - 1] != '/') nob_sb_append(&sb, '/');
+    nob_sb_append_buf(&sb, rhs.data ? rhs.data : "", rhs.count);
+    copy = arena_strndup(arena, sb.items ? sb.items : "", sb.count);
+    nob_sb_free(sb);
+    if (!copy) return false;
+    return bm_normalize_path(arena, nob_sv_from_cstr(copy), out);
+}
+
+bool bm_path_rebase(Arena *arena, String_View base_dir, String_View path, String_View *out) {
+    if (!arena || !out) return false;
+    if (bm_path_is_abs(path)) return bm_normalize_path(arena, path, out);
+    return bm_path_join(arena, base_dir, path, out);
+}
+
 BM_Target_Kind bm_target_kind_from_event(Cmake_Target_Type type) {
     switch (type) {
         case EV_TARGET_EXECUTABLE: return BM_TARGET_EXECUTABLE;
@@ -176,6 +255,17 @@ BM_Target_Kind bm_target_kind_from_event(Cmake_Target_Type type) {
         case EV_TARGET_LIBRARY_UNKNOWN: return BM_TARGET_UTILITY;
     }
     return BM_TARGET_UTILITY;
+}
+
+BM_Build_Step_Kind bm_build_step_kind_from_event(Event_Build_Step_Kind kind) {
+    switch (kind) {
+        case EVENT_BUILD_STEP_OUTPUT_RULE: return BM_BUILD_STEP_OUTPUT_RULE;
+        case EVENT_BUILD_STEP_CUSTOM_TARGET: return BM_BUILD_STEP_CUSTOM_TARGET;
+        case EVENT_BUILD_STEP_TARGET_PRE_BUILD: return BM_BUILD_STEP_TARGET_PRE_BUILD;
+        case EVENT_BUILD_STEP_TARGET_PRE_LINK: return BM_BUILD_STEP_TARGET_PRE_LINK;
+        case EVENT_BUILD_STEP_TARGET_POST_BUILD: return BM_BUILD_STEP_TARGET_POST_BUILD;
+    }
+    return BM_BUILD_STEP_OUTPUT_RULE;
 }
 
 BM_Visibility bm_visibility_from_event(Cmake_Visibility visibility) {
@@ -212,6 +302,22 @@ BM_Directory_Record *bm_draft_get_directory(Build_Model_Draft *draft, BM_Directo
 const BM_Directory_Record *bm_draft_get_directory_const(const Build_Model_Draft *draft, BM_Directory_Id id) {
     if (!draft || id == BM_DIRECTORY_ID_INVALID || (size_t)id >= arena_arr_len(draft->directories)) return NULL;
     return &draft->directories[id];
+}
+
+BM_Build_Step_Record *bm_draft_find_build_step(Build_Model_Draft *draft, String_View step_key) {
+    if (!draft) return NULL;
+    for (size_t i = 0; i < arena_arr_len(draft->build_steps); ++i) {
+        if (nob_sv_eq(draft->build_steps[i].step_key, step_key)) return &draft->build_steps[i];
+    }
+    return NULL;
+}
+
+const BM_Build_Step_Record *bm_draft_find_build_step_const(const Build_Model_Draft *draft, String_View step_key) {
+    if (!draft) return NULL;
+    for (size_t i = 0; i < arena_arr_len(draft->build_steps); ++i) {
+        if (nob_sv_eq(draft->build_steps[i].step_key, step_key)) return &draft->build_steps[i];
+    }
+    return NULL;
 }
 
 BM_Target_Id bm_draft_find_target_id(const Build_Model_Draft *draft, String_View name) {
@@ -443,7 +549,13 @@ bool bm_builder_apply_event(BM_Builder *builder, const Event *ev) {
 
         case EVENT_TARGET_DECLARE:
         case EVENT_TARGET_ADD_SOURCE:
+        case EVENT_SOURCE_MARK_GENERATED:
         case EVENT_TARGET_ADD_DEPENDENCY:
+        case EVENT_BUILD_STEP_DECLARE:
+        case EVENT_BUILD_STEP_ADD_OUTPUT:
+        case EVENT_BUILD_STEP_ADD_BYPRODUCT:
+        case EVENT_BUILD_STEP_ADD_DEPENDENCY:
+        case EVENT_BUILD_STEP_ADD_COMMAND:
         case EVENT_TARGET_PROP_SET:
         case EVENT_TARGET_LINK_LIBRARIES:
         case EVENT_TARGET_LINK_OPTIONS:
@@ -451,6 +563,14 @@ bool bm_builder_apply_event(BM_Builder *builder, const Event *ev) {
         case EVENT_TARGET_INCLUDE_DIRECTORIES:
         case EVENT_TARGET_COMPILE_DEFINITIONS:
         case EVENT_TARGET_COMPILE_OPTIONS:
+            if (ev->h.kind == EVENT_SOURCE_MARK_GENERATED ||
+                ev->h.kind == EVENT_BUILD_STEP_DECLARE ||
+                ev->h.kind == EVENT_BUILD_STEP_ADD_OUTPUT ||
+                ev->h.kind == EVENT_BUILD_STEP_ADD_BYPRODUCT ||
+                ev->h.kind == EVENT_BUILD_STEP_ADD_DEPENDENCY ||
+                ev->h.kind == EVENT_BUILD_STEP_ADD_COMMAND) {
+                return bm_builder_handle_build_graph_event(builder, ev);
+            }
             return bm_builder_handle_target_event(builder, ev);
 
         case EVENT_TEST_ENABLE:

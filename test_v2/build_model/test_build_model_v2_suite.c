@@ -33,6 +33,14 @@ static bool build_model_write_text_file(const char *path, const char *text) {
     return nob_write_entire_file(path, text, strlen(text));
 }
 
+static bool build_model_sv_contains(String_View haystack, String_View needle) {
+    if (needle.count == 0 || haystack.count < needle.count) return false;
+    for (size_t i = 0; i + needle.count <= haystack.count; ++i) {
+        if (memcmp(haystack.data + i, needle.data, needle.count) == 0) return true;
+    }
+    return false;
+}
+
 static void build_model_init_event(Event *ev, Event_Kind kind, size_t line) {
     *ev = (Event){0};
     ev->h.kind = kind;
@@ -53,6 +61,19 @@ static BM_Directory_Id build_model_find_directory_id(const Build_Model *model,
         }
     }
     return BM_DIRECTORY_ID_INVALID;
+}
+
+static BM_Build_Step_Id build_model_find_step_by_kind_and_owner(const Build_Model *model,
+                                                                BM_Build_Step_Kind kind,
+                                                                BM_Target_Id owner_target_id) {
+    size_t count = bm_query_build_step_count(model);
+    for (size_t i = 0; i < count; ++i) {
+        BM_Build_Step_Id id = (BM_Build_Step_Id)i;
+        if (bm_query_build_step_kind(model, id) != kind) continue;
+        if (bm_query_build_step_owner_target(model, id) != owner_target_id) continue;
+        return id;
+    }
+    return BM_BUILD_STEP_ID_INVALID;
 }
 
 TEST(build_model_builder_directory_scope_events) {
@@ -249,6 +270,137 @@ TEST(build_model_add_subdirectory_defaults_rebase_binary_dirs_out_of_source) {
     TEST_PASS();
 }
 
+TEST(build_model_generated_sources_rebase_to_binary_dir_and_link_producer_steps) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    BM_Build_Step_Id step_id = BM_BUILD_STEP_ID_INVALID;
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "gen_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("gen_src");
+    config.binary_dir = nob_sv_from_cstr("gen_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test C)\n"
+        "add_custom_command(\n"
+        "  OUTPUT generated/generated.c generated/generated.h\n"
+        "  COMMAND echo gen\n"
+        "  DEPENDS schema.idl\n"
+        "  BYPRODUCTS generated/generated.log)\n"
+        "add_executable(app main.c ${CMAKE_CURRENT_BINARY_DIR}/generated/generated.c)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    ASSERT(bm_query_build_step_count(model) == 1);
+
+    step_id = 0;
+    ASSERT(bm_query_build_step_kind(model, step_id) == BM_BUILD_STEP_OUTPUT_RULE);
+    ASSERT(bm_query_build_step_outputs(model, step_id).count == 2);
+    ASSERT(bm_query_build_step_byproducts(model, step_id).count == 1);
+    ASSERT(bm_query_build_step_file_dependencies(model, step_id).count == 1);
+    ASSERT(nob_sv_eq(bm_query_build_step_file_dependencies(model, step_id).items[0],
+                     nob_sv_from_cstr("gen_src/schema.idl")));
+
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+    ASSERT(bm_query_target_source_count(model, app_id) == 2);
+
+    bool saw_generated = false;
+    for (size_t i = 0; i < bm_query_target_source_count(model, app_id); ++i) {
+        String_View effective = bm_query_target_source_effective(model, app_id, i);
+        if (!build_model_sv_contains(effective, nob_sv_from_cstr("generated/generated.c"))) continue;
+        ASSERT(bm_query_target_source_generated(model, app_id, i));
+        ASSERT(bm_query_target_source_producer_step(model, app_id, i) == step_id);
+        saw_generated = true;
+    }
+    ASSERT(saw_generated);
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_build_steps_classify_target_producer_and_file_dependencies_and_preserve_hooks) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_Target_Id helper_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id prepare_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    BM_Build_Step_Id output_rule_id = BM_BUILD_STEP_ID_INVALID;
+    BM_Build_Step_Id custom_target_id = BM_BUILD_STEP_ID_INVALID;
+    BM_Build_Step_Id pre_build_id = BM_BUILD_STEP_ID_INVALID;
+    BM_Build_Step_Id pre_link_id = BM_BUILD_STEP_ID_INVALID;
+    BM_Build_Step_Id post_build_id = BM_BUILD_STEP_ID_INVALID;
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "graph_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("graph_src");
+    config.binary_dir = nob_sv_from_cstr("graph_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test C)\n"
+        "add_custom_command(OUTPUT generated.c COMMAND echo gen DEPENDS schema.idl)\n"
+        "add_executable(helper helper.c)\n"
+        "add_custom_target(prepare DEPENDS helper ${CMAKE_CURRENT_BINARY_DIR}/generated.c extra.txt BYPRODUCTS prepared.txt)\n"
+        "add_executable(app main.c)\n"
+        "add_custom_command(TARGET app PRE_BUILD COMMAND echo before BYPRODUCTS before.txt)\n"
+        "add_custom_command(TARGET app PRE_LINK COMMAND echo pre BYPRODUCTS pre.txt)\n"
+        "add_custom_command(TARGET app POST_BUILD COMMAND echo post BYPRODUCTS post.txt)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    ASSERT(bm_query_build_step_count(model) == 5);
+
+    helper_id = bm_query_target_by_name(model, nob_sv_from_cstr("helper"));
+    prepare_id = bm_query_target_by_name(model, nob_sv_from_cstr("prepare"));
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    ASSERT(helper_id != BM_TARGET_ID_INVALID);
+    ASSERT(prepare_id != BM_TARGET_ID_INVALID);
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+    ASSERT(bm_query_target_kind(model, prepare_id) == BM_TARGET_UTILITY);
+
+    output_rule_id = 0;
+    ASSERT(bm_query_build_step_kind(model, output_rule_id) == BM_BUILD_STEP_OUTPUT_RULE);
+
+    custom_target_id = build_model_find_step_by_kind_and_owner(model,
+                                                               BM_BUILD_STEP_CUSTOM_TARGET,
+                                                               prepare_id);
+    pre_build_id = build_model_find_step_by_kind_and_owner(model,
+                                                           BM_BUILD_STEP_TARGET_PRE_BUILD,
+                                                           app_id);
+    pre_link_id = build_model_find_step_by_kind_and_owner(model,
+                                                          BM_BUILD_STEP_TARGET_PRE_LINK,
+                                                          app_id);
+    post_build_id = build_model_find_step_by_kind_and_owner(model,
+                                                            BM_BUILD_STEP_TARGET_POST_BUILD,
+                                                            app_id);
+    ASSERT(custom_target_id != BM_BUILD_STEP_ID_INVALID);
+    ASSERT(pre_build_id != BM_BUILD_STEP_ID_INVALID);
+    ASSERT(pre_link_id != BM_BUILD_STEP_ID_INVALID);
+    ASSERT(post_build_id != BM_BUILD_STEP_ID_INVALID);
+
+    ASSERT(bm_query_build_step_target_dependencies(model, custom_target_id).count == 1);
+    ASSERT(bm_query_build_step_target_dependencies(model, custom_target_id).items[0] == helper_id);
+    ASSERT(bm_query_build_step_producer_dependencies(model, custom_target_id).count == 1);
+    ASSERT(bm_query_build_step_producer_dependencies(model, custom_target_id).items[0] == output_rule_id);
+    ASSERT(bm_query_build_step_file_dependencies(model, custom_target_id).count == 1);
+    ASSERT(nob_sv_eq(bm_query_build_step_file_dependencies(model, custom_target_id).items[0],
+                     nob_sv_from_cstr("graph_src/extra.txt")));
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -272,6 +424,8 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_builder_directory_scope_events(passed, failed, skipped);
     test_build_model_validate_does_not_infer_link_library_targets(passed, failed, skipped);
     test_build_model_add_subdirectory_defaults_rebase_binary_dirs_out_of_source(passed, failed, skipped);
+    test_build_model_generated_sources_rebase_to_binary_dir_and_link_producer_steps(passed, failed, skipped);
+    test_build_model_build_steps_classify_target_producer_and_file_dependencies_and_preserve_hooks(passed, failed, skipped);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

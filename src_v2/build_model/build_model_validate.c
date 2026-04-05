@@ -137,6 +137,26 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
     }
     bm_validate_duplicate_target_names(draft, sink, had_error);
 
+    for (size_t i = 0; i < arena_arr_len(draft->build_steps); ++i) {
+        const BM_Build_Step_Record *step = &draft->build_steps[i];
+        bm_validate_contiguous_id(step->id == (BM_Build_Step_Id)i,
+                                  step->provenance,
+                                  sink,
+                                  had_error,
+                                  "build step id mismatch",
+                                  "build step ids must be contiguous");
+        bm_validate_owner_directory(draft, step->owner_directory_id, step->provenance, "build step", sink, had_error);
+        if (step->kind > BM_BUILD_STEP_TARGET_POST_BUILD) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          step->provenance,
+                          "build_model_validate",
+                          "structural",
+                          "build step kind is invalid",
+                          "map every build step kind to a canonical BM_Build_Step_Kind");
+        }
+    }
+
     for (size_t i = 0; i < arena_arr_len(draft->tests); ++i) {
         const BM_Test_Record *test = &draft->tests[i];
         bm_validate_contiguous_id(test->id == (BM_Test_Id)i,
@@ -248,6 +268,20 @@ static bool bm_validate_resolution_pass(const Build_Model_Draft *draft, Diag_Sin
                 *had_error = true;
                 bm_diag_error(sink, target->provenance, "build_model_validate", "resolution", "explicit target dependency cannot be resolved", "declare the dependency target before freeze");
             }
+        }
+    }
+
+    for (size_t i = 0; i < arena_arr_len(draft->build_steps); ++i) {
+        const BM_Build_Step_Record *step = &draft->build_steps[i];
+        if (!bm_string_view_is_empty(step->owner_target_name) &&
+            bm_draft_find_target_id(draft, step->owner_target_name) == BM_TARGET_ID_INVALID) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          step->provenance,
+                          "build_model_validate",
+                          "resolution",
+                          "build step owner target cannot be resolved",
+                          "declare the owner target before emitting target hook or custom-target steps");
         }
     }
 

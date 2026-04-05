@@ -19,6 +19,11 @@ static const BM_Target_Record *bm_model_target(const Build_Model *model, BM_Targ
     return &model->targets[id];
 }
 
+static const BM_Build_Step_Record *bm_model_build_step(const Build_Model *model, BM_Build_Step_Id id) {
+    if (!model || id == BM_BUILD_STEP_ID_INVALID || (size_t)id >= arena_arr_len(model->build_steps)) return NULL;
+    return &model->build_steps[id];
+}
+
 static const BM_Test_Record *bm_model_test(const Build_Model *model, BM_Test_Id id) {
     if (!model || id == BM_TEST_ID_INVALID || (size_t)id >= arena_arr_len(model->tests)) return NULL;
     return &model->tests[id];
@@ -67,6 +72,20 @@ static BM_String_Item_Span bm_item_span(const BM_String_Item_View *items) {
 
 static BM_String_Span bm_string_span(const String_View *items) {
     BM_String_Span span = {0};
+    span.items = items;
+    span.count = arena_arr_len(items);
+    return span;
+}
+
+static BM_Target_Id_Span bm_target_id_span(const BM_Target_Id *items) {
+    BM_Target_Id_Span span = {0};
+    span.items = items;
+    span.count = arena_arr_len(items);
+    return span;
+}
+
+static BM_Build_Step_Id_Span bm_build_step_id_span(const BM_Build_Step_Id *items) {
+    BM_Build_Step_Id_Span span = {0};
     span.items = items;
     span.count = arena_arr_len(items);
     return span;
@@ -378,12 +397,14 @@ static bool bm_query_target_effective_values_common(const Build_Model *model,
 
 bool bm_model_has_project(const Build_Model *model) { return model ? model->project.present : false; }
 bool bm_target_id_is_valid(BM_Target_Id id) { return id != BM_TARGET_ID_INVALID; }
+bool bm_build_step_id_is_valid(BM_Build_Step_Id id) { return id != BM_BUILD_STEP_ID_INVALID; }
 bool bm_directory_id_is_valid(BM_Directory_Id id) { return id != BM_DIRECTORY_ID_INVALID; }
 bool bm_test_id_is_valid(BM_Test_Id id) { return id != BM_TEST_ID_INVALID; }
 bool bm_package_id_is_valid(BM_Package_Id id) { return id != BM_PACKAGE_ID_INVALID; }
 
 size_t bm_query_directory_count(const Build_Model *model) { return model ? arena_arr_len(model->directories) : 0; }
 size_t bm_query_target_count(const Build_Model *model) { return model ? arena_arr_len(model->targets) : 0; }
+size_t bm_query_build_step_count(const Build_Model *model) { return model ? arena_arr_len(model->build_steps) : 0; }
 size_t bm_query_test_count(const Build_Model *model) { return model ? arena_arr_len(model->tests) : 0; }
 size_t bm_query_install_rule_count(const Build_Model *model) { return model ? arena_arr_len(model->install_rules) : 0; }
 size_t bm_query_package_count(const Build_Model *model) { return model ? arena_arr_len(model->packages) : 0; }
@@ -527,13 +548,38 @@ BM_String_Span bm_query_target_sources_raw(const Build_Model *model, BM_Target_I
     return target ? bm_string_span(target->sources) : (BM_String_Span){0};
 }
 
-BM_Target_Id_Span bm_query_target_dependencies_explicit(const Build_Model *model, BM_Target_Id id) {
-    BM_Target_Id_Span span = {0};
+size_t bm_query_target_source_count(const Build_Model *model, BM_Target_Id id) {
     const BM_Target_Record *target = bm_model_target(model, id);
-    if (!target) return span;
-    span.items = target->explicit_dependency_ids;
-    span.count = arena_arr_len(target->explicit_dependency_ids);
-    return span;
+    return target ? arena_arr_len(target->source_records) : 0;
+}
+
+String_View bm_query_target_source_raw(const Build_Model *model, BM_Target_Id id, size_t source_index) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    if (!target || source_index >= arena_arr_len(target->source_records)) return nob_sv_from_cstr("");
+    return target->source_records[source_index].raw_path;
+}
+
+String_View bm_query_target_source_effective(const Build_Model *model, BM_Target_Id id, size_t source_index) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    if (!target || source_index >= arena_arr_len(target->source_records)) return nob_sv_from_cstr("");
+    return target->source_records[source_index].effective_path;
+}
+
+bool bm_query_target_source_generated(const Build_Model *model, BM_Target_Id id, size_t source_index) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    if (!target || source_index >= arena_arr_len(target->source_records)) return false;
+    return target->source_records[source_index].generated;
+}
+
+BM_Build_Step_Id bm_query_target_source_producer_step(const Build_Model *model, BM_Target_Id id, size_t source_index) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    if (!target || source_index >= arena_arr_len(target->source_records)) return BM_BUILD_STEP_ID_INVALID;
+    return target->source_records[source_index].producer_step_id;
+}
+
+BM_Target_Id_Span bm_query_target_dependencies_explicit(const Build_Model *model, BM_Target_Id id) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? bm_target_id_span(target->explicit_dependency_ids) : (BM_Target_Id_Span){0};
 }
 
 BM_String_Item_Span bm_query_target_link_libraries_raw(const Build_Model *model, BM_Target_Id id) {
@@ -599,6 +645,132 @@ String_View bm_query_target_runtime_output_directory(const Build_Model *model, B
 String_View bm_query_target_folder(const Build_Model *model, BM_Target_Id id) {
     const BM_Target_Record *target = bm_model_target(model, id);
     return target ? target->folder : (String_View){0};
+}
+
+BM_Build_Step_Kind bm_query_build_step_kind(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? step->kind : BM_BUILD_STEP_OUTPUT_RULE;
+}
+
+BM_Directory_Id bm_query_build_step_owner_directory(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? step->owner_directory_id : BM_DIRECTORY_ID_INVALID;
+}
+
+BM_Target_Id bm_query_build_step_owner_target(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? step->owner_target_id : BM_TARGET_ID_INVALID;
+}
+
+bool bm_query_build_step_append(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? step->append : false;
+}
+
+bool bm_query_build_step_verbatim(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? step->verbatim : false;
+}
+
+bool bm_query_build_step_uses_terminal(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? step->uses_terminal : false;
+}
+
+bool bm_query_build_step_command_expand_lists(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? step->command_expand_lists : false;
+}
+
+bool bm_query_build_step_depends_explicit_only(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? step->depends_explicit_only : false;
+}
+
+bool bm_query_build_step_codegen(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? step->codegen : false;
+}
+
+String_View bm_query_build_step_working_directory(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? step->working_directory : nob_sv_from_cstr("");
+}
+
+String_View bm_query_build_step_comment(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? step->comment : nob_sv_from_cstr("");
+}
+
+String_View bm_query_build_step_main_dependency(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? step->main_dependency : nob_sv_from_cstr("");
+}
+
+String_View bm_query_build_step_depfile(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? step->depfile : nob_sv_from_cstr("");
+}
+
+String_View bm_query_build_step_job_pool(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? step->job_pool : nob_sv_from_cstr("");
+}
+
+String_View bm_query_build_step_job_server_aware(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? step->job_server_aware : nob_sv_from_cstr("");
+}
+
+BM_String_Span bm_query_build_step_outputs_raw(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? bm_string_span(step->raw_outputs) : (BM_String_Span){0};
+}
+
+BM_String_Span bm_query_build_step_outputs(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? bm_string_span(step->effective_outputs) : (BM_String_Span){0};
+}
+
+BM_String_Span bm_query_build_step_byproducts_raw(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? bm_string_span(step->raw_byproducts) : (BM_String_Span){0};
+}
+
+BM_String_Span bm_query_build_step_byproducts(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? bm_string_span(step->effective_byproducts) : (BM_String_Span){0};
+}
+
+BM_String_Span bm_query_build_step_dependency_tokens_raw(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? bm_string_span(step->raw_dependency_tokens) : (BM_String_Span){0};
+}
+
+BM_Target_Id_Span bm_query_build_step_target_dependencies(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? bm_target_id_span(step->resolved_target_dependencies) : (BM_Target_Id_Span){0};
+}
+
+BM_Build_Step_Id_Span bm_query_build_step_producer_dependencies(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? bm_build_step_id_span(step->resolved_producer_dependencies) : (BM_Build_Step_Id_Span){0};
+}
+
+BM_String_Span bm_query_build_step_file_dependencies(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? bm_string_span(step->resolved_file_dependencies) : (BM_String_Span){0};
+}
+
+size_t bm_query_build_step_command_count(const Build_Model *model, BM_Build_Step_Id id) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    return step ? arena_arr_len(step->commands) : 0;
+}
+
+BM_String_Span bm_query_build_step_command_argv(const Build_Model *model, BM_Build_Step_Id id, size_t command_index) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    if (!step || command_index >= arena_arr_len(step->commands)) return (BM_String_Span){0};
+    return bm_string_span(step->commands[command_index].argv);
 }
 
 bool bm_query_target_effective_include_directories_items(const Build_Model *model,

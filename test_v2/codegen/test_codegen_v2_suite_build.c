@@ -251,6 +251,97 @@ TEST(codegen_ignores_cxx_modules_file_set_metadata_in_compile_inputs) {
     TEST_PASS();
 }
 
+TEST(codegen_builds_generated_source_from_output_rule_step) {
+    const char *script =
+        "project(Test C)\n"
+        "add_custom_command(\n"
+        "  OUTPUT generated/generated.c generated/generated.h\n"
+        "  COMMAND sh -c \"mkdir -p gen_build/generated && cp gen_src/template_generated.c gen_build/generated/generated.c && cp gen_src/template_generated.h gen_build/generated/generated.h && printf generated > gen_build/generated/generated.log\"\n"
+        "  DEPENDS template_generated.c template_generated.h\n"
+        "  BYPRODUCTS generated/generated.log)\n"
+        "add_executable(app main.c ${CMAKE_CURRENT_BINARY_DIR}/generated/generated.c)\n"
+        "target_include_directories(app PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)\n";
+    Codegen_Test_Config config = {
+        .input_path = "gen_src/CMakeLists.txt",
+        .output_path = "generated_graph_nob.c",
+        .source_dir = "gen_src",
+        .binary_dir = "gen_build",
+    };
+
+    ASSERT(codegen_write_text_file(
+        "gen_src/template_generated.c",
+        "#include \"generated.h\"\n"
+        "int generated_value(void) { return GENERATED_VALUE; }\n"));
+    ASSERT(codegen_write_text_file(
+        "gen_src/template_generated.h",
+        "#define GENERATED_VALUE 29\n"));
+    ASSERT(codegen_write_text_file(
+        "gen_src/main.c",
+        "int generated_value(void);\n"
+        "int main(void) { return generated_value() == 29 ? 0 : 1; }\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("generated_graph_nob.c", "generated_graph_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir(".", "./generated_graph_nob_gen", "app", NULL));
+    ASSERT(test_ws_host_path_exists("gen_build/app"));
+    ASSERT(test_ws_host_path_exists("gen_build/generated/generated.c"));
+    ASSERT(test_ws_host_path_exists("gen_build/generated/generated.h"));
+    ASSERT(test_ws_host_path_exists("gen_build/generated/generated.log"));
+    TEST_PASS();
+}
+
+TEST(codegen_custom_target_dependency_runs_and_clean_removes_step_stamps) {
+    const char *script =
+        "project(Test C)\n"
+        "add_custom_target(prepare COMMAND sh -c \"mkdir -p ct_build/generated && printf ready > ct_build/generated/prepared.txt\")\n"
+        "add_executable(app main.c)\n"
+        "add_dependencies(app prepare)\n";
+    Codegen_Test_Config config = {
+        .input_path = "ct_src/CMakeLists.txt",
+        .output_path = "custom_target_nob.c",
+        .source_dir = "ct_src",
+        .binary_dir = "ct_build",
+    };
+
+    ASSERT(codegen_write_text_file("ct_src/main.c", "int main(void) { return 0; }\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("custom_target_nob.c", "custom_target_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir(".", "./custom_target_nob_gen", "app", NULL));
+    ASSERT(test_ws_host_path_exists("ct_build/app"));
+    ASSERT(test_ws_host_path_exists("ct_build/generated/prepared.txt"));
+    ASSERT(test_ws_host_path_exists("ct_build/.nob/steps"));
+    ASSERT(codegen_run_binary_in_dir(".", "./custom_target_nob_gen", "clean", NULL));
+    ASSERT(test_ws_host_path_exists("ct_build"));
+    ASSERT(!test_ws_host_path_exists("ct_build/.nob/steps"));
+    TEST_PASS();
+}
+
+TEST(codegen_target_hooks_run_at_pre_link_and_post_build_boundaries) {
+    const char *script =
+        "project(Test C)\n"
+        "add_executable(app main.c)\n"
+        "add_custom_command(TARGET app PRE_LINK\n"
+        "  COMMAND sh -c \"test ! -e hook_build/app && mkdir -p hook_build/hooks && printf pre > hook_build/hooks/pre.txt\"\n"
+        "  BYPRODUCTS hooks/pre.txt)\n"
+        "add_custom_command(TARGET app POST_BUILD\n"
+        "  COMMAND sh -c \"test -e hook_build/app && mkdir -p hook_build/hooks && printf post > hook_build/hooks/post.txt\"\n"
+        "  BYPRODUCTS hooks/post.txt)\n";
+    Codegen_Test_Config config = {
+        .input_path = "hook_src/CMakeLists.txt",
+        .output_path = "hook_nob.c",
+        .source_dir = "hook_src",
+        .binary_dir = "hook_build",
+    };
+
+    ASSERT(codegen_write_text_file("hook_src/main.c", "int main(void) { return 0; }\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("hook_nob.c", "hook_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir(".", "./hook_nob_gen", "app", NULL));
+    ASSERT(test_ws_host_path_exists("hook_build/app"));
+    ASSERT(test_ws_host_path_exists("hook_build/hooks/pre.txt"));
+    ASSERT(test_ws_host_path_exists("hook_build/hooks/post.txt"));
+    TEST_PASS();
+}
+
 void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_write_file_rebases_source_and_binary_roots_for_out_of_source_nob(passed, failed, skipped);
     test_codegen_default_out_of_source_top_level_targets_build_in_binary_root(passed, failed, skipped);
@@ -259,4 +350,7 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_cxx_static_dependency_uses_cxx_driver_for_link_out_of_source(passed, failed, skipped);
     test_codegen_clean_removes_out_of_source_outputs_but_preserves_binary_root(passed, failed, skipped);
     test_codegen_ignores_cxx_modules_file_set_metadata_in_compile_inputs(passed, failed, skipped);
+    test_codegen_builds_generated_source_from_output_rule_step(passed, failed, skipped);
+    test_codegen_custom_target_dependency_runs_and_clean_removes_step_stamps(passed, failed, skipped);
+    test_codegen_target_hooks_run_at_pre_link_and_post_build_boundaries(passed, failed, skipped);
 }

@@ -31,6 +31,145 @@ enum {
 };
 
 typedef struct {
+    SV_List argv;
+} Eval_Custom_Command_Record;
+
+typedef Eval_Custom_Command_Record *Eval_Custom_Command_Record_List;
+
+static bool custom_command_record_push(EvalExecContext *ctx,
+                                       Eval_Custom_Command_Record_List *commands,
+                                       SV_List values) {
+    Eval_Custom_Command_Record record = {0};
+    size_t start = 0;
+    if (!ctx || !commands) return false;
+    if (arena_arr_len(values) > 0 && eval_sv_eq_ci_lit(values[0], "ARGS")) start = 1;
+    if (start >= arena_arr_len(values)) return true;
+    for (size_t i = start; i < arena_arr_len(values); ++i) {
+        if (!svu_list_push_temp(ctx, &record.argv, values[i])) return false;
+    }
+    return arena_arr_push(eval_temp_arena(ctx), *commands, record);
+}
+
+static bool custom_expand_command_argv(EvalExecContext *ctx,
+                                       const Eval_Custom_Command_Record *record,
+                                       bool command_expand_lists,
+                                       SV_List *out) {
+    if (!ctx || !record || !out) return false;
+    *out = NULL;
+    for (size_t i = 0; i < arena_arr_len(record->argv); ++i) {
+        if (!command_expand_lists) {
+            if (!svu_list_push_temp(ctx, out, record->argv[i])) return false;
+            continue;
+        }
+
+        SV_List expanded = NULL;
+        if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), record->argv[i], &expanded)) return false;
+        if (arena_arr_len(expanded) == 0) {
+            if (!svu_list_push_temp(ctx, out, record->argv[i])) return false;
+            continue;
+        }
+        for (size_t j = 0; j < arena_arr_len(expanded); ++j) {
+            if (!svu_list_push_temp(ctx, out, expanded[j])) return false;
+        }
+    }
+    return true;
+}
+
+static bool custom_emit_generated_mark(EvalExecContext *ctx,
+                                       Cmake_Event_Origin origin,
+                                       String_View raw_path) {
+    String_View directory_source_dir = {0};
+    String_View directory_binary_dir = {0};
+    String_View resolved_path = {0};
+    if (!ctx) return false;
+    directory_source_dir = eval_current_source_dir_for_paths(ctx);
+    directory_binary_dir = eval_current_binary_dir(ctx);
+    resolved_path = eval_path_resolve_for_cmake_arg(ctx, raw_path, directory_binary_dir, true);
+    if (eval_should_stop(ctx)) return false;
+    return eval_emit_source_mark_generated(ctx,
+                                           origin,
+                                           resolved_path,
+                                           directory_source_dir,
+                                           directory_binary_dir,
+                                           true);
+}
+
+static bool custom_emit_build_step(EvalExecContext *ctx,
+                                   Cmake_Event_Origin origin,
+                                   String_View step_key,
+                                   Event_Build_Step_Kind step_kind,
+                                   String_View owner_target_name,
+                                   bool append,
+                                   bool verbatim,
+                                   bool uses_terminal,
+                                   bool command_expand_lists,
+                                   bool depends_explicit_only,
+                                   bool codegen,
+                                   String_View working_dir,
+                                   String_View comment,
+                                   String_View main_dependency,
+                                   String_View depfile,
+                                   String_View job_pool,
+                                   String_View job_server_aware,
+                                   const SV_List *outputs,
+                                   const SV_List *byproducts,
+                                   const SV_List *depends,
+                                   const Eval_Custom_Command_Record_List *commands) {
+    if (!ctx) return false;
+    if (!eval_emit_build_step_declare(ctx,
+                                      origin,
+                                      step_key,
+                                      step_kind,
+                                      owner_target_name,
+                                      append,
+                                      verbatim,
+                                      uses_terminal,
+                                      command_expand_lists,
+                                      depends_explicit_only,
+                                      codegen,
+                                      working_dir,
+                                      comment,
+                                      main_dependency,
+                                      depfile,
+                                      job_pool,
+                                      job_server_aware)) {
+        return false;
+    }
+
+    if (outputs) {
+        for (size_t i = 0; i < arena_arr_len(*outputs); ++i) {
+            if (!eval_emit_build_step_add_output(ctx, origin, step_key, (*outputs)[i]) ||
+                !custom_emit_generated_mark(ctx, origin, (*outputs)[i])) {
+                return false;
+            }
+        }
+    }
+    if (byproducts) {
+        for (size_t i = 0; i < arena_arr_len(*byproducts); ++i) {
+            if (!eval_emit_build_step_add_byproduct(ctx, origin, step_key, (*byproducts)[i]) ||
+                !custom_emit_generated_mark(ctx, origin, (*byproducts)[i])) {
+                return false;
+            }
+        }
+    }
+    if (depends) {
+        for (size_t i = 0; i < arena_arr_len(*depends); ++i) {
+            if (!eval_emit_build_step_add_dependency(ctx, origin, step_key, (*depends)[i])) return false;
+        }
+    }
+    if (commands) {
+        for (size_t i = 0; i < arena_arr_len(*commands); ++i) {
+            SV_List argv = NULL;
+            if (!custom_expand_command_argv(ctx, &(*commands)[i], command_expand_lists, &argv) ||
+                !eval_emit_build_step_add_command(ctx, origin, step_key, (uint32_t)i, &argv)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+typedef struct {
     String_View working_dir;
     String_View comment;
     bool verbatim;
@@ -42,7 +181,7 @@ typedef struct {
     String_View job_server_aware;
     SV_List depends;
     SV_List byproducts;
-    SV_List commands;
+    Eval_Custom_Command_Record_List commands;
     SV_List sources;
 } Add_Custom_Target_Opts;
 
@@ -86,13 +225,7 @@ static bool add_custom_target_on_option(EvalExecContext *ctx,
         st->command_expand_lists = true;
         return true;
     case CUSTOM_TARGET_OPT_COMMAND: {
-        size_t start = 0;
-        if (arena_arr_len(values) > 0 && eval_sv_eq_ci_lit(values[0], "ARGS")) start = 1;
-        if (start < arena_arr_len(values)) {
-            String_View cmd = svu_join_space_temp(ctx, &values[start], arena_arr_len(values) - start);
-            if (!svu_list_push_temp(ctx, &st->commands, cmd)) return false;
-        }
-        return true;
+        return custom_command_record_push(ctx, &st->commands, values);
     }
     case CUSTOM_TARGET_OPT_JOB_POOL:
         st->has_job_pool = true;
@@ -160,7 +293,7 @@ enum {
 typedef struct {
     String_View command_name;
     Cmake_Event_Origin origin;
-    bool pre_build;
+    Event_Build_Step_Kind step_kind;
     bool got_stage;
     size_t stage_count;
     bool append;
@@ -182,7 +315,7 @@ typedef struct {
     SV_List outputs;
     SV_List byproducts;
     SV_List depends;
-    SV_List commands;
+    Eval_Custom_Command_Record_List commands;
 } Add_Custom_Command_Opts;
 
 typedef struct {
@@ -214,27 +347,21 @@ static bool add_custom_command_on_option(EvalExecContext *ctx,
         return true;
     case CUSTOM_CMD_OPT_PRE_BUILD:
         st->got_stage = true;
-        st->pre_build = true;
+        st->step_kind = EVENT_BUILD_STEP_TARGET_PRE_BUILD;
         st->stage_count++;
         return true;
     case CUSTOM_CMD_OPT_PRE_LINK:
         st->got_stage = true;
-        st->pre_build = true;
+        st->step_kind = EVENT_BUILD_STEP_TARGET_PRE_LINK;
         st->stage_count++;
         return true;
     case CUSTOM_CMD_OPT_POST_BUILD:
         st->got_stage = true;
-        st->pre_build = false;
+        st->step_kind = EVENT_BUILD_STEP_TARGET_POST_BUILD;
         st->stage_count++;
         return true;
     case CUSTOM_CMD_OPT_COMMAND: {
-        size_t start = 0;
-        if (arena_arr_len(values) > 0 && eval_sv_eq_ci_lit(values[0], "ARGS")) start = 1;
-        if (start < arena_arr_len(values)) {
-            String_View cmd = svu_join_space_temp(ctx, &values[start], arena_arr_len(values) - start);
-            if (!svu_list_push_temp(ctx, &st->commands, cmd)) return false;
-        }
-        return true;
+        return custom_command_record_push(ctx, &st->commands, values);
     }
     case CUSTOM_CMD_OPT_DEPENDS:
         for (size_t i = 0; i < arena_arr_len(values); i++) {
@@ -382,6 +509,16 @@ Eval_Result eval_handle_add_custom_target(EvalExecContext *ctx, const Node *node
 
     (void)eval_target_register(ctx, name);
 
+    if (!eval_emit_target_declare(ctx,
+                                  o,
+                                  name,
+                                  EV_TARGET_LIBRARY_UNKNOWN,
+                                  false,
+                                  false,
+                                  nob_sv_from_cstr(""))) {
+        return eval_result_fatal();
+    }
+
     if (!eval_target_apply_defined_initializers(ctx, o, name)) return eval_result_from_ctx(ctx);
     if (!apply_subdir_system_default_to_target(ctx, o, name)) return eval_result_from_ctx(ctx);
 
@@ -414,16 +551,34 @@ Eval_Result eval_handle_add_custom_target(EvalExecContext *ctx, const Node *node
             return eval_result_from_ctx(ctx);
         }
     }
-
-    (void)opt;
-    if (!eval_emit_target_declare(ctx,
-                                  o,
-                                  name,
-                                  EV_TARGET_LIBRARY_UNKNOWN,
-                                  false,
-                                  false,
-                                  nob_sv_from_cstr(""))) {
-        return eval_result_fatal();
+    {
+        String_View step_key = eval_alloc_build_step_key(ctx);
+        String_View job_pool = opt.has_job_pool ? opt.job_pool : nob_sv_from_cstr("");
+        String_View job_server_aware = opt.has_job_server_aware ? opt.job_server_aware : nob_sv_from_cstr("");
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+        if (!custom_emit_build_step(ctx,
+                                    o,
+                                    step_key,
+                                    EVENT_BUILD_STEP_CUSTOM_TARGET,
+                                    name,
+                                    false,
+                                    opt.verbatim,
+                                    opt.uses_terminal,
+                                    opt.command_expand_lists,
+                                    false,
+                                    false,
+                                    opt.working_dir,
+                                    opt.comment,
+                                    nob_sv_from_cstr(""),
+                                    nob_sv_from_cstr(""),
+                                    job_pool,
+                                    job_server_aware,
+                                    NULL,
+                                    &opt.byproducts,
+                                    &opt.depends,
+                                    &opt.commands)) {
+            return eval_result_fatal();
+        }
     }
     return eval_result_from_ctx(ctx);
 }
@@ -497,7 +652,7 @@ Eval_Result eval_handle_add_custom_command(EvalExecContext *ctx, const Node *nod
     Add_Custom_Command_Opts opt = {0};
     opt.command_name = node->as.cmd.name;
     opt.origin = o;
-    opt.pre_build = true;
+    opt.step_kind = EVENT_BUILD_STEP_TARGET_PRE_BUILD;
     Eval_Opt_Parse_Config cfg = {
         .component = nob_sv_from_cstr("dispatcher"),
         .command = node->as.cmd.name,
@@ -558,7 +713,6 @@ Eval_Result eval_handle_add_custom_command(EvalExecContext *ctx, const Node *nod
         return eval_result_from_ctx(ctx);
     }
     if (opt.main_dependency.count > 0) (void)svu_list_push_temp(ctx, &opt.depends, opt.main_dependency);
-    if (opt.depfile.count > 0) (void)svu_list_push_temp(ctx, &opt.byproducts, opt.depfile);
 
     if (mode_output && opt.append) {
         // CMake ignores these on APPEND mode.
@@ -567,24 +721,37 @@ Eval_Result eval_handle_add_custom_command(EvalExecContext *ctx, const Node *nod
         opt.main_dependency = nob_sv_from_cstr("");
     }
 
-    if (mode_target) {
-        if (!eval_emit_target_prop_set(ctx,
-                                       o,
-                                       target_name,
-                                       nob_sv_from_cstr("NOBIFY_CUSTOM_COMMAND_STAGE"),
-                                       opt.pre_build ? nob_sv_from_cstr("PRE_BUILD") : nob_sv_from_cstr("POST_BUILD"),
-                                       EV_PROP_SET)) {
+    {
+        String_View step_key = eval_alloc_build_step_key(ctx);
+        String_View job_pool = opt.has_job_pool ? opt.job_pool : nob_sv_from_cstr("");
+        String_View job_server_aware = opt.has_job_server_aware ? opt.job_server_aware : nob_sv_from_cstr("");
+        Event_Build_Step_Kind step_kind =
+            mode_target ? opt.step_kind : EVENT_BUILD_STEP_OUTPUT_RULE;
+        String_View owner_target_name = mode_target ? target_name : nob_sv_from_cstr("");
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
+        if (!custom_emit_build_step(ctx,
+                                    o,
+                                    step_key,
+                                    step_kind,
+                                    owner_target_name,
+                                    opt.append,
+                                    opt.verbatim,
+                                    opt.uses_terminal,
+                                    opt.command_expand_lists,
+                                    opt.depends_explicit_only,
+                                    opt.codegen,
+                                    opt.working_dir,
+                                    opt.comment,
+                                    opt.main_dependency,
+                                    opt.depfile,
+                                    job_pool,
+                                    job_server_aware,
+                                    mode_output ? &opt.outputs : NULL,
+                                    &opt.byproducts,
+                                    &opt.depends,
+                                    &opt.commands)) {
             return eval_result_fatal();
-        }
-    } else {
-        for (size_t i = 0; i < arena_arr_len(opt.outputs); i++) {
-            if (opt.append) {
-                if (!eval_emit_fs_append_file(ctx, o, opt.outputs[i])) return eval_result_fatal();
-            } else {
-                if (!eval_emit_fs_write_file(ctx, o, opt.outputs[i])) return eval_result_fatal();
-            }
         }
     }
     return eval_result_from_ctx(ctx);
 }
-
