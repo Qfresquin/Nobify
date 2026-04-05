@@ -308,6 +308,55 @@ Evidence delivered:
 - `./build/nob_test test-artifact-parity`
 - `./build/nob_test test-v2`
 
+### Pre-P3 Hardening
+
+Status:
+- completed on April 4, 2026
+- delivered:
+  a private codegen step-emission layer that pulls build-step scheduling out of
+  the monolithic backend file, standardizes per-command lexical scopes, and
+  deduplicates rebuild inputs before emitting `nob_needs_rebuild(...)`
+  embedded runtime tool resolution for `cmake`/`cpack`, with generated Nob
+  precedence now fixed as `NOB_CMAKE_BIN` / `NOB_CPACK_BIN` -> embedded
+  absolute path resolved at generation time -> bare `cmake` / `cpack`
+  stricter frozen-model validation for duplicate effective producers, invalid
+  step ownership contracts, invalid generated-source producer links, and
+  execution-graph cycles across targets plus build steps
+  focused build-model freeze/query coverage for producer matching, byproduct
+  lookup, generated marks without producers, and unresolved file dependencies
+  cleanup of the remaining `eval_expr.c` warning plus parity regressions that
+  prove embedded CMake execution works without PATH injection crutches
+
+Deliverables:
+- keep `P2` scheduling semantics while making the backend code shape explicit
+  and easier to extend in `P3`
+- harden the generated runtime so CMake-family helper steps do not depend on
+  the caller's ambient `PATH`
+- move impossible graph states from late backend failures into frozen-model
+  validation errors with clear diagnostics
+- lock the public freeze/query surface with smaller, targeted tests instead of
+  relying only on broader integration scenarios
+
+Non-goals:
+- no expansion of positive backend support for `DEPFILE`, `IMPLICIT_DEPENDS`,
+  `JOB_POOL`, `JOB_SERVER_AWARE`, `USES_TERMINAL`, or `CODEGEN`
+- no new install/export/package semantics
+- no widening of supported custom-command behavior beyond the `P2` contract
+
+Exit criteria:
+- `test-build-model`, `test-codegen`, `test-artifact-parity`, and `test-v2`
+  all stay green after the scheduler refactor and stricter validation
+- generated Nob no longer needs suite-local PATH mutation to execute
+  `cmake -E` helper steps in parity fixtures
+- impossible frozen-model execution-graph states fail during validation rather
+  than surfacing later as backend-only corruption
+
+Evidence delivered:
+- `./build/nob_test test-build-model`
+- `./build/nob_test test-codegen`
+- `./build/nob_test test-artifact-parity`
+- `./build/nob_test test-v2`
+
 ### P3 Usage-Requirement And Link Parity
 
 Status:

@@ -109,7 +109,11 @@ code.
   default aggregate. `P2` extends it again with real-CMake parity fixtures for
   generated-source consumers, custom-target dependency edges, and post-build
   sidecar outputs. The suite requires a real `cmake 3.28.x` plus the
-  runner-provided `CMK2NOB_TEST_NOBIFY_BIN` tool path.
+  runner-provided `CMK2NOB_TEST_NOBIFY_BIN` tool path. Generated Nob runtime
+  resolution for CMake-family tools now follows this precedence:
+  `NOB_CMAKE_BIN` / `NOB_CPACK_BIN` -> embedded absolute path captured by
+  `nobify` at generation time -> bare `cmake` / `cpack`. The harness no
+  longer relies on PATH injection to make `cmake -E` steps work.
   Current aggregate status: excluded from the default aggregate path.
 
 - `evaluator-integration`
@@ -175,6 +179,9 @@ Current state:
 - host fixtures are now centralized
 - evaluator-specific and codegen-specific support remains suite-local only where
   the logic is truly module-specific
+- generated build-step execution stays suite-local to `codegen`, but its proof
+  now includes focused scheduler coverage plus runtime tool-resolution
+  regressions instead of depending on ad hoc PATH setup
 
 Target direction:
 - generic support belongs here, not inside suite-local copies

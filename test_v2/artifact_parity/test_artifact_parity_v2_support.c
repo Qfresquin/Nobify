@@ -26,7 +26,6 @@ typedef struct {
 } Artifact_Parity_Tree_Entry;
 
 static char s_artifact_parity_repo_root[_TINYDIR_PATH_MAX] = {0};
-static char s_artifact_parity_cmake_bin_dir[_TINYDIR_PATH_MAX] = {0};
 
 static bool artifact_parity_mkdirs(const char *path) {
     char buf[_TINYDIR_PATH_MAX] = {0};
@@ -56,97 +55,6 @@ static bool artifact_parity_copy_string(const char *src,
         return false;
     }
     return true;
-}
-
-static bool artifact_parity_copy_parent_dir(const char *path,
-                                            char out[_TINYDIR_PATH_MAX]) {
-    const char *slash = NULL;
-    size_t len = 0;
-    if (!path || !out) return false;
-    slash = strrchr(path, '/');
-#if defined(_WIN32)
-    {
-        const char *backslash = strrchr(path, '\\');
-        if (!slash || (backslash && backslash > slash)) slash = backslash;
-    }
-#endif
-    if (!slash) return artifact_parity_copy_string(".", out);
-    len = (size_t)(slash - path);
-    if (len == 0) len = 1;
-    if (len >= _TINYDIR_PATH_MAX) return false;
-    memcpy(out, path, len);
-    out[len] = '\0';
-    return true;
-}
-
-static bool artifact_parity_push_cmake_tool_path(char **saved_path_out) {
-    const char *old_path = NULL;
-    char *new_path = NULL;
-    size_t new_len = 0;
-    if (!saved_path_out) return false;
-    *saved_path_out = NULL;
-    if (s_artifact_parity_cmake_bin_dir[0] == '\0') return true;
-
-    old_path = getenv("PATH");
-    if (old_path) {
-        *saved_path_out = strdup(old_path);
-        if (!*saved_path_out) return false;
-    }
-
-    new_len = strlen(s_artifact_parity_cmake_bin_dir) + 1;
-    if (old_path && old_path[0] != '\0') new_len += 1 + strlen(old_path);
-    new_path = (char*)malloc(new_len);
-    if (!new_path) {
-        free(*saved_path_out);
-        *saved_path_out = NULL;
-        return false;
-    }
-
-#if defined(_WIN32)
-    if (old_path && old_path[0] != '\0') {
-        snprintf(new_path, new_len, "%s;%s", s_artifact_parity_cmake_bin_dir, old_path);
-    } else {
-        snprintf(new_path, new_len, "%s", s_artifact_parity_cmake_bin_dir);
-    }
-    if (_putenv_s("PATH", new_path) != 0) {
-        free(new_path);
-        free(*saved_path_out);
-        *saved_path_out = NULL;
-        return false;
-    }
-#else
-    if (old_path && old_path[0] != '\0') {
-        snprintf(new_path, new_len, "%s:%s", s_artifact_parity_cmake_bin_dir, old_path);
-    } else {
-        snprintf(new_path, new_len, "%s", s_artifact_parity_cmake_bin_dir);
-    }
-    if (setenv("PATH", new_path, 1) != 0) {
-        free(new_path);
-        free(*saved_path_out);
-        *saved_path_out = NULL;
-        return false;
-    }
-#endif
-
-    free(new_path);
-    return true;
-}
-
-static void artifact_parity_pop_cmake_tool_path(char *saved_path) {
-#if defined(_WIN32)
-    if (saved_path) {
-        (void)_putenv_s("PATH", saved_path);
-    } else {
-        (void)_putenv_s("PATH", "");
-    }
-#else
-    if (saved_path) {
-        (void)setenv("PATH", saved_path, 1);
-    } else {
-        (void)unsetenv("PATH");
-    }
-#endif
-    free(saved_path);
 }
 
 static bool artifact_parity_path_is_executable(const char *path) {
@@ -675,10 +583,6 @@ bool artifact_parity_resolve_cmake(Artifact_Parity_Cmake_Config *out_config,
     }
 
     out_config->available = true;
-    if (!artifact_parity_copy_parent_dir(out_config->cmake_bin, s_artifact_parity_cmake_bin_dir)) {
-        arena_destroy(arena);
-        return false;
-    }
     if (artifact_parity_find_sibling_tool(out_config->cmake_bin, "cpack", out_config->cpack_bin)) {
         out_config->cpack_available = true;
     }
@@ -803,23 +707,17 @@ bool artifact_parity_run_binary_in_dir(const char *dir,
     Nob_Cmd cmd = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
     const char *cwd = nob_get_current_dir_temp();
-    char *saved_path = NULL;
     bool ok = false;
     if (!dir || !binary_path || !cwd) return false;
     if (strlen(cwd) + 1 > sizeof(prev_cwd)) return false;
     memcpy(prev_cwd, cwd, strlen(cwd) + 1);
 
     if (!nob_set_current_dir(dir)) return false;
-    if (!artifact_parity_push_cmake_tool_path(&saved_path)) {
-        (void)nob_set_current_dir(prev_cwd);
-        return false;
-    }
     nob_cmd_append(&cmd, binary_path);
     if (arg1) nob_cmd_append(&cmd, arg1);
     if (arg2) nob_cmd_append(&cmd, arg2);
     ok = nob_cmd_run(&cmd);
     nob_cmd_free(cmd);
-    artifact_parity_pop_cmake_tool_path(saved_path);
     if (!nob_set_current_dir(prev_cwd)) return false;
     return ok;
 }

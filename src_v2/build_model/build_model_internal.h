@@ -341,5 +341,9 @@ bool bm_validate_explicit_cycles(const Build_Model_Draft *draft,
                                  Arena *scratch,
                                  Diag_Sink *sink,
                                  bool *had_error);
+bool bm_validate_execution_graph(const Build_Model *model,
+                                 Arena *scratch,
+                                 Diag_Sink *sink,
+                                 bool *had_error);
 
 #endif

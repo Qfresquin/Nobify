@@ -453,13 +453,13 @@ static String_View expand_once(struct EvalExecContext *ctx, String_View in, int 
         if (c == '$' && i + 1 < in.count && in.data[i + 1] == '{') {
             size_t start = i + 2;
             size_t j = start;
-            int depth = 1;
-            while (j < in.count && depth > 0) {
-                if (in.data[j] == '{') depth++;
-                else if (in.data[j] == '}') depth--;
+            int nested_depth = 1;
+            while (j < in.count && nested_depth > 0) {
+                if (in.data[j] == '{') nested_depth++;
+                else if (in.data[j] == '}') nested_depth--;
                 j++;
             }
-            if (depth == 0) {
+            if (nested_depth == 0) {
                 String_View inner = nob_sv_from_parts(in.data + start, (j - 1) - start);
                 inner = eval_expand_vars_depth(ctx, inner, depth + 1);
                 String_View val = nob_sv_from_cstr("");

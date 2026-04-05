@@ -767,7 +767,8 @@ static void append_v2_build_model_runtime_sources(Nob_Cmd *cmd) {
 
 static void append_v2_codegen_runtime_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
-        "src_v2/codegen/nob_codegen.c");
+        "src_v2/codegen/nob_codegen.c",
+        "src_v2/codegen/nob_codegen_steps.c");
 }
 
 static unsigned long test_process_id(void) {

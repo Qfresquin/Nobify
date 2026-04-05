@@ -8,6 +8,8 @@ typedef struct Nob_Codegen_Options {
     String_View output_path;
     String_View source_root;
     String_View binary_root;
+    String_View embedded_cmake_bin;
+    String_View embedded_cpack_bin;
 } Nob_Codegen_Options;
 
 bool nob_codegen_render(const Build_Model *model,

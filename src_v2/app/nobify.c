@@ -14,8 +14,172 @@
 #include "build_model_freeze.h"
 #include "build_model_query.h"
 #include "nob_codegen.h"
+#include "tinydir.h"
 
 #include <string.h>
+#if defined(_WIN32)
+#include <windows.h>
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
+static bool nobify_copy_string(const char *src,
+                               char out[_TINYDIR_PATH_MAX]) {
+    int n = 0;
+    if (!src || !out) return false;
+    n = snprintf(out, _TINYDIR_PATH_MAX, "%s", src);
+    return n >= 0 && n < _TINYDIR_PATH_MAX;
+}
+
+static bool nobify_path_is_executable(const char *path) {
+    if (!path || path[0] == '\0') return false;
+#if defined(_WIN32)
+    {
+        DWORD attrs = GetFileAttributesA(path);
+        return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+    }
+#else
+    return access(path, X_OK) == 0;
+#endif
+}
+
+static bool nobify_find_executable_in_path(const char *name,
+                                           char out_path[_TINYDIR_PATH_MAX]) {
+    if (!name || !out_path) return false;
+
+    if (strchr(name, '/') || strchr(name, '\\')) {
+        if (!nobify_path_is_executable(name)) return false;
+        return snprintf(out_path, _TINYDIR_PATH_MAX, "%s", name) < _TINYDIR_PATH_MAX;
+    }
+
+#if defined(_WIN32)
+    {
+        DWORD n = SearchPathA(NULL, name, NULL, _TINYDIR_PATH_MAX, out_path, NULL);
+        return n > 0 && n < _TINYDIR_PATH_MAX;
+    }
+#else
+    {
+        const char *path_env = getenv("PATH");
+        size_t temp_mark = nob_temp_save();
+        if (!path_env || path_env[0] == '\0') return false;
+
+        while (*path_env) {
+            const char *sep = strchr(path_env, ':');
+            size_t dir_len = sep ? (size_t)(sep - path_env) : strlen(path_env);
+            const char *dir = dir_len == 0 ? "." : nob_temp_strndup(path_env, dir_len);
+            const char *candidate = NULL;
+
+            if (!dir) {
+                nob_temp_rewind(temp_mark);
+                return false;
+            }
+            candidate = nob_temp_sprintf("%s/%s", dir, name);
+            if (candidate && nobify_path_is_executable(candidate)) {
+                bool ok = snprintf(out_path, _TINYDIR_PATH_MAX, "%s", candidate) < _TINYDIR_PATH_MAX;
+                nob_temp_rewind(temp_mark);
+                return ok;
+            }
+
+            if (!sep) break;
+            path_env = sep + 1;
+        }
+
+        nob_temp_rewind(temp_mark);
+        return false;
+    }
+#endif
+}
+
+static bool nobify_resolve_sibling_tool(const char *tool_path,
+                                        const char *tool_name,
+                                        char out_path[_TINYDIR_PATH_MAX]) {
+    const char *tool_dir = NULL;
+    if (!tool_path || !tool_name || !out_path) return false;
+    tool_dir = nob_temp_dir_name(tool_path);
+    if (!tool_dir || tool_dir[0] == '\0') return false;
+    if (snprintf(out_path, _TINYDIR_PATH_MAX, "%s/%s", tool_dir, tool_name) >= _TINYDIR_PATH_MAX) {
+        return false;
+    }
+    return nobify_path_is_executable(out_path);
+}
+
+static bool nobify_find_repo_probe_cmake(char out_path[_TINYDIR_PATH_MAX]) {
+    char probes_root[_TINYDIR_PATH_MAX] = {0};
+    Nob_Dir_Entry dir = {0};
+    const char *repo_root = getenv("CMK2NOB_TEST_REPO_ROOT");
+    const char *cwd = NULL;
+
+    if (!out_path) return false;
+    if (!repo_root || repo_root[0] == '\0') {
+        cwd = nob_get_current_dir_temp();
+        repo_root = cwd;
+    }
+    if (!repo_root || repo_root[0] == '\0') return false;
+    if (snprintf(probes_root,
+                 sizeof(probes_root),
+                 "%s/Temp_tests/probes",
+                 repo_root) >= (int)sizeof(probes_root)) {
+        return false;
+    }
+    if (!nob_file_exists(probes_root)) return false;
+    if (!nob_dir_entry_open(probes_root, &dir)) return false;
+
+    while (nob_dir_entry_next(&dir)) {
+        char candidate_dir[_TINYDIR_PATH_MAX] = {0};
+        char candidate_path[_TINYDIR_PATH_MAX] = {0};
+        if (strcmp(dir.name, ".") == 0 || strcmp(dir.name, "..") == 0) continue;
+        if (strncmp(dir.name, "cmake-", strlen("cmake-")) != 0) continue;
+        if (snprintf(candidate_dir,
+                     sizeof(candidate_dir),
+                     "%s/%s",
+                     probes_root,
+                     dir.name) >= (int)sizeof(candidate_dir)) {
+            continue;
+        }
+        if (snprintf(candidate_path,
+                     sizeof(candidate_path),
+                     "%s/bin/cmake",
+                     candidate_dir) >= (int)sizeof(candidate_path)) {
+            continue;
+        }
+        if (nobify_path_is_executable(candidate_path)) {
+            nob_dir_entry_close(dir);
+            return nobify_copy_string(candidate_path, out_path);
+        }
+    }
+
+    nob_dir_entry_close(dir);
+    return false;
+}
+
+static bool nobify_resolve_host_tool_paths(char cmake_bin[_TINYDIR_PATH_MAX],
+                                           char cpack_bin[_TINYDIR_PATH_MAX]) {
+    const char *env_cmake = NULL;
+    if (!cmake_bin || !cpack_bin) return false;
+    cmake_bin[0] = '\0';
+    cpack_bin[0] = '\0';
+
+    env_cmake = getenv("CMK2NOB_TEST_CMAKE_BIN");
+    if (env_cmake && env_cmake[0] != '\0') {
+        bool found = false;
+        if (strchr(env_cmake, '/') || strchr(env_cmake, '\\')) {
+            found = nobify_path_is_executable(env_cmake) &&
+                    nobify_copy_string(env_cmake, cmake_bin);
+        } else {
+            found = nobify_find_executable_in_path(env_cmake, cmake_bin);
+        }
+        if (!found) cmake_bin[0] = '\0';
+    } else if (nobify_find_executable_in_path("cmake", cmake_bin)) {
+        /* Resolved from PATH. */
+    } else if (nobify_find_repo_probe_cmake(cmake_bin)) {
+        /* Resolved from repo-local probe cache. */
+    }
+
+    if (cmake_bin[0] == '\0') return true;
+    (void)nobify_resolve_sibling_tool(cmake_bin, "cpack", cpack_bin);
+    return true;
+}
 
 static void print_usage(const char *program) {
     nob_log(NOB_INFO,
@@ -75,6 +239,8 @@ int main(int argc, char **argv) {
     const char *output_path = NULL;
     const char *source_root_path = NULL;
     const char *binary_root_path = NULL;
+    char cmake_bin[_TINYDIR_PATH_MAX] = {0};
+    char cpack_bin[_TINYDIR_PATH_MAX] = {0};
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--strict") == 0) {
@@ -174,6 +340,11 @@ int main(int argc, char **argv) {
     binary_root = arena_strdup(arena, binary_root_path ? binary_root_path : source_root);
     if (!source_root || !binary_root) {
         nob_log(NOB_ERROR, "Failed to resolve effective roots");
+        arena_destroy(arena);
+        return 1;
+    }
+    if (!nobify_resolve_host_tool_paths(cmake_bin, cpack_bin)) {
+        nob_log(NOB_ERROR, "Failed to resolve host tool paths");
         arena_destroy(arena);
         return 1;
     }
@@ -415,6 +586,8 @@ int main(int argc, char **argv) {
         .output_path = nob_sv_from_cstr(output_path),
         .source_root = sv_from_cstr(source_root),
         .binary_root = sv_from_cstr(binary_root),
+        .embedded_cmake_bin = nob_sv_from_cstr(cmake_bin),
+        .embedded_cpack_bin = nob_sv_from_cstr(cpack_bin),
     };
     if (!nob_codegen_write_file(model, codegen_arena, &codegen_opts)) {
         nob_log(NOB_ERROR, "Codegen failed while writing %s", output_path);

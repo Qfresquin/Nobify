@@ -661,6 +661,8 @@ const Build_Model *bm_freeze_draft(const Build_Model_Draft *draft,
                                    Arena *out_arena,
                                    Diag_Sink *sink) {
     Build_Model *model = NULL;
+    Arena *validate_arena = NULL;
+    bool had_error = false;
     if (!draft || !out_arena) return NULL;
     if (!bm_freeze_check_invariants(draft, sink)) return NULL;
 
@@ -689,6 +691,15 @@ const Build_Model *bm_freeze_draft(const Build_Model_Draft *draft,
         !bm_apply_generated_source_marks(draft, model)) {
         return NULL;
     }
+
+    validate_arena = arena_create(2 * 1024 * 1024);
+    if (!validate_arena) return NULL;
+    if (!bm_validate_execution_graph(model, validate_arena, sink, &had_error)) {
+        arena_destroy(validate_arena);
+        return NULL;
+    }
+    arena_destroy(validate_arena);
+    if (had_error) return NULL;
 
     return model;
 }

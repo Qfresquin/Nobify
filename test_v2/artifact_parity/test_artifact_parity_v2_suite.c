@@ -1,10 +1,15 @@
 #include "test_artifact_parity_v2_support.h"
 
+#include "test_fs.h"
 #include "test_v2_assert.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 static Artifact_Parity_Cmake_Config s_artifact_parity_cmake = {0};
 static char s_artifact_parity_skip_reason[256] = {0};
@@ -53,6 +58,23 @@ static void artifact_parity_env_guard_cleanup(void *ctx) {
     free(guard->prev_value);
     guard->prev_value = NULL;
 }
+
+#if !defined(_WIN32)
+static bool artifact_parity_make_tool_only_path_dir(const char *dir) {
+    static const char *k_tools[] = {"cc", "c++", "as", "ld", "ar", "mkdir", "rm"};
+    char tool_path[_TINYDIR_PATH_MAX] = {0};
+    char tool_link[_TINYDIR_PATH_MAX] = {0};
+    if (!dir) return false;
+    if (!nob_mkdir_if_not_exists(dir)) return false;
+    for (size_t i = 0; i < NOB_ARRAY_LEN(k_tools); ++i) {
+        if (!test_ws_host_program_in_path(k_tools[i], tool_path)) return false;
+        if (!test_fs_join_path(dir, k_tools[i], tool_link)) return false;
+        (void)unlink(tool_link);
+        if (symlink(tool_path, tool_link) != 0) return false;
+    }
+    return true;
+}
+#endif
 
 static const char *artifact_parity_case_source_root(const Artifact_Parity_Case *case_def) {
     return case_def && case_def->source_root && case_def->source_root[0] != '\0'
@@ -872,6 +894,61 @@ TEST(artifact_parity_manifest_mismatch_reporting_returns_false) {
     TEST_PASS();
 }
 
+TEST(artifact_parity_generated_nob_uses_embedded_cmake_without_path_injection) {
+#if defined(_WIN32)
+    TEST_SKIP("tool-only PATH probe is POSIX-only");
+#else
+    Artifact_Parity_Env_Guard path_guard = {0};
+    const char *tool_only_path_abs = nob_temp_sprintf("%s/tool_only_path", nob_get_current_dir_temp());
+    ASSERT(s_artifact_parity_cmake.available);
+    ASSERT(s_artifact_parity_nobify_bin[0] != '\0');
+    ASSERT(artifact_parity_materialize_files("source",
+                                             (Artifact_Parity_File[]){
+                                                 {
+                                                     "CMakeLists.txt",
+                                                     "cmake_minimum_required(VERSION 3.28)\n"
+                                                     "project(EmbeddedCMake LANGUAGES C)\n"
+                                                     "add_custom_command(\n"
+                                                     "  OUTPUT generated/generated.c generated/generated.h\n"
+                                                     "  COMMAND cmake -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated\n"
+                                                     "  COMMAND cmake -E copy_if_different template_generated.c ${CMAKE_CURRENT_BINARY_DIR}/generated/generated.c\n"
+                                                     "  COMMAND cmake -E copy_if_different template_generated.h ${CMAKE_CURRENT_BINARY_DIR}/generated/generated.h)\n"
+                                                     "add_executable(app main.c ${CMAKE_CURRENT_BINARY_DIR}/generated/generated.c)\n"
+                                                     "target_include_directories(app PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)\n",
+                                                 },
+                                                 {
+                                                     "template_generated.c",
+                                                     "#include \"generated.h\"\n"
+                                                     "int generated_value(void) { return GENERATED_VALUE; }\n",
+                                                 },
+                                                 {
+                                                     "template_generated.h",
+                                                     "#define GENERATED_VALUE 37\n",
+                                                 },
+                                                 {
+                                                     "main.c",
+                                                     "int generated_value(void);\n"
+                                                     "int main(void) { return generated_value() == 37 ? 0 : 1; }\n",
+                                                 },
+                                             },
+                                             4));
+    ASSERT(artifact_parity_run_nobify(s_artifact_parity_nobify_bin,
+                                      nob_temp_sprintf("%s/source/CMakeLists.txt", nob_get_current_dir_temp()),
+                                      nob_temp_sprintf("%s/source/nob.c", nob_get_current_dir_temp()),
+                                      nob_temp_sprintf("%s/source", nob_get_current_dir_temp()),
+                                      nob_temp_sprintf("%s/nob_build", nob_get_current_dir_temp())));
+    ASSERT(artifact_parity_compile_generated_nob("source/nob.c", "source/nob_gen"));
+    ASSERT(artifact_parity_make_tool_only_path_dir("tool_only_path"));
+    ASSERT(artifact_parity_env_guard_set(&path_guard, "PATH", tool_only_path_abs));
+    TEST_DEFER(artifact_parity_env_guard_cleanup, &path_guard);
+    ASSERT(artifact_parity_run_binary_in_dir("source", "./nob_gen", "app", NULL));
+    ASSERT(test_ws_host_path_exists("nob_build/app"));
+    ASSERT(test_ws_host_path_exists("nob_build/generated/generated.c"));
+    ASSERT(test_ws_host_path_exists("nob_build/generated/generated.h"));
+    TEST_PASS();
+#endif
+}
+
 void run_artifact_parity_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -928,6 +1005,7 @@ void run_artifact_parity_v2_tests(int *passed, int *failed, int *skipped) {
     test_artifact_parity_skips_when_cmake_version_is_not_3_28(passed, failed, skipped);
     test_artifact_parity_skips_when_cpack_is_missing_for_package_phase(passed, failed, skipped);
     test_artifact_parity_manifest_mismatch_reporting_returns_false(passed, failed, skipped);
+    test_artifact_parity_generated_nob_uses_embedded_cmake_without_path_injection(passed, failed, skipped);
 
     if (!test_ws_leave(prev_cwd)) {
         nob_log(NOB_ERROR, "artifact parity suite: failed to restore cwd");

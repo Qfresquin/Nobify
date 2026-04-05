@@ -1,6 +1,121 @@
 #include "test_codegen_v2_support.h"
+#include "test_fs.h"
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 static char s_codegen_repo_root[_TINYDIR_PATH_MAX] = {0};
+
+static bool codegen_copy_string(const char *src,
+                                char out[_TINYDIR_PATH_MAX]) {
+    int n = 0;
+    if (!src || !out) return false;
+    n = snprintf(out, _TINYDIR_PATH_MAX, "%s", src);
+    if (n < 0 || n >= _TINYDIR_PATH_MAX) {
+        nob_log(NOB_ERROR, "codegen test: path too long: %s", src);
+        return false;
+    }
+    return true;
+}
+
+static bool codegen_path_is_executable(const char *path) {
+    if (!path || path[0] == '\0') return false;
+#if defined(_WIN32)
+    {
+        DWORD attrs = GetFileAttributesA(path);
+        return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+    }
+#else
+    return access(path, X_OK) == 0;
+#endif
+}
+
+static bool codegen_find_repo_probe_cmake(char out_path[_TINYDIR_PATH_MAX]) {
+    char probes_root[_TINYDIR_PATH_MAX] = {0};
+    Nob_Dir_Entry dir = {0};
+    Test_Fs_Path_Info info = {0};
+    const char *repo_root = s_codegen_repo_root[0] != '\0'
+        ? s_codegen_repo_root
+        : getenv(CMK2NOB_TEST_REPO_ROOT_ENV);
+
+    if (!repo_root || repo_root[0] == '\0') return false;
+    if (!test_fs_join_path(repo_root, "Temp_tests/probes", probes_root)) return false;
+    if (!test_fs_get_path_info(probes_root, &info) || !info.exists || !info.is_dir) return false;
+    if (!nob_dir_entry_open(probes_root, &dir)) return false;
+
+    while (nob_dir_entry_next(&dir)) {
+        char candidate_dir[_TINYDIR_PATH_MAX] = {0};
+        char candidate_path[_TINYDIR_PATH_MAX] = {0};
+        if (test_fs_is_dot_or_dotdot(dir.name)) continue;
+        if (strncmp(dir.name, "cmake-", strlen("cmake-")) != 0) continue;
+        if (!test_fs_join_path(probes_root, dir.name, candidate_dir) ||
+            !test_fs_join_path(candidate_dir, "bin/cmake", candidate_path)) {
+            continue;
+        }
+        if (codegen_path_is_executable(candidate_path)) {
+            nob_dir_entry_close(dir);
+            return codegen_copy_string(candidate_path, out_path);
+        }
+    }
+
+    nob_dir_entry_close(dir);
+    return false;
+}
+
+static bool codegen_resolve_sibling_tool(const char *tool_path,
+                                         const char *tool_name,
+                                         char out_path[_TINYDIR_PATH_MAX]) {
+    const char *tool_dir = NULL;
+    if (!tool_path || !tool_name || !out_path) return false;
+    tool_dir = nob_temp_dir_name(tool_path);
+    if (!tool_dir || tool_dir[0] == '\0') return false;
+    if (snprintf(out_path, _TINYDIR_PATH_MAX, "%s/%s", tool_dir, tool_name) >= _TINYDIR_PATH_MAX) {
+        return false;
+    }
+    return test_ws_host_path_exists(out_path);
+}
+
+static bool codegen_fill_host_tool_paths(Arena *arena, Nob_Codegen_Options *opts) {
+    char cmake_bin[_TINYDIR_PATH_MAX] = {0};
+    char cpack_bin[_TINYDIR_PATH_MAX] = {0};
+    const char *env_cmake = NULL;
+    char *cmake_copy = NULL;
+    char *cpack_copy = NULL;
+    if (!arena || !opts) return false;
+
+    env_cmake = getenv(CMK2NOB_TEST_CMAKE_BIN_ENV);
+    if (env_cmake && env_cmake[0] != '\0') {
+        if (strchr(env_cmake, '/') || strchr(env_cmake, '\\')) {
+            if (snprintf(cmake_bin, sizeof(cmake_bin), "%s", env_cmake) >= (int)sizeof(cmake_bin)) {
+                return false;
+            }
+        } else if (!test_ws_host_program_in_path(env_cmake, cmake_bin)) {
+            cmake_bin[0] = '\0';
+        }
+    } else if (test_ws_host_program_in_path("cmake", cmake_bin)) {
+        /* Resolved from PATH. */
+    } else if (codegen_find_repo_probe_cmake(cmake_bin)) {
+        /* Resolved from repo-local probe cache. */
+    } else {
+        cmake_bin[0] = '\0';
+    }
+
+    if (cmake_bin[0] == '\0') return true;
+    (void)codegen_resolve_sibling_tool(cmake_bin, "cpack", cpack_bin);
+
+    cmake_copy = arena_strdup(arena, cmake_bin);
+    if (!cmake_copy) return false;
+    opts->embedded_cmake_bin = nob_sv_from_cstr(cmake_copy);
+    if (cpack_bin[0] != '\0') {
+        cpack_copy = arena_strdup(arena, cpack_bin);
+        if (!cpack_copy) return false;
+        opts->embedded_cpack_bin = nob_sv_from_cstr(cpack_copy);
+    }
+    return true;
+}
 
 static bool codegen_mkdirs(const char *path) {
     char buf[_TINYDIR_PATH_MAX] = {0};
@@ -74,6 +189,11 @@ static bool codegen_render_or_write_script(const char *script,
             .source_root = nob_sv_from_cstr(effective_source_dir),
             .binary_root = nob_sv_from_cstr(effective_binary_dir),
         };
+        if (!codegen_fill_host_tool_paths(codegen_arena, &opts)) {
+            arena_destroy(codegen_arena);
+            test_semantic_pipeline_fixture_destroy(&fixture);
+            return false;
+        }
         ok = write_file
             ? nob_codegen_write_file(fixture.build.model, codegen_arena, &opts)
             : nob_codegen_render(fixture.build.model, codegen_arena, &opts, out);

@@ -47,6 +47,9 @@ The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`
   sibling `cpack` only for package-phase cases
   runner-provided `CMK2NOB_TEST_NOBIFY_BIN` so the suite uses a freshly built
   `nobify` from the current workspace sources
+  generated Nob runtime tool precedence is
+  `NOB_CMAKE_BIN` / `NOB_CPACK_BIN` -> embedded absolute path from `nobify` ->
+  bare `cmake` / `cpack`
 - execution policy:
   explicit-only via `./build/nob_test test-artifact-parity`
   not part of the default `./build/nob_test test-v2` smoke aggregate

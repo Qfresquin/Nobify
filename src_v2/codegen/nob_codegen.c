@@ -1,4 +1,4 @@
-#include "nob_codegen.h"
+#include "nob_codegen_internal.h"
 
 #include "arena_dyn.h"
 
@@ -7,60 +7,6 @@
 #include <stdio.h>
 #include <string.h>
 
-typedef struct {
-    BM_Target_Id id;
-    BM_Target_Id resolved_id;
-    BM_Target_Kind kind;
-    bool imported;
-    bool alias;
-    bool exclude_from_all;
-    bool emits_artifact;
-    String_View name;
-    const char *ident;
-    String_View artifact_path;
-    String_View state_path;
-    bool needs_cxx_linker_known;
-    bool needs_cxx_linker;
-} CG_Target_Info;
-
-typedef struct {
-    BM_Build_Step_Id id;
-    BM_Build_Step_Kind kind;
-    BM_Directory_Id owner_directory_id;
-    BM_Target_Id owner_target_id;
-    const char *ident;
-    String_View sentinel_path;
-    bool uses_stamp;
-} CG_Build_Step_Info;
-
-typedef enum {
-    CG_SOURCE_LANG_C = 0,
-    CG_SOURCE_LANG_CXX,
-} CG_Source_Lang;
-
-typedef struct {
-    String_View path;
-    CG_Source_Lang lang;
-    BM_Build_Step_Id producer_step_id;
-} CG_Source_Info;
-
-typedef struct {
-    const Build_Model *model;
-    Arena *scratch;
-    Nob_Codegen_Options opts;
-    String_View cwd_abs;
-    String_View source_root_abs;
-    String_View binary_root_abs;
-    String_View emit_path_abs;
-    String_View emit_dir_abs;
-    CG_Target_Info *targets;
-    size_t target_count;
-    CG_Build_Step_Info *build_steps;
-    size_t build_step_count;
-} CG_Context;
-
-static const CG_Target_Info *cg_target_info(const CG_Context *ctx, BM_Target_Id id);
-static const CG_Build_Step_Info *cg_build_step_info(const CG_Context *ctx, BM_Build_Step_Id id);
 static bool cg_target_needs_cxx_linker_recursive(CG_Context *ctx, BM_Target_Id id, bool *out);
 
 static bool cg_sv_eq_lit(String_View sv, const char *lit) {
@@ -143,7 +89,7 @@ static char *cg_arena_sprintf(Arena *scratch, const char *fmt, ...) {
     return out;
 }
 
-static bool cg_sb_append_c_string(Nob_String_Builder *sb, String_View sv) {
+bool cg_sb_append_c_string(Nob_String_Builder *sb, String_View sv) {
     if (!sb) return false;
     nob_sb_append(sb, '"');
     for (size_t i = 0; i < sv.count; ++i) {
@@ -356,7 +302,7 @@ static bool cg_rebase_from_provenance(CG_Context *ctx,
     return cg_rebase_from_base(ctx, value, base_dir, out);
 }
 
-static bool cg_rebase_path_from_cwd(CG_Context *ctx, String_View value, String_View *out) {
+bool cg_rebase_path_from_cwd(CG_Context *ctx, String_View value, String_View *out) {
     return cg_rebase_from_base(ctx, value, ctx->cwd_abs, out);
 }
 
@@ -624,7 +570,7 @@ static bool cg_init_targets(CG_Context *ctx) {
     return true;
 }
 
-static const CG_Target_Info *cg_target_info(const CG_Context *ctx, BM_Target_Id id) {
+const CG_Target_Info *cg_target_info(const CG_Context *ctx, BM_Target_Id id) {
     if (!ctx || !bm_target_id_is_valid(id) || (size_t)id >= ctx->target_count) return NULL;
     return &ctx->targets[id];
 }
@@ -689,7 +635,7 @@ static bool cg_resolve_link_item_target(CG_Context *ctx, String_View item, BM_Ta
     return true;
 }
 
-static const CG_Build_Step_Info *cg_build_step_info(const CG_Context *ctx, BM_Build_Step_Id id) {
+const CG_Build_Step_Info *cg_build_step_info(const CG_Context *ctx, BM_Build_Step_Id id) {
     if (!ctx || !bm_build_step_id_is_valid(id) || (size_t)id >= ctx->build_step_count) return NULL;
     return &ctx->build_steps[id];
 }
@@ -1005,12 +951,22 @@ static bool cg_collect_link_library_args(CG_Context *ctx,
     return true;
 }
 
-static bool cg_emit_cmd_append_sv(Nob_String_Builder *out, const char *cmd_var, String_View arg) {
+bool cg_emit_cmd_append_sv(Nob_String_Builder *out, const char *cmd_var, String_View arg) {
     if (!out || !cmd_var) return false;
     nob_sb_append_cstr(out, "        nob_cmd_append(&");
     nob_sb_append_cstr(out, cmd_var);
     nob_sb_append_cstr(out, ", ");
     if (!cg_sb_append_c_string(out, arg)) return false;
+    nob_sb_append_cstr(out, ");\n");
+    return true;
+}
+
+bool cg_emit_cmd_append_expr(Nob_String_Builder *out, const char *cmd_var, const char *expr) {
+    if (!out || !cmd_var || !expr) return false;
+    nob_sb_append_cstr(out, "        nob_cmd_append(&");
+    nob_sb_append_cstr(out, cmd_var);
+    nob_sb_append_cstr(out, ", ");
+    nob_sb_append_cstr(out, expr);
     nob_sb_append_cstr(out, ");\n");
     return true;
 }
@@ -1047,15 +1003,52 @@ static bool cg_emit_step_forward_decls(CG_Context *ctx, Nob_String_Builder *out)
     return true;
 }
 
-static bool cg_emit_support_helpers(Nob_String_Builder *out) {
-    if (!out) return false;
+static bool cg_emit_preferred_tool_resolver(Nob_String_Builder *out,
+                                            const char *fn_name,
+                                            const char *env_name,
+                                            String_View embedded_path,
+                                            const char *fallback) {
+    if (!out || !fn_name || !env_name || !fallback) return false;
+    nob_sb_append_cstr(out, "static const char *");
+    nob_sb_append_cstr(out, fn_name);
+    nob_sb_append_cstr(out, "(void) {\n");
+    nob_sb_append_cstr(out, "    const char *tool = getenv(");
+    if (!cg_sb_append_c_string(out, nob_sv_from_cstr(env_name))) return false;
+    nob_sb_append_cstr(out, ");\n");
+    nob_sb_append_cstr(out, "    if (tool && tool[0] != '\\0') return tool;\n");
+    nob_sb_append_cstr(out, "    tool = ");
+    if (!cg_sb_append_c_string(out, embedded_path)) return false;
+    nob_sb_append_cstr(out, ";\n");
+    nob_sb_append_cstr(out, "    if (tool && tool[0] != '\\0') return tool;\n");
+    nob_sb_append_cstr(out, "    return ");
+    if (!cg_sb_append_c_string(out, nob_sv_from_cstr(fallback))) return false;
+    nob_sb_append_cstr(out, ";\n");
+    nob_sb_append_cstr(out, "}\n\n");
+    return true;
+}
+
+static bool cg_emit_support_helpers(CG_Context *ctx, Nob_String_Builder *out) {
+    if (!ctx || !out) return false;
     nob_sb_append_cstr(out,
         "static void append_toolchain_cmd(Nob_Cmd *cmd, bool use_cxx) {\n"
         "    const char *tool = getenv(use_cxx ? \"CXX\" : \"CC\");\n"
         "    if (!tool || tool[0] == '\\0') tool = use_cxx ? \"c++\" : \"cc\";\n"
         "    nob_cmd_append(cmd, tool);\n"
         "}\n"
-        "\n"
+        "\n");
+    if (!cg_emit_preferred_tool_resolver(out,
+                                         "resolve_cmake_bin",
+                                         "NOB_CMAKE_BIN",
+                                         ctx->embedded_cmake_bin_abs,
+                                         "cmake") ||
+        !cg_emit_preferred_tool_resolver(out,
+                                         "resolve_cpack_bin",
+                                         "NOB_CPACK_BIN",
+                                         ctx->embedded_cpack_bin_abs,
+                                         "cpack")) {
+        return false;
+    }
+    nob_sb_append_cstr(out,
         "static bool ensure_dir(const char *path) {\n"
         "    Nob_Cmd cmd = {0};\n"
         "    bool ok = false;\n"
@@ -1106,160 +1099,6 @@ static bool cg_emit_support_helpers(Nob_String_Builder *out) {
         "    return nob_copy_file(src_path, dst_path);\n"
         "}\n"
         "\n");
-    return true;
-}
-
-static bool cg_emit_step_function(CG_Context *ctx,
-                                  const CG_Build_Step_Info *info,
-                                  Nob_String_Builder *out) {
-    BM_Target_Id_Span target_deps = {0};
-    BM_Build_Step_Id_Span producer_deps = {0};
-    BM_String_Span file_deps = {0};
-    BM_String_Span outputs = {0};
-    BM_String_Span byproducts = {0};
-    String_View working_dir = {0};
-    size_t rebuild_input_count = 1;
-    if (!ctx || !info || !out) return false;
-
-    target_deps = bm_query_build_step_target_dependencies(ctx->model, info->id);
-    producer_deps = bm_query_build_step_producer_dependencies(ctx->model, info->id);
-    file_deps = bm_query_build_step_file_dependencies(ctx->model, info->id);
-    outputs = bm_query_build_step_outputs(ctx->model, info->id);
-    byproducts = bm_query_build_step_byproducts(ctx->model, info->id);
-    working_dir = bm_query_build_step_working_directory(ctx->model, info->id);
-
-    nob_sb_append_cstr(out, "static bool run_");
-    nob_sb_append_cstr(out, info->ident);
-    nob_sb_append_cstr(out, "(void) {\n");
-    nob_sb_append_cstr(out, "    static int step_state = 0;\n");
-    nob_sb_append_cstr(out, "    if (step_state == 2) return true;\n");
-    nob_sb_append_cstr(out, "    if (step_state == 1) {\n");
-    nob_sb_append_cstr(out, "        nob_log(NOB_ERROR, \"codegen: build-step dependency cycle detected\");\n");
-    nob_sb_append_cstr(out, "        return false;\n");
-    nob_sb_append_cstr(out, "    }\n");
-    nob_sb_append_cstr(out, "    step_state = 1;\n");
-
-    if (bm_query_build_step_append(ctx->model, info->id)) {
-        nob_sb_append_cstr(out, "    nob_log(NOB_ERROR, \"codegen: APPEND custom-command steps are not supported yet\");\n");
-        nob_sb_append_cstr(out, "    return false;\n");
-        nob_sb_append_cstr(out, "}\n\n");
-        return true;
-    }
-
-    for (size_t i = 0; i < target_deps.count; ++i) {
-        const CG_Target_Info *dep = cg_target_info(ctx, target_deps.items[i]);
-        if (!dep) return false;
-        nob_sb_append_cstr(out, "    if (!build_");
-        nob_sb_append_cstr(out, dep->ident);
-        nob_sb_append_cstr(out, "()) return false;\n");
-    }
-    for (size_t i = 0; i < producer_deps.count; ++i) {
-        const CG_Build_Step_Info *dep = cg_build_step_info(ctx, producer_deps.items[i]);
-        if (!dep) return false;
-        nob_sb_append_cstr(out, "    if (!run_");
-        nob_sb_append_cstr(out, dep->ident);
-        nob_sb_append_cstr(out, "()) return false;\n");
-    }
-
-    nob_sb_append_cstr(out, "    if (nob_needs_rebuild(");
-    if (!cg_sb_append_c_string(out, info->sentinel_path)) return false;
-    nob_sb_append_cstr(out, ", (const char*[]){__FILE__");
-    for (size_t i = 0; i < target_deps.count; ++i) {
-        const CG_Target_Info *dep = cg_target_info(ctx, target_deps.items[i]);
-        if (!dep || dep->state_path.count == 0) continue;
-        rebuild_input_count++;
-        nob_sb_append_cstr(out, ", ");
-        if (!cg_sb_append_c_string(out, dep->state_path)) return false;
-    }
-    for (size_t i = 0; i < producer_deps.count; ++i) {
-        const CG_Build_Step_Info *dep = cg_build_step_info(ctx, producer_deps.items[i]);
-        if (!dep) return false;
-        rebuild_input_count++;
-        nob_sb_append_cstr(out, ", ");
-        if (!cg_sb_append_c_string(out, dep->sentinel_path)) return false;
-    }
-    for (size_t i = 0; i < file_deps.count; ++i) {
-        String_View path = {0};
-        if (!cg_rebase_path_from_cwd(ctx, file_deps.items[i], &path)) return false;
-        rebuild_input_count++;
-        nob_sb_append_cstr(out, ", ");
-        if (!cg_sb_append_c_string(out, path)) return false;
-    }
-    nob_sb_append_cstr(out, "}, ");
-    nob_sb_append_cstr(out, nob_temp_sprintf("%zu", rebuild_input_count));
-    nob_sb_append_cstr(out, ")) {\n");
-
-    if (info->uses_stamp) {
-        nob_sb_append_cstr(out, "        if (!ensure_parent_dir(");
-        if (!cg_sb_append_c_string(out, info->sentinel_path)) return false;
-        nob_sb_append_cstr(out, ")) return false;\n");
-    }
-    for (size_t i = 0; i < outputs.count; ++i) {
-        String_View path = {0};
-        if (!cg_rebase_path_from_cwd(ctx, outputs.items[i], &path)) return false;
-        nob_sb_append_cstr(out, "        if (!ensure_parent_dir(");
-        if (!cg_sb_append_c_string(out, path)) return false;
-        nob_sb_append_cstr(out, ")) return false;\n");
-    }
-    for (size_t i = 0; i < byproducts.count; ++i) {
-        String_View path = {0};
-        if (!cg_rebase_path_from_cwd(ctx, byproducts.items[i], &path)) return false;
-        nob_sb_append_cstr(out, "        if (!ensure_parent_dir(");
-        if (!cg_sb_append_c_string(out, path)) return false;
-        nob_sb_append_cstr(out, ")) return false;\n");
-    }
-
-    for (size_t cmd_index = 0; cmd_index < bm_query_build_step_command_count(ctx->model, info->id); ++cmd_index) {
-        BM_String_Span argv = bm_query_build_step_command_argv(ctx->model, info->id, cmd_index);
-        nob_sb_append_cstr(out, "        {\n");
-        nob_sb_append_cstr(out, "            Nob_Cmd step_cmd = {0};\n");
-        for (size_t arg = 0; arg < argv.count; ++arg) {
-            if (!cg_emit_cmd_append_sv(out, "step_cmd", argv.items[arg])) return false;
-        }
-        nob_sb_append_cstr(out, "            bool ok = run_cmd_in_dir(");
-        if (working_dir.count > 0) {
-            String_View rebased_working_dir = {0};
-            if (!cg_rebase_path_from_cwd(ctx, working_dir, &rebased_working_dir)) return false;
-            if (!cg_sb_append_c_string(out, rebased_working_dir)) return false;
-        } else {
-            nob_sb_append_cstr(out, "NULL");
-        }
-        nob_sb_append_cstr(out, ", &step_cmd);\n");
-        nob_sb_append_cstr(out, "            nob_cmd_free(step_cmd);\n");
-        nob_sb_append_cstr(out, "            if (!ok) return false;\n");
-        nob_sb_append_cstr(out, "        }\n");
-    }
-
-    if (outputs.count + byproducts.count > 0) {
-        nob_sb_append_cstr(out, "        if (!require_paths((const char*[]){");
-        bool first = true;
-        for (size_t i = 0; i < outputs.count; ++i) {
-            String_View path = {0};
-            if (!cg_rebase_path_from_cwd(ctx, outputs.items[i], &path)) return false;
-            if (!first) nob_sb_append_cstr(out, ", ");
-            if (!cg_sb_append_c_string(out, path)) return false;
-            first = false;
-        }
-        for (size_t i = 0; i < byproducts.count; ++i) {
-            String_View path = {0};
-            if (!cg_rebase_path_from_cwd(ctx, byproducts.items[i], &path)) return false;
-            if (!first) nob_sb_append_cstr(out, ", ");
-            if (!cg_sb_append_c_string(out, path)) return false;
-            first = false;
-        }
-        nob_sb_append_cstr(out, "}, ");
-        nob_sb_append_cstr(out, nob_temp_sprintf("%zu", outputs.count + byproducts.count));
-        nob_sb_append_cstr(out, ")) return false;\n");
-    }
-    if (info->uses_stamp) {
-        nob_sb_append_cstr(out, "        if (!write_stamp(");
-        if (!cg_sb_append_c_string(out, info->sentinel_path)) return false;
-        nob_sb_append_cstr(out, ")) return false;\n");
-    }
-    nob_sb_append_cstr(out, "    }\n");
-    nob_sb_append_cstr(out, "    step_state = 2;\n");
-    nob_sb_append_cstr(out, "    return true;\n");
-    nob_sb_append_cstr(out, "}\n\n");
     return true;
 }
 
@@ -1841,6 +1680,8 @@ static bool cg_init_context(CG_Context *ctx,
         .output_path = output_path,
         .source_root = source_root,
         .binary_root = binary_root,
+        .embedded_cmake_bin = opts->embedded_cmake_bin,
+        .embedded_cpack_bin = opts->embedded_cpack_bin,
     };
 
     cwd = nob_get_current_dir_temp();
@@ -1853,6 +1694,14 @@ static bool cg_init_context(CG_Context *ctx,
         !cg_absolute_from_cwd(ctx, ctx->opts.source_root, &ctx->source_root_abs) ||
         !cg_absolute_from_cwd(ctx, ctx->opts.binary_root, &ctx->binary_root_abs) ||
         !cg_absolute_from_cwd(ctx, ctx->opts.output_path, &ctx->emit_path_abs)) {
+        return false;
+    }
+    if (ctx->opts.embedded_cmake_bin.count > 0 &&
+        !cg_absolute_from_cwd(ctx, ctx->opts.embedded_cmake_bin, &ctx->embedded_cmake_bin_abs)) {
+        return false;
+    }
+    if (ctx->opts.embedded_cpack_bin.count > 0 &&
+        !cg_absolute_from_cwd(ctx, ctx->opts.embedded_cpack_bin, &ctx->embedded_cpack_bin_abs)) {
         return false;
     }
 
@@ -1880,7 +1729,7 @@ bool nob_codegen_render(const Build_Model *model,
 
     if (!cg_emit_target_forward_decls(&ctx, out) ||
         !cg_emit_step_forward_decls(&ctx, out) ||
-        !cg_emit_support_helpers(out)) {
+        !cg_emit_support_helpers(&ctx, out)) {
         return false;
     }
 

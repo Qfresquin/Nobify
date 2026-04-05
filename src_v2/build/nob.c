@@ -59,6 +59,7 @@ static void append_evaluator_sources(Nob_Cmd *cmd) {
         "src_v2/build_model/build_model_freeze.c",
         "src_v2/build_model/build_model_query.c",
         "src_v2/codegen/nob_codegen.c",
+        "src_v2/codegen/nob_codegen_steps.c",
         "src_v2/genex/genex.c",
         "src_v2/evaluator/stb_ds_impl.c",
         "src_v2/evaluator/eval_exec_core.c",
