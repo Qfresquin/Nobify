@@ -1,6 +1,7 @@
 #include "test_artifact_parity_v2_support.h"
 
 #include "test_fs.h"
+#include "test_host_fixture_support.h"
 #include "test_v2_assert.h"
 
 #include <stdio.h>
@@ -15,66 +16,6 @@ static Artifact_Parity_Cmake_Config s_artifact_parity_cmake = {0};
 static char s_artifact_parity_skip_reason[256] = {0};
 static char s_artifact_parity_nobify_bin[_TINYDIR_PATH_MAX] = {0};
 static char s_artifact_parity_nobify_error[256] = {0};
-
-typedef struct {
-    char name[64];
-    char *prev_value;
-    bool had_prev_value;
-} Artifact_Parity_Env_Guard;
-
-static void artifact_parity_set_env_or_unset(const char *name, const char *value) {
-#if defined(_WIN32)
-    _putenv_s(name, value ? value : "");
-#else
-    if (value) setenv(name, value, 1);
-    else unsetenv(name);
-#endif
-}
-
-static bool artifact_parity_env_guard_set(Artifact_Parity_Env_Guard *guard,
-                                          const char *name,
-                                          const char *value) {
-    const char *prev = NULL;
-    if (!guard || !name) return false;
-    memset(guard, 0, sizeof(*guard));
-    if (snprintf(guard->name, sizeof(guard->name), "%s", name) >= (int)sizeof(guard->name)) {
-        return false;
-    }
-    prev = getenv(name);
-    guard->had_prev_value = prev != NULL;
-    if (guard->had_prev_value) {
-        guard->prev_value = strdup(prev);
-        if (!guard->prev_value) return false;
-    }
-    artifact_parity_set_env_or_unset(name, value);
-    return true;
-}
-
-static bool artifact_parity_env_guard_begin(Artifact_Parity_Env_Guard **out_guard,
-                                            const char *name,
-                                            const char *value) {
-    Artifact_Parity_Env_Guard *guard = NULL;
-    if (!out_guard) return false;
-    *out_guard = NULL;
-    guard = (Artifact_Parity_Env_Guard*)calloc(1, sizeof(*guard));
-    if (!guard) return false;
-    if (!artifact_parity_env_guard_set(guard, name, value)) {
-        free(guard->prev_value);
-        free(guard);
-        return false;
-    }
-    *out_guard = guard;
-    return true;
-}
-
-static void artifact_parity_env_guard_cleanup(void *ctx) {
-    Artifact_Parity_Env_Guard *guard = (Artifact_Parity_Env_Guard*)ctx;
-    if (!guard) return;
-    artifact_parity_set_env_or_unset(guard->name,
-                                     guard->had_prev_value ? guard->prev_value : NULL);
-    free(guard->prev_value);
-    free(guard);
-}
 
 #if !defined(_WIN32)
 static bool artifact_parity_make_tool_only_path_dir(const char *dir) {
@@ -1139,14 +1080,14 @@ TEST(artifact_parity_usage_requirement_propagation_matches_cmake) {
 }
 
 TEST(artifact_parity_skips_when_cmake_env_points_to_missing_binary) {
-    Artifact_Parity_Env_Guard *env_guard = NULL;
+    Test_Host_Env_Guard *env_guard = NULL;
     Artifact_Parity_Cmake_Config config = {0};
     char skip_reason[256] = {0};
 
-    ASSERT(artifact_parity_env_guard_begin(&env_guard,
-                                           CMK2NOB_TEST_CMAKE_BIN_ENV,
-                                           "./missing-cmake-for-artifact-parity"));
-    TEST_DEFER(artifact_parity_env_guard_cleanup, env_guard);
+    ASSERT(test_host_env_guard_begin_heap(&env_guard,
+                                          CMK2NOB_TEST_CMAKE_BIN_ENV,
+                                          "./missing-cmake-for-artifact-parity"));
+    TEST_DEFER(test_host_env_guard_cleanup, env_guard);
 
     ASSERT(artifact_parity_resolve_cmake(&config, false, skip_reason));
     ASSERT(!config.available);
@@ -1158,7 +1099,7 @@ TEST(artifact_parity_skips_when_cmake_version_is_not_3_28) {
 #if defined(_WIN32)
     TEST_SKIP("fake cmake version probe is POSIX-only");
 #else
-    Artifact_Parity_Env_Guard *env_guard = NULL;
+    Test_Host_Env_Guard *env_guard = NULL;
     Artifact_Parity_Cmake_Config config = {0};
     char skip_reason[256] = {0};
 
@@ -1170,10 +1111,10 @@ TEST(artifact_parity_skips_when_cmake_version_is_not_3_28) {
         "  exit 0\n"
         "fi\n"
         "exit 0\n"));
-    ASSERT(artifact_parity_env_guard_begin(&env_guard,
-                                           CMK2NOB_TEST_CMAKE_BIN_ENV,
-                                           "fake_bin/cmake"));
-    TEST_DEFER(artifact_parity_env_guard_cleanup, env_guard);
+    ASSERT(test_host_env_guard_begin_heap(&env_guard,
+                                          CMK2NOB_TEST_CMAKE_BIN_ENV,
+                                          "fake_bin/cmake"));
+    TEST_DEFER(test_host_env_guard_cleanup, env_guard);
 
     ASSERT(artifact_parity_resolve_cmake(&config, false, skip_reason));
     ASSERT(!config.available);
@@ -1186,7 +1127,7 @@ TEST(artifact_parity_skips_when_cpack_is_missing_for_package_phase) {
 #if defined(_WIN32)
     TEST_SKIP("fake cpack sibling probe is POSIX-only");
 #else
-    Artifact_Parity_Env_Guard *env_guard = NULL;
+    Test_Host_Env_Guard *env_guard = NULL;
     Artifact_Parity_Cmake_Config config = {0};
     char skip_reason[256] = {0};
 
@@ -1198,10 +1139,10 @@ TEST(artifact_parity_skips_when_cpack_is_missing_for_package_phase) {
         "  exit 0\n"
         "fi\n"
         "exit 0\n"));
-    ASSERT(artifact_parity_env_guard_begin(&env_guard,
-                                           CMK2NOB_TEST_CMAKE_BIN_ENV,
-                                           "fake_pkg_bin/cmake"));
-    TEST_DEFER(artifact_parity_env_guard_cleanup, env_guard);
+    ASSERT(test_host_env_guard_begin_heap(&env_guard,
+                                          CMK2NOB_TEST_CMAKE_BIN_ENV,
+                                          "fake_pkg_bin/cmake"));
+    TEST_DEFER(test_host_env_guard_cleanup, env_guard);
 
     ASSERT(artifact_parity_resolve_cmake(&config, true, skip_reason));
     ASSERT(config.available);
@@ -1226,7 +1167,7 @@ TEST(artifact_parity_generated_nob_uses_embedded_cmake_without_path_injection) {
 #if defined(_WIN32)
     TEST_SKIP("tool-only PATH probe is POSIX-only");
 #else
-    Artifact_Parity_Env_Guard *path_guard = NULL;
+    Test_Host_Env_Guard *path_guard = NULL;
     const char *tool_only_path_abs = nob_temp_sprintf("%s/tool_only_path", nob_get_current_dir_temp());
     ASSERT(s_artifact_parity_cmake.available);
     ASSERT(s_artifact_parity_nobify_bin[0] != '\0');
@@ -1267,8 +1208,8 @@ TEST(artifact_parity_generated_nob_uses_embedded_cmake_without_path_injection) {
                                       nob_temp_sprintf("%s/nob_build", nob_get_current_dir_temp())));
     ASSERT(artifact_parity_compile_generated_nob("source/nob.c", "source/nob_gen"));
     ASSERT(artifact_parity_make_tool_only_path_dir("tool_only_path"));
-    ASSERT(artifact_parity_env_guard_begin(&path_guard, "PATH", tool_only_path_abs));
-    TEST_DEFER(artifact_parity_env_guard_cleanup, path_guard);
+    ASSERT(test_host_env_guard_begin_heap(&path_guard, "PATH", tool_only_path_abs));
+    TEST_DEFER(test_host_env_guard_cleanup, path_guard);
     ASSERT(artifact_parity_run_binary_in_dir("source", "./nob_gen", "app", NULL));
     ASSERT(test_ws_host_path_exists("nob_build/app"));
     ASSERT(test_ws_host_path_exists("nob_build/generated/generated.c"));

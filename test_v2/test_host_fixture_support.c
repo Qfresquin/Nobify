@@ -88,6 +88,22 @@ bool test_host_env_guard_begin(Test_Host_Env_Guard *guard, const char *name, con
     return true;
 }
 
+bool test_host_env_guard_begin_heap(Test_Host_Env_Guard **out_guard,
+                                    const char *name,
+                                    const char *value) {
+    Test_Host_Env_Guard *guard = NULL;
+    if (!out_guard) return false;
+    *out_guard = NULL;
+    guard = (Test_Host_Env_Guard*)calloc(1, sizeof(*guard));
+    if (!guard) return false;
+    if (!test_host_env_guard_begin(guard, name, value)) {
+        free(guard);
+        return false;
+    }
+    *out_guard = guard;
+    return true;
+}
+
 void test_host_env_guard_cleanup(void *ctx) {
     Test_Host_Env_Guard *guard = (Test_Host_Env_Guard*)ctx;
     if (!guard) return;

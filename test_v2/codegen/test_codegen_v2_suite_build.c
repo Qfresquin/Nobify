@@ -1,5 +1,6 @@
 #include "test_codegen_v2_common.h"
 #include "test_fs.h"
+#include "test_host_fixture_support.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -7,66 +8,6 @@
 #if !defined(_WIN32)
 #include <unistd.h>
 #endif
-
-typedef struct {
-    char name[64];
-    char *prev_value;
-    bool had_prev_value;
-} Codegen_Env_Guard;
-
-static void codegen_set_env_or_unset(const char *name, const char *value) {
-#if defined(_WIN32)
-    _putenv_s(name, value ? value : "");
-#else
-    if (value) setenv(name, value, 1);
-    else unsetenv(name);
-#endif
-}
-
-static bool codegen_env_guard_set(Codegen_Env_Guard *guard,
-                                  const char *name,
-                                  const char *value) {
-    const char *prev = NULL;
-    if (!guard || !name) return false;
-    memset(guard, 0, sizeof(*guard));
-    if (snprintf(guard->name, sizeof(guard->name), "%s", name) >= (int)sizeof(guard->name)) {
-        return false;
-    }
-    prev = getenv(name);
-    guard->had_prev_value = prev != NULL;
-    if (guard->had_prev_value) {
-        guard->prev_value = strdup(prev);
-        if (!guard->prev_value) return false;
-    }
-    codegen_set_env_or_unset(name, value);
-    return true;
-}
-
-static bool codegen_env_guard_begin(Codegen_Env_Guard **out_guard,
-                                    const char *name,
-                                    const char *value) {
-    Codegen_Env_Guard *guard = NULL;
-    if (!out_guard) return false;
-    *out_guard = NULL;
-    guard = (Codegen_Env_Guard*)calloc(1, sizeof(*guard));
-    if (!guard) return false;
-    if (!codegen_env_guard_set(guard, name, value)) {
-        free(guard->prev_value);
-        free(guard);
-        return false;
-    }
-    *out_guard = guard;
-    return true;
-}
-
-static void codegen_env_guard_cleanup(void *ctx) {
-    Codegen_Env_Guard *guard = (Codegen_Env_Guard*)ctx;
-    if (!guard) return;
-    codegen_set_env_or_unset(guard->name,
-                             guard->had_prev_value ? guard->prev_value : NULL);
-    free(guard->prev_value);
-    free(guard);
-}
 
 static size_t codegen_count_substr(String_View sv, const char *needle) {
     size_t needle_len = needle ? strlen(needle) : 0;
@@ -451,11 +392,72 @@ TEST(codegen_renders_multi_command_steps_with_deduped_rebuild_inputs) {
     TEST_PASS();
 }
 
+TEST(codegen_dedups_emitted_usage_flags_and_alias_link_inputs) {
+    String_View generated = {0};
+    Nob_String_Builder sb = {0};
+    Codegen_Test_Config config = {
+        .input_path = "dedup_emit_src/CMakeLists.txt",
+        .output_path = "dedup_emit_nob.c",
+        .source_dir = "dedup_emit_src",
+        .binary_dir = "dedup_emit_build",
+    };
+    ASSERT(codegen_render_script_with_config(
+        "project(Test C)\n"
+        "add_library(core STATIC core.c)\n"
+        "add_library(core_alias ALIAS core)\n"
+        "add_library(iface INTERFACE)\n"
+        "target_include_directories(iface INTERFACE include ./include)\n"
+        "target_compile_definitions(iface INTERFACE DUP=1 DUP=1)\n"
+        "target_compile_options(iface INTERFACE -Wall -Wall)\n"
+        "target_link_directories(iface INTERFACE lib ./lib)\n"
+        "target_link_options(iface INTERFACE -Wl,--as-needed -Wl,--as-needed)\n"
+        "target_link_libraries(iface INTERFACE core core_alias m m)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE iface core_alias core)\n",
+        &config,
+        &sb));
+    generated = nob_sv_from_parts(sb.items ? sb.items : "", sb.count);
+    ASSERT(codegen_count_substr(generated, "dedup_emit_src/include") == 1);
+    ASSERT(codegen_count_substr(generated, "\"-DDUP=1\"") == 1);
+    ASSERT(codegen_count_substr(generated, "\"-Wall\"") == 1);
+    ASSERT(codegen_count_substr(generated, "dedup_emit_src/lib") == 1);
+    ASSERT(codegen_count_substr(generated, "\"-Wl,--as-needed\"") == 1);
+    ASSERT(codegen_count_substr(generated, "nob_cmd_append(&link_cmd, \"dedup_emit_build/libcore.a\");") == 1);
+    ASSERT(codegen_count_substr(generated, "\"-lm\"") == 1);
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
+TEST(codegen_suite_reuses_shared_host_env_guard_support) {
+    Arena *arena = arena_create(128 * 1024);
+    String_View codegen_suite = {0};
+    String_View parity_suite = {0};
+    const char *legacy_codegen_typedef = "typedef struct " "Codegen_Env_Guard";
+    const char *legacy_parity_typedef = "typedef struct " "Artifact_Parity_Env_Guard";
+    const char *repo_root = getenv(CMK2NOB_TEST_REPO_ROOT_ENV);
+    ASSERT(arena != NULL);
+    ASSERT(repo_root != NULL && repo_root[0] != '\0');
+    ASSERT(codegen_load_text_file_to_arena(
+        arena,
+        nob_temp_sprintf("%s/test_v2/codegen/test_codegen_v2_suite_build.c", repo_root),
+        &codegen_suite));
+    ASSERT(codegen_load_text_file_to_arena(
+        arena,
+        nob_temp_sprintf("%s/test_v2/artifact_parity/test_artifact_parity_v2_suite.c", repo_root),
+        &parity_suite));
+    ASSERT(!codegen_sv_contains(codegen_suite, legacy_codegen_typedef));
+    ASSERT(!codegen_sv_contains(parity_suite, legacy_parity_typedef));
+    ASSERT(codegen_sv_contains(codegen_suite, "test_host_env_guard_begin_heap"));
+    ASSERT(codegen_sv_contains(parity_suite, "test_host_env_guard_begin_heap"));
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(codegen_uses_embedded_cmake_for_runtime_steps_without_cmake_on_path) {
 #if defined(_WIN32)
     TEST_SKIP("tool-only PATH probe is POSIX-only");
 #else
-    Codegen_Env_Guard *path_guard = NULL;
+    Test_Host_Env_Guard *path_guard = NULL;
     const char *script =
         "project(Test C)\n"
         "add_custom_command(\n"
@@ -486,8 +488,8 @@ TEST(codegen_uses_embedded_cmake_for_runtime_steps_without_cmake_on_path) {
     ASSERT(codegen_write_script_with_config(script, &config));
     ASSERT(codegen_compile_generated_nob("cmake_embed_nob.c", "cmake_embed_nob_gen"));
     ASSERT(codegen_make_tool_only_path_dir("tool_only_path"));
-    ASSERT(codegen_env_guard_begin(&path_guard, "PATH", "tool_only_path"));
-    TEST_DEFER(codegen_env_guard_cleanup, path_guard);
+    ASSERT(test_host_env_guard_begin_heap(&path_guard, "PATH", "tool_only_path"));
+    TEST_DEFER(test_host_env_guard_cleanup, path_guard);
     ASSERT(codegen_run_binary_in_dir(".", "./cmake_embed_nob_gen", "app", NULL));
     ASSERT(test_ws_host_path_exists("cmake_embed_build/app"));
     ASSERT(test_ws_host_path_exists("cmake_embed_build/generated/generated.c"));
@@ -777,6 +779,8 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_ignores_cxx_modules_file_set_metadata_in_compile_inputs(passed, failed, skipped);
     test_codegen_builds_generated_source_from_output_rule_step(passed, failed, skipped);
     test_codegen_renders_multi_command_steps_with_deduped_rebuild_inputs(passed, failed, skipped);
+    test_codegen_dedups_emitted_usage_flags_and_alias_link_inputs(passed, failed, skipped);
+    test_codegen_suite_reuses_shared_host_env_guard_support(passed, failed, skipped);
     test_codegen_uses_embedded_cmake_for_runtime_steps_without_cmake_on_path(passed, failed, skipped);
     test_codegen_custom_target_dependency_runs_and_clean_removes_step_stamps(passed, failed, skipped);
     test_codegen_target_hooks_run_at_pre_link_and_post_build_boundaries(passed, failed, skipped);

@@ -12,6 +12,9 @@ typedef struct {
 
 bool test_host_set_env_value(const char *name, const char *value);
 bool test_host_env_guard_begin(Test_Host_Env_Guard *guard, const char *name, const char *value);
+bool test_host_env_guard_begin_heap(Test_Host_Env_Guard **out_guard,
+                                    const char *name,
+                                    const char *value);
 void test_host_env_guard_cleanup(void *ctx);
 
 bool test_host_prepare_symlink_escape_fixture(const char *outside_dir,

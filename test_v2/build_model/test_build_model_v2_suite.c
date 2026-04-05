@@ -105,6 +105,18 @@ static bool build_model_string_item_span_contains(BM_String_Item_Span span, cons
     return false;
 }
 
+static bool build_model_string_item_equals_at(BM_String_Item_Span span, size_t index, const char *expected) {
+    return index < span.count && nob_sv_eq(span.items[index].value, nob_sv_from_cstr(expected ? expected : ""));
+}
+
+static bool build_model_string_equals_at(BM_String_Span span, size_t index, const char *expected) {
+    return index < span.count && nob_sv_eq(span.items[index], nob_sv_from_cstr(expected ? expected : ""));
+}
+
+static bool build_model_string_item_contains_at(BM_String_Item_Span span, size_t index, const char *needle) {
+    return index < span.count && build_model_sv_contains(span.items[index].value, nob_sv_from_cstr(needle ? needle : ""));
+}
+
 TEST(build_model_builder_directory_scope_events) {
     Arena *arena = arena_create(2 * 1024 * 1024);
     Arena *validate_arena = arena_create(512 * 1024);
@@ -1134,6 +1146,125 @@ TEST(build_model_compile_feature_catalog_and_effective_features_are_shared) {
     TEST_PASS();
 }
 
+TEST(build_model_effective_queries_dedup_and_preserve_first_occurrence) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    BM_Query_Eval_Context compile_ctx = {0};
+    BM_Query_Eval_Context link_ctx = {0};
+    BM_String_Item_Span include_items = {0};
+    BM_String_Item_Span def_items = {0};
+    BM_String_Item_Span opt_items = {0};
+    BM_String_Item_Span link_dir_items = {0};
+    BM_String_Item_Span link_opt_items = {0};
+    BM_String_Item_Span link_lib_items = {0};
+    BM_String_Span feature_items = {0};
+    ASSERT(query_arena != NULL);
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "dedup_query_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("dedup_query_src");
+    config.binary_dir = nob_sv_from_cstr("dedup_query_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "add_library(iface INTERFACE)\n"
+        "target_include_directories(iface INTERFACE dedup_inc ./dedup_inc second_inc)\n"
+        "target_compile_definitions(iface INTERFACE FIRST=1 SECOND=2 FIRST=1)\n"
+        "target_compile_options(iface INTERFACE -Wall -Winvalid-pch -Wall)\n"
+        "target_compile_features(iface INTERFACE c_std_11 c_std_11)\n"
+        "target_link_directories(iface INTERFACE dedup_lib ./dedup_lib second_lib)\n"
+        "target_link_options(iface INTERFACE -Wl,--as-needed -Wl,-z,defs -Wl,--as-needed)\n"
+        "target_link_libraries(iface INTERFACE m pthread m)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE iface)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+
+    compile_ctx.current_target_id = app_id;
+    compile_ctx.usage_mode = BM_QUERY_USAGE_COMPILE;
+    compile_ctx.compile_language = nob_sv_from_cstr("C");
+    compile_ctx.build_interface_active = true;
+    compile_ctx.install_interface_active = false;
+
+    link_ctx.current_target_id = app_id;
+    link_ctx.usage_mode = BM_QUERY_USAGE_LINK;
+    link_ctx.build_interface_active = true;
+    link_ctx.install_interface_active = false;
+
+    ASSERT(bm_query_target_effective_include_directories_items_with_context(model,
+                                                                            app_id,
+                                                                            &compile_ctx,
+                                                                            query_arena,
+                                                                            &include_items));
+    ASSERT(include_items.count == 2);
+    ASSERT(build_model_string_item_contains_at(include_items, 0, "dedup_inc"));
+    ASSERT(build_model_string_item_contains_at(include_items, 1, "second_inc"));
+
+    ASSERT(bm_query_target_effective_compile_definitions_items_with_context(model,
+                                                                            app_id,
+                                                                            &compile_ctx,
+                                                                            query_arena,
+                                                                            &def_items));
+    ASSERT(def_items.count == 2);
+    ASSERT(build_model_string_item_equals_at(def_items, 0, "FIRST=1"));
+    ASSERT(build_model_string_item_equals_at(def_items, 1, "SECOND=2"));
+
+    ASSERT(bm_query_target_effective_compile_options_items_with_context(model,
+                                                                        app_id,
+                                                                        &compile_ctx,
+                                                                        query_arena,
+                                                                        &opt_items));
+    ASSERT(opt_items.count == 2);
+    ASSERT(build_model_string_item_equals_at(opt_items, 0, "-Wall"));
+    ASSERT(build_model_string_item_equals_at(opt_items, 1, "-Winvalid-pch"));
+
+    ASSERT(bm_query_target_effective_compile_features(model, app_id, &compile_ctx, query_arena, &feature_items));
+    ASSERT(feature_items.count == 1);
+    ASSERT(build_model_string_equals_at(feature_items, 0, "c_std_11"));
+
+    ASSERT(bm_query_target_effective_link_directories_items_with_context(model,
+                                                                         app_id,
+                                                                         &link_ctx,
+                                                                         query_arena,
+                                                                         &link_dir_items));
+    ASSERT(link_dir_items.count == 2);
+    ASSERT(build_model_string_item_contains_at(link_dir_items, 0, "dedup_lib"));
+    ASSERT(build_model_string_item_contains_at(link_dir_items, 1, "second_lib"));
+
+    ASSERT(bm_query_target_effective_link_options_items_with_context(model,
+                                                                     app_id,
+                                                                     &link_ctx,
+                                                                     query_arena,
+                                                                     &link_opt_items));
+    ASSERT(link_opt_items.count == 2);
+    ASSERT(build_model_string_item_equals_at(link_opt_items, 0, "-Wl,--as-needed"));
+    ASSERT(build_model_string_item_equals_at(link_opt_items, 1, "-Wl,-z,defs"));
+
+    ASSERT(bm_query_target_effective_link_libraries_items_with_context(model,
+                                                                       app_id,
+                                                                       &link_ctx,
+                                                                       query_arena,
+                                                                       &link_lib_items));
+    ASSERT(link_lib_items.count == 3);
+    ASSERT(build_model_string_item_equals_at(link_lib_items, 0, "iface"));
+    ASSERT(build_model_string_item_equals_at(link_lib_items, 1, "m"));
+    ASSERT(build_model_string_item_equals_at(link_lib_items, 2, "pthread"));
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -1167,6 +1298,7 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_context_aware_queries_expand_usage_requirements_and_target_property_genex(passed, failed, skipped);
     test_build_model_imported_target_queries_resolve_configs_and_mapped_locations(passed, failed, skipped);
     test_build_model_compile_feature_catalog_and_effective_features_are_shared(passed, failed, skipped);
+    test_build_model_effective_queries_dedup_and_preserve_first_occurrence(passed, failed, skipped);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;
