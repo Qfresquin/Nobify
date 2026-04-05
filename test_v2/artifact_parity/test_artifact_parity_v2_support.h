@@ -75,6 +75,10 @@ typedef struct Artifact_Parity_Case {
     const char *nob_run_dir;
     const char *cmake_build_target;
     const char *cmake_build_type;
+    const char *cmake_install_prefix;
+    const char *cmake_install_component;
+    const char *nob_install_prefix;
+    const char *nob_install_component;
     const char *cmake_base_dir;
     const char *nob_base_dir;
     const char *clean_absence_relpath;
@@ -125,7 +129,8 @@ bool artifact_parity_run_cmake_build(const Artifact_Parity_Cmake_Config *config,
                                      const char *target_name);
 bool artifact_parity_run_cmake_install(const Artifact_Parity_Cmake_Config *config,
                                        const char *binary_dir,
-                                       const char *prefix_dir);
+                                       const char *prefix_dir,
+                                       const char *component);
 bool artifact_parity_run_cmake_package(const Artifact_Parity_Cmake_Config *config,
                                        const char *binary_dir);
 bool artifact_parity_capture_manifest(

@@ -62,6 +62,19 @@ The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`
   `test_v2/artifact_parity/` stays explicit-only and remains Linux/POSIX-only
   for execution parity, now invoking `nobify` explicitly with
   `--platform linux --backend posix`
+- `P5` proof split:
+  `test_v2/build_model/` locks effective install/export components and typed
+  install metadata for artifact-specific destinations, export association, and
+  default-component fallback
+  `test_v2/codegen/` owns aggregate-safe Linux/POSIX install smoke for custom
+  prefixes, component-selective installs, `PROGRAMS` executability,
+  `DIRECTORY` slash semantics, `PUBLIC_HEADER`, installed export emission, and
+  `clean` preserving custom install prefixes
+  `test_v2/artifact_parity/` stays explicit-only and owns real-CMake install
+  parity with per-case CMake/Nob `--prefix` and `--component` control
+  `test_v2/artifact_parity/real_projects/` stays explicit-only and now runs
+  full-install parity plus consumer-against-installed-prefix checks with
+  explicit generated-Nob install prefixes for the pinned corpus projects
 - required external tools:
   real `cmake 3.28.x`
   sibling `cpack` only for package-phase cases
@@ -70,6 +83,9 @@ The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`
   generated Nob runtime tool precedence is
   `NOB_CMAKE_BIN` / `NOB_CPACK_BIN` -> embedded absolute path from `nobify` ->
   bare `cmake` / `cpack`
+  generated Nob install execution is now explicit through
+  `install [--prefix <path>] [--component <name>]`; omitting `--component`
+  means full install
   generated Nob config selection is explicit through `--config <cfg>`; the
   empty config remains the default when the flag is omitted
   generation-time platform/backend selection is explicit through

@@ -780,11 +780,15 @@ bool artifact_parity_run_cmake_build(const Artifact_Parity_Cmake_Config *config,
 
 bool artifact_parity_run_cmake_install(const Artifact_Parity_Cmake_Config *config,
                                        const char *binary_dir,
-                                       const char *prefix_dir) {
+                                       const char *prefix_dir,
+                                       const char *component) {
     Nob_Cmd cmd = {0};
     bool ok = false;
     if (!config || !config->available || !binary_dir || !prefix_dir) return false;
     nob_cmd_append(&cmd, config->cmake_bin, "--install", binary_dir, "--prefix", prefix_dir);
+    if (component && component[0] != '\0') {
+        nob_cmd_append(&cmd, "--component", component);
+    }
     ok = nob_cmd_run(&cmd);
     nob_cmd_free(cmd);
     return ok;

@@ -1,10 +1,19 @@
 #include "nob_codegen_internal.h"
 
-static bool cg_join_install_prefix(CG_Context *ctx, String_View relative_path, String_View *out) {
-    if (!ctx || !out) return false;
-    *out = nob_sv_from_cstr("install");
-    if (relative_path.count == 0) return true;
-    return cg_join_paths_to_arena(ctx->scratch, nob_sv_from_cstr("install"), relative_path, out);
+static bool cg_sb_append_install_join_call(Nob_String_Builder *sb, String_View relative_path) {
+    if (!sb) return false;
+    nob_sb_append_cstr(sb, "join_install_prefix(install_prefix, ");
+    if (!cg_sb_append_c_string(sb, relative_path)) return false;
+    nob_sb_append_cstr(sb, ")");
+    return true;
+}
+
+static bool cg_emit_install_component_guard_open(Nob_String_Builder *sb, String_View component) {
+    if (!sb) return false;
+    nob_sb_append_cstr(sb, "    if (install_component_matches(install_component, ");
+    if (!cg_sb_append_c_string(sb, component)) return false;
+    nob_sb_append_cstr(sb, ")) {\n");
+    return true;
 }
 
 static String_View cg_install_target_destination(String_View specific, String_View generic) {
@@ -619,22 +628,34 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
 
     rule_count = bm_query_install_rule_count(ctx->model);
     export_count = bm_query_export_count(ctx->model);
-    nob_sb_append_cstr(out, "static bool install_all(void) {\n");
+    if (rule_count > 0 || export_count > 0) {
+        nob_sb_append_cstr(out,
+            "static const char *join_install_prefix(const char *install_prefix, const char *relative_path) {\n"
+            "    if (!install_prefix || install_prefix[0] == '\\0') install_prefix = \"install\";\n"
+            "    if (!relative_path || relative_path[0] == '\\0') return install_prefix;\n"
+            "    return nob_temp_sprintf(\"%s/%s\", install_prefix, relative_path);\n"
+            "}\n\n"
+            "static bool install_component_matches(const char *requested_component, const char *rule_component) {\n"
+            "    if (!requested_component || requested_component[0] == '\\0') return true;\n"
+            "    if (!rule_component || rule_component[0] == '\\0') rule_component = \"Unspecified\";\n"
+            "    return strcmp(requested_component, rule_component) == 0;\n"
+            "}\n\n");
+    }
+    nob_sb_append_cstr(out, "static bool install_all(const char *install_prefix, const char *install_component) {\n");
     if (rule_count == 0 && export_count == 0) {
         nob_sb_append_cstr(out, "    return true;\n");
         nob_sb_append_cstr(out, "}\n\n");
         return true;
     }
 
-    nob_sb_append_cstr(out, "    if (!ensure_dir(\"install\")) return false;\n");
+    nob_sb_append_cstr(out,
+        "    if (!install_prefix || install_prefix[0] == '\\0') install_prefix = \"install\";\n"
+        "    if (!ensure_dir(install_prefix)) return false;\n");
     for (size_t i = 0; i < rule_count; ++i) {
         BM_Install_Rule_Id id = (BM_Install_Rule_Id)i;
         BM_Install_Rule_Kind kind = bm_query_install_rule_kind(ctx->model, id);
         String_View destination = bm_query_install_rule_destination(ctx->model, id);
-        String_View install_dir = nob_sv_from_cstr("install");
-
-        if (destination.count > 0 &&
-            !cg_join_paths_to_arena(ctx->scratch, nob_sv_from_cstr("install"), destination, &install_dir)) {
+        if (!cg_emit_install_component_guard_open(out, bm_query_install_rule_component(ctx->model, id))) {
             return false;
         }
 
@@ -647,22 +668,19 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
             }
             if (info->kind != BM_TARGET_INTERFACE_LIBRARY && info->emits_artifact) {
                 String_View runtime_rel = {0};
-                String_View install_path = {0};
-                if (!cg_target_installed_artifact_relpath(ctx, id, info, false, &runtime_rel) ||
-                    !cg_join_install_prefix(ctx, runtime_rel, &install_path)) {
+                if (!cg_target_installed_artifact_relpath(ctx, id, info, false, &runtime_rel)) {
                     return false;
                 }
                 nob_sb_append_cstr(out, "    if (!build_");
                 nob_sb_append_cstr(out, info->ident);
                 nob_sb_append_cstr(out, "()) return false;\n");
-                nob_sb_append_cstr(out, "    if (!ensure_parent_dir(");
-                if (!cg_sb_append_c_string(out, install_path)) return false;
-                nob_sb_append_cstr(out, ")) return false;\n");
-                nob_sb_append_cstr(out, "    if (!install_copy_file(");
+                nob_sb_append_cstr(out, "        const char *install_path = ");
+                if (!cg_sb_append_install_join_call(out, runtime_rel)) return false;
+                nob_sb_append_cstr(out, ";\n");
+                nob_sb_append_cstr(out, "        if (!ensure_parent_dir(install_path)) return false;\n");
+                nob_sb_append_cstr(out, "        if (!install_copy_file(");
                 if (!cg_sb_append_c_string(out, info->artifact_path)) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, install_path)) return false;
-                nob_sb_append_cstr(out, ")) return false;\n");
+                nob_sb_append_cstr(out, ", install_path)) return false;\n");
             }
 
             if (bm_query_install_rule_public_header_destination(ctx->model, id).count > 0) {
@@ -672,7 +690,6 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
                     String_View src_path = {0};
                     String_View basename = {0};
                     String_View dest_rel = {0};
-                    String_View dest_path = {0};
                     if (!cg_resolve_install_item_from_owner_dirs(ctx, owner_dir, headers.items[header_index], &src_path)) {
                         return false;
                     }
@@ -680,17 +697,18 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
                     if (!cg_join_paths_to_arena(ctx->scratch,
                                                 bm_query_install_rule_public_header_destination(ctx->model, id),
                                                 basename,
-                                                &dest_rel) ||
-                        !cg_join_install_prefix(ctx, dest_rel, &dest_path)) {
+                                                &dest_rel)) {
                         return false;
                     }
-                    nob_sb_append_cstr(out, "    if (!install_copy_file(");
+                    nob_sb_append_cstr(out, "        const char *dest_path = ");
+                    if (!cg_sb_append_install_join_call(out, dest_rel)) return false;
+                    nob_sb_append_cstr(out, ";\n");
+                    nob_sb_append_cstr(out, "        if (!install_copy_file(");
                     if (!cg_sb_append_c_string(out, src_path)) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, dest_path)) return false;
-                    nob_sb_append_cstr(out, ")) return false;\n");
+                    nob_sb_append_cstr(out, ", dest_path)) return false;\n");
                 }
             }
+            nob_sb_append_cstr(out, "    }\n");
             continue;
         }
 
@@ -699,7 +717,7 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
             String_View item = bm_query_install_rule_item_raw(ctx->model, id);
             String_View src_path = {0};
             String_View basename = {0};
-            String_View install_path = {0};
+            String_View install_rel = {0};
 
             if (!cg_check_no_genex("install(FILES)", item)) return false;
             if (cg_sv_has_prefix(item, "SCRIPT::") ||
@@ -714,13 +732,19 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
 
             if (!cg_resolve_install_item_from_owner_dirs(ctx, owner_dir, item, &src_path)) return false;
             basename = cg_basename_to_arena(ctx->scratch, src_path);
-            if (!cg_join_paths_to_arena(ctx->scratch, install_dir, basename, &install_path)) return false;
+            if (destination.count > 0) {
+                if (!cg_join_paths_to_arena(ctx->scratch, destination, basename, &install_rel)) return false;
+            } else {
+                install_rel = basename;
+            }
 
-            nob_sb_append_cstr(out, "    if (!install_copy_file(");
+            nob_sb_append_cstr(out, "        const char *install_path = ");
+            if (!cg_sb_append_install_join_call(out, install_rel)) return false;
+            nob_sb_append_cstr(out, ";\n");
+            nob_sb_append_cstr(out, "        if (!install_copy_file(");
             if (!cg_sb_append_c_string(out, src_path)) return false;
-            nob_sb_append_cstr(out, ", ");
-            if (!cg_sb_append_c_string(out, install_path)) return false;
-            nob_sb_append_cstr(out, ")) return false;\n");
+            nob_sb_append_cstr(out, ", install_path)) return false;\n");
+            nob_sb_append_cstr(out, "    }\n");
             continue;
         }
 
@@ -728,23 +752,23 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
             BM_Directory_Id owner_dir = bm_query_install_rule_owner_directory(ctx->model, id);
             String_View item = bm_query_install_rule_item_raw(ctx->model, id);
             String_View src_path = {0};
-            String_View install_path = install_dir;
+            String_View install_rel = destination;
             bool copy_contents = item.count > 0 &&
                                  (item.data[item.count - 1] == '/' || item.data[item.count - 1] == '\\');
             if (!cg_check_no_genex("install(DIRECTORY)", item)) return false;
             if (!cg_resolve_install_item_from_owner_dirs(ctx, owner_dir, item, &src_path)) return false;
             if (!copy_contents) {
                 String_View basename = cg_basename_to_arena(ctx->scratch, src_path);
-                if (!cg_join_paths_to_arena(ctx->scratch, install_dir, basename, &install_path)) return false;
+                if (!cg_join_paths_to_arena(ctx->scratch, destination, basename, &install_rel)) return false;
             }
-            nob_sb_append_cstr(out, "    if (!ensure_parent_dir(");
-            if (!cg_sb_append_c_string(out, install_path)) return false;
-            nob_sb_append_cstr(out, ")) return false;\n");
-            nob_sb_append_cstr(out, "    if (!install_copy_directory(");
+            nob_sb_append_cstr(out, "        const char *install_path = ");
+            if (!cg_sb_append_install_join_call(out, install_rel)) return false;
+            nob_sb_append_cstr(out, ";\n");
+            nob_sb_append_cstr(out, "        if (!ensure_parent_dir(install_path)) return false;\n");
+            nob_sb_append_cstr(out, "        if (!install_copy_directory(");
             if (!cg_sb_append_c_string(out, src_path)) return false;
-            nob_sb_append_cstr(out, ", ");
-            if (!cg_sb_append_c_string(out, install_path)) return false;
-            nob_sb_append_cstr(out, ")) return false;\n");
+            nob_sb_append_cstr(out, ", install_path)) return false;\n");
+            nob_sb_append_cstr(out, "    }\n");
             continue;
         }
 
@@ -760,40 +784,39 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
         String_View export_noconfig_text = {0};
         String_View output_rel = bm_query_export_output_file_path(ctx->model, export_id, ctx->scratch);
         String_View noconfig_output_rel = {0};
-        String_View output_path = {0};
-        String_View noconfig_output_path = {0};
         bool use_noconfig = cg_export_has_non_interface_targets(ctx, export_id);
-        if (!cg_build_export_file_contents(ctx, export_id, &export_text) ||
-            !cg_join_install_prefix(ctx, output_rel, &output_path)) {
+        if (!cg_build_export_file_contents(ctx, export_id, &export_text)) {
             return false;
         }
-        nob_sb_append_cstr(out, "    if (!ensure_parent_dir(");
-        if (!cg_sb_append_c_string(out, output_path)) return false;
-        nob_sb_append_cstr(out, ")) return false;\n");
-        nob_sb_append_cstr(out, "    if (!nob_write_entire_file(");
-        if (!cg_sb_append_c_string(out, output_path)) return false;
-        nob_sb_append_cstr(out, ", ");
+        if (!cg_emit_install_component_guard_open(out, bm_query_export_component(ctx->model, export_id))) {
+            return false;
+        }
+        nob_sb_append_cstr(out, "        const char *output_path = ");
+        if (!cg_sb_append_install_join_call(out, output_rel)) return false;
+        nob_sb_append_cstr(out, ";\n");
+        nob_sb_append_cstr(out, "        if (!ensure_parent_dir(output_path)) return false;\n");
+        nob_sb_append_cstr(out, "        if (!nob_write_entire_file(output_path, ");
         if (!cg_sb_append_c_string(out, export_text)) return false;
         nob_sb_append_cstr(out, ", strlen(");
         if (!cg_sb_append_c_string(out, export_text)) return false;
         nob_sb_append_cstr(out, "))) return false;\n");
 
-        if (!use_noconfig) continue;
-        if (!cg_build_export_noconfig_file_contents(ctx, export_id, &export_noconfig_text) ||
-            !cg_export_noconfig_output_file_path(ctx, export_id, &noconfig_output_rel) ||
-            !cg_join_install_prefix(ctx, noconfig_output_rel, &noconfig_output_path)) {
-            return false;
+        if (use_noconfig) {
+            if (!cg_build_export_noconfig_file_contents(ctx, export_id, &export_noconfig_text) ||
+                !cg_export_noconfig_output_file_path(ctx, export_id, &noconfig_output_rel)) {
+                return false;
+            }
+            nob_sb_append_cstr(out, "        const char *noconfig_output_path = ");
+            if (!cg_sb_append_install_join_call(out, noconfig_output_rel)) return false;
+            nob_sb_append_cstr(out, ";\n");
+            nob_sb_append_cstr(out, "        if (!ensure_parent_dir(noconfig_output_path)) return false;\n");
+            nob_sb_append_cstr(out, "        if (!nob_write_entire_file(noconfig_output_path, ");
+            if (!cg_sb_append_c_string(out, export_noconfig_text)) return false;
+            nob_sb_append_cstr(out, ", strlen(");
+            if (!cg_sb_append_c_string(out, export_noconfig_text)) return false;
+            nob_sb_append_cstr(out, "))) return false;\n");
         }
-        nob_sb_append_cstr(out, "    if (!ensure_parent_dir(");
-        if (!cg_sb_append_c_string(out, noconfig_output_path)) return false;
-        nob_sb_append_cstr(out, ")) return false;\n");
-        nob_sb_append_cstr(out, "    if (!nob_write_entire_file(");
-        if (!cg_sb_append_c_string(out, noconfig_output_path)) return false;
-        nob_sb_append_cstr(out, ", ");
-        if (!cg_sb_append_c_string(out, export_noconfig_text)) return false;
-        nob_sb_append_cstr(out, ", strlen(");
-        if (!cg_sb_append_c_string(out, export_noconfig_text)) return false;
-        nob_sb_append_cstr(out, "))) return false;\n");
+        nob_sb_append_cstr(out, "    }\n");
     }
 
     nob_sb_append_cstr(out, "    return true;\n");

@@ -5,7 +5,7 @@
 This document defines the current baseline architecture and suite taxonomy for
 the v2 test stack.
 
-As of April 4, 2026:
+As of April 5, 2026:
 - the official test entrypoint is `./build/nob_test`
 - the runner owns module selection, build profiles, incremental compilation,
   workspace roots, captured logs, and aggregate execution
@@ -22,6 +22,10 @@ As of April 4, 2026:
 - platform/backend proof is now split between aggregate-safe `codegen`
   render/execution coverage and Linux/POSIX-only explicit `artifact-parity`
   execution coverage
+- install parity proof is now split between aggregate-safe `evaluator`,
+  `build-model`, and `codegen` coverage, while `artifact-parity` and the
+  pinned real-project corpus remain explicit-only for real-CMake install
+  comparison
 
 This file is the canonical baseline for test architecture, ownership, and suite
 taxonomy. The multi-wave change roadmap lives in
@@ -108,7 +112,11 @@ code.
   render-only policy coverage for explicit generation targets
   `linux + posix`, `darwin + posix`, and `windows + win32-msvc`. Platform and
   backend are now explicit generation-time inputs instead of host-derived
-  implicit defaults.
+  implicit defaults. `P5` extends the aggregate-safe ownership again with
+  Linux/POSIX install smoke for custom prefixes, component-selective installs,
+  `PROGRAMS` executability preservation, `DIRECTORY` trailing-slash semantics,
+  `PUBLIC_HEADER`, installed export emission, and verification that `clean`
+  does not delete custom install prefixes.
   Current aggregate status: included.
 
 - `artifact-parity`
@@ -136,7 +144,10 @@ code.
   on implicit host selection. The explicit real-project corpus now keeps pinned
   upstream inputs as compressed local archives and only extracts them under the
   isolated `Temp_tests` workspace, which keeps third-party trees out of the
-  day-to-day repo layout.
+  day-to-day repo layout. `P5` extends the install harness again with explicit
+  per-case `--prefix` / `--component` control for CMake and generated Nob, and
+  the real-project corpus now runs generated-Nob installs through explicit
+  custom prefixes before the consumer-against-installed-prefix checks.
   Current aggregate status: excluded from the default aggregate path.
 
 - `evaluator-integration`

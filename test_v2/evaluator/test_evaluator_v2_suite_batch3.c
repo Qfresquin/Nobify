@@ -1391,6 +1391,9 @@ TEST(evaluator_install_signatures_emit_expected_rules_and_component_inventory) {
     bool saw_script = false;
     bool saw_code = false;
     bool saw_export = false;
+    bool saw_export_component = false;
+    bool saw_target_component = false;
+    bool saw_program_default_component = false;
     bool saw_export_android = false;
     bool saw_imported_runtime_artifacts = false;
     bool saw_runtime_dependency_set = false;
@@ -1400,6 +1403,9 @@ TEST(evaluator_install_signatures_emit_expected_rules_and_component_inventory) {
             nob_sv_eq(ev->as.export_install.export_name, nob_sv_from_cstr("InstExport")) &&
             nob_sv_eq(ev->as.export_install.destination, nob_sv_from_cstr("share/cmake/Inst"))) {
             saw_export = true;
+            if (nob_sv_eq(ev->as.export_install.component, nob_sv_from_cstr("Toolkit"))) {
+                saw_export_component = true;
+            }
             continue;
         }
         if (ev->h.kind != EV_INSTALL_ADD_RULE) continue;
@@ -1407,6 +1413,9 @@ TEST(evaluator_install_signatures_emit_expected_rules_and_component_inventory) {
             nob_sv_eq(ev->as.install_add_rule.item, nob_sv_from_cstr("inst_meta")) &&
             nob_sv_eq(ev->as.install_add_rule.destination, nob_sv_from_cstr("lib"))) {
             saw_target = true;
+            if (nob_sv_eq(ev->as.install_add_rule.component, nob_sv_from_cstr("Toolkit"))) {
+                saw_target_component = true;
+            }
         } else if (ev->as.install_add_rule.rule_type == EV_INSTALL_RULE_FILE &&
                    nob_sv_eq(ev->as.install_add_rule.item, nob_sv_from_cstr("install_payload.txt")) &&
                    nob_sv_eq(ev->as.install_add_rule.destination, nob_sv_from_cstr("share/doc"))) {
@@ -1415,6 +1424,9 @@ TEST(evaluator_install_signatures_emit_expected_rules_and_component_inventory) {
                    nob_sv_eq(ev->as.install_add_rule.item, nob_sv_from_cstr("install_helper.sh")) &&
                    nob_sv_eq(ev->as.install_add_rule.destination, nob_sv_from_cstr("bin"))) {
             saw_program_type_bin = true;
+            if (nob_sv_eq(ev->as.install_add_rule.component, nob_sv_from_cstr("Toolkit"))) {
+                saw_program_default_component = true;
+            }
         } else if (ev->as.install_add_rule.rule_type == EV_INSTALL_RULE_DIRECTORY &&
                    nob_sv_eq(ev->as.install_add_rule.item, nob_sv_from_cstr("install_assets")) &&
                    nob_sv_eq(ev->as.install_add_rule.destination, nob_sv_from_cstr("share/assets"))) {
@@ -1449,6 +1461,9 @@ TEST(evaluator_install_signatures_emit_expected_rules_and_component_inventory) {
     ASSERT(saw_script);
     ASSERT(saw_code);
     ASSERT(saw_export);
+    ASSERT(saw_export_component);
+    ASSERT(saw_target_component);
+    ASSERT(saw_program_default_component);
     ASSERT(saw_export_android);
     ASSERT(saw_imported_runtime_artifacts);
     ASSERT(saw_runtime_dependency_set);
@@ -1457,6 +1472,70 @@ TEST(evaluator_install_signatures_emit_expected_rules_and_component_inventory) {
     ASSERT(sv_contains_sv(install_components, nob_sv_from_cstr("Toolkit")));
     ASSERT(sv_contains_sv(install_components, nob_sv_from_cstr("Docs")));
     ASSERT(sv_contains_sv(install_components, nob_sv_from_cstr("Runtime")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_install_omitted_components_materialize_as_unspecified_without_default_override) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_write_entire_file("install_unspecified.txt", "payload\n", strlen("payload\n")));
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "add_library(unspecified INTERFACE)\n"
+        "install(FILES install_unspecified.txt DESTINATION share/unspecified)\n"
+        "install(TARGETS unspecified EXPORT UnspecifiedExport DESTINATION lib)\n"
+        "install(EXPORT UnspecifiedExport DESTINATION share/cmake/Unspecified)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    bool saw_file_unspecified = false;
+    bool saw_target_unspecified = false;
+    bool saw_export_unspecified = false;
+    for (size_t i = 0; i < stream->count; ++i) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind == EV_INSTALL_ADD_RULE &&
+            nob_sv_eq(ev->as.install_add_rule.item, nob_sv_from_cstr("install_unspecified.txt")) &&
+            nob_sv_eq(ev->as.install_add_rule.component, nob_sv_from_cstr("Unspecified"))) {
+            saw_file_unspecified = true;
+        } else if (ev->h.kind == EV_INSTALL_ADD_RULE &&
+                   nob_sv_eq(ev->as.install_add_rule.item, nob_sv_from_cstr("unspecified")) &&
+                   nob_sv_eq(ev->as.install_add_rule.component, nob_sv_from_cstr("Unspecified"))) {
+            saw_target_unspecified = true;
+        } else if (ev->h.kind == EVENT_EXPORT_INSTALL &&
+                   nob_sv_eq(ev->as.export_install.export_name, nob_sv_from_cstr("UnspecifiedExport")) &&
+                   nob_sv_eq(ev->as.export_install.component, nob_sv_from_cstr("Unspecified"))) {
+            saw_export_unspecified = true;
+        }
+    }
+
+    ASSERT(saw_file_unspecified);
+    ASSERT(saw_target_unspecified);
+    ASSERT(saw_export_unspecified);
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -3410,6 +3489,7 @@ void run_evaluator_v2_batch3(int *passed, int *failed, int *skipped) {
     test_evaluator_get_cmake_and_directory_property_synthetic_providers_cover_documented_surface(passed, failed, skipped);
     test_evaluator_get_source_and_test_property_synthetic_providers_cover_location_generated_and_working_directory(passed, failed, skipped);
     test_evaluator_install_signatures_emit_expected_rules_and_component_inventory(passed, failed, skipped);
+    test_evaluator_install_omitted_components_materialize_as_unspecified_without_default_override(passed, failed, skipped);
     test_evaluator_get_property_inherited_target_and_source_queries_follow_declared_target_directory(passed, failed, skipped);
     test_evaluator_directory_scoped_property_queries_require_known_directories(passed, failed, skipped);
     test_evaluator_directory_property_inheritance_uses_directory_graph_parent(passed, failed, skipped);

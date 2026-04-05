@@ -1423,6 +1423,64 @@ TEST(build_model_install_and_export_queries_surface_typed_metadata) {
     TEST_PASS();
 }
 
+TEST(build_model_install_queries_materialize_effective_default_components) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id core_id = BM_TARGET_ID_INVALID;
+
+    ASSERT(build_model_write_text_file("install_component_src/core.c", "int core_value(void) { return 5; }\n"));
+    ASSERT(build_model_write_text_file("install_component_src/main.c",
+                                       "int core_value(void);\n"
+                                       "int main(void) { return core_value() == 5 ? 0 : 1; }\n"));
+    ASSERT(build_model_write_text_file("install_component_src/notice.txt", "notice\n"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "install_component_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("install_component_src");
+    config.binary_dir = nob_sv_from_cstr("install_component_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME Toolkit)\n"
+        "add_library(core STATIC core.c)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE core)\n"
+        "install(TARGETS app DESTINATION bin)\n"
+        "install(FILES notice.txt DESTINATION share)\n"
+        "install(TARGETS core EXPORT DemoTargets ARCHIVE DESTINATION lib COMPONENT Development)\n"
+        "install(EXPORT DemoTargets NAMESPACE Demo:: DESTINATION lib/cmake/demo FILE DemoTargets.cmake)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    core_id = bm_query_target_by_name(model, nob_sv_from_cstr("core"));
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+    ASSERT(core_id != BM_TARGET_ID_INVALID);
+
+    ASSERT(bm_query_install_rule_count(model) == 3);
+    ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)0) == app_id);
+    ASSERT(nob_sv_eq(bm_query_install_rule_component(model, (BM_Install_Rule_Id)0),
+                     nob_sv_from_cstr("Toolkit")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_component(model, (BM_Install_Rule_Id)1),
+                     nob_sv_from_cstr("Toolkit")));
+    ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)2) == core_id);
+    ASSERT(nob_sv_eq(bm_query_install_rule_component(model, (BM_Install_Rule_Id)2),
+                     nob_sv_from_cstr("Development")));
+
+    ASSERT(bm_query_export_count(model) == 1);
+    ASSERT(nob_sv_eq(bm_query_export_component(model, (BM_Export_Id)0),
+                     nob_sv_from_cstr("Toolkit")));
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -1459,6 +1517,7 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_compile_feature_catalog_and_effective_features_are_shared(passed, failed, skipped);
     test_build_model_effective_queries_dedup_and_preserve_first_occurrence(passed, failed, skipped);
     test_build_model_install_and_export_queries_surface_typed_metadata(passed, failed, skipped);
+    test_build_model_install_queries_materialize_effective_default_components(passed, failed, skipped);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

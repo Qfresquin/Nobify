@@ -479,7 +479,26 @@ Support matrix after `P4`:
 ### P5 Install Parity
 
 Status:
-- planned
+- completed on April 5, 2026
+- delivered:
+  effective install/export component materialization in evaluator lowering,
+  so omitted `COMPONENT` now freezes as the visible
+  `CMAKE_INSTALL_DEFAULT_COMPONENT_NAME` or `Unspecified`
+  generated Nob install CLI support for
+  `install [--prefix <path>] [--component <name>]`
+  prefix-aware and component-aware Linux/POSIX install execution for the
+  supported baseline:
+  `install(TARGETS)`, `install(FILES)`, `install(PROGRAMS)`,
+  `install(DIRECTORY)`, `install(EXPORT)`, `PUBLIC_HEADER`, and
+  artifact-specific destinations
+  aggregate-safe evaluator/build-model/codegen proof for effective component
+  naming, selective component installs, custom install prefixes,
+  `PROGRAMS` executability preservation, `DIRECTORY` trailing-slash
+  semantics, `PUBLIC_HEADER` installation, installed export emission, and
+  `clean` preserving custom install prefixes
+  explicit-only artifact-parity install fixtures with independent CMake/Nob
+  prefix and component knobs, plus real-project corpus installs now driven
+  through explicit generated-Nob `--prefix` execution
 
 Deliverables:
 - consume install rules from the frozen model in the backend instead of
@@ -501,6 +520,14 @@ Exit criteria:
 - component and install-type/group behavior is proven where the model already
   carries it
 - install regressions are visible in the aggregate proof stack
+
+Evidence delivered:
+- `./build/nob_test test-evaluator`
+- `./build/nob_test test-build-model`
+- `./build/nob_test test-codegen`
+- `./build/nob_test test-artifact-parity`
+- `./build/nob_test test-artifact-parity-corpus`
+- `./build/nob_test test-v2`
 
 ### P6 Export Parity
 

@@ -5,6 +5,8 @@
 
 #include <string.h>
 
+static String_View install_default_component_name(EvalExecContext *ctx);
+
 static bool install_emit_diag(EvalExecContext *ctx,
                               const Node *node,
                               Cmake_Event_Origin o,
@@ -27,6 +29,7 @@ static bool install_emit_rule(EvalExecContext *ctx,
                               String_View runtime_destination,
                               String_View includes_destination,
                               String_View public_header_destination) {
+    if (component.count == 0) component = install_default_component_name(ctx);
     return eval_emit_install_rule_add(ctx,
                                       o,
                                       rule_type,
@@ -588,6 +591,7 @@ static bool install_handle_export_like(EvalExecContext *ctx,
     }
 
     if (strcmp(tag, "EXPORT") == 0) {
+        if (component.count == 0) component = install_default_component_name(ctx);
         return eval_emit_export_install(ctx, o, args[1], destination, export_namespace, file_name, component);
     }
     {

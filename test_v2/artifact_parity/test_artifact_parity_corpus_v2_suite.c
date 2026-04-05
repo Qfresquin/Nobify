@@ -183,7 +183,8 @@ static bool corpus_run_project(const Artifact_Parity_Corpus_Project *project) {
                                          NULL) ||
         !artifact_parity_run_cmake_install(&s_corpus_cmake,
                                            nob_temp_sprintf("%s_cmake_build", project->name),
-                                           nob_temp_sprintf("%s_cmake_install", project->name))) {
+                                           nob_temp_sprintf("%s_cmake_install", project->name),
+                                           NULL)) {
         return false;
     }
 
@@ -195,7 +196,10 @@ static bool corpus_run_project(const Artifact_Parity_Corpus_Project *project) {
         !artifact_parity_compile_generated_nob(nob_temp_sprintf("%s_project/nob.c", project->name),
                                                nob_temp_sprintf("%s_project/nob_gen", project->name)) ||
         !artifact_parity_run_binary_in_dir(nob_temp_sprintf("%s_project", project->name), "./nob_gen", NULL, NULL) ||
-        !artifact_parity_run_binary_in_dir(nob_temp_sprintf("%s_project", project->name), "./nob_gen", "install", NULL)) {
+        !artifact_parity_run_binary_in_dir_argv(nob_temp_sprintf("%s_project", project->name),
+                                                "./nob_gen",
+                                                (const char *[]){"install", "--prefix", nob_install_abs},
+                                                3)) {
         return false;
     }
 

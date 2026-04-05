@@ -1,12 +1,17 @@
-#define NOB_IMPLEMENTATION
-#define NOB_NO_ECHO
-#include "nob.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#define NOB_IMPLEMENTATION
+#define NOB_NO_ECHO
+#include "nob.h"
 
 #if defined(_WIN32)
 #include <process.h>
@@ -16,8 +21,13 @@
 #define SNAPSHOT_GETPID() getpid()
 #endif
 
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
 #define SNAPSHOT_MANIFEST_PATH "test_v2/artifact_parity/real_projects/manifest.json"
 #define SNAPSHOT_ARCHIVE_ROOT "test_v2/artifact_parity/real_projects/archives"
+#define SNAPSHOT_PATH_MAX PATH_MAX
 
 typedef struct {
     char **items;
@@ -391,24 +401,16 @@ defer:
     return ok;
 }
 
-static bool snapshot_path_join2(char out[_TINYDIR_PATH_MAX], const char *a, const char *b) {
+static bool snapshot_path_join2(char out[SNAPSHOT_PATH_MAX], const char *a, const char *b) {
     if (!out || !a || !b) return false;
-    return snprintf(out, _TINYDIR_PATH_MAX, "%s/%s", a, b) < _TINYDIR_PATH_MAX;
-}
-
-static bool snapshot_path_join3(char out[_TINYDIR_PATH_MAX],
-                                const char *a,
-                                const char *b,
-                                const char *c) {
-    if (!out || !a || !b || !c) return false;
-    return snprintf(out, _TINYDIR_PATH_MAX, "%s/%s/%s", a, b, c) < _TINYDIR_PATH_MAX;
+    return snprintf(out, SNAPSHOT_PATH_MAX, "%s/%s", a, b) < SNAPSHOT_PATH_MAX;
 }
 
 static bool snapshot_ensure_dir_recursive(const char *path) {
-    char buf[_TINYDIR_PATH_MAX] = {0};
+    char buf[SNAPSHOT_PATH_MAX] = {0};
     size_t len = 0;
 
-    if (!path || path[0] == '\0') return false;
+    if (!path || path[0] == '\0' || strcmp(path, ".") == 0) return true;
     if (snprintf(buf, sizeof(buf), "%s", path) >= (int)sizeof(buf)) return false;
     len = strlen(buf);
     if (len == 0) return false;
@@ -444,9 +446,9 @@ static bool snapshot_remove_tree_if_exists(const char *path) {
 static bool snapshot_copy_allowed_path(const char *tree_root,
                                        const char *dest_root,
                                        const char *relpath) {
-    char src_path[_TINYDIR_PATH_MAX] = {0};
-    char dst_path[_TINYDIR_PATH_MAX] = {0};
-    char dst_parent[_TINYDIR_PATH_MAX] = {0};
+    char src_path[SNAPSHOT_PATH_MAX] = {0};
+    char dst_path[SNAPSHOT_PATH_MAX] = {0};
+    char dst_parent[SNAPSHOT_PATH_MAX] = {0};
     Nob_File_Type type = NOB_FILE_OTHER;
 
     if (!snapshot_path_join2(src_path, tree_root, relpath) ||
@@ -523,12 +525,12 @@ static bool snapshot_write_metadata(const Snapshot_Project *project, const char 
 }
 
 static bool snapshot_refresh_project(const Snapshot_Project *project) {
-    char archive_path[_TINYDIR_PATH_MAX] = {0};
-    char metadata_path[_TINYDIR_PATH_MAX] = {0};
-    char staging_dir[_TINYDIR_PATH_MAX] = {0};
-    char temp_root[_TINYDIR_PATH_MAX] = {0};
-    char download_path[_TINYDIR_PATH_MAX] = {0};
-    char tree_root[_TINYDIR_PATH_MAX] = {0};
+    char archive_path[SNAPSHOT_PATH_MAX] = {0};
+    char metadata_path[SNAPSHOT_PATH_MAX] = {0};
+    char staging_dir[SNAPSHOT_PATH_MAX] = {0};
+    char temp_root[SNAPSHOT_PATH_MAX] = {0};
+    char download_path[SNAPSHOT_PATH_MAX] = {0};
+    char tree_root[SNAPSHOT_PATH_MAX] = {0};
     bool ok = false;
 
     if (!project) return false;

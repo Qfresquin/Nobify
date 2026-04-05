@@ -6,6 +6,7 @@
 #include <string.h>
 
 #if !defined(_WIN32)
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -78,6 +79,24 @@ static bool codegen_make_tool_only_path_dir(const char *dir) {
     return true;
 }
 #endif
+
+static bool codegen_test_make_executable(const char *path) {
+    if (!path) return false;
+#if defined(_WIN32)
+    return true;
+#else
+    return chmod(path, 0755) == 0;
+#endif
+}
+
+static bool codegen_test_path_is_executable(const char *path) {
+    if (!path) return false;
+#if defined(_WIN32)
+    return test_ws_host_path_exists(path);
+#else
+    return access(path, X_OK) == 0;
+#endif
+}
 
 TEST(codegen_write_file_rebases_source_and_binary_roots_for_out_of_source_nob) {
     Arena *arena = arena_create(512 * 1024);
@@ -306,6 +325,134 @@ TEST(codegen_clean_removes_out_of_source_outputs_but_preserves_binary_root) {
     ASSERT(!test_ws_host_path_exists("clean_build/libcore.a"));
     ASSERT(!test_ws_host_path_exists("clean_build/libshared.so"));
     ASSERT(!test_ws_host_path_exists("clean_build/libplugin.so"));
+    TEST_PASS();
+}
+
+TEST(codegen_install_full_custom_prefix_preserves_program_mode_and_directory_semantics) {
+    const char *install_argv[] = {"install", "--prefix", "install_full_prefix"};
+    const char *script =
+        "project(Test C)\n"
+        "add_library(core STATIC core.c)\n"
+        "set_target_properties(core PROPERTIES PUBLIC_HEADER include/core.h)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE core)\n"
+        "install(TARGETS core app EXPORT DemoTargets\n"
+        "  ARCHIVE DESTINATION lib\n"
+        "  RUNTIME DESTINATION bin\n"
+        "  PUBLIC_HEADER DESTINATION include/demo)\n"
+        "install(FILES config/demo.conf DESTINATION share/demo)\n"
+        "install(PROGRAMS scripts/run-helper.sh DESTINATION bin)\n"
+        "install(DIRECTORY docs/ DESTINATION share/docs)\n"
+        "install(DIRECTORY bundle DESTINATION share/packages)\n"
+        "install(EXPORT DemoTargets DESTINATION share/cmake/Demo)\n";
+    Codegen_Test_Config config = {
+        .input_path = "install_full_src/CMakeLists.txt",
+        .output_path = "install_full_nob.c",
+        .source_dir = "install_full_src",
+        .binary_dir = "install_full_build",
+    };
+
+    ASSERT(codegen_write_text_file("install_full_src/core.c", "int core_value(void) { return 33; }\n"));
+    ASSERT(codegen_write_text_file("install_full_src/include/core.h", "#define CORE_VALUE 33\n"));
+    ASSERT(codegen_write_text_file(
+        "install_full_src/main.c",
+        "int core_value(void);\n"
+        "int main(void) { return core_value() == 33 ? 0 : 1; }\n"));
+    ASSERT(codegen_write_text_file("install_full_src/config/demo.conf", "mode=full\n"));
+    ASSERT(codegen_write_text_file("install_full_src/scripts/run-helper.sh", "#!/bin/sh\nexit 0\n"));
+    ASSERT(codegen_test_make_executable("install_full_src/scripts/run-helper.sh"));
+    ASSERT(codegen_write_text_file("install_full_src/docs/guide.txt", "guide\n"));
+    ASSERT(codegen_write_text_file("install_full_src/bundle/nested/data.txt", "bundle\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("install_full_nob.c", "install_full_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir(".", "./install_full_nob_gen", "app", NULL));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./install_full_nob_gen",
+                                          install_argv,
+                                          NOB_ARRAY_LEN(install_argv)));
+    ASSERT(test_ws_host_path_exists("install_full_prefix/bin/app"));
+    ASSERT(test_ws_host_path_exists("install_full_prefix/lib/libcore.a"));
+    ASSERT(test_ws_host_path_exists("install_full_prefix/include/demo/core.h"));
+    ASSERT(test_ws_host_path_exists("install_full_prefix/share/demo/demo.conf"));
+    ASSERT(test_ws_host_path_exists("install_full_prefix/bin/run-helper.sh"));
+    ASSERT(codegen_test_path_is_executable("install_full_prefix/bin/run-helper.sh"));
+    ASSERT(test_ws_host_path_exists("install_full_prefix/share/docs/guide.txt"));
+    ASSERT(!test_ws_host_path_exists("install_full_prefix/share/docs/docs/guide.txt"));
+    ASSERT(test_ws_host_path_exists("install_full_prefix/share/packages/bundle/nested/data.txt"));
+    ASSERT(!test_ws_host_path_exists("install_full_prefix/share/packages/nested/data.txt"));
+    ASSERT(test_ws_host_path_exists("install_full_prefix/share/cmake/Demo/DemoTargets.cmake"));
+    ASSERT(codegen_run_binary_in_dir(".", "./install_full_nob_gen", "clean", NULL));
+    ASSERT(test_ws_host_path_exists("install_full_prefix/bin/app"));
+    ASSERT(test_ws_host_path_exists("install_full_prefix/lib/libcore.a"));
+    ASSERT(!test_ws_host_path_exists("install_full_build/app"));
+    ASSERT(!test_ws_host_path_exists("install_full_build/libcore.a"));
+    TEST_PASS();
+}
+
+TEST(codegen_install_component_selection_and_default_component_fallback_work) {
+    const char *install_dev_argv[] = {"install", "--prefix", "install_component_dev", "--component", "Development"};
+    const char *install_runtime_argv[] = {"install", "--prefix", "install_component_runtime", "--component", "Runtime"};
+    const char *install_toolkit_argv[] = {"install", "--prefix", "install_component_toolkit", "--component", "Toolkit"};
+    const char *script =
+        "project(Test C)\n"
+        "set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME Toolkit)\n"
+        "add_library(core STATIC core.c)\n"
+        "set_target_properties(core PROPERTIES PUBLIC_HEADER include/core.h)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE core)\n"
+        "install(TARGETS app RUNTIME DESTINATION bin COMPONENT Runtime)\n"
+        "install(TARGETS core EXPORT DemoTargets\n"
+        "  ARCHIVE DESTINATION lib\n"
+        "  PUBLIC_HEADER DESTINATION include/demo\n"
+        "  COMPONENT Development)\n"
+        "install(PROGRAMS scripts/runtime-helper.sh DESTINATION bin COMPONENT Runtime)\n"
+        "install(FILES docs/default.txt DESTINATION share/toolkit)\n"
+        "install(EXPORT DemoTargets DESTINATION share/cmake/Demo COMPONENT Development)\n";
+    Codegen_Test_Config config = {
+        .input_path = "install_component_src/CMakeLists.txt",
+        .output_path = "install_component_nob.c",
+        .source_dir = "install_component_src",
+        .binary_dir = "install_component_build",
+    };
+
+    ASSERT(codegen_write_text_file("install_component_src/core.c", "int core_value(void) { return 37; }\n"));
+    ASSERT(codegen_write_text_file("install_component_src/include/core.h", "#define CORE_VALUE 37\n"));
+    ASSERT(codegen_write_text_file(
+        "install_component_src/main.c",
+        "int core_value(void);\n"
+        "int main(void) { return core_value() == 37 ? 0 : 1; }\n"));
+    ASSERT(codegen_write_text_file("install_component_src/scripts/runtime-helper.sh", "#!/bin/sh\nexit 0\n"));
+    ASSERT(codegen_test_make_executable("install_component_src/scripts/runtime-helper.sh"));
+    ASSERT(codegen_write_text_file("install_component_src/docs/default.txt", "toolkit\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("install_component_nob.c", "install_component_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir(".", "./install_component_nob_gen", "app", NULL));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./install_component_nob_gen",
+                                          install_dev_argv,
+                                          NOB_ARRAY_LEN(install_dev_argv)));
+    ASSERT(test_ws_host_path_exists("install_component_dev/lib/libcore.a"));
+    ASSERT(test_ws_host_path_exists("install_component_dev/include/demo/core.h"));
+    ASSERT(test_ws_host_path_exists("install_component_dev/share/cmake/Demo/DemoTargets.cmake"));
+    ASSERT(!test_ws_host_path_exists("install_component_dev/bin/app"));
+    ASSERT(!test_ws_host_path_exists("install_component_dev/share/toolkit/default.txt"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./install_component_nob_gen",
+                                          install_runtime_argv,
+                                          NOB_ARRAY_LEN(install_runtime_argv)));
+    ASSERT(test_ws_host_path_exists("install_component_runtime/bin/app"));
+    ASSERT(test_ws_host_path_exists("install_component_runtime/bin/runtime-helper.sh"));
+    ASSERT(codegen_test_path_is_executable("install_component_runtime/bin/runtime-helper.sh"));
+    ASSERT(!test_ws_host_path_exists("install_component_runtime/lib/libcore.a"));
+    ASSERT(!test_ws_host_path_exists("install_component_runtime/share/cmake/Demo/DemoTargets.cmake"));
+    ASSERT(!test_ws_host_path_exists("install_component_runtime/share/toolkit/default.txt"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./install_component_nob_gen",
+                                          install_toolkit_argv,
+                                          NOB_ARRAY_LEN(install_toolkit_argv)));
+    ASSERT(test_ws_host_path_exists("install_component_toolkit/share/toolkit/default.txt"));
+    ASSERT(!test_ws_host_path_exists("install_component_toolkit/bin/app"));
+    ASSERT(!test_ws_host_path_exists("install_component_toolkit/lib/libcore.a"));
+    ASSERT(!test_ws_host_path_exists("install_component_toolkit/share/cmake/Demo/DemoTargets.cmake"));
     TEST_PASS();
 }
 
@@ -894,6 +1041,8 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_explicit_output_directories_shape_out_of_source_artifacts(passed, failed, skipped);
     test_codegen_cxx_static_dependency_uses_cxx_driver_for_link_out_of_source(passed, failed, skipped);
     test_codegen_clean_removes_out_of_source_outputs_but_preserves_binary_root(passed, failed, skipped);
+    test_codegen_install_full_custom_prefix_preserves_program_mode_and_directory_semantics(passed, failed, skipped);
+    test_codegen_install_component_selection_and_default_component_fallback_work(passed, failed, skipped);
     test_codegen_ignores_cxx_modules_file_set_metadata_in_compile_inputs(passed, failed, skipped);
     test_codegen_builds_generated_source_from_output_rule_step(passed, failed, skipped);
     test_codegen_renders_multi_command_steps_with_deduped_rebuild_inputs(passed, failed, skipped);

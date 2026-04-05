@@ -69,6 +69,26 @@ static const char *artifact_parity_case_generated_nob_bin_path(const Artifact_Pa
     return nob_temp_sprintf("%s/nob_gen", artifact_parity_case_nob_run_dir(case_def));
 }
 
+static const char *artifact_parity_case_cmake_install_prefix(const Artifact_Parity_Case *case_def) {
+    return case_def && case_def->cmake_install_prefix && case_def->cmake_install_prefix[0] != '\0'
+        ? case_def->cmake_install_prefix
+        : "cmake_install";
+}
+
+static const char *artifact_parity_case_cmake_install_component(const Artifact_Parity_Case *case_def) {
+    return case_def ? case_def->cmake_install_component : NULL;
+}
+
+static const char *artifact_parity_case_nob_install_prefix(const Artifact_Parity_Case *case_def) {
+    return case_def && case_def->nob_install_prefix && case_def->nob_install_prefix[0] != '\0'
+        ? case_def->nob_install_prefix
+        : "source/install";
+}
+
+static const char *artifact_parity_case_nob_install_component(const Artifact_Parity_Case *case_def) {
+    return case_def ? case_def->nob_install_component : NULL;
+}
+
 static bool artifact_parity_run_cmd_in_dir(const char *dir, Nob_Cmd *cmd) {
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
     const char *cwd = nob_get_current_dir_temp();
@@ -109,10 +129,18 @@ static bool artifact_parity_build_archive_in_dir(const char *dir,
     return true;
 }
 
+static bool artifact_parity_prepare_install_case(const Artifact_Parity_Case *case_def) {
+    const char *source_root = artifact_parity_case_source_root(case_def);
+    if (!source_root) return false;
+    return artifact_parity_write_executable_file(nob_temp_sprintf("%s/scripts/run-helper.sh", source_root),
+                                                 "#!/bin/sh\n"
+                                                 "exit 0\n");
+}
+
 static bool artifact_parity_run_nob_command(const Artifact_Parity_Case *case_def,
                                             const Artifact_Parity_Nob_Command *command) {
     const char *run_dir = artifact_parity_case_nob_run_dir(case_def);
-    const char *argv[3] = {0};
+    const char *argv[8] = {0};
     size_t argc = 0;
     if (!case_def || !command) return false;
 
@@ -144,6 +172,15 @@ static bool artifact_parity_run_nob_command(const Artifact_Parity_Case *case_def
 
         case ARTIFACT_PARITY_NOB_COMMAND_INSTALL:
             argv[argc++] = "install";
+            if (artifact_parity_case_nob_install_prefix(case_def)[0] != '\0') {
+                argv[argc++] = "--prefix";
+                argv[argc++] = artifact_parity_case_nob_install_prefix(case_def);
+            }
+            if (artifact_parity_case_nob_install_component(case_def) &&
+                artifact_parity_case_nob_install_component(case_def)[0] != '\0') {
+                argv[argc++] = "--component";
+                argv[argc++] = artifact_parity_case_nob_install_component(case_def);
+            }
             return artifact_parity_run_binary_in_dir_argv(run_dir, "./nob_gen", argv, argc);
 
         case ARTIFACT_PARITY_NOB_COMMAND_PACKAGE:
@@ -168,6 +205,7 @@ static bool artifact_parity_run_case(const Artifact_Parity_Case *case_def) {
     const char *nob_binary_dir = NULL;
     const char *generated_nob_path = NULL;
     const char *generated_nob_bin_path = NULL;
+    const char *cmake_install_prefix = NULL;
 
     if (!case_def) return false;
     if (!cwd) return false;
@@ -176,6 +214,7 @@ static bool artifact_parity_run_case(const Artifact_Parity_Case *case_def) {
     nob_binary_dir = artifact_parity_case_nob_binary_dir(case_def);
     generated_nob_path = artifact_parity_case_generated_nob_path(case_def);
     generated_nob_bin_path = artifact_parity_case_generated_nob_bin_path(case_def);
+    cmake_install_prefix = artifact_parity_case_cmake_install_prefix(case_def);
     if (s_artifact_parity_nobify_bin[0] == '\0') {
         nob_log(NOB_ERROR,
                 "artifact parity suite: missing nobify tool: %s",
@@ -217,7 +256,8 @@ static bool artifact_parity_run_case(const Artifact_Parity_Case *case_def) {
     if (case_def->phases & ARTIFACT_PARITY_PHASE_INSTALL) {
         if (!artifact_parity_run_cmake_install(&s_artifact_parity_cmake,
                                                cmake_binary_dir,
-                                               "cmake_install")) {
+                                               cmake_install_prefix,
+                                               artifact_parity_case_cmake_install_component(case_def))) {
             return false;
         }
     }
@@ -341,6 +381,9 @@ static const Artifact_Parity_Manifest_Request s_install_manifest_requests[] = {
     {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_TREE, "install_tree", ""},
     {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "install_notice_text", "share/NOTICE.txt"},
     {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_FILE_SHA256, "install_notice_sha256", "share/NOTICE.txt"},
+    {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "install_demo_config_text", "lib/cmake/demo/DemoConfig.cmake"},
+    {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "install_demo_targets_text", "lib/cmake/demo/DemoTargets.cmake"},
+    {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "install_demo_targets_noconfig_text", "lib/cmake/demo/DemoTargets-noconfig.cmake"},
 };
 
 static const Artifact_Parity_File s_install_files[] = {
@@ -349,17 +392,29 @@ static const Artifact_Parity_File s_install_files[] = {
         "cmake_minimum_required(VERSION 3.28)\n"
         "project(ArtifactParityInstall VERSION 2.0 LANGUAGES C)\n"
         "add_library(core STATIC src/core.c)\n"
-        "set_target_properties(core PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/lib)\n"
+        "set_target_properties(core PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/lib PUBLIC_HEADER include/core.h)\n"
+        "target_include_directories(core PUBLIC\n"
+        "  \"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>\"\n"
+        "  \"$<INSTALL_INTERFACE:include/demo>\")\n"
         "add_executable(app src/main.c)\n"
         "target_link_libraries(app PRIVATE core)\n"
         "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n"
-        "install(TARGETS app DESTINATION bin)\n"
-        "install(TARGETS core DESTINATION lib)\n"
-        "install(FILES assets/NOTICE.txt DESTINATION share)\n",
+        "install(TARGETS app DESTINATION bin COMPONENT Runtime)\n"
+        "install(TARGETS core EXPORT DemoTargets ARCHIVE DESTINATION lib PUBLIC_HEADER DESTINATION include/demo COMPONENT Development)\n"
+        "install(FILES assets/NOTICE.txt DESTINATION share COMPONENT Runtime)\n"
+        "install(PROGRAMS scripts/run-helper.sh DESTINATION bin COMPONENT Runtime)\n"
+        "install(DIRECTORY docs/ DESTINATION share/doc COMPONENT Runtime)\n"
+        "install(DIRECTORY bundle DESTINATION share/tree COMPONENT Runtime)\n"
+        "install(FILES cmake/DemoConfig.cmake DESTINATION lib/cmake/demo COMPONENT Development)\n"
+        "install(EXPORT DemoTargets NAMESPACE Demo:: DESTINATION lib/cmake/demo FILE DemoTargets.cmake COMPONENT Development)\n",
     },
     {
         "src/core.c",
         "int core_value(void) { return 11; }\n",
+    },
+    {
+        "include/core.h",
+        "int core_value(void);\n",
     },
     {
         "src/main.c",
@@ -369,6 +424,23 @@ static const Artifact_Parity_File s_install_files[] = {
     {
         "assets/NOTICE.txt",
         "Artifact parity install notice\n",
+    },
+    {
+        "scripts/run-helper.sh",
+        "#!/bin/sh\n"
+        "exit 0\n",
+    },
+    {
+        "docs/guide.txt",
+        "Runtime docs\n",
+    },
+    {
+        "bundle/readme.txt",
+        "Bundled tree\n",
+    },
+    {
+        "cmake/DemoConfig.cmake",
+        "include(\"${CMAKE_CURRENT_LIST_DIR}/DemoTargets.cmake\")\n",
     },
 };
 
@@ -389,10 +461,128 @@ static const Artifact_Parity_Case s_install_case = {
     .manifest_requests = s_install_manifest_requests,
     .manifest_request_count = NOB_ARRAY_LEN(s_install_manifest_requests),
     .cmake_build_target = "app",
-    .cmake_base_dir = "cmake_install",
-    .nob_base_dir = "source/install",
+    .cmake_install_prefix = "cmake_install_full",
+    .nob_install_prefix = "source/custom_install",
+    .cmake_base_dir = "cmake_install_full",
+    .nob_base_dir = "source/custom_install",
     .clean_absence_relpath = NULL,
     .subject = "install_tree",
+    .prepare = artifact_parity_prepare_install_case,
+};
+
+static const Artifact_Parity_Manifest_Request s_install_component_manifest_requests[] = {
+    {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_TREE, "install_tree", ""},
+    {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "install_demo_targets_text", "lib/cmake/demo/DemoTargets.cmake"},
+};
+
+static const Artifact_Parity_File s_install_component_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityInstallComponents VERSION 2.0 LANGUAGES C)\n"
+        "set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME Toolkit)\n"
+        "add_library(core STATIC src/core.c)\n"
+        "set_target_properties(core PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/lib PUBLIC_HEADER include/core.h)\n"
+        "target_include_directories(core PUBLIC \"$<INSTALL_INTERFACE:include/demo>\")\n"
+        "add_executable(app src/main.c)\n"
+        "target_link_libraries(app PRIVATE core)\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n"
+        "install(TARGETS app DESTINATION bin)\n"
+        "install(TARGETS core EXPORT DemoTargets ARCHIVE DESTINATION lib PUBLIC_HEADER DESTINATION include/demo COMPONENT Development)\n"
+        "install(FILES assets/runtime.txt DESTINATION share/runtime COMPONENT Runtime)\n"
+        "install(FILES assets/toolkit.txt DESTINATION share/toolkit)\n"
+        "install(FILES cmake/DemoConfig.cmake DESTINATION lib/cmake/demo COMPONENT Development)\n"
+        "install(EXPORT DemoTargets NAMESPACE Demo:: DESTINATION lib/cmake/demo FILE DemoTargets.cmake COMPONENT Development)\n",
+    },
+    {
+        "src/core.c",
+        "int core_value(void) { return 21; }\n",
+    },
+    {
+        "include/core.h",
+        "int core_value(void);\n",
+    },
+    {
+        "src/main.c",
+        "int core_value(void);\n"
+        "int main(void) { return core_value() == 21 ? 0 : 1; }\n",
+    },
+    {
+        "assets/runtime.txt",
+        "Runtime component\n",
+    },
+    {
+        "assets/toolkit.txt",
+        "Toolkit component\n",
+    },
+    {
+        "cmake/DemoConfig.cmake",
+        "include(\"${CMAKE_CURRENT_LIST_DIR}/DemoTargets.cmake\")\n",
+    },
+};
+
+static const Artifact_Parity_Nob_Command s_install_component_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, NULL, "app"},
+    {ARTIFACT_PARITY_NOB_COMMAND_INSTALL, NULL, NULL},
+};
+
+static const Artifact_Parity_Case s_install_component_development_case = {
+    .name = "install_component_development",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE |
+              ARTIFACT_PARITY_PHASE_BUILD |
+              ARTIFACT_PARITY_PHASE_INSTALL,
+    .files = s_install_component_files,
+    .file_count = NOB_ARRAY_LEN(s_install_component_files),
+    .nob_commands = s_install_component_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_install_component_commands),
+    .manifest_requests = s_install_component_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_install_component_manifest_requests),
+    .source_root = "install_component_dev_source",
+    .cmake_binary_dir = "install_component_dev_cmake_build",
+    .nob_binary_dir = "install_component_dev_nob_build",
+    .generated_nob_path = "install_component_dev_source/nob.c",
+    .nob_run_dir = "install_component_dev_source",
+    .cmake_build_target = "app",
+    .cmake_install_prefix = "install_component_dev_cmake_prefix",
+    .cmake_install_component = "Development",
+    .nob_install_prefix = "install_component_dev_source/install_dev",
+    .nob_install_component = "Development",
+    .cmake_base_dir = "install_component_dev_cmake_prefix",
+    .nob_base_dir = "install_component_dev_source/install_dev",
+    .clean_absence_relpath = NULL,
+    .subject = "install_component_development",
+};
+
+static const Artifact_Parity_Manifest_Request s_install_component_default_manifest_requests[] = {
+    {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_TREE, "install_tree", ""},
+    {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "toolkit_text", "share/toolkit/toolkit.txt"},
+};
+
+static const Artifact_Parity_Case s_install_component_default_case = {
+    .name = "install_component_default_toolkit",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE |
+              ARTIFACT_PARITY_PHASE_BUILD |
+              ARTIFACT_PARITY_PHASE_INSTALL,
+    .files = s_install_component_files,
+    .file_count = NOB_ARRAY_LEN(s_install_component_files),
+    .nob_commands = s_install_component_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_install_component_commands),
+    .manifest_requests = s_install_component_default_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_install_component_default_manifest_requests),
+    .source_root = "install_component_default_source",
+    .cmake_binary_dir = "install_component_default_cmake_build",
+    .nob_binary_dir = "install_component_default_nob_build",
+    .generated_nob_path = "install_component_default_source/nob.c",
+    .nob_run_dir = "install_component_default_source",
+    .cmake_build_target = "app",
+    .cmake_install_prefix = "install_component_default_cmake_prefix",
+    .cmake_install_component = "Toolkit",
+    .nob_install_prefix = "install_component_default_source/install_toolkit",
+    .nob_install_component = "Toolkit",
+    .cmake_base_dir = "install_component_default_cmake_prefix",
+    .nob_base_dir = "install_component_default_source/install_toolkit",
+    .clean_absence_relpath = NULL,
+    .subject = "install_component_default_toolkit",
 };
 
 static const Artifact_Parity_Manifest_Request s_empty_export_package_manifest_requests[] = {
@@ -980,6 +1170,28 @@ TEST(artifact_parity_install_tree_matches_cmake_for_files_and_targets) {
     TEST_PASS();
 }
 
+TEST(artifact_parity_install_component_development_matches_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_install_component_development_case));
+    TEST_PASS();
+}
+
+TEST(artifact_parity_install_component_default_matches_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_install_component_default_case));
+    TEST_PASS();
+}
+
 TEST(artifact_parity_emits_empty_export_and_package_manifest_sections) {
     if (!s_artifact_parity_cmake.available) {
         TEST_SKIP(s_artifact_parity_skip_reason[0]
@@ -1266,6 +1478,8 @@ void run_artifact_parity_v2_tests(int *passed, int *failed, int *skipped) {
     } else {
         test_artifact_parity_build_and_generated_manifest_matches_cmake_via_nobify(passed, failed, skipped);
         test_artifact_parity_install_tree_matches_cmake_for_files_and_targets(passed, failed, skipped);
+        test_artifact_parity_install_component_development_matches_cmake(passed, failed, skipped);
+        test_artifact_parity_install_component_default_matches_cmake(passed, failed, skipped);
         test_artifact_parity_emits_empty_export_and_package_manifest_sections(passed, failed, skipped);
         test_artifact_parity_out_of_source_top_level_build_outputs_match_cmake(passed, failed, skipped);
         test_artifact_parity_out_of_source_subdirectory_build_outputs_match_cmake(passed, failed, skipped);
