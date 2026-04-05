@@ -2574,6 +2574,7 @@ TEST(evaluator_event_ir_taxonomy_is_frozen) {
         {EVENT_FAMILY_INSTALL, "install"},
         {EVENT_FAMILY_CPACK, "cpack"},
         {EVENT_FAMILY_PACKAGE, "package"},
+        {EVENT_FAMILY_EXPORT, "export"},
     };
     static const Event_Kind_Contract_Row expected_kinds[] = {
         {EVENT_DIAG, EVENT_FAMILY_DIAG, "diag", EVENT_ROLE_DIAGNOSTIC},
@@ -2668,6 +2669,7 @@ TEST(evaluator_event_ir_taxonomy_is_frozen) {
         {EVENT_TARGET_INCLUDE_DIRECTORIES, EVENT_FAMILY_TARGET, "target_include_directories", EVENT_ROLE_BUILD_SEMANTIC},
         {EVENT_TARGET_COMPILE_DEFINITIONS, EVENT_FAMILY_TARGET, "target_compile_definitions", EVENT_ROLE_BUILD_SEMANTIC},
         {EVENT_TARGET_COMPILE_OPTIONS, EVENT_FAMILY_TARGET, "target_compile_options", EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_EXPORT_INSTALL, EVENT_FAMILY_EXPORT, "export_install", EVENT_ROLE_BUILD_SEMANTIC},
     };
 
     ASSERT(EVENT_FAMILY_COUNT == NOB_ARRAY_LEN(expected_families));

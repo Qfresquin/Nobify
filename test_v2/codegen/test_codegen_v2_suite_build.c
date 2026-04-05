@@ -458,6 +458,9 @@ TEST(codegen_uses_embedded_cmake_for_runtime_steps_without_cmake_on_path) {
     TEST_SKIP("tool-only PATH probe is POSIX-only");
 #else
     Test_Host_Env_Guard *path_guard = NULL;
+    if (!codegen_host_cmake_available()) {
+        TEST_SKIP("requires local cmake for embedded runtime tool resolution");
+    }
     const char *script =
         "project(Test C)\n"
         "add_custom_command(\n"
@@ -548,6 +551,118 @@ TEST(codegen_target_hooks_run_at_pre_link_and_post_build_boundaries) {
     ASSERT(test_ws_host_path_exists("hook_build/app"));
     ASSERT(test_ws_host_path_exists("hook_build/hooks/pre.txt"));
     ASSERT(test_ws_host_path_exists("hook_build/hooks/post.txt"));
+    TEST_PASS();
+}
+
+TEST(codegen_render_explicit_linux_posix_policy_preserves_linux_artifact_rules) {
+    Arena *arena = arena_create(512 * 1024);
+    Nob_String_Builder sb = {0};
+    String_View generated = {0};
+    const char *script =
+        "project(Test C)\n"
+        "add_library(shared SHARED shared.c)\n"
+        "add_library(plugin MODULE plugin.c)\n"
+        "add_executable(app main.c)\n";
+    Codegen_Test_Config config = {
+        .input_path = "p4_linux_src/CMakeLists.txt",
+        .output_path = "p4_linux_nob.c",
+        .source_dir = "p4_linux_src",
+        .binary_dir = "p4_linux_build",
+        .platform = NOB_CODEGEN_PLATFORM_LINUX,
+        .backend = NOB_CODEGEN_BACKEND_POSIX,
+    };
+    ASSERT(arena != NULL);
+    ASSERT(codegen_render_script_with_config(script, &config, &sb));
+    generated = nob_sv_from_parts(sb.items ? sb.items : "", sb.count);
+    ASSERT(codegen_sv_contains(generated, "libshared.so"));
+    ASSERT(codegen_sv_contains(generated, "libplugin.so"));
+    ASSERT(codegen_sv_contains(generated, "\"-shared\""));
+    ASSERT(!codegen_sv_contains(generated, ".dylib"));
+    ASSERT(!codegen_sv_contains(generated, ".dll"));
+    ASSERT(!codegen_sv_contains(generated, "mkdir -p"));
+    ASSERT(!codegen_sv_contains(generated, "rm -rf"));
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(codegen_render_darwin_posix_policy_uses_dylib_and_bundle_rules) {
+    Arena *arena = arena_create(512 * 1024);
+    Nob_String_Builder sb = {0};
+    String_View generated = {0};
+    const char *script =
+        "project(Test C)\n"
+        "add_library(shared SHARED shared.c)\n"
+        "add_library(plugin MODULE plugin.c)\n";
+    Codegen_Test_Config config = {
+        .input_path = "p4_darwin_src/CMakeLists.txt",
+        .output_path = "p4_darwin_nob.c",
+        .source_dir = "p4_darwin_src",
+        .binary_dir = "p4_darwin_build",
+        .platform = NOB_CODEGEN_PLATFORM_DARWIN,
+        .backend = NOB_CODEGEN_BACKEND_POSIX,
+    };
+    ASSERT(arena != NULL);
+    ASSERT(codegen_render_script_with_config(script, &config, &sb));
+    generated = nob_sv_from_parts(sb.items ? sb.items : "", sb.count);
+    ASSERT(codegen_sv_contains(generated, "libshared.dylib"));
+    ASSERT(codegen_sv_contains(generated, "libplugin.so"));
+    ASSERT(codegen_sv_contains(generated, "\"-dynamiclib\""));
+    ASSERT(codegen_sv_contains(generated, "\"-bundle\""));
+    ASSERT(!codegen_sv_contains(generated, ".dll"));
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(codegen_render_windows_msvc_policy_plans_dll_import_lib_and_msvc_tools) {
+    Arena *arena = arena_create(512 * 1024);
+    Nob_String_Builder sb = {0};
+    String_View generated = {0};
+    const char *script =
+        "project(Test C)\n"
+        "add_library(staticcore STATIC staticcore.c)\n"
+        "set_target_properties(staticcore PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/lib)\n"
+        "add_library(core SHARED core.c)\n"
+        "set_target_properties(core PROPERTIES\n"
+        "  RUNTIME_OUTPUT_DIRECTORY artifacts/bin\n"
+        "  ARCHIVE_OUTPUT_DIRECTORY artifacts/lib)\n"
+        "add_library(plugin MODULE plugin.c)\n"
+        "set_target_properties(plugin PROPERTIES\n"
+        "  RUNTIME_OUTPUT_DIRECTORY artifacts/modules\n"
+        "  ARCHIVE_OUTPUT_DIRECTORY artifacts/lib)\n"
+        "add_custom_target(paths ALL\n"
+        "  COMMAND ${CMAKE_COMMAND} -E echo $<TARGET_FILE:core> $<TARGET_LINKER_FILE:core> $<TARGET_FILE:plugin> $<TARGET_LINKER_FILE:plugin>)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE core staticcore kernel32)\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n";
+    Codegen_Test_Config config = {
+        .input_path = "p4_windows_src/CMakeLists.txt",
+        .output_path = "p4_windows_nob.c",
+        .source_dir = "p4_windows_src",
+        .binary_dir = "p4_windows_build",
+        .platform = NOB_CODEGEN_PLATFORM_WINDOWS,
+        .backend = NOB_CODEGEN_BACKEND_WIN32_MSVC,
+    };
+    ASSERT(arena != NULL);
+    ASSERT(codegen_render_script_with_config(script, &config, &sb));
+    generated = nob_sv_from_parts(sb.items ? sb.items : "", sb.count);
+    ASSERT(codegen_sv_contains(generated, "cl.exe"));
+    ASSERT(codegen_sv_contains(generated, "lib.exe"));
+    ASSERT(codegen_sv_contains(generated, "link.exe"));
+    ASSERT(codegen_sv_contains(generated, ".obj"));
+    ASSERT(codegen_sv_contains(generated, "app.exe"));
+    ASSERT(codegen_sv_contains(generated, "staticcore.lib"));
+    ASSERT(codegen_sv_contains(generated, "core.dll"));
+    ASSERT(codegen_sv_contains(generated, "core.lib"));
+    ASSERT(codegen_sv_contains(generated, "plugin.dll"));
+    ASSERT(codegen_sv_contains(generated, "plugin.lib"));
+    ASSERT(codegen_sv_contains(generated, "/IMPLIB:"));
+    ASSERT(codegen_sv_contains(generated, "kernel32.lib"));
+    ASSERT(!codegen_sv_contains(generated, "mkdir -p"));
+    ASSERT(!codegen_sv_contains(generated, "rm -rf"));
+    nob_sb_free(sb);
+    arena_destroy(arena);
     TEST_PASS();
 }
 
@@ -736,6 +851,9 @@ TEST(codegen_debug_and_optimized_link_items_follow_generated_config) {
 }
 
 TEST(codegen_build_steps_resolve_target_file_and_target_linker_file_genex) {
+    if (!codegen_host_cmake_available()) {
+        TEST_SKIP("requires local cmake for ${CMAKE_COMMAND} runtime steps");
+    }
     const char *script =
         "project(Test C)\n"
         "add_library(core STATIC core.c)\n"
@@ -784,6 +902,9 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_uses_embedded_cmake_for_runtime_steps_without_cmake_on_path(passed, failed, skipped);
     test_codegen_custom_target_dependency_runs_and_clean_removes_step_stamps(passed, failed, skipped);
     test_codegen_target_hooks_run_at_pre_link_and_post_build_boundaries(passed, failed, skipped);
+    test_codegen_render_explicit_linux_posix_policy_preserves_linux_artifact_rules(passed, failed, skipped);
+    test_codegen_render_darwin_posix_policy_uses_dylib_and_bundle_rules(passed, failed, skipped);
+    test_codegen_render_windows_msvc_policy_plans_dll_import_lib_and_msvc_tools(passed, failed, skipped);
     test_codegen_mixed_c_and_cxx_compile_contexts_apply_language_options_and_standard_flags(passed, failed, skipped);
     test_codegen_imported_static_unknown_and_interface_targets_build_and_run(passed, failed, skipped);
     test_codegen_imported_shared_target_links_successfully(passed, failed, skipped);

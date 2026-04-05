@@ -974,6 +974,82 @@ TEST(build_model_context_aware_queries_expand_usage_requirements_and_target_prop
     TEST_PASS();
 }
 
+TEST(build_model_platform_context_and_typed_platform_properties_are_queryable) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id bundle_id = BM_TARGET_ID_INVALID;
+    BM_Query_Eval_Context linux_ctx = {0};
+    BM_Query_Eval_Context windows_ctx = {0};
+    BM_String_Span defs = {0};
+
+    ASSERT(query_arena != NULL);
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "p4_platform_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("p4_platform_src");
+    config.binary_dir = nob_sv_from_cstr("p4_platform_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "add_library(iface INTERFACE)\n"
+        "target_compile_definitions(iface INTERFACE\n"
+        "  \"$<$<PLATFORM_ID:Linux>:LINUX_ONLY>\"\n"
+        "  \"$<$<PLATFORM_ID:Windows>:WINDOWS_ONLY>\")\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE iface)\n"
+        "set_target_properties(app PROPERTIES WIN32_EXECUTABLE ON)\n"
+        "add_executable(bundle bundle.c)\n"
+        "set_target_properties(bundle PROPERTIES MACOSX_BUNDLE ON)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    bundle_id = bm_query_target_by_name(model, nob_sv_from_cstr("bundle"));
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+    ASSERT(bundle_id != BM_TARGET_ID_INVALID);
+
+    linux_ctx.current_target_id = app_id;
+    linux_ctx.usage_mode = BM_QUERY_USAGE_COMPILE;
+    linux_ctx.compile_language = nob_sv_from_cstr("C");
+    linux_ctx.platform_id = nob_sv_from_cstr("Linux");
+    linux_ctx.build_interface_active = true;
+    linux_ctx.install_interface_active = false;
+
+    windows_ctx = linux_ctx;
+    windows_ctx.platform_id = nob_sv_from_cstr("Windows");
+
+    ASSERT(bm_query_target_effective_compile_definitions_with_context(model,
+                                                                      app_id,
+                                                                      &linux_ctx,
+                                                                      query_arena,
+                                                                      &defs));
+    ASSERT(build_model_string_span_contains(defs, "LINUX_ONLY"));
+    ASSERT(!build_model_string_span_contains(defs, "WINDOWS_ONLY"));
+
+    ASSERT(bm_query_target_effective_compile_definitions_with_context(model,
+                                                                      app_id,
+                                                                      &windows_ctx,
+                                                                      query_arena,
+                                                                      &defs));
+    ASSERT(!build_model_string_span_contains(defs, "LINUX_ONLY"));
+    ASSERT(build_model_string_span_contains(defs, "WINDOWS_ONLY"));
+
+    ASSERT(bm_query_target_win32_executable(model, app_id));
+    ASSERT(!bm_query_target_macosx_bundle(model, app_id));
+    ASSERT(!bm_query_target_win32_executable(model, bundle_id));
+    ASSERT(bm_query_target_macosx_bundle(model, bundle_id));
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 TEST(build_model_imported_target_queries_resolve_configs_and_mapped_locations) {
     Test_Semantic_Pipeline_Config config = {0};
     Test_Semantic_Pipeline_Fixture fixture = {0};
@@ -1265,6 +1341,88 @@ TEST(build_model_effective_queries_dedup_and_preserve_first_occurrence) {
     TEST_PASS();
 }
 
+TEST(build_model_install_and_export_queries_surface_typed_metadata) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(256 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id core_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id_Span export_targets = {0};
+    ASSERT(query_arena != NULL);
+
+    ASSERT(build_model_write_text_file("install_export_src/src/core.c", "int core_value(void) { return 42; }\n"));
+    ASSERT(build_model_write_text_file("install_export_src/include/core.h", "int core_value(void);\n"));
+    ASSERT(build_model_write_text_file("install_export_src/cmake/DemoConfig.cmake",
+                                       "include(\"${CMAKE_CURRENT_LIST_DIR}/DemoTargets.cmake\")\n"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "install_export_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("install_export_src");
+    config.binary_dir = nob_sv_from_cstr("install_export_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "add_library(core STATIC src/core.c)\n"
+        "add_library(Demo::core ALIAS core)\n"
+        "target_include_directories(core PUBLIC\n"
+        "  \"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>\"\n"
+        "  \"$<INSTALL_INTERFACE:include>\")\n"
+        "set_target_properties(core PROPERTIES PUBLIC_HEADER include/core.h)\n"
+        "install(TARGETS core EXPORT DemoTargets\n"
+        "  ARCHIVE DESTINATION lib\n"
+        "  LIBRARY DESTINATION lib\n"
+        "  RUNTIME DESTINATION bin\n"
+        "  INCLUDES DESTINATION include\n"
+        "  PUBLIC_HEADER DESTINATION include/demo\n"
+        "  COMPONENT Development)\n"
+        "install(FILES cmake/DemoConfig.cmake DESTINATION lib/cmake/demo COMPONENT Development)\n"
+        "install(EXPORT DemoTargets NAMESPACE Demo:: DESTINATION lib/cmake/demo FILE DemoTargets.cmake COMPONENT Development)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    core_id = bm_query_target_by_name(model, nob_sv_from_cstr("core"));
+    ASSERT(core_id != BM_TARGET_ID_INVALID);
+
+    ASSERT(bm_query_install_rule_count(model) == 2);
+    ASSERT(bm_query_install_rule_kind(model, (BM_Install_Rule_Id)0) == BM_INSTALL_RULE_TARGET);
+    ASSERT(nob_sv_eq(bm_query_install_rule_component(model, (BM_Install_Rule_Id)0),
+                     nob_sv_from_cstr("Development")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_export_name(model, (BM_Install_Rule_Id)0),
+                     nob_sv_from_cstr("DemoTargets")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_archive_destination(model, (BM_Install_Rule_Id)0),
+                     nob_sv_from_cstr("lib")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_library_destination(model, (BM_Install_Rule_Id)0),
+                     nob_sv_from_cstr("lib")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_runtime_destination(model, (BM_Install_Rule_Id)0),
+                     nob_sv_from_cstr("bin")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_includes_destination(model, (BM_Install_Rule_Id)0),
+                     nob_sv_from_cstr("include")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_public_header_destination(model, (BM_Install_Rule_Id)0),
+                     nob_sv_from_cstr("include/demo")));
+    ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)0) == core_id);
+
+    ASSERT(bm_query_export_count(model) == 1);
+    ASSERT(nob_sv_eq(bm_query_export_name(model, (BM_Export_Id)0), nob_sv_from_cstr("DemoTargets")));
+    ASSERT(nob_sv_eq(bm_query_export_namespace(model, (BM_Export_Id)0), nob_sv_from_cstr("Demo::")));
+    ASSERT(nob_sv_eq(bm_query_export_destination(model, (BM_Export_Id)0), nob_sv_from_cstr("lib/cmake/demo")));
+    ASSERT(nob_sv_eq(bm_query_export_file_name(model, (BM_Export_Id)0), nob_sv_from_cstr("DemoTargets.cmake")));
+    ASSERT(nob_sv_eq(bm_query_export_component(model, (BM_Export_Id)0), nob_sv_from_cstr("Development")));
+    ASSERT(nob_sv_eq(bm_query_export_output_file_path(model, (BM_Export_Id)0, query_arena),
+                     nob_sv_from_cstr("lib/cmake/demo/DemoTargets.cmake")));
+
+    export_targets = bm_query_export_targets(model, (BM_Export_Id)0);
+    ASSERT(export_targets.count == 1);
+    ASSERT(export_targets.items[0] == core_id);
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -1296,9 +1454,11 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_marks_generated_sources_without_producer_steps(passed, failed, skipped);
     test_build_model_freeze_rejects_duplicate_effective_producers_and_execution_cycles(passed, failed, skipped);
     test_build_model_context_aware_queries_expand_usage_requirements_and_target_property_genex(passed, failed, skipped);
+    test_build_model_platform_context_and_typed_platform_properties_are_queryable(passed, failed, skipped);
     test_build_model_imported_target_queries_resolve_configs_and_mapped_locations(passed, failed, skipped);
     test_build_model_compile_feature_catalog_and_effective_features_are_shared(passed, failed, skipped);
     test_build_model_effective_queries_dedup_and_preserve_first_occurrence(passed, failed, skipped);
+    test_build_model_install_and_export_queries_surface_typed_metadata(passed, failed, skipped);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

@@ -331,6 +331,21 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
         case EVENT_INSTALL_RULE_ADD:
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.item)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.destination)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.component)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.namelink_component)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.export_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.archive_destination)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.library_destination)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.runtime_destination)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.includes_destination)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.public_header_destination)) return false;
+            break;
+        case EVENT_EXPORT_INSTALL:
+            if (!event_copy_sv_inplace(arena, &ev->as.export_install.export_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.export_install.destination)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.export_install.export_namespace)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.export_install.file_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.export_install.component)) return false;
             break;
         case EVENT_CPACK_ADD_INSTALL_TYPE:
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_install_type.name)) return false;
@@ -646,6 +661,31 @@ static void event_dump_one(const Event *ev) {
             printf(" version=%.*s",
                    (int)ev->as.project_minimum_required.version.count,
                    ev->as.project_minimum_required.version.data ? ev->as.project_minimum_required.version.data : "");
+            break;
+        case EVENT_INSTALL_RULE_ADD:
+            printf(" rule_type=%d item=%.*s destination=%.*s export=%.*s component=%.*s",
+                   (int)ev->as.install_rule_add.rule_type,
+                   (int)ev->as.install_rule_add.item.count,
+                   ev->as.install_rule_add.item.data ? ev->as.install_rule_add.item.data : "",
+                   (int)ev->as.install_rule_add.destination.count,
+                   ev->as.install_rule_add.destination.data ? ev->as.install_rule_add.destination.data : "",
+                   (int)ev->as.install_rule_add.export_name.count,
+                   ev->as.install_rule_add.export_name.data ? ev->as.install_rule_add.export_name.data : "",
+                   (int)ev->as.install_rule_add.component.count,
+                   ev->as.install_rule_add.component.data ? ev->as.install_rule_add.component.data : "");
+            break;
+        case EVENT_EXPORT_INSTALL:
+            printf(" export=%.*s destination=%.*s namespace=%.*s file=%.*s component=%.*s",
+                   (int)ev->as.export_install.export_name.count,
+                   ev->as.export_install.export_name.data ? ev->as.export_install.export_name.data : "",
+                   (int)ev->as.export_install.destination.count,
+                   ev->as.export_install.destination.data ? ev->as.export_install.destination.data : "",
+                   (int)ev->as.export_install.export_namespace.count,
+                   ev->as.export_install.export_namespace.data ? ev->as.export_install.export_namespace.data : "",
+                   (int)ev->as.export_install.file_name.count,
+                   ev->as.export_install.file_name.data ? ev->as.export_install.file_name.data : "",
+                   (int)ev->as.export_install.component.count,
+                   ev->as.export_install.component.data ? ev->as.export_install.component.data : "");
             break;
 
         case EVENT_TARGET_DECLARE:

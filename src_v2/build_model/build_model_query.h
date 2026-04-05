@@ -24,6 +24,7 @@ bool bm_target_id_is_valid(BM_Target_Id id);
 bool bm_build_step_id_is_valid(BM_Build_Step_Id id);
 bool bm_directory_id_is_valid(BM_Directory_Id id);
 bool bm_test_id_is_valid(BM_Test_Id id);
+bool bm_export_id_is_valid(BM_Export_Id id);
 bool bm_package_id_is_valid(BM_Package_Id id);
 
 size_t bm_query_directory_count(const Build_Model *model);
@@ -31,6 +32,7 @@ size_t bm_query_target_count(const Build_Model *model);
 size_t bm_query_build_step_count(const Build_Model *model);
 size_t bm_query_test_count(const Build_Model *model);
 size_t bm_query_install_rule_count(const Build_Model *model);
+size_t bm_query_export_count(const Build_Model *model);
 size_t bm_query_package_count(const Build_Model *model);
 size_t bm_query_cpack_install_type_count(const Build_Model *model);
 size_t bm_query_cpack_component_group_count(const Build_Model *model);
@@ -105,6 +107,8 @@ bool bm_query_target_c_extensions(const Build_Model *model, BM_Target_Id id);
 String_View bm_query_target_cxx_standard(const Build_Model *model, BM_Target_Id id);
 bool bm_query_target_cxx_standard_required(const Build_Model *model, BM_Target_Id id);
 bool bm_query_target_cxx_extensions(const Build_Model *model, BM_Target_Id id);
+bool bm_query_target_win32_executable(const Build_Model *model, BM_Target_Id id);
+bool bm_query_target_macosx_bundle(const Build_Model *model, BM_Target_Id id);
 
 BM_Build_Step_Kind bm_query_build_step_kind(const Build_Model *model, BM_Build_Step_Id id);
 BM_Directory_Id bm_query_build_step_owner_directory(const Build_Model *model, BM_Build_Step_Id id);
@@ -269,7 +273,24 @@ BM_Install_Rule_Kind bm_query_install_rule_kind(const Build_Model *model, BM_Ins
 BM_Directory_Id bm_query_install_rule_owner_directory(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_item_raw(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_destination(const Build_Model *model, BM_Install_Rule_Id id);
+String_View bm_query_install_rule_component(const Build_Model *model, BM_Install_Rule_Id id);
+String_View bm_query_install_rule_namelink_component(const Build_Model *model, BM_Install_Rule_Id id);
+String_View bm_query_install_rule_export_name(const Build_Model *model, BM_Install_Rule_Id id);
+String_View bm_query_install_rule_archive_destination(const Build_Model *model, BM_Install_Rule_Id id);
+String_View bm_query_install_rule_library_destination(const Build_Model *model, BM_Install_Rule_Id id);
+String_View bm_query_install_rule_runtime_destination(const Build_Model *model, BM_Install_Rule_Id id);
+String_View bm_query_install_rule_includes_destination(const Build_Model *model, BM_Install_Rule_Id id);
+String_View bm_query_install_rule_public_header_destination(const Build_Model *model, BM_Install_Rule_Id id);
 BM_Target_Id bm_query_install_rule_target(const Build_Model *model, BM_Install_Rule_Id id);
+
+BM_Directory_Id bm_query_export_owner_directory(const Build_Model *model, BM_Export_Id id);
+String_View bm_query_export_name(const Build_Model *model, BM_Export_Id id);
+String_View bm_query_export_namespace(const Build_Model *model, BM_Export_Id id);
+String_View bm_query_export_destination(const Build_Model *model, BM_Export_Id id);
+String_View bm_query_export_file_name(const Build_Model *model, BM_Export_Id id);
+String_View bm_query_export_output_file_path(const Build_Model *model, BM_Export_Id id, Arena *scratch);
+String_View bm_query_export_component(const Build_Model *model, BM_Export_Id id);
+BM_Target_Id_Span bm_query_export_targets(const Build_Model *model, BM_Export_Id id);
 
 String_View bm_query_package_name(const Build_Model *model, BM_Package_Id id);
 BM_Directory_Id bm_query_package_owner_directory(const Build_Model *model, BM_Package_Id id);

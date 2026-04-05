@@ -38,7 +38,8 @@ typedef enum {
     X(EVENT_FAMILY_TEST, "test") \
     X(EVENT_FAMILY_INSTALL, "install") \
     X(EVENT_FAMILY_CPACK, "cpack") \
-    X(EVENT_FAMILY_PACKAGE, "package")
+    X(EVENT_FAMILY_PACKAGE, "package") \
+    X(EVENT_FAMILY_EXPORT, "export")
 
 typedef enum {
 #define DECLARE_EVENT_FAMILY(kind, label) kind,
@@ -140,7 +141,8 @@ typedef enum {
     X(EVENT_TARGET_LINK_DIRECTORIES, EVENT_FAMILY_TARGET, "target_link_directories", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TARGET_INCLUDE_DIRECTORIES, EVENT_FAMILY_TARGET, "target_include_directories", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TARGET_COMPILE_DEFINITIONS, EVENT_FAMILY_TARGET, "target_compile_definitions", EVENT_ROLE_BUILD_SEMANTIC) \
-    X(EVENT_TARGET_COMPILE_OPTIONS, EVENT_FAMILY_TARGET, "target_compile_options", EVENT_ROLE_BUILD_SEMANTIC)
+    X(EVENT_TARGET_COMPILE_OPTIONS, EVENT_FAMILY_TARGET, "target_compile_options", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_EXPORT_INSTALL, EVENT_FAMILY_EXPORT, "export_install", EVENT_ROLE_BUILD_SEMANTIC)
 
 typedef enum {
 #define DECLARE_EVENT_KIND(kind, family, label, roles) kind,
@@ -579,7 +581,23 @@ typedef struct {
     Cmake_Install_Rule_Type rule_type;
     String_View item;
     String_View destination;
+    String_View component;
+    String_View namelink_component;
+    String_View export_name;
+    String_View archive_destination;
+    String_View library_destination;
+    String_View runtime_destination;
+    String_View includes_destination;
+    String_View public_header_destination;
 } Event_Install_Rule_Add;
+
+typedef struct {
+    String_View export_name;
+    String_View destination;
+    String_View export_namespace;
+    String_View file_name;
+    String_View component;
+} Event_Export_Install;
 
 typedef struct {
     String_View name;
@@ -897,6 +915,7 @@ typedef struct {
         Event_Target_Include_Directories target_include_directories;
         Event_Target_Compile_Definitions target_compile_definitions;
         Event_Target_Compile_Options target_compile_options;
+        Event_Export_Install export_install;
     } as;
 } Event;
 

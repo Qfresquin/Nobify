@@ -137,13 +137,13 @@ EV[6] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=6 col=1 rule_type=0 it
 EV[7] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=7 col=1 rule_type=1 item='readme.txt' destination='share/doc'
 EV[8] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=8 col=1 rule_type=2 item='run.sh' destination='bin'
 EV[9] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=9 col=1 rule_type=3 item='assets' destination='share/assets'
-EV[10] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=10 col=1 rule_type=0 item='app' destination='bin'
+EV[10] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=10 col=1 rule_type=0 item='app' destination=''
 EV[11] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=11 col=1 rule_type=1 item='license.txt' destination='share/doc'
 EV[12] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=12 col=1 rule_type=2 item='helper.sh' destination='bin'
 EV[13] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=13 col=1 rule_type=3 item='include/' destination='include'
 EV[14] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=14 col=1 rule_type=1 item='SCRIPT::cmake_install_hook.cmake' destination=''
 EV[15] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=15 col=1 rule_type=1 item='CODE::set(INSTALL_CODE_MARKER 1)' destination=''
-EV[16] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=16 col=1 rule_type=1 item='EXPORT::ctest_export' destination='share/cmake/CTestDemo'
+EV[16] kind=EV_EXPORT_INSTALL file='CMakeLists.txt' line=16 col=1 export='ctest_export' destination='share/cmake/CTestDemo' namespace='' file='' component=''
 EV[17] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=17 col=1 rule_type=1 item='EXPORT_ANDROID_MK::ctest_export' destination='share/cmake/android'
 EV[18] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='ctest_imported' key='IMPORTED' value='1' op=SET
 EV[19] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='ctest_imported' key='IMPORTED_GLOBAL' value='1' op=SET

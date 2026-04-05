@@ -80,6 +80,7 @@ static void append_test_evaluator_integration_all_sources(Nob_Cmd *cmd);
 static void append_test_pipeline_all_sources(Nob_Cmd *cmd);
 static void append_test_codegen_all_sources(Nob_Cmd *cmd);
 static void append_test_artifact_parity_all_sources(Nob_Cmd *cmd);
+static void append_test_artifact_parity_corpus_all_sources(Nob_Cmd *cmd);
 static void append_test_nobify_all_sources(Nob_Cmd *cmd);
 static void append_v2_pcre_sources(Nob_Cmd *cmd);
 static void append_platform_link_flags(Nob_Cmd *cmd);
@@ -170,6 +171,7 @@ static Test_Module TEST_MODULES[] = {
     {"pipeline", append_test_pipeline_all_sources, true},
     {"codegen", append_test_codegen_all_sources, true},
     {"artifact-parity", append_test_artifact_parity_all_sources, false},
+    {"artifact-parity-corpus", append_test_artifact_parity_corpus_all_sources, false},
 };
 
 static bool starts_with(const char *text, const char *prefix) {
@@ -753,11 +755,23 @@ static void append_v2_artifact_parity_test_sources(Nob_Cmd *cmd) {
         "test_v2/artifact_parity/test_artifact_parity_v2_suite.c");
 }
 
+static void append_v2_artifact_parity_corpus_test_sources(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+        "test_v2/test_host_fixture_support.c",
+        "test_v2/test_v2_assert.c",
+        "test_v2/test_snapshot_support.c",
+        "test_v2/test_workspace.c",
+        "test_v2/artifact_parity/test_artifact_parity_v2_support.c",
+        "test_v2/artifact_parity/test_artifact_parity_corpus_v2_main.c",
+        "test_v2/artifact_parity/test_artifact_parity_corpus_v2_suite.c");
+}
+
 static void append_v2_build_model_runtime_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "src_v2/build_model/build_model_builder.c",
         "src_v2/build_model/build_model_builder_directory.c",
         "src_v2/build_model/build_model_builder_install.c",
+        "src_v2/build_model/build_model_builder_export.c",
         "src_v2/build_model/build_model_builder_package.c",
         "src_v2/build_model/build_model_builder_project.c",
         "src_v2/build_model/build_model_builder_target.c",
@@ -1194,6 +1208,14 @@ static void append_test_codegen_all_sources(Nob_Cmd *cmd) {
 
 static void append_test_artifact_parity_all_sources(Nob_Cmd *cmd) {
     append_v2_artifact_parity_test_sources(cmd);
+    append_v2_evaluator_runtime_sources(cmd);
+    append_v2_build_model_runtime_sources(cmd);
+    append_v2_codegen_runtime_sources(cmd);
+    append_v2_pcre_sources(cmd);
+}
+
+static void append_test_artifact_parity_corpus_all_sources(Nob_Cmd *cmd) {
+    append_v2_artifact_parity_corpus_test_sources(cmd);
     append_v2_evaluator_runtime_sources(cmd);
     append_v2_build_model_runtime_sources(cmd);
     append_v2_codegen_runtime_sources(cmd);
@@ -1652,7 +1674,9 @@ static bool run_binary_in_workspace(const Test_Module *module,
     (void)had_prev_repo_root;
     (void)had_prev_nobify_bin;
 
-    if (module && strcmp(module->name, "artifact-parity") == 0) {
+    if (module &&
+        (strcmp(module->name, "artifact-parity") == 0 ||
+         strcmp(module->name, "artifact-parity-corpus") == 0)) {
         const char *nobify_rel_path = test_nobify_output_path_temp(profile);
         if (!build_incremental_test_binary(nobify_rel_path,
                                            append_test_nobify_all_sources,

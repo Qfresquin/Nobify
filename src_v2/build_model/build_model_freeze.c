@@ -67,6 +67,28 @@ static bool bm_freeze_check_invariants(const Build_Model_Draft *draft, Diag_Sink
         }
     }
 
+    for (size_t i = 0; i < arena_arr_len(draft->exports); ++i) {
+        if (draft->exports[i].id != (BM_Export_Id)i) {
+            bm_diag_error(sink,
+                          draft->exports[i].provenance,
+                          "build_model_freeze",
+                          "freeze",
+                          "export ids are not contiguous",
+                          "freeze requires validated contiguous export ids");
+            return false;
+        }
+        if (draft->exports[i].owner_directory_id != BM_DIRECTORY_ID_INVALID &&
+            (size_t)draft->exports[i].owner_directory_id >= arena_arr_len(draft->directories)) {
+            bm_diag_error(sink,
+                          draft->exports[i].provenance,
+                          "build_model_freeze",
+                          "freeze",
+                          "export owner_directory_id is invalid",
+                          "freeze requires validated export ownership");
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -549,6 +571,14 @@ static bool bm_clone_install_rules(const Build_Model_Draft *draft, Build_Model *
         rule.resolved_target_id = BM_TARGET_ID_INVALID;
         if (!bm_copy_string(arena, src->item, &rule.item) ||
             !bm_copy_string(arena, src->destination, &rule.destination) ||
+            !bm_copy_string(arena, src->component, &rule.component) ||
+            !bm_copy_string(arena, src->namelink_component, &rule.namelink_component) ||
+            !bm_copy_string(arena, src->export_name, &rule.export_name) ||
+            !bm_copy_string(arena, src->archive_destination, &rule.archive_destination) ||
+            !bm_copy_string(arena, src->library_destination, &rule.library_destination) ||
+            !bm_copy_string(arena, src->runtime_destination, &rule.runtime_destination) ||
+            !bm_copy_string(arena, src->includes_destination, &rule.includes_destination) ||
+            !bm_copy_string(arena, src->public_header_destination, &rule.public_header_destination) ||
             !bm_clone_provenance(arena, &rule.provenance, src->provenance)) {
             return false;
         }
@@ -560,6 +590,38 @@ static bool bm_clone_install_rules(const Build_Model_Draft *draft, Build_Model *
             }
         }
         if (!arena_arr_push(arena, model->install_rules, rule)) return false;
+    }
+    return true;
+}
+
+static bool bm_clone_exports(const Build_Model_Draft *draft, Build_Model *model, Arena *arena, Diag_Sink *sink) {
+    for (size_t i = 0; i < arena_arr_len(draft->exports); ++i) {
+        const BM_Export_Record *src = &draft->exports[i];
+        BM_Export_Record record = *src;
+        if (!bm_copy_string(arena, src->name, &record.name) ||
+            !bm_copy_string(arena, src->export_namespace, &record.export_namespace) ||
+            !bm_copy_string(arena, src->destination, &record.destination) ||
+            !bm_copy_string(arena, src->file_name, &record.file_name) ||
+            !bm_copy_string(arena, src->component, &record.component) ||
+            !bm_clone_provenance(arena, &record.provenance, src->provenance)) {
+            return false;
+        }
+        record.target_ids = NULL;
+        for (size_t rule_index = 0; rule_index < arena_arr_len(model->install_rules); ++rule_index) {
+            const BM_Install_Rule_Record *rule = &model->install_rules[rule_index];
+            if (rule->kind != BM_INSTALL_RULE_TARGET || !nob_sv_eq(rule->export_name, src->name)) continue;
+            if (rule->resolved_target_id == BM_TARGET_ID_INVALID) {
+                bm_diag_error(sink,
+                              rule->provenance,
+                              "build_model_freeze",
+                              "freeze",
+                              "install export target could not be resolved during freeze",
+                              "fix unresolved install target names before freezing exports");
+                return false;
+            }
+            if (!arena_arr_push(arena, record.target_ids, rule->resolved_target_id)) return false;
+        }
+        if (!arena_arr_push(arena, model->exports, record)) return false;
     }
     return true;
 }
@@ -680,9 +742,10 @@ const Build_Model *bm_freeze_draft(const Build_Model_Draft *draft,
         !bm_clone_build_steps(draft, model, out_arena) ||
         !bm_clone_tests(draft, model, out_arena) ||
         !bm_clone_install_rules(draft, model, out_arena, sink) ||
+        !bm_clone_exports(draft, model, out_arena, sink) ||
         !bm_clone_packages(draft, model, out_arena) ||
         !bm_clone_cpack(draft, model, out_arena, sink)) {
-            return NULL;
+        return NULL;
     }
 
     if (!bm_resolve_build_step_effective_paths(draft, model, out_arena, sink) ||

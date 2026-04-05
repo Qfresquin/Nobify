@@ -102,6 +102,51 @@ TEST(codegen_rejects_targets_with_precompile_headers) {
     TEST_PASS();
 }
 
+TEST(codegen_rejects_invalid_platform_backend_pair) {
+    Nob_String_Builder sb = {0};
+    Codegen_Test_Config config = {
+        .input_path = "CMakeLists.txt",
+        .output_path = "nob.c",
+        .source_dir = NULL,
+        .binary_dir = NULL,
+        .platform = NOB_CODEGEN_PLATFORM_WINDOWS,
+        .backend = NOB_CODEGEN_BACKEND_POSIX,
+    };
+    diag_reset();
+    diag_set_strict(false);
+    diag_telemetry_reset();
+    ASSERT(!codegen_render_script_with_config(
+        "project(Test C)\n"
+        "add_executable(app main.c)\n",
+        &config,
+        &sb));
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
+TEST(codegen_rejects_macosx_bundle_targets) {
+    Nob_String_Builder sb = {0};
+    Codegen_Test_Config config = {
+        .input_path = "CMakeLists.txt",
+        .output_path = "nob.c",
+        .source_dir = NULL,
+        .binary_dir = NULL,
+        .platform = NOB_CODEGEN_PLATFORM_DARWIN,
+        .backend = NOB_CODEGEN_BACKEND_POSIX,
+    };
+    diag_reset();
+    diag_set_strict(false);
+    diag_telemetry_reset();
+    ASSERT(!codegen_render_script_with_config(
+        "project(Test C)\n"
+        "add_executable(app main.c)\n"
+        "set_target_properties(app PROPERTIES MACOSX_BUNDLE ON)\n",
+        &config,
+        &sb));
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
 void run_codegen_v2_reject_tests(int *passed, int *failed, int *skipped) {
     test_codegen_rejects_module_target_as_link_dependency(passed, failed, skipped);
     test_codegen_rejects_unsupported_generator_expression_operator(passed, failed, skipped);
@@ -109,4 +154,6 @@ void run_codegen_v2_reject_tests(int *passed, int *failed, int *skipped) {
     test_codegen_rejects_imported_module_target_as_link_dependency(passed, failed, skipped);
     test_codegen_rejects_append_custom_command_steps(passed, failed, skipped);
     test_codegen_rejects_targets_with_precompile_headers(passed, failed, skipped);
+    test_codegen_rejects_invalid_platform_backend_pair(passed, failed, skipped);
+    test_codegen_rejects_macosx_bundle_targets(passed, failed, skipped);
 }

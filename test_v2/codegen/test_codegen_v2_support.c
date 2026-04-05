@@ -117,6 +117,16 @@ static bool codegen_fill_host_tool_paths(Arena *arena, Nob_Codegen_Options *opts
     return true;
 }
 
+bool codegen_host_cmake_available(void) {
+    Arena *arena = arena_create(4096);
+    Nob_Codegen_Options opts = {0};
+    bool ok = false;
+    if (!arena) return false;
+    ok = codegen_fill_host_tool_paths(arena, &opts) && opts.embedded_cmake_bin.count > 0;
+    arena_destroy(arena);
+    return ok;
+}
+
 static bool codegen_mkdirs(const char *path) {
     char buf[_TINYDIR_PATH_MAX] = {0};
     size_t len = 0;
@@ -188,6 +198,8 @@ static bool codegen_render_or_write_script(const char *script,
             .output_path = nob_sv_from_cstr(effective_output_path),
             .source_root = nob_sv_from_cstr(effective_source_dir),
             .binary_root = nob_sv_from_cstr(effective_binary_dir),
+            .target_platform = config ? config->platform : NOB_CODEGEN_PLATFORM_HOST,
+            .backend = config ? config->backend : NOB_CODEGEN_BACKEND_AUTO,
         };
         if (!codegen_fill_host_tool_paths(codegen_arena, &opts)) {
             arena_destroy(codegen_arena);
@@ -245,6 +257,8 @@ bool codegen_render_script(const char *script,
         .output_path = output_path,
         .source_dir = NULL,
         .binary_dir = NULL,
+        .platform = NOB_CODEGEN_PLATFORM_HOST,
+        .backend = NOB_CODEGEN_BACKEND_AUTO,
     };
     return codegen_render_or_write_script(script, &config, out, false);
 }
@@ -263,6 +277,8 @@ bool codegen_write_script(const char *script,
         .output_path = output_path,
         .source_dir = NULL,
         .binary_dir = NULL,
+        .platform = NOB_CODEGEN_PLATFORM_HOST,
+        .backend = NOB_CODEGEN_BACKEND_AUTO,
     };
     return codegen_render_or_write_script(script, &config, NULL, true);
 }

@@ -7,6 +7,8 @@
 // Caminhos relativos à raiz do projeto
 static const char *APP_SRC = "src_v2/app/nobify.c";
 static const char *APP_BIN = "build/nobify";
+static const char *SNAPSHOT_TOOL_SRC = "test_v2/artifact_parity/tools/update_snapshot.c";
+static const char *SNAPSHOT_TOOL_BIN = "build/update_artifact_parity_snapshots";
 
 static void append_common_flags(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
@@ -53,6 +55,7 @@ static void append_evaluator_sources(Nob_Cmd *cmd) {
         "src_v2/build_model/build_model_builder_target.c",
         "src_v2/build_model/build_model_builder_test.c",
         "src_v2/build_model/build_model_builder_install.c",
+        "src_v2/build_model/build_model_builder_export.c",
         "src_v2/build_model/build_model_builder_package.c",
         "src_v2/build_model/bm_compile_features.c",
         "src_v2/build_model/build_model_validate.c",
@@ -174,6 +177,33 @@ static bool build_app(void) {
     return ok;
 }
 
+static bool build_snapshot_tool(void) {
+    Nob_Cmd cmd = {0};
+    bool ok = false;
+
+    if (!nob_mkdir_if_not_exists("build")) return false;
+
+    nob_cc(&cmd);
+    nob_cmd_append(&cmd, "-Wall", "-Wextra", "-std=c11", "-O2", "-ggdb", "-Ivendor");
+    nob_cmd_append(&cmd, "-o", SNAPSHOT_TOOL_BIN, SNAPSHOT_TOOL_SRC);
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
+}
+
+static bool run_snapshot_tool(int argc, char **argv) {
+    Nob_Cmd cmd = {0};
+    bool ok = false;
+    if (!build_snapshot_tool()) return false;
+    nob_cmd_append(&cmd, SNAPSHOT_TOOL_BIN);
+    for (int i = 2; i < argc; ++i) {
+        nob_cmd_append(&cmd, argv[i]);
+    }
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
+}
+
 static bool run_valgrind(int argc, char **argv) {
     bool ok = false;
     if (!build_app()) return false;
@@ -205,6 +235,9 @@ static bool run_valgrind(int argc, char **argv) {
 }
 
 static bool clean_all(void) {
+    if (nob_file_exists(SNAPSHOT_TOOL_BIN)) {
+        if (!nob_delete_file(SNAPSHOT_TOOL_BIN)) return false;
+    }
     if (nob_file_exists(APP_BIN)) {
         return nob_delete_file(APP_BIN);
     }
@@ -215,11 +248,15 @@ int main(int argc, char **argv) {
     const char *cmd = (argc > 1) ? argv[1] : "build";
 
     if (strcmp(cmd, "build") == 0) return build_app() ? 0 : 1;
+    if (strcmp(cmd, "build-update-artifact-parity-snapshots") == 0) return build_snapshot_tool() ? 0 : 1;
+    if (strcmp(cmd, "update-artifact-parity-snapshots") == 0) return run_snapshot_tool(argc, argv) ? 0 : 1;
     if (strcmp(cmd, "clean") == 0) return clean_all() ? 0 : 1;
     
     // Passa argc e argv para a função
     if (strcmp(cmd, "valgrind") == 0) return run_valgrind(argc, argv) ? 0 : 1;
 
-    nob_log(NOB_INFO, "Usage: %s [build|clean|valgrind]", argv[0]);
+    nob_log(NOB_INFO,
+            "Usage: %s [build|build-update-artifact-parity-snapshots|update-artifact-parity-snapshots|clean|valgrind]",
+            argv[0]);
     return 1;
 }

@@ -18,9 +18,41 @@ static bool install_emit_rule(EvalExecContext *ctx,
                               Cmake_Event_Origin o,
                               Cmake_Install_Rule_Type rule_type,
                               String_View item,
-                              String_View destination) {
-    return eval_emit_install_rule_add(ctx, o, rule_type, item, destination);
+                              String_View destination,
+                              String_View component,
+                              String_View namelink_component,
+                              String_View export_name,
+                              String_View archive_destination,
+                              String_View library_destination,
+                              String_View runtime_destination,
+                              String_View includes_destination,
+                              String_View public_header_destination) {
+    return eval_emit_install_rule_add(ctx,
+                                      o,
+                                      rule_type,
+                                      item,
+                                      destination,
+                                      component,
+                                      namelink_component,
+                                      export_name,
+                                      archive_destination,
+                                      library_destination,
+                                      runtime_destination,
+                                      includes_destination,
+                                      public_header_destination);
 }
+
+typedef struct {
+    String_View destination;
+    String_View component;
+    String_View namelink_component;
+    String_View export_name;
+    String_View archive_destination;
+    String_View library_destination;
+    String_View runtime_destination;
+    String_View includes_destination;
+    String_View public_header_destination;
+} Install_Target_Metadata;
 
 static bool install_publish_artifact(EvalExecContext *ctx, String_View signature) {
     if (!ctx) return false;
@@ -89,6 +121,15 @@ static bool install_is_targets_keyword(String_View tok) {
            eval_sv_eq_ci_lit(tok, "FILE_SET") ||
            eval_sv_eq_ci_lit(tok, "CXX_MODULES_BMI");
 }
+
+typedef enum {
+    INSTALL_TARGET_SCOPE_GENERAL = 0,
+    INSTALL_TARGET_SCOPE_ARCHIVE,
+    INSTALL_TARGET_SCOPE_LIBRARY,
+    INSTALL_TARGET_SCOPE_RUNTIME,
+    INSTALL_TARGET_SCOPE_INCLUDES,
+    INSTALL_TARGET_SCOPE_PUBLIC_HEADER,
+} Install_Target_Scope;
 
 static bool install_destination_from_type(String_View type, String_View *out_destination) {
     if (!out_destination) return false;
@@ -197,6 +238,7 @@ static bool install_handle_files_like(EvalExecContext *ctx,
 
     String_View destination = nob_sv_from_cstr("");
     String_View type = nob_sv_from_cstr("");
+    String_View component = nob_sv_from_cstr("");
     for (; i < arena_arr_len(args); i++) {
         if (eval_sv_eq_ci_lit(args[i], "DESTINATION")) {
             if (i + 1 >= arena_arr_len(args)) {
@@ -221,10 +263,11 @@ static bool install_handle_files_like(EvalExecContext *ctx,
             }
             type = args[++i];
         } else if (eval_sv_eq_ci_lit(args[i], "RENAME") ||
-                   eval_sv_eq_ci_lit(args[i], "COMPONENT") ||
                    eval_sv_eq_ci_lit(args[i], "PATTERN") ||
                    eval_sv_eq_ci_lit(args[i], "REGEX")) {
             if (i + 1 < arena_arr_len(args)) i++;
+        } else if (eval_sv_eq_ci_lit(args[i], "COMPONENT")) {
+            if (i + 1 < arena_arr_len(args)) component = args[++i];
         }
     }
 
@@ -275,7 +318,21 @@ static bool install_handle_files_like(EvalExecContext *ctx,
     }
 
     for (size_t j = 0; j < arena_arr_len(items); j++) {
-        if (!install_emit_rule(ctx, o, rule_type, items[j], destination)) return false;
+        if (!install_emit_rule(ctx,
+                               o,
+                               rule_type,
+                               items[j],
+                               destination,
+                               component,
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""))) {
+            return false;
+        }
     }
     return true;
 }
@@ -302,36 +359,81 @@ static bool install_handle_targets_like(EvalExecContext *ctx,
         return true;
     }
 
-    SV_List destinations = NULL;
-    String_View export_name = nob_sv_from_cstr("");
-    if (!install_collect_destinations(ctx, node, o, args, i, &destinations)) return false;
+    Install_Target_Metadata meta = {0};
+    Install_Target_Scope scope = INSTALL_TARGET_SCOPE_GENERAL;
     for (size_t j = i; j < arena_arr_len(args); j++) {
-        if (!eval_sv_eq_ci_lit(args[j], "EXPORT")) continue;
-        if (j + 1 >= arena_arr_len(args)) {
-            install_emit_diag(ctx,
-                              node,
-                              o,
-                              EV_DIAG_ERROR,
-                              nob_sv_from_cstr("install(TARGETS ... EXPORT ...) requires an export name"),
-                              nob_sv_from_cstr("Usage: install(TARGETS <tgt>... EXPORT <name> ...)"));
-            return true;
+        if (eval_sv_eq_ci_lit(args[j], "EXPORT")) {
+            if (j + 1 >= arena_arr_len(args)) {
+                install_emit_diag(ctx,
+                                  node,
+                                  o,
+                                  EV_DIAG_ERROR,
+                                  nob_sv_from_cstr("install(TARGETS ... EXPORT ...) requires an export name"),
+                                  nob_sv_from_cstr("Usage: install(TARGETS <tgt>... EXPORT <name> ...)"));
+                return true;
+            }
+            meta.export_name = args[++j];
+            continue;
         }
-        export_name = args[j + 1];
-        break;
-    }
-    if (arena_arr_len(destinations) == 0) {
-        // CMake allows some target installs without explicit destination depending on artifact/category.
-        // Keep evaluator behavior permissive and preserve the rule with empty destination.
-        if (!svu_list_push_temp(ctx, &destinations, nob_sv_from_cstr(""))) return false;
+        if (eval_sv_eq_ci_lit(args[j], "COMPONENT")) {
+            if (j + 1 < arena_arr_len(args) && meta.component.count == 0) meta.component = args[++j];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args[j], "NAMELINK_COMPONENT")) {
+            if (j + 1 < arena_arr_len(args)) meta.namelink_component = args[++j];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args[j], "ARCHIVE")) {
+            scope = INSTALL_TARGET_SCOPE_ARCHIVE;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args[j], "LIBRARY")) {
+            scope = INSTALL_TARGET_SCOPE_LIBRARY;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args[j], "RUNTIME")) {
+            scope = INSTALL_TARGET_SCOPE_RUNTIME;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args[j], "INCLUDES")) {
+            scope = INSTALL_TARGET_SCOPE_INCLUDES;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args[j], "PUBLIC_HEADER")) {
+            scope = INSTALL_TARGET_SCOPE_PUBLIC_HEADER;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args[j], "DESTINATION")) {
+            String_View value = nob_sv_from_cstr("");
+            if (j + 1 >= arena_arr_len(args)) {
+                install_emit_diag(ctx,
+                                  node,
+                                  o,
+                                  EV_DIAG_ERROR,
+                                  nob_sv_from_cstr("install(TARGETS ... DESTINATION) requires a destination path"),
+                                  nob_sv_from_cstr("Usage: install(TARGETS <tgt>... DESTINATION <dir>)"));
+                return true;
+            }
+            value = args[++j];
+            switch (scope) {
+                case INSTALL_TARGET_SCOPE_ARCHIVE: meta.archive_destination = value; break;
+                case INSTALL_TARGET_SCOPE_LIBRARY: meta.library_destination = value; break;
+                case INSTALL_TARGET_SCOPE_RUNTIME: meta.runtime_destination = value; break;
+                case INSTALL_TARGET_SCOPE_INCLUDES: meta.includes_destination = value; break;
+                case INSTALL_TARGET_SCOPE_PUBLIC_HEADER: meta.public_header_destination = value; break;
+                case INSTALL_TARGET_SCOPE_GENERAL: meta.destination = value; break;
+            }
+            continue;
+        }
     }
 
-    if (export_name.count > 0) {
-        size_t total = strlen("NOBIFY_INSTALL_EXPORT::") + export_name.count + strlen("::TARGETS");
+    if (meta.export_name.count > 0) {
+        size_t total = strlen("NOBIFY_INSTALL_EXPORT::") + meta.export_name.count + strlen("::TARGETS");
         char *key_buf = (char*)arena_alloc(eval_temp_arena(ctx), total + 1);
         EVAL_OOM_RETURN_IF_NULL(ctx, key_buf, false);
         memcpy(key_buf, "NOBIFY_INSTALL_EXPORT::", strlen("NOBIFY_INSTALL_EXPORT::"));
-        memcpy(key_buf + strlen("NOBIFY_INSTALL_EXPORT::"), export_name.data, export_name.count);
-        memcpy(key_buf + strlen("NOBIFY_INSTALL_EXPORT::") + export_name.count, "::TARGETS", strlen("::TARGETS"));
+        memcpy(key_buf + strlen("NOBIFY_INSTALL_EXPORT::"), meta.export_name.data, meta.export_name.count);
+        memcpy(key_buf + strlen("NOBIFY_INSTALL_EXPORT::") + meta.export_name.count, "::TARGETS", strlen("::TARGETS"));
         key_buf[total] = '\0';
         if (!eval_var_set_current(ctx,
                           nob_sv_from_parts(key_buf, total),
@@ -346,8 +448,20 @@ static bool install_handle_targets_like(EvalExecContext *ctx,
             item = install_tagged_item_temp(ctx, "IMPORTED_RUNTIME_ARTIFACTS", item);
             if (ctx->oom) return false;
         }
-        for (size_t di = 0; di < arena_arr_len(destinations); di++) {
-            if (!install_emit_rule(ctx, o, EV_INSTALL_RULE_TARGET, item, destinations[di])) return false;
+        if (!install_emit_rule(ctx,
+                               o,
+                               EV_INSTALL_RULE_TARGET,
+                               item,
+                               meta.destination,
+                               meta.component,
+                               meta.namelink_component,
+                               meta.export_name,
+                               meta.archive_destination,
+                               meta.library_destination,
+                               meta.runtime_destination,
+                               meta.includes_destination,
+                               meta.public_header_destination)) {
+            return false;
         }
     }
     return true;
@@ -383,7 +497,21 @@ static bool install_handle_script_code_block(EvalExecContext *ctx,
                                                         is_code ? "CODE" : "SCRIPT",
                                                         args[i + 1]);
             if (ctx->oom) return false;
-            if (!install_emit_rule(ctx, o, EV_INSTALL_RULE_FILE, item, nob_sv_from_cstr(""))) return false;
+            if (!install_emit_rule(ctx,
+                                   o,
+                                   EV_INSTALL_RULE_FILE,
+                                   item,
+                                   nob_sv_from_cstr(""),
+                                   nob_sv_from_cstr(""),
+                                   nob_sv_from_cstr(""),
+                                   nob_sv_from_cstr(""),
+                                   nob_sv_from_cstr(""),
+                                   nob_sv_from_cstr(""),
+                                   nob_sv_from_cstr(""),
+                                   nob_sv_from_cstr(""),
+                                   nob_sv_from_cstr(""))) {
+                return false;
+            }
             emitted_any = true;
             i++;
             continue;
@@ -427,9 +555,29 @@ static bool install_handle_export_like(EvalExecContext *ctx,
         return true;
     }
 
-    SV_List destinations = NULL;
-    if (!install_collect_destinations(ctx, node, o, args, 2, &destinations)) return false;
-    if (arena_arr_len(destinations) == 0) {
+    String_View destination = nob_sv_from_cstr("");
+    String_View export_namespace = nob_sv_from_cstr("");
+    String_View file_name = nob_sv_from_cstr("");
+    String_View component = nob_sv_from_cstr("");
+    for (size_t i = 2; i < arena_arr_len(args); ++i) {
+        if (eval_sv_eq_ci_lit(args[i], "DESTINATION")) {
+            if (i + 1 < arena_arr_len(args)) destination = args[++i];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args[i], "NAMESPACE")) {
+            if (i + 1 < arena_arr_len(args)) export_namespace = args[++i];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args[i], "FILE")) {
+            if (i + 1 < arena_arr_len(args)) file_name = args[++i];
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args[i], "COMPONENT")) {
+            if (i + 1 < arena_arr_len(args)) component = args[++i];
+            continue;
+        }
+    }
+    if (destination.count == 0) {
         install_emit_diag(ctx,
                           node,
                           o,
@@ -439,12 +587,26 @@ static bool install_handle_export_like(EvalExecContext *ctx,
         return true;
     }
 
-    String_View item = install_tagged_item_temp(ctx, tag, args[1]);
-    if (ctx->oom) return false;
-    for (size_t i = 0; i < arena_arr_len(destinations); i++) {
-        if (!install_emit_rule(ctx, o, EV_INSTALL_RULE_FILE, item, destinations[i])) return false;
+    if (strcmp(tag, "EXPORT") == 0) {
+        return eval_emit_export_install(ctx, o, args[1], destination, export_namespace, file_name, component);
     }
-    return true;
+    {
+        String_View item = install_tagged_item_temp(ctx, tag, args[1]);
+        if (ctx->oom) return false;
+        return install_emit_rule(ctx,
+                                 o,
+                                 EV_INSTALL_RULE_FILE,
+                                 item,
+                                 destination,
+                                 component,
+                                 nob_sv_from_cstr(""),
+                                 nob_sv_from_cstr(""),
+                                 nob_sv_from_cstr(""),
+                                 nob_sv_from_cstr(""),
+                                 nob_sv_from_cstr(""),
+                                 nob_sv_from_cstr(""),
+                                 nob_sv_from_cstr(""));
+    }
 }
 
 static bool install_handle_runtime_dependency_set(EvalExecContext *ctx,
@@ -476,7 +638,21 @@ static bool install_handle_runtime_dependency_set(EvalExecContext *ctx,
     String_View item = install_tagged_item_temp(ctx, "RUNTIME_DEPENDENCY_SET", args[1]);
     if (ctx->oom) return false;
     for (size_t i = 0; i < arena_arr_len(destinations); i++) {
-        if (!install_emit_rule(ctx, o, EV_INSTALL_RULE_TARGET, item, destinations[i])) return false;
+        if (!install_emit_rule(ctx,
+                               o,
+                               EV_INSTALL_RULE_TARGET,
+                               item,
+                               destinations[i],
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""))) {
+            return false;
+        }
     }
     return true;
 }

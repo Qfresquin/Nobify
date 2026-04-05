@@ -664,6 +664,7 @@ bool artifact_parity_run_nobify(const char *nobify_bin,
     bool ok = false;
     if (!nobify_bin || !input_path || !output_path) return false;
     nob_cmd_append(&cmd, nobify_bin);
+    nob_cmd_append(&cmd, "--platform", "linux", "--backend", "posix");
     if (source_root && source_root[0] != '\0') {
         nob_cmd_append(&cmd, "--source-root", source_root);
     }

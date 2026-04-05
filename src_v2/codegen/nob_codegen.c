@@ -9,7 +9,8 @@
 #include <string.h>
 
 static bool cg_target_needs_cxx_linker_recursive(CG_Context *ctx, BM_Target_Id id, bool *out);
-static BM_Query_Eval_Context cg_make_query_ctx(BM_Target_Id current_target_id,
+static BM_Query_Eval_Context cg_make_query_ctx(CG_Context *ctx,
+                                               BM_Target_Id current_target_id,
                                                BM_Query_Usage_Mode usage_mode,
                                                String_View config,
                                                String_View compile_language);
@@ -200,9 +201,12 @@ static bool cg_is_cxx_source(String_View sv) {
 
 static bool cg_is_link_file_like(String_View sv) {
     return cg_ends_with(sv, ".a") ||
+           cg_ends_with(sv, ".lib") ||
+           cg_ends_with(sv, ".dll") ||
            cg_ends_with(sv, ".so") ||
            cg_ends_with(sv, ".dylib") ||
-           cg_ends_with(sv, ".o");
+           cg_ends_with(sv, ".o") ||
+           cg_ends_with(sv, ".obj");
 }
 
 static bool cg_is_bare_library_name(String_View sv) {
@@ -225,6 +229,24 @@ static char *cg_arena_sprintf(Arena *scratch, const char *fmt, ...) {
     char *out = cg_arena_vsprintf(scratch, fmt, ap);
     va_end(ap);
     return out;
+}
+
+static bool cg_host_ensure_dir(const char *path) {
+    char buf[4096] = {0};
+    size_t len = 0;
+    size_t start = 1;
+    if (!path || path[0] == '\0' || strcmp(path, ".") == 0) return true;
+    len = strlen(path);
+    if (len >= sizeof(buf)) return false;
+    memcpy(buf, path, len + 1);
+    if (len >= 3 && buf[1] == ':' && (buf[2] == '/' || buf[2] == '\\')) start = 3;
+    for (size_t i = start; i < len; ++i) {
+        if (buf[i] != '/' && buf[i] != '\\') continue;
+        buf[i] = '\0';
+        if (buf[0] != '\0' && !nob_mkdir_if_not_exists(buf)) return false;
+        buf[i] = '/';
+    }
+    return nob_mkdir_if_not_exists(buf);
 }
 
 bool cg_sb_append_c_string(Nob_String_Builder *sb, String_View sv) {
@@ -529,7 +551,8 @@ static bool cg_target_is_non_emitting(BM_Target_Kind kind) {
            kind == BM_TARGET_UTILITY;
 }
 
-static bool cg_target_needs_pic(BM_Target_Kind kind) {
+static bool cg_target_needs_pic(CG_Context *ctx, BM_Target_Kind kind) {
+    if (!ctx || ctx->policy.backend != NOB_CODEGEN_BACKEND_POSIX) return false;
     return kind == BM_TARGET_STATIC_LIBRARY ||
            kind == BM_TARGET_SHARED_LIBRARY ||
            kind == BM_TARGET_MODULE_LIBRARY;
@@ -540,6 +563,7 @@ static bool cg_target_kind_is_linkable_artifact(BM_Target_Kind kind) {
            kind == BM_TARGET_SHARED_LIBRARY;
 }
 
+#include "nob_codegen_platform.c"
 #include "nob_codegen_resolve.c"
 
 static bool cg_check_no_genex(const char *what, String_View sv) {
@@ -562,13 +586,35 @@ static bool cg_classify_source_lang(String_View src, CG_Source_Lang *out_lang) {
     return false;
 }
 
-static bool cg_compute_target_artifact_path(CG_Context *ctx, BM_Target_Id id, String_View *out) {
+static String_View cg_target_output_directory_property(CG_Context *ctx,
+                                                       BM_Target_Id id,
+                                                       BM_Target_Kind kind,
+                                                       bool linker_artifact) {
+    if (cg_target_uses_archive_output_dir(ctx, kind, linker_artifact)) {
+        return bm_query_target_archive_output_directory(ctx->model, id);
+    }
+    if (cg_target_uses_runtime_output_dir(ctx, kind)) {
+        return bm_query_target_runtime_output_directory(ctx->model, id);
+    }
+    if (kind == BM_TARGET_SHARED_LIBRARY || kind == BM_TARGET_MODULE_LIBRARY) {
+        return bm_query_target_library_output_directory(ctx->model, id);
+    }
+    return nob_sv_from_cstr("");
+}
+
+static bool cg_compute_target_artifact_path(CG_Context *ctx,
+                                            BM_Target_Id id,
+                                            bool linker_artifact,
+                                            String_View *out) {
     BM_Target_Kind kind = bm_query_target_kind(ctx->model, id);
     BM_Directory_Id owner = bm_query_target_owner_directory(ctx->model, id);
     String_View owner_binary_dir_abs = {0};
     String_View output_name = bm_query_target_output_name(ctx->model, id);
     String_View prefix = bm_query_target_prefix(ctx->model, id);
     String_View suffix = bm_query_target_suffix(ctx->model, id);
+    CG_Artifact_Naming naming = linker_artifact
+        ? cg_target_linker_naming(ctx, kind)
+        : cg_target_runtime_naming(ctx, kind);
     String_View output_dir = {0};
     Nob_String_Builder name_sb = {0};
     String_View basename = {0};
@@ -583,31 +629,18 @@ static bool cg_compute_target_artifact_path(CG_Context *ctx, BM_Target_Id id, St
         return false;
     }
 
-    if (kind == BM_TARGET_EXECUTABLE) {
-        output_dir = bm_query_target_runtime_output_directory(ctx->model, id);
-        if (output_name.count == 0) output_name = bm_query_target_name(ctx->model, id);
-        nob_sb_append_buf(&name_sb, output_name.data ? output_name.data : "", output_name.count);
-    } else if (kind == BM_TARGET_STATIC_LIBRARY) {
-        output_dir = bm_query_target_archive_output_directory(ctx->model, id);
-        if (output_name.count == 0) output_name = bm_query_target_name(ctx->model, id);
-        if (prefix.count == 0) prefix = nob_sv_from_cstr("lib");
-        if (suffix.count == 0) suffix = nob_sv_from_cstr(".a");
-        nob_sb_append_buf(&name_sb, prefix.data ? prefix.data : "", prefix.count);
-        nob_sb_append_buf(&name_sb, output_name.data ? output_name.data : "", output_name.count);
-        nob_sb_append_buf(&name_sb, suffix.data ? suffix.data : "", suffix.count);
-    } else if (kind == BM_TARGET_SHARED_LIBRARY || kind == BM_TARGET_MODULE_LIBRARY) {
-        output_dir = bm_query_target_library_output_directory(ctx->model, id);
-        if (output_name.count == 0) output_name = bm_query_target_name(ctx->model, id);
-        if (prefix.count == 0) prefix = nob_sv_from_cstr("lib");
-        if (suffix.count == 0) suffix = nob_sv_from_cstr(".so");
-        nob_sb_append_buf(&name_sb, prefix.data ? prefix.data : "", prefix.count);
-        nob_sb_append_buf(&name_sb, output_name.data ? output_name.data : "", output_name.count);
-        nob_sb_append_buf(&name_sb, suffix.data ? suffix.data : "", suffix.count);
-    } else {
+    if (!cg_target_is_supported_concrete(kind)) {
         *out = (String_View){0};
         nob_sb_free(name_sb);
         return true;
     }
+    output_dir = cg_target_output_directory_property(ctx, id, kind, linker_artifact);
+    if (output_name.count == 0) output_name = bm_query_target_name(ctx->model, id);
+    if (prefix.count == 0) prefix = naming.prefix;
+    if (suffix.count == 0) suffix = naming.suffix;
+    nob_sb_append_buf(&name_sb, prefix.data ? prefix.data : "", prefix.count);
+    nob_sb_append_buf(&name_sb, output_name.data ? output_name.data : "", output_name.count);
+    nob_sb_append_buf(&name_sb, suffix.data ? suffix.data : "", suffix.count);
 
     if (output_dir.count > 0 && !cg_check_no_genex("target output directory", output_dir)) {
         nob_sb_free(name_sb);
@@ -685,7 +718,13 @@ static bool cg_init_targets(CG_Context *ctx) {
         }
 
         info->emits_artifact = !info->alias && !info->imported && cg_target_is_supported_concrete(info->kind);
-        if (info->emits_artifact && !cg_compute_target_artifact_path(ctx, id, &info->artifact_path)) return false;
+        if (info->emits_artifact &&
+            (!cg_compute_target_artifact_path(ctx, id, false, &info->artifact_path) ||
+             !cg_compute_target_artifact_path(ctx, id, true, &info->linker_artifact_path))) {
+            return false;
+        }
+        info->has_distinct_linker_artifact = info->emits_artifact &&
+                                             !nob_sv_eq(info->artifact_path, info->linker_artifact_path);
         if (!cg_compute_target_state_path(ctx, info, &info->state_path)) return false;
     }
 
@@ -697,6 +736,8 @@ static bool cg_init_targets(CG_Context *ctx) {
         ctx->targets[i].kind = ctx->targets[resolved].kind;
         ctx->targets[i].imported = ctx->targets[resolved].imported;
         ctx->targets[i].emits_artifact = ctx->targets[resolved].emits_artifact;
+        ctx->targets[i].linker_artifact_path = ctx->targets[resolved].linker_artifact_path;
+        ctx->targets[i].has_distinct_linker_artifact = ctx->targets[resolved].has_distinct_linker_artifact;
         ctx->targets[i].state_path = ctx->targets[resolved].state_path;
     }
 
@@ -752,10 +793,6 @@ static bool cg_init_build_steps(CG_Context *ctx) {
         info->kind = bm_query_build_step_kind(ctx->model, id);
         info->owner_directory_id = bm_query_build_step_owner_directory(ctx->model, id);
         info->owner_target_id = bm_query_build_step_owner_target(ctx->model, id);
-        if (bm_query_build_step_append(ctx->model, id)) {
-            nob_log(NOB_ERROR, "codegen: APPEND custom-command steps are not supported yet");
-            return false;
-        }
         info->ident = cg_make_identifier(ctx->scratch,
                                          nob_sv_from_cstr(nob_temp_sprintf("step_%u", (unsigned)id)),
                                          i);
@@ -778,6 +815,22 @@ static bool cg_resolve_link_item_target(CG_Context *ctx, String_View item, BM_Ta
 const CG_Build_Step_Info *cg_build_step_info(const CG_Context *ctx, BM_Build_Step_Id id) {
     if (!ctx || !bm_build_step_id_is_valid(id) || (size_t)id >= ctx->build_step_count) return NULL;
     return &ctx->build_steps[id];
+}
+
+static bool cg_object_path_for_index(CG_Context *ctx,
+                                     String_View object_dir,
+                                     size_t index,
+                                     String_View *out) {
+    char *name = NULL;
+    if (out) *out = nob_sv_from_cstr("");
+    if (!ctx || !out) return false;
+    name = cg_arena_sprintf(ctx->scratch,
+                            "%zu%.*s",
+                            index,
+                            (int)ctx->policy.object_suffix.count,
+                            ctx->policy.object_suffix.data ? ctx->policy.object_suffix.data : "");
+    if (!name) return false;
+    return cg_join_paths_to_arena(ctx->scratch, object_dir, nob_sv_from_cstr(name), out);
 }
 
 static bool cg_collect_unique_target(Arena *scratch, BM_Target_Id **list, BM_Target_Id value) {
@@ -818,7 +871,7 @@ static bool cg_target_link_closure_has_interface_pch(CG_Context *ctx,
     for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
         BM_String_Item_Span libs = {0};
         String_View config = branch < arena_arr_len(ctx->known_configs) ? ctx->known_configs[branch] : nob_sv_from_cstr("");
-        BM_Query_Eval_Context qctx = cg_make_query_ctx(id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
+        BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
         if (!cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_LINK_LIBRARIES, &libs)) {
             return false;
         }
@@ -863,6 +916,27 @@ static bool cg_reject_unsupported_precompile_headers(CG_Context *ctx, const CG_T
                 info->name.data ? info->name.data : "",
                 (int)offender_name.count,
                 offender_name.data ? offender_name.data : "");
+        return false;
+    }
+    return true;
+}
+
+static bool cg_reject_unsupported_platform_target_properties(CG_Context *ctx, const CG_Target_Info *info) {
+    if (!ctx || !info) return false;
+    if (info->alias || info->imported) return true;
+
+    if (bm_query_target_macosx_bundle(ctx->model, info->id)) {
+        nob_log(NOB_ERROR,
+                "codegen: MACOSX_BUNDLE is not supported yet for target '%.*s'",
+                (int)info->name.count,
+                info->name.data ? info->name.data : "");
+        return false;
+    }
+    if (bm_query_target_win32_executable(ctx->model, info->id)) {
+        nob_log(NOB_ERROR,
+                "codegen: WIN32_EXECUTABLE subsystem handling is not supported yet for target '%.*s'",
+                (int)info->name.count,
+                info->name.data ? info->name.data : "");
         return false;
     }
     return true;
@@ -921,12 +995,12 @@ bool cg_eval_string_for_config(CG_Context *ctx,
     if (out) *out = nob_sv_from_cstr("");
     if (!ctx || !out) return false;
     data.ctx = ctx;
-    data.eval_ctx = cg_make_query_ctx(current_target_id, usage_mode, config, compile_language);
+    data.eval_ctx = cg_make_query_ctx(ctx, current_target_id, usage_mode, config, compile_language);
 
     gx.arena = ctx->scratch;
     gx.config = config;
     gx.current_target_name = bm_query_target_name(ctx->model, current_target_id);
-    gx.platform_id = nob_sv_from_cstr("");
+    gx.platform_id = ctx->policy.platform_id;
     gx.compile_language = compile_language;
     gx.read_target_property = cg_genex_target_property_cb;
     gx.read_target_file = cg_genex_target_file_cb;
@@ -945,18 +1019,20 @@ bool cg_eval_string_for_config(CG_Context *ctx,
     return true;
 }
 
-static BM_Query_Eval_Context cg_make_query_ctx(BM_Target_Id current_target_id,
+static BM_Query_Eval_Context cg_make_query_ctx(CG_Context *ctx,
+                                               BM_Target_Id current_target_id,
                                                BM_Query_Usage_Mode usage_mode,
                                                String_View config,
                                                String_View compile_language) {
-    BM_Query_Eval_Context ctx = {0};
-    ctx.current_target_id = current_target_id;
-    ctx.usage_mode = usage_mode;
-    ctx.config = config;
-    ctx.compile_language = compile_language;
-    ctx.build_interface_active = true;
-    ctx.install_interface_active = false;
-    return ctx;
+    BM_Query_Eval_Context qctx = {0};
+    qctx.current_target_id = current_target_id;
+    qctx.usage_mode = usage_mode;
+    qctx.config = config;
+    qctx.compile_language = compile_language;
+    qctx.platform_id = ctx ? ctx->policy.platform_id : nob_sv_from_cstr("");
+    qctx.build_interface_active = true;
+    qctx.install_interface_active = false;
+    return qctx;
 }
 
 static bool cg_parse_int_sv(String_View value, int *out) {
@@ -1006,7 +1082,7 @@ static bool cg_collect_standard_arg(CG_Context *ctx,
                                     String_View config,
                                     CG_Source_Lang lang,
                                     String_View **out_args) {
-    BM_Query_Eval_Context qctx = cg_make_query_ctx(id, BM_QUERY_USAGE_COMPILE, config, cg_compile_language_sv(lang));
+    BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_COMPILE, config, cg_compile_language_sv(lang));
     BM_String_Span features = {0};
     int required_standard = 0;
     bool extensions = true;
@@ -1146,7 +1222,7 @@ static bool cg_target_needs_cxx_linker_for_config_impl(CG_Context *ctx,
 
     if (info->imported) {
         BM_String_Span langs = {0};
-        qctx = cg_make_query_ctx(id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
+        qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
         if (!cg_query_imported_link_languages_cached(ctx, id, &qctx, &langs)) return false;
         *out = cg_string_span_contains_ci(langs, "CXX");
         visiting[id] = 0;
@@ -1162,7 +1238,7 @@ static bool cg_target_needs_cxx_linker_for_config_impl(CG_Context *ctx,
         return true;
     }
 
-    qctx = cg_make_query_ctx(id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
+    qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
     if (!cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_LINK_LIBRARIES, &libs)) {
         visiting[id] = 0;
         return false;
@@ -1212,7 +1288,7 @@ static bool cg_collect_build_dependencies(CG_Context *ctx, BM_Target_Id id, BM_T
     for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
         BM_String_Item_Span libs = {0};
         String_View config = branch < arena_arr_len(ctx->known_configs) ? ctx->known_configs[branch] : nob_sv_from_cstr("");
-        BM_Query_Eval_Context qctx = cg_make_query_ctx(id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
+        BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
         if (!cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_LINK_LIBRARIES, &libs)) {
             return false;
         }
@@ -1305,7 +1381,7 @@ static bool cg_collect_compile_args(CG_Context *ctx,
     BM_String_Item_Span includes = {0};
     BM_String_Item_Span defs = {0};
     BM_String_Item_Span opts = {0};
-    BM_Query_Eval_Context qctx = cg_make_query_ctx(id, BM_QUERY_USAGE_COMPILE, config, cg_compile_language_sv(lang));
+    BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_COMPILE, config, cg_compile_language_sv(lang));
     if (!cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_INCLUDE_DIRECTORIES, &includes) ||
         !cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_COMPILE_DEFINITIONS, &defs) ||
         !cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_COMPILE_OPTIONS, &opts) ||
@@ -1316,7 +1392,10 @@ static bool cg_collect_compile_args(CG_Context *ctx,
     for (size_t i = 0; i < includes.count; ++i) {
         String_View path = {0};
         if (!cg_rebase_from_provenance(ctx, includes.items[i].value, includes.items[i].provenance, &path)) return false;
-        if (includes.items[i].flags & BM_ITEM_FLAG_SYSTEM) {
+        if (cg_policy_is_windows(ctx)) {
+            char *arg = cg_arena_sprintf(ctx->scratch, "/I%.*s", (int)path.count, path.data ? path.data : "");
+            if (!arg || !cg_collect_unique_path(ctx->scratch, out, nob_sv_from_cstr(arg))) return false;
+        } else if (includes.items[i].flags & BM_ITEM_FLAG_SYSTEM) {
             if (!cg_collect_unique_path(ctx->scratch, out, nob_sv_from_cstr("-isystem")) ||
                 !cg_collect_unique_path(ctx->scratch, out, path)) {
                 return false;
@@ -1330,12 +1409,21 @@ static bool cg_collect_compile_args(CG_Context *ctx,
     for (size_t i = 0; i < defs.count; ++i) {
         String_View item = defs.items[i].value;
         char *arg = NULL;
-        if (cg_sv_has_prefix(item, "-D")) arg = arena_strndup(ctx->scratch, item.data, item.count);
-        else arg = cg_arena_sprintf(ctx->scratch, "-D%.*s", (int)item.count, item.data ? item.data : "");
+        if (cg_policy_is_windows(ctx)) {
+            if (cg_sv_has_prefix(item, "-D")) {
+                item = nob_sv_from_parts(item.data + 2, item.count - 2);
+            }
+            arg = cg_arena_sprintf(ctx->scratch, "/D%.*s", (int)item.count, item.data ? item.data : "");
+        } else if (cg_sv_has_prefix(item, "-D")) {
+            arg = arena_strndup(ctx->scratch, item.data, item.count);
+        } else {
+            arg = cg_arena_sprintf(ctx->scratch, "-D%.*s", (int)item.count, item.data ? item.data : "");
+        }
         if (!arg || !cg_collect_unique_path(ctx->scratch, out, nob_sv_from_cstr(arg))) return false;
     }
 
     for (size_t i = 0; i < opts.count; ++i) {
+        if (cg_policy_is_windows(ctx) && cg_sv_has_prefix(opts.items[i].value, "-std=")) continue;
         if (!cg_collect_unique_path(ctx->scratch, out, opts.items[i].value)) return false;
     }
 
@@ -1347,18 +1435,26 @@ static bool cg_collect_link_dir_args(CG_Context *ctx,
                                      String_View config,
                                      String_View **out) {
     BM_String_Item_Span dirs = {0};
-    BM_Query_Eval_Context qctx = cg_make_query_ctx(id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
+    BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
     if (!cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_LINK_DIRECTORIES, &dirs)) return false;
 
     for (size_t i = 0; i < dirs.count; ++i) {
         String_View path = {0};
         char *arg = NULL;
         if (cg_sv_has_prefix(dirs.items[i].value, "-L")) {
-            if (!cg_collect_unique_path(ctx->scratch, out, dirs.items[i].value)) return false;
+            if (cg_policy_is_windows(ctx)) {
+                path = nob_sv_trim(nob_sv_from_parts(dirs.items[i].value.data + 2, dirs.items[i].value.count - 2));
+                arg = cg_arena_sprintf(ctx->scratch, "/LIBPATH:%.*s", (int)path.count, path.data ? path.data : "");
+                if (!arg || !cg_collect_unique_path(ctx->scratch, out, nob_sv_from_cstr(arg))) return false;
+            } else if (!cg_collect_unique_path(ctx->scratch, out, dirs.items[i].value)) {
+                return false;
+            }
             continue;
         }
         if (!cg_rebase_from_provenance(ctx, dirs.items[i].value, dirs.items[i].provenance, &path)) return false;
-        arg = cg_arena_sprintf(ctx->scratch, "-L%.*s", (int)path.count, path.data ? path.data : "");
+        arg = cg_policy_is_windows(ctx)
+            ? cg_arena_sprintf(ctx->scratch, "/LIBPATH:%.*s", (int)path.count, path.data ? path.data : "")
+            : cg_arena_sprintf(ctx->scratch, "-L%.*s", (int)path.count, path.data ? path.data : "");
         if (!arg || !cg_collect_unique_path(ctx->scratch, out, nob_sv_from_cstr(arg))) return false;
     }
 
@@ -1370,7 +1466,7 @@ static bool cg_collect_link_option_args(CG_Context *ctx,
                                         String_View config,
                                         String_View **out) {
     BM_String_Item_Span opts = {0};
-    BM_Query_Eval_Context qctx = cg_make_query_ctx(id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
+    BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
     if (!cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_LINK_OPTIONS, &opts)) return false;
 
     for (size_t i = 0; i < opts.count; ++i) {
@@ -1386,7 +1482,7 @@ static bool cg_collect_link_library_args(CG_Context *ctx,
                                          String_View **out_args,
                                          String_View **out_rebuild_inputs) {
     BM_String_Item_Span libs = {0};
-    BM_Query_Eval_Context qctx = cg_make_query_ctx(id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
+    BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
     BM_Target_Id *seen_targets = NULL;
     if (!cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_LINK_LIBRARIES, &libs)) return false;
 
@@ -1398,7 +1494,7 @@ static bool cg_collect_link_library_args(CG_Context *ctx,
             String_View dep_path = {0};
             if (dep.usage_only) continue;
             if (dep.target_kind == BM_TARGET_MODULE_LIBRARY) {
-                nob_log(NOB_ERROR, "codegen: target '%.*s' is not linkable in the POSIX backend",
+                nob_log(NOB_ERROR, "codegen: target '%.*s' is not linkable in the selected backend",
                         (int)item.count, item.data ? item.data : "");
                 return false;
             }
@@ -1428,7 +1524,7 @@ static bool cg_collect_link_library_args(CG_Context *ctx,
                 continue;
             }
             if (!dep.linkable_artifact) {
-                nob_log(NOB_ERROR, "codegen: local link target '%.*s' is not linkable in the POSIX backend",
+                nob_log(NOB_ERROR, "codegen: local link target '%.*s' is not linkable in the selected backend",
                         (int)item.count, item.data ? item.data : "");
                 return false;
             }
@@ -1458,7 +1554,9 @@ static bool cg_collect_link_library_args(CG_Context *ctx,
         }
 
         if (cg_is_bare_library_name(item)) {
-            char *arg = cg_arena_sprintf(ctx->scratch, "-l%.*s", (int)item.count, item.data ? item.data : "");
+            char *arg = cg_policy_is_windows(ctx)
+                ? cg_arena_sprintf(ctx->scratch, "%.*s.lib", (int)item.count, item.data ? item.data : "")
+                : cg_arena_sprintf(ctx->scratch, "-l%.*s", (int)item.count, item.data ? item.data : "");
             if (!arg || (out_args && !cg_collect_unique_path(ctx->scratch, out_args, nob_sv_from_cstr(arg)))) return false;
             continue;
         }
@@ -1494,6 +1592,32 @@ bool cg_emit_cmd_append_expr(Nob_String_Builder *out, const char *cmd_var, const
 static bool cg_emit_cmd_append_toolchain(Nob_String_Builder *out, const char *cmd_var, bool use_cxx) {
     if (!out || !cmd_var) return false;
     nob_sb_append_cstr(out, "        append_toolchain_cmd(&");
+    nob_sb_append_cstr(out, cmd_var);
+    nob_sb_append_cstr(out, ", ");
+    nob_sb_append_cstr(out, use_cxx ? "true" : "false");
+    nob_sb_append_cstr(out, ");\n");
+    return true;
+}
+
+static bool cg_emit_cmd_append_archive_tool(Nob_String_Builder *out, const char *cmd_var) {
+    if (!out || !cmd_var) return false;
+    nob_sb_append_cstr(out, "        append_archive_tool_cmd(&");
+    nob_sb_append_cstr(out, cmd_var);
+    nob_sb_append_cstr(out, ");\n");
+    return true;
+}
+
+static bool cg_emit_cmd_append_link_tool(CG_Context *ctx,
+                                         Nob_String_Builder *out,
+                                         const char *cmd_var,
+                                         bool use_cxx) {
+    if (!ctx || !out || !cmd_var) return false;
+    if (ctx->policy.use_compiler_driver_for_executable_link ||
+        ctx->policy.use_compiler_driver_for_shared_link ||
+        ctx->policy.use_compiler_driver_for_module_link) {
+        return cg_emit_cmd_append_toolchain(out, cmd_var, use_cxx);
+    }
+    nob_sb_append_cstr(out, "        append_link_tool_cmd(&");
     nob_sb_append_cstr(out, cmd_var);
     nob_sb_append_cstr(out, ", ");
     nob_sb_append_cstr(out, use_cxx ? "true" : "false");
@@ -1566,21 +1690,43 @@ static bool cg_emit_link_args_runtime(CG_Context *ctx,
         }
 
         nob_sb_append_cstr(out, "        Nob_Cmd link_cmd = {0};\n");
-        if (!cg_emit_cmd_append_toolchain(out, "link_cmd", needs_cxx_linker)) return false;
-        if ((info->kind == BM_TARGET_SHARED_LIBRARY || info->kind == BM_TARGET_MODULE_LIBRARY) &&
-            !cg_emit_cmd_append_sv(out, "link_cmd", nob_sv_from_cstr("-shared"))) {
-            return false;
-        }
-        if (!cg_emit_cmd_append_sv(out, "link_cmd", nob_sv_from_cstr("-o")) ||
-            !cg_emit_cmd_append_sv(out, "link_cmd", info->artifact_path)) {
-            return false;
+        if (!cg_emit_cmd_append_link_tool(ctx, out, "link_cmd", needs_cxx_linker)) return false;
+        if (cg_policy_is_windows(ctx)) {
+            char *out_arg = cg_arena_sprintf(ctx->scratch,
+                                             "/OUT:%.*s",
+                                             (int)info->artifact_path.count,
+                                             info->artifact_path.data ? info->artifact_path.data : "");
+            if (!out_arg) return false;
+            if (!cg_emit_cmd_append_sv(out, "link_cmd", nob_sv_from_cstr("/NOLOGO"))) return false;
+            if (info->kind == BM_TARGET_SHARED_LIBRARY) {
+                if (!cg_emit_cmd_append_sv(out, "link_cmd", ctx->policy.shared_link_flag)) return false;
+            } else if (info->kind == BM_TARGET_MODULE_LIBRARY) {
+                if (!cg_emit_cmd_append_sv(out, "link_cmd", ctx->policy.module_link_flag)) return false;
+            }
+            if (!cg_emit_cmd_append_sv(out, "link_cmd", nob_sv_from_cstr(out_arg))) return false;
+            if (info->has_distinct_linker_artifact) {
+                char *implib_arg = cg_arena_sprintf(ctx->scratch,
+                                                    "/IMPLIB:%.*s",
+                                                    (int)info->linker_artifact_path.count,
+                                                    info->linker_artifact_path.data ? info->linker_artifact_path.data : "");
+                if (!implib_arg || !cg_emit_cmd_append_sv(out, "link_cmd", nob_sv_from_cstr(implib_arg))) {
+                    return false;
+                }
+            }
+        } else {
+            if (info->kind == BM_TARGET_SHARED_LIBRARY) {
+                if (!cg_emit_cmd_append_sv(out, "link_cmd", ctx->policy.shared_link_flag)) return false;
+            } else if (info->kind == BM_TARGET_MODULE_LIBRARY) {
+                if (!cg_emit_cmd_append_sv(out, "link_cmd", ctx->policy.module_link_flag)) return false;
+            }
+            if (!cg_emit_cmd_append_sv(out, "link_cmd", nob_sv_from_cstr("-o")) ||
+                !cg_emit_cmd_append_sv(out, "link_cmd", info->artifact_path)) {
+                return false;
+            }
         }
         for (size_t i = 0; i < source_count; ++i) {
             String_View obj_path = {0};
-            if (!cg_join_paths_to_arena(ctx->scratch,
-                                        object_dir,
-                                        nob_sv_from_cstr(nob_temp_sprintf("%zu.o", i)),
-                                        &obj_path)) {
+            if (!cg_object_path_for_index(ctx, object_dir, i, &obj_path)) {
                 return false;
             }
             if (!cg_emit_cmd_append_sv(out, "link_cmd", obj_path)) return false;
@@ -1599,6 +1745,15 @@ static bool cg_emit_link_args_runtime(CG_Context *ctx,
         nob_sb_append_cstr(out, "            nob_cmd_free(link_cmd);\n");
         nob_sb_append_cstr(out, "            if (!ok) return false;\n");
         nob_sb_append_cstr(out, "        }\n");
+        nob_sb_append_cstr(out, "        if (!require_paths((const char*[]){");
+        if (!cg_sb_append_c_string(out, info->artifact_path)) return false;
+        if (info->has_distinct_linker_artifact) {
+            nob_sb_append_cstr(out, ", ");
+            if (!cg_sb_append_c_string(out, info->linker_artifact_path)) return false;
+        }
+        nob_sb_append_cstr(out, "}, ");
+        nob_sb_append_cstr(out, info->has_distinct_linker_artifact ? "2" : "1");
+        nob_sb_append_cstr(out, ")) return false;\n");
     }
     return cg_emit_runtime_config_branches_suffix(ctx, out);
 }
@@ -1649,93 +1804,7 @@ static bool cg_emit_preferred_tool_resolver(Nob_String_Builder *out,
     return true;
 }
 
-static bool cg_emit_support_helpers(CG_Context *ctx, Nob_String_Builder *out) {
-    if (!ctx || !out) return false;
-    nob_sb_append_cstr(out,
-        "static const char *g_build_config = \"\";\n"
-        "\n"
-        "static bool config_matches(const char *actual, const char *expected) {\n"
-        "    if (!expected) return false;\n"
-        "    if (!actual) actual = \"\";\n"
-        "    while (*actual && *expected) {\n"
-        "        if (tolower((unsigned char)*actual) != tolower((unsigned char)*expected)) return false;\n"
-        "        ++actual;\n"
-        "        ++expected;\n"
-        "    }\n"
-        "    return *actual == '\\0' && *expected == '\\0';\n"
-        "}\n"
-        "\n"
-        "static void append_toolchain_cmd(Nob_Cmd *cmd, bool use_cxx) {\n"
-        "    const char *tool = getenv(use_cxx ? \"CXX\" : \"CC\");\n"
-        "    if (!tool || tool[0] == '\\0') tool = use_cxx ? \"c++\" : \"cc\";\n"
-        "    nob_cmd_append(cmd, tool);\n"
-        "}\n"
-        "\n");
-    if (!cg_emit_preferred_tool_resolver(out,
-                                         "resolve_cmake_bin",
-                                         "NOB_CMAKE_BIN",
-                                         ctx->embedded_cmake_bin_abs,
-                                         "cmake") ||
-        !cg_emit_preferred_tool_resolver(out,
-                                         "resolve_cpack_bin",
-                                         "NOB_CPACK_BIN",
-                                         ctx->embedded_cpack_bin_abs,
-                                         "cpack")) {
-        return false;
-    }
-    nob_sb_append_cstr(out,
-        "static bool ensure_dir(const char *path) {\n"
-        "    Nob_Cmd cmd = {0};\n"
-        "    bool ok = false;\n"
-        "    nob_cmd_append(&cmd, \"mkdir\", \"-p\", path);\n"
-        "    ok = nob_cmd_run(&cmd);\n"
-        "    nob_cmd_free(cmd);\n"
-        "    return ok;\n"
-        "}\n"
-        "\n"
-        "static bool ensure_parent_dir(const char *path) {\n"
-        "    const char *dir = nob_temp_dir_name(path);\n"
-        "    if (!dir || strcmp(dir, \".\") == 0) return true;\n"
-        "    return ensure_dir(dir);\n"
-        "}\n"
-        "\n"
-        "static bool run_cmd_in_dir(const char *working_dir, Nob_Cmd *cmd) {\n"
-        "    const char *saved_dir = NULL;\n"
-        "    bool ok = false;\n"
-        "    if (working_dir && working_dir[0] != '\\0') {\n"
-        "        saved_dir = nob_get_current_dir_temp();\n"
-        "        if (!saved_dir) return false;\n"
-        "        saved_dir = nob_temp_strdup(saved_dir);\n"
-        "        if (!saved_dir) return false;\n"
-        "        if (!nob_set_current_dir(working_dir)) return false;\n"
-        "    }\n"
-        "    ok = nob_cmd_run(cmd);\n"
-        "    if (working_dir && working_dir[0] != '\\0') {\n"
-        "        if (!nob_set_current_dir(saved_dir)) return false;\n"
-        "    }\n"
-        "    return ok;\n"
-        "}\n"
-        "\n"
-        "static bool write_stamp(const char *path) {\n"
-        "    if (!ensure_parent_dir(path)) return false;\n"
-        "    return nob_write_entire_file(path, \"\", 0);\n"
-        "}\n"
-        "\n"
-        "static bool require_paths(const char *const *paths, size_t count) {\n"
-        "    for (size_t i = 0; i < count; ++i) {\n"
-        "        if (nob_file_exists(paths[i])) continue;\n"
-        "        nob_log(NOB_ERROR, \"codegen: declared build output is missing: %s\", paths[i]);\n"
-        "        return false;\n"
-        "    }\n"
-        "    return true;\n"
-        "}\n"
-        "\n"
-        "static bool install_copy_file(const char *src_path, const char *dst_path) {\n"
-        "    return nob_copy_file(src_path, dst_path);\n"
-        "}\n"
-        "\n");
-    return true;
-}
+#include "nob_codegen_runtime.c"
 
 static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info, Nob_String_Builder *out) {
     BM_Target_Id *deps = NULL;
@@ -1747,6 +1816,7 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
     String_View *link_rebuild_inputs = NULL;
     String_View object_dir = {0};
     String_View artifact_dir = {0};
+    String_View linker_artifact_dir = {0};
     bool needs_pic = false;
     if (!ctx || !info || !out) return false;
 
@@ -1790,6 +1860,7 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
     }
 
     if (!cg_reject_unsupported_precompile_headers(ctx, info)) return false;
+    if (!cg_reject_unsupported_platform_target_properties(ctx, info)) return false;
 
     if (!cg_collect_build_dependencies(ctx, info->id, &deps)) return false;
     for (size_t i = 0; i < arena_arr_len(deps); ++i) {
@@ -1857,7 +1928,7 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
                 (int)info->name.count, info->name.data ? info->name.data : "");
         return false;
     }
-    needs_pic = cg_target_needs_pic(info->kind);
+    needs_pic = cg_target_needs_pic(ctx, info->kind);
 
     {
         String_View object_subdir = {0};
@@ -1875,6 +1946,9 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         return false;
     }
     artifact_dir = cg_dirname_to_arena(ctx->scratch, info->artifact_path);
+    if (info->has_distinct_linker_artifact) {
+        linker_artifact_dir = cg_dirname_to_arena(ctx->scratch, info->linker_artifact_path);
+    }
 
     for (size_t i = 0; i < arena_arr_len(pre_build_steps); ++i) {
         const CG_Build_Step_Info *step = cg_build_step_info(ctx, pre_build_steps[i]);
@@ -1897,13 +1971,15 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
     nob_sb_append_cstr(out, "    if (!ensure_dir(");
     if (!cg_sb_append_c_string(out, artifact_dir)) return false;
     nob_sb_append_cstr(out, ")) return false;\n");
+    if (info->has_distinct_linker_artifact && linker_artifact_dir.count > 0) {
+        nob_sb_append_cstr(out, "    if (!ensure_dir(");
+        if (!cg_sb_append_c_string(out, linker_artifact_dir)) return false;
+        nob_sb_append_cstr(out, ")) return false;\n");
+    }
 
     for (size_t i = 0; i < arena_arr_len(sources); ++i) {
         String_View obj_path = {0};
-        if (!cg_join_paths_to_arena(ctx->scratch,
-                                    object_dir,
-                                    nob_sv_from_cstr(nob_temp_sprintf("%zu.o", i)),
-                                    &obj_path)) {
+        if (!cg_object_path_for_index(ctx, object_dir, i, &obj_path)) {
             return false;
         }
 
@@ -1917,12 +1993,26 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         nob_sb_append_cstr(out, "        Nob_Cmd cc_cmd = {0};\n");
         if (!cg_emit_cmd_append_toolchain(out, "cc_cmd", sources[i].lang == CG_SOURCE_LANG_CXX)) return false;
         if (!cg_emit_compile_args_runtime(ctx, info->id, sources[i].lang, "cc_cmd", out)) return false;
-        if (needs_pic && !cg_emit_cmd_append_sv(out, "cc_cmd", nob_sv_from_cstr("-fPIC"))) return false;
-        if (!cg_emit_cmd_append_sv(out, "cc_cmd", nob_sv_from_cstr("-c")) ||
-            !cg_emit_cmd_append_sv(out, "cc_cmd", sources[i].path) ||
-            !cg_emit_cmd_append_sv(out, "cc_cmd", nob_sv_from_cstr("-o")) ||
-            !cg_emit_cmd_append_sv(out, "cc_cmd", obj_path)) {
-            return false;
+        if (cg_policy_is_windows(ctx)) {
+            char *fo_arg = cg_arena_sprintf(ctx->scratch,
+                                            "/Fo:%.*s",
+                                            (int)obj_path.count,
+                                            obj_path.data ? obj_path.data : "");
+            if (!fo_arg ||
+                !cg_emit_cmd_append_sv(out, "cc_cmd", nob_sv_from_cstr("/nologo")) ||
+                !cg_emit_cmd_append_sv(out, "cc_cmd", nob_sv_from_cstr("/c")) ||
+                !cg_emit_cmd_append_sv(out, "cc_cmd", sources[i].path) ||
+                !cg_emit_cmd_append_sv(out, "cc_cmd", nob_sv_from_cstr(fo_arg))) {
+                return false;
+            }
+        } else {
+            if (needs_pic && !cg_emit_cmd_append_sv(out, "cc_cmd", nob_sv_from_cstr("-fPIC"))) return false;
+            if (!cg_emit_cmd_append_sv(out, "cc_cmd", nob_sv_from_cstr("-c")) ||
+                !cg_emit_cmd_append_sv(out, "cc_cmd", sources[i].path) ||
+                !cg_emit_cmd_append_sv(out, "cc_cmd", nob_sv_from_cstr("-o")) ||
+                !cg_emit_cmd_append_sv(out, "cc_cmd", obj_path)) {
+                return false;
+            }
         }
         nob_sb_append_cstr(out, "        {\n");
         nob_sb_append_cstr(out, "            bool ok = nob_cmd_run(&cc_cmd);\n");
@@ -1947,10 +2037,7 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         if (!cg_sb_append_c_string(out, ctx->emit_path_abs)) return false;
         for (size_t i = 0; i < arena_arr_len(sources); ++i) {
             String_View obj_path = {0};
-            if (!cg_join_paths_to_arena(ctx->scratch,
-                                        object_dir,
-                                        nob_sv_from_cstr(nob_temp_sprintf("%zu.o", i)),
-                                        &obj_path)) {
+            if (!cg_object_path_for_index(ctx, object_dir, i, &obj_path)) {
                 return false;
             }
             nob_sb_append_cstr(out, ", ");
@@ -1960,20 +2047,30 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         nob_sb_append_cstr(out, nob_temp_sprintf("%zu", arena_arr_len(sources) + 1));
         nob_sb_append_cstr(out, ")) {\n");
         nob_sb_append_cstr(out, "        Nob_Cmd ar_cmd = {0};\n");
-        nob_sb_append_cstr(out, "        nob_cmd_append(&ar_cmd, \"ar\", \"rcs\", ");
-        if (!cg_sb_append_c_string(out, info->artifact_path)) return false;
-        for (size_t i = 0; i < arena_arr_len(sources); ++i) {
-            String_View obj_path = {0};
-            if (!cg_join_paths_to_arena(ctx->scratch,
-                                        object_dir,
-                                        nob_sv_from_cstr(nob_temp_sprintf("%zu.o", i)),
-                                        &obj_path)) {
+        if (!cg_emit_cmd_append_archive_tool(out, "ar_cmd")) return false;
+        if (cg_policy_is_windows(ctx)) {
+            char *out_arg = cg_arena_sprintf(ctx->scratch,
+                                             "/OUT:%.*s",
+                                             (int)info->artifact_path.count,
+                                             info->artifact_path.data ? info->artifact_path.data : "");
+            if (!out_arg ||
+                !cg_emit_cmd_append_sv(out, "ar_cmd", nob_sv_from_cstr("/NOLOGO")) ||
+                !cg_emit_cmd_append_sv(out, "ar_cmd", nob_sv_from_cstr(out_arg))) {
                 return false;
             }
-            nob_sb_append_cstr(out, ", ");
-            if (!cg_sb_append_c_string(out, obj_path)) return false;
+        } else {
+            if (!cg_emit_cmd_append_sv(out, "ar_cmd", nob_sv_from_cstr("rcs")) ||
+                !cg_emit_cmd_append_sv(out, "ar_cmd", info->artifact_path)) {
+                return false;
+            }
         }
-        nob_sb_append_cstr(out, ");\n");
+        for (size_t i = 0; i < arena_arr_len(sources); ++i) {
+            String_View obj_path = {0};
+            if (!cg_object_path_for_index(ctx, object_dir, i, &obj_path)) {
+                return false;
+            }
+            if (!cg_emit_cmd_append_sv(out, "ar_cmd", obj_path)) return false;
+        }
         nob_sb_append_cstr(out, "        {\n");
         nob_sb_append_cstr(out, "            bool ok = nob_cmd_run(&ar_cmd);\n");
         nob_sb_append_cstr(out, "            nob_cmd_free(ar_cmd);\n");
@@ -1994,16 +2091,19 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
             }
         }
 
-        nob_sb_append_cstr(out, "    if (nob_needs_rebuild(");
+        if (info->has_distinct_linker_artifact) {
+            nob_sb_append_cstr(out, "    if (!nob_file_exists(");
+            if (!cg_sb_append_c_string(out, info->linker_artifact_path)) return false;
+            nob_sb_append_cstr(out, ") || nob_needs_rebuild(");
+        } else {
+            nob_sb_append_cstr(out, "    if (nob_needs_rebuild(");
+        }
         if (!cg_sb_append_c_string(out, info->artifact_path)) return false;
         nob_sb_append_cstr(out, ", (const char*[]){");
         if (!cg_sb_append_c_string(out, ctx->emit_path_abs)) return false;
         for (size_t i = 0; i < arena_arr_len(sources); ++i) {
             String_View obj_path = {0};
-            if (!cg_join_paths_to_arena(ctx->scratch,
-                                        object_dir,
-                                        nob_sv_from_cstr(nob_temp_sprintf("%zu.o", i)),
-                                        &obj_path)) {
+            if (!cg_object_path_for_index(ctx, object_dir, i, &obj_path)) {
                 return false;
             }
             nob_sb_append_cstr(out, ", ");
@@ -2066,18 +2166,32 @@ static bool cg_emit_clean_function(CG_Context *ctx, Nob_String_Builder *out) {
     for (size_t i = 0; i < ctx->target_count; ++i) {
         String_View dir = {0};
         String_View dir_abs = {0};
+        String_View linker_dir = {0};
         if (!ctx->targets[i].emits_artifact) continue;
         dir = cg_dirname_to_arena(ctx->scratch, ctx->targets[i].artifact_path);
         if (dir.count == 0 || cg_sv_eq_lit(dir, "/")) {
             if (!cg_collect_unique_path(ctx->scratch, &paths, ctx->targets[i].artifact_path)) return false;
-            continue;
+        } else {
+            if (!cg_absolute_from_emit(ctx, dir, &dir_abs)) return false;
+            if (nob_sv_eq(dir_abs, ctx->binary_root_abs) || cg_sv_eq_lit(dir, ".")) {
+                if (!cg_collect_unique_path(ctx->scratch, &paths, ctx->targets[i].artifact_path)) return false;
+            } else if (!cg_collect_unique_path(ctx->scratch, &paths, dir)) {
+                return false;
+            }
         }
-        if (!cg_absolute_from_emit(ctx, dir, &dir_abs)) return false;
-        if (nob_sv_eq(dir_abs, ctx->binary_root_abs) || cg_sv_eq_lit(dir, ".")) {
-            if (!cg_collect_unique_path(ctx->scratch, &paths, ctx->targets[i].artifact_path)) return false;
-            continue;
+        if (ctx->targets[i].has_distinct_linker_artifact) {
+            linker_dir = cg_dirname_to_arena(ctx->scratch, ctx->targets[i].linker_artifact_path);
+            if (linker_dir.count == 0 || cg_sv_eq_lit(linker_dir, "/")) {
+                if (!cg_collect_unique_path(ctx->scratch, &paths, ctx->targets[i].linker_artifact_path)) return false;
+            } else {
+                if (!cg_absolute_from_emit(ctx, linker_dir, &dir_abs)) return false;
+                if (nob_sv_eq(dir_abs, ctx->binary_root_abs) || cg_sv_eq_lit(linker_dir, ".")) {
+                    if (!cg_collect_unique_path(ctx->scratch, &paths, ctx->targets[i].linker_artifact_path)) return false;
+                } else if (!cg_collect_unique_path(ctx->scratch, &paths, linker_dir)) {
+                    return false;
+                }
+            }
         }
-        if (!cg_collect_unique_path(ctx->scratch, &paths, dir)) return false;
     }
 
     nob_sb_append_cstr(out, "static bool clean_all(void) {\n");
@@ -2086,141 +2200,18 @@ static bool cg_emit_clean_function(CG_Context *ctx, Nob_String_Builder *out) {
         nob_sb_append_cstr(out, "}\n\n");
         return true;
     }
-    nob_sb_append_cstr(out, "    Nob_Cmd cmd = {0};\n");
-    nob_sb_append_cstr(out, "    bool ok = false;\n");
-    nob_sb_append_cstr(out, "    nob_cmd_append(&cmd, \"rm\", \"-rf\"");
     for (size_t i = 0; i < arena_arr_len(paths); ++i) {
-        nob_sb_append_cstr(out, ", ");
+        nob_sb_append_cstr(out, "    if (!remove_path_recursive(");
         if (!cg_sb_append_c_string(out, paths[i])) return false;
+        nob_sb_append_cstr(out, ")) return false;\n");
     }
-    nob_sb_append_cstr(out, ");\n");
-    nob_sb_append_cstr(out, "    ok = nob_cmd_run(&cmd);\n");
-    nob_sb_append_cstr(out, "    nob_cmd_free(cmd);\n");
-    nob_sb_append_cstr(out, "    return ok;\n");
-    nob_sb_append_cstr(out, "}\n\n");
-    return true;
-}
-
-static bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
-    size_t rule_count = 0;
-    if (!ctx || !out) return false;
-
-    rule_count = bm_query_install_rule_count(ctx->model);
-    nob_sb_append_cstr(out, "static bool install_all(void) {\n");
-    if (rule_count == 0) {
-        nob_sb_append_cstr(out, "    return true;\n");
-        nob_sb_append_cstr(out, "}\n\n");
-        return true;
-    }
-
-    nob_sb_append_cstr(out, "    if (!ensure_dir(\"install\")) return false;\n");
-    for (size_t i = 0; i < rule_count; ++i) {
-        BM_Install_Rule_Id id = (BM_Install_Rule_Id)i;
-        BM_Install_Rule_Kind kind = bm_query_install_rule_kind(ctx->model, id);
-        String_View destination = bm_query_install_rule_destination(ctx->model, id);
-        String_View install_dir = nob_sv_from_cstr("install");
-
-        if (destination.count > 0 &&
-            !cg_join_paths_to_arena(ctx->scratch,
-                                    nob_sv_from_cstr("install"),
-                                    destination,
-                                    &install_dir)) {
-            return false;
-        }
-
-        if (kind == BM_INSTALL_RULE_TARGET) {
-            BM_Target_Id target_id = bm_query_install_rule_target(ctx->model, id);
-            const CG_Target_Info *info = cg_target_info(ctx, target_id);
-            String_View basename = {0};
-            String_View install_path = {0};
-            if (!info || !info->emits_artifact) {
-                nob_log(NOB_ERROR, "codegen: unsupported install target rule");
-                return false;
-            }
-            basename = cg_basename_to_arena(ctx->scratch, info->artifact_path);
-            if (!cg_join_paths_to_arena(ctx->scratch, install_dir, basename, &install_path)) return false;
-
-            nob_sb_append_cstr(out, "    if (!build_");
-            nob_sb_append_cstr(out, info->ident);
-            nob_sb_append_cstr(out, "()) return false;\n");
-            nob_sb_append_cstr(out, "    if (!ensure_dir(");
-            if (!cg_sb_append_c_string(out, install_dir)) return false;
-            nob_sb_append_cstr(out, ")) return false;\n");
-            nob_sb_append_cstr(out, "    if (!install_copy_file(");
-            if (!cg_sb_append_c_string(out, info->artifact_path)) return false;
-            nob_sb_append_cstr(out, ", ");
-            if (!cg_sb_append_c_string(out, install_path)) return false;
-            nob_sb_append_cstr(out, ")) return false;\n");
-            continue;
-        }
-
-        if (kind == BM_INSTALL_RULE_FILE) {
-            BM_Directory_Id owner_dir = bm_query_install_rule_owner_directory(ctx->model, id);
-            String_View item = bm_query_install_rule_item_raw(ctx->model, id);
-            String_View owner_source_dir = bm_query_directory_source_dir(ctx->model, owner_dir);
-            String_View src_path = {0};
-            String_View basename = {0};
-            String_View install_path = {0};
-
-            if (!cg_check_no_genex("install(FILES)", item)) return false;
-            if (cg_sv_has_prefix(item, "SCRIPT::") ||
-                cg_sv_has_prefix(item, "CODE::") ||
-                cg_sv_has_prefix(item, "EXPORT::") ||
-                cg_sv_has_prefix(item, "EXPORT_ANDROID_MK::")) {
-                nob_log(NOB_ERROR,
-                        "codegen: unsupported install(FILES) pseudo-item: %.*s",
-                        (int)item.count,
-                        item.data ? item.data : "");
-                return false;
-            }
-
-            if (!cg_rebase_from_base(ctx, item, owner_source_dir, &src_path)) return false;
-            basename = cg_basename_to_arena(ctx->scratch, item);
-            if (!cg_join_paths_to_arena(ctx->scratch, install_dir, basename, &install_path)) return false;
-
-            nob_sb_append_cstr(out, "    if (!ensure_dir(");
-            if (!cg_sb_append_c_string(out, install_dir)) return false;
-            nob_sb_append_cstr(out, ")) return false;\n");
-            nob_sb_append_cstr(out, "    if (!install_copy_file(");
-            if (!cg_sb_append_c_string(out, src_path)) return false;
-            nob_sb_append_cstr(out, ", ");
-            if (!cg_sb_append_c_string(out, install_path)) return false;
-            nob_sb_append_cstr(out, ")) return false;\n");
-            continue;
-        }
-
-        nob_log(NOB_ERROR,
-                "codegen: unsupported install rule kind in minimal backend: %d",
-                (int)kind);
-        return false;
-    }
-
     nob_sb_append_cstr(out, "    return true;\n");
     nob_sb_append_cstr(out, "}\n\n");
     return true;
 }
 
-static bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
-    bool has_package_data = false;
-    if (!ctx || !out) return false;
-
-    has_package_data =
-        bm_query_package_count(ctx->model) > 0 ||
-        bm_query_cpack_install_type_count(ctx->model) > 0 ||
-        bm_query_cpack_component_group_count(ctx->model) > 0 ||
-        bm_query_cpack_component_count(ctx->model) > 0;
-
-    nob_sb_append_cstr(out, "static bool package_all(void) {\n");
-    if (!has_package_data) {
-        nob_sb_append_cstr(out, "    return true;\n");
-    } else {
-        nob_sb_append_cstr(out,
-            "    nob_log(NOB_ERROR, \"codegen: package command is not implemented in the minimal backend\");\n"
-            "    return false;\n");
-    }
-    nob_sb_append_cstr(out, "}\n\n");
-    return true;
-}
+#include "nob_codegen_install.c"
+#include "nob_codegen_package.c"
 
 static bool cg_emit_main(CG_Context *ctx, Nob_String_Builder *out) {
     if (!ctx || !out) return false;
@@ -2266,6 +2257,8 @@ static bool cg_emit_main(CG_Context *ctx, Nob_String_Builder *out) {
     return true;
 }
 
+#include "nob_codegen_validate.c"
+
 static bool cg_init_context(CG_Context *ctx,
                             const Build_Model *model,
                             Arena *scratch,
@@ -2297,7 +2290,10 @@ static bool cg_init_context(CG_Context *ctx,
         .binary_root = binary_root,
         .embedded_cmake_bin = opts->embedded_cmake_bin,
         .embedded_cpack_bin = opts->embedded_cpack_bin,
+        .target_platform = opts->target_platform,
+        .backend = opts->backend,
     };
+    if (!cg_init_backend_policy(ctx)) return false;
 
     cwd = nob_get_current_dir_temp();
     if (!cwd) {
@@ -2321,7 +2317,10 @@ static bool cg_init_context(CG_Context *ctx,
     }
 
     ctx->emit_dir_abs = cg_dirname_to_arena(ctx->scratch, ctx->emit_path_abs);
-    return cg_collect_known_configs(ctx) && cg_init_targets(ctx) && cg_init_build_steps(ctx);
+    if (!cg_collect_known_configs(ctx) || !cg_init_targets(ctx) || !cg_init_build_steps(ctx)) return false;
+    if (!cg_validate_model_for_backend(ctx)) return false;
+    cg_collect_helper_requirements(ctx);
+    return true;
 }
 
 bool nob_codegen_render(const Build_Model *model,
@@ -2378,14 +2377,7 @@ bool nob_codegen_write_file(const Build_Model *model,
     out_path = nob_temp_sv_to_cstr(opts->output_path);
     if (!out_path) return false;
     out_dir = nob_temp_dir_name(out_path);
-    if (out_dir && strcmp(out_dir, ".") != 0) {
-        Nob_Cmd mkdir_cmd = {0};
-        bool mkdir_ok = false;
-        nob_cmd_append(&mkdir_cmd, "mkdir", "-p", out_dir);
-        mkdir_ok = nob_cmd_run(&mkdir_cmd);
-        nob_cmd_free(mkdir_cmd);
-        if (!mkdir_ok) return false;
-    }
+    if (out_dir && strcmp(out_dir, ".") != 0 && !cg_host_ensure_dir(out_dir)) return false;
     if (!nob_codegen_render(model, scratch, opts, &sb)) {
         nob_sb_free(sb);
         return false;

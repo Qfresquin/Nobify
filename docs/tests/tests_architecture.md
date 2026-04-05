@@ -19,6 +19,9 @@ As of April 4, 2026:
   real-CMake versus generated-Nob artifact comparison
 - generated-file/build-graph proof is now split across `pipeline`,
   `build-model`, `codegen`, and explicit-only `artifact-parity` coverage
+- platform/backend proof is now split between aggregate-safe `codegen`
+  render/execution coverage and Linux/POSIX-only explicit `artifact-parity`
+  execution coverage
 
 This file is the canonical baseline for test architecture, ownership, and suite
 taxonomy. The multi-wave change roadmap lives in
@@ -100,7 +103,12 @@ code.
   language `COMPILE_LANGUAGE` cases, imported prebuilt library coverage,
   config-sensitive `debug`/`optimized` link selection, `TARGET_FILE*`
   build-step argv coverage, and explicit rejection paths for unsupported genex
-  operators plus concrete `PRECOMPILE_HEADERS*` dependencies.
+  operators plus concrete `PRECOMPILE_HEADERS*` dependencies. `P4` keeps
+  Linux/POSIX as the only execution-proven aggregate baseline while adding
+  render-only policy coverage for explicit generation targets
+  `linux + posix`, `darwin + posix`, and `windows + win32-msvc`. Platform and
+  backend are now explicit generation-time inputs instead of host-derived
+  implicit defaults.
   Current aggregate status: included.
 
 - `artifact-parity`
@@ -122,7 +130,13 @@ code.
   `nobify` at generation time -> bare `cmake` / `cpack`. The harness no
   longer relies on PATH injection to make `cmake -E` steps work. Generated Nob
   runtime config selection is now explicit through `--config <cfg>`; the empty
-  config remains the default when the flag is omitted.
+  config remains the default when the flag is omitted. `P4` keeps this suite
+  Linux/POSIX-only for execution parity and now drives `nobify` explicitly as
+  `--platform linux --backend posix`, so the parity baseline no longer depends
+  on implicit host selection. The explicit real-project corpus now keeps pinned
+  upstream inputs as compressed local archives and only extracts them under the
+  isolated `Temp_tests` workspace, which keeps third-party trees out of the
+  day-to-day repo layout.
   Current aggregate status: excluded from the default aggregate path.
 
 - `evaluator-integration`

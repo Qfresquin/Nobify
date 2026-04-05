@@ -1,0 +1,6 @@
+{
+  "name": "fmt",
+  "upstream_url": "https://github.com/fmtlib/fmt",
+  "pinned_ref": "12.1.0",
+  "snapshot_date": "2026-04-05"
+}

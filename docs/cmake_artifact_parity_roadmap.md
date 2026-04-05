@@ -65,13 +65,16 @@ The roadmap starts from the current repository reality:
   data through the frozen/query-facing model
 - export behavior is not yet a first-class downstream semantic domain in the
   same way as targets, install rules, packages, or CPack objects
-- codegen is still a minimal POSIX-oriented backend and rejects several
-  semantically important downstream cases
+- codegen now has explicit platform/backend policy selection, with
+  `linux + posix` as the execution-proven baseline and
+  `darwin + posix` / `windows + win32-msvc` as render-only baselines, but it
+  still rejects several later-wave semantic surfaces
 - the default `test-v2` smoke path is green again and is once more the trusted
   aggregate smoke baseline
 - the repo now has an explicit-only artifact-parity harness under
-  `test_v2/artifact_parity/`, but the fixture corpus is still intentionally
-  narrow and does not yet prove later-wave export or packaging parity
+  `test_v2/artifact_parity/`; it is currently Linux/POSIX-only for execution
+  parity, and the fixture corpus is still intentionally narrow and does not
+  yet prove later-wave export or packaging parity
 
 ## 5. Frozen Definition Of Artifact Equivalence
 
@@ -411,7 +414,31 @@ Evidence delivered:
 ### P4 Backend Abstraction And Platform Artifact Rules
 
 Status:
-- planned
+- completed on April 5, 2026
+- delivered:
+  explicit generation-time platform/backend selection in `nobify` through
+  `--platform host|linux|darwin|windows` and
+  `--backend auto|posix|win32-msvc`
+  typed `Nob_Codegen_Options` target selection with an explicit policy matrix
+  that accepts only:
+  `linux + posix`
+  `darwin + posix`
+  `windows + win32-msvc`
+  policy-driven local artifact planning for runtime versus linker artifacts,
+  including Windows DLL plus import-library splits and platform-aware
+  `TARGET_FILE*` versus `TARGET_LINKER_FILE*` behavior
+  backend-generated runtime helpers for directory creation, parent creation,
+  recursive cleanup, file copy, and tool resolution, removing the remaining
+  literal `mkdir -p` and `rm -rf` shell assumptions from generated output
+  query/codegen platform threading so `$<PLATFORM_ID:...>` now evaluates from
+  the chosen generation target instead of an implicit host/default context
+  typed build-model/query accessors for `WIN32_EXECUTABLE` and
+  `MACOSX_BUNDLE`, with explicit codegen rejection for both semantics until a
+  future execution wave broadens support
+  render-only proof for `darwin + posix` and `windows + win32-msvc`, while
+  keeping `linux + posix` as the only execution-proven aggregate baseline
+  Linux/POSIX-only artifact-parity execution, now driven explicitly through
+  `nobify --platform linux --backend posix`
 
 Deliverables:
 - replace the current minimal POSIX-only assumptions with explicit backend and
@@ -433,6 +460,21 @@ Exit criteria:
   added incrementally
 - platform-specific artifact naming/layout behavior is proven with parity
   fixtures before it is considered supported
+
+Evidence delivered:
+- `./build/nob_test test-build-model`
+- `./build/nob_test test-codegen`
+- `./build/nob_test test-artifact-parity`
+- `./build/nob_test test-v2`
+
+Support matrix after `P4`:
+- supported:
+  `linux + posix`
+- render-only:
+  `darwin + posix`
+  `windows + win32-msvc`
+- rejected:
+  any other platform/backend pair
 
 ### P5 Install Parity
 

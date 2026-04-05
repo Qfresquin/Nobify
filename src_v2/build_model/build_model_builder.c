@@ -72,6 +72,7 @@ static bool bm_is_supported_build_event(Event_Kind kind) {
         case EVENT_TEST_ENABLE:
         case EVENT_TEST_ADD:
         case EVENT_INSTALL_RULE_ADD:
+        case EVENT_EXPORT_INSTALL:
         case EVENT_CPACK_ADD_INSTALL_TYPE:
         case EVENT_CPACK_ADD_COMPONENT_GROUP:
         case EVENT_CPACK_ADD_COMPONENT:
@@ -382,6 +383,14 @@ BM_CPack_Component_Id bm_draft_find_component_id(const Build_Model_Draft *draft,
     return BM_CPACK_COMPONENT_ID_INVALID;
 }
 
+BM_Export_Id bm_draft_find_export_id(const Build_Model_Draft *draft, String_View name) {
+    if (!draft) return BM_EXPORT_ID_INVALID;
+    for (size_t i = 0; i < arena_arr_len(draft->exports); ++i) {
+        if (nob_sv_eq(draft->exports[i].name, name)) return draft->exports[i].id;
+    }
+    return BM_EXPORT_ID_INVALID;
+}
+
 bool bm_diag_error(Diag_Sink *sink,
                    BM_Provenance provenance,
                    const char *component,
@@ -579,6 +588,9 @@ bool bm_builder_apply_event(BM_Builder *builder, const Event *ev) {
 
         case EVENT_INSTALL_RULE_ADD:
             return bm_builder_handle_install_event(builder, ev);
+
+        case EVENT_EXPORT_INSTALL:
+            return bm_builder_handle_export_event(builder, ev);
 
         case EVENT_PACKAGE_FIND_RESULT:
         case EVENT_CPACK_ADD_INSTALL_TYPE:

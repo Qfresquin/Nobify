@@ -1,0 +1,6 @@
+{
+  "name": "cjson",
+  "upstream_url": "https://github.com/DaveGamble/cJSON",
+  "pinned_ref": "v1.7.19",
+  "snapshot_date": "2026-04-05"
+}

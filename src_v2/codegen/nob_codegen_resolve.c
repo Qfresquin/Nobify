@@ -267,8 +267,12 @@ bool cg_resolve_target_ref(CG_Context *ctx,
     }
 
     out->effective_file = info->artifact_path;
-    out->effective_linker_file = info->artifact_path;
-    out->rebuild_input_path = info->artifact_path;
+    out->effective_linker_file = info->has_distinct_linker_artifact
+        ? info->linker_artifact_path
+        : info->artifact_path;
+    out->rebuild_input_path = out->effective_linker_file.count > 0
+        ? out->effective_linker_file
+        : out->effective_file;
     out->linkable_artifact = cg_target_kind_is_linkable_artifact(info->kind);
     return true;
 }

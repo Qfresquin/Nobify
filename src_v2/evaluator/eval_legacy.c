@@ -31,7 +31,15 @@ static bool legacy_emit_install_rule(EvalExecContext *ctx,
                                       eval_origin_from_node(ctx, node),
                                       rule_type,
                                       item,
-                                      destination);
+                                      destination,
+                                      nob_sv_from_cstr(""),
+                                      nob_sv_from_cstr(""),
+                                      nob_sv_from_cstr(""),
+                                      nob_sv_from_cstr(""),
+                                      nob_sv_from_cstr(""),
+                                      nob_sv_from_cstr(""),
+                                      nob_sv_from_cstr(""),
+                                      nob_sv_from_cstr(""));
 }
 
 static String_View legacy_stem_from_path(String_View path) {

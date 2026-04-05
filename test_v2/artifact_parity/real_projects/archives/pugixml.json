@@ -1,0 +1,6 @@
+{
+  "name": "pugixml",
+  "upstream_url": "https://github.com/zeux/pugixml",
+  "pinned_ref": "v1.15",
+  "snapshot_date": "2026-04-05"
+}

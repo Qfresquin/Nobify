@@ -165,8 +165,28 @@ typedef struct {
     BM_Provenance provenance;
     String_View item;
     String_View destination;
+    String_View component;
+    String_View namelink_component;
+    String_View export_name;
+    String_View archive_destination;
+    String_View library_destination;
+    String_View runtime_destination;
+    String_View includes_destination;
+    String_View public_header_destination;
     BM_Target_Id resolved_target_id;
 } BM_Install_Rule_Record;
+
+typedef struct {
+    BM_Export_Id id;
+    BM_Directory_Id owner_directory_id;
+    BM_Provenance provenance;
+    String_View name;
+    String_View export_namespace;
+    String_View destination;
+    String_View file_name;
+    String_View component;
+    BM_Target_Id *target_ids;
+} BM_Export_Record;
 
 typedef struct {
     BM_Package_Id id;
@@ -236,6 +256,7 @@ struct Build_Model_Draft {
     BM_Source_Generated_Mark_Record *generated_source_marks;
     BM_Test_Record *tests;
     BM_Install_Rule_Record *install_rules;
+    BM_Export_Record *exports;
     BM_Package_Record *packages;
     BM_CPack_Install_Type_Record *cpack_install_types;
     BM_CPack_Component_Group_Record *cpack_component_groups;
@@ -256,6 +277,7 @@ struct Build_Model {
     BM_Build_Step_Record *build_steps;
     BM_Test_Record *tests;
     BM_Install_Rule_Record *install_rules;
+    BM_Export_Record *exports;
     BM_Package_Record *packages;
     BM_CPack_Install_Type_Record *cpack_install_types;
     BM_CPack_Component_Group_Record *cpack_component_groups;
@@ -301,6 +323,7 @@ BM_Package_Id bm_draft_find_package_id(const Build_Model_Draft *draft, String_Vi
 BM_CPack_Install_Type_Id bm_draft_find_install_type_id(const Build_Model_Draft *draft, String_View name);
 BM_CPack_Component_Group_Id bm_draft_find_component_group_id(const Build_Model_Draft *draft, String_View name);
 BM_CPack_Component_Id bm_draft_find_component_id(const Build_Model_Draft *draft, String_View name);
+BM_Export_Id bm_draft_find_export_id(const Build_Model_Draft *draft, String_View name);
 bool bm_builder_error(BM_Builder *builder, const Event *ev, const char *cause, const char *hint);
 void bm_builder_warn(BM_Builder *builder, const Event *ev, const char *cause, const char *hint);
 bool bm_diag_error(Diag_Sink *sink,
@@ -337,6 +360,7 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev);
 bool bm_builder_handle_build_graph_event(BM_Builder *builder, const Event *ev);
 bool bm_builder_handle_test_event(BM_Builder *builder, const Event *ev);
 bool bm_builder_handle_install_event(BM_Builder *builder, const Event *ev);
+bool bm_builder_handle_export_event(BM_Builder *builder, const Event *ev);
 bool bm_builder_handle_package_event(BM_Builder *builder, const Event *ev);
 bool bm_validate_explicit_cycles(const Build_Model_Draft *draft,
                                  Arena *scratch,

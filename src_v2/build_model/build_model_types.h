@@ -34,6 +34,7 @@ typedef uint32_t BM_Target_Id;
 typedef uint32_t BM_Build_Step_Id;
 typedef uint32_t BM_Test_Id;
 typedef uint32_t BM_Install_Rule_Id;
+typedef uint32_t BM_Export_Id;
 typedef uint32_t BM_Package_Id;
 typedef uint32_t BM_CPack_Install_Type_Id;
 typedef uint32_t BM_CPack_Component_Group_Id;
@@ -44,6 +45,7 @@ typedef uint32_t BM_CPack_Component_Id;
 #define BM_BUILD_STEP_ID_INVALID ((BM_Build_Step_Id)UINT32_MAX)
 #define BM_TEST_ID_INVALID ((BM_Test_Id)UINT32_MAX)
 #define BM_INSTALL_RULE_ID_INVALID ((BM_Install_Rule_Id)UINT32_MAX)
+#define BM_EXPORT_ID_INVALID ((BM_Export_Id)UINT32_MAX)
 #define BM_PACKAGE_ID_INVALID ((BM_Package_Id)UINT32_MAX)
 #define BM_CPACK_INSTALL_TYPE_ID_INVALID ((BM_CPack_Install_Type_Id)UINT32_MAX)
 #define BM_CPACK_COMPONENT_GROUP_ID_INVALID ((BM_CPack_Component_Group_Id)UINT32_MAX)

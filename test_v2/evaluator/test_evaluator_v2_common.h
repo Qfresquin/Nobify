@@ -554,6 +554,7 @@ static const char *snapshot_event_kind_name(const Cmake_Event *ev) {
         case EV_TESTING_ENABLE: return "EV_TESTING_ENABLE";
         case EV_TEST_ADD: return "EV_TEST_ADD";
         case EV_INSTALL_ADD_RULE: return "EV_INSTALL_ADD_RULE";
+        case EVENT_EXPORT_INSTALL: return "EV_EXPORT_INSTALL";
         case EV_CPACK_ADD_INSTALL_TYPE: return "EV_CPACK_ADD_INSTALL_TYPE";
         case EV_CPACK_ADD_COMPONENT_GROUP: return "EV_CPACK_ADD_COMPONENT_GROUP";
         case EV_CPACK_ADD_COMPONENT: return "EV_CPACK_ADD_COMPONENT";
@@ -593,6 +594,7 @@ static bool snapshot_event_is_visible(const Cmake_Event *ev) {
         case EV_TESTING_ENABLE:
         case EV_TEST_ADD:
         case EV_INSTALL_ADD_RULE:
+        case EVENT_EXPORT_INSTALL:
         case EV_CPACK_ADD_INSTALL_TYPE:
         case EV_CPACK_ADD_COMPONENT_GROUP:
         case EV_CPACK_ADD_COMPONENT:
@@ -805,6 +807,19 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
             snapshot_append_escaped_sv(sb, ev->as.install_add_rule.item);
             nob_sb_append_cstr(sb, " destination=");
             snapshot_append_escaped_sv(sb, ev->as.install_add_rule.destination);
+            break;
+
+        case EVENT_EXPORT_INSTALL:
+            nob_sb_append_cstr(sb, " export=");
+            snapshot_append_escaped_sv(sb, ev->as.export_install.export_name);
+            nob_sb_append_cstr(sb, " destination=");
+            snapshot_append_escaped_sv(sb, ev->as.export_install.destination);
+            nob_sb_append_cstr(sb, " namespace=");
+            snapshot_append_escaped_sv(sb, ev->as.export_install.export_namespace);
+            nob_sb_append_cstr(sb, " file=");
+            snapshot_append_escaped_sv(sb, ev->as.export_install.file_name);
+            nob_sb_append_cstr(sb, " component=");
+            snapshot_append_escaped_sv(sb, ev->as.export_install.component);
             break;
 
         case EV_CPACK_ADD_INSTALL_TYPE:

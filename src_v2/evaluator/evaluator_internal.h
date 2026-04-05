@@ -1516,13 +1516,46 @@ static inline bool eval_emit_install_rule_add(EvalExecContext *ctx,
                                               Event_Origin origin,
                                               Cmake_Install_Rule_Type rule_type,
                                               String_View item,
-                                              String_View destination) {
+                                              String_View destination,
+                                              String_View component,
+                                              String_View namelink_component,
+                                              String_View export_name,
+                                              String_View archive_destination,
+                                              String_View library_destination,
+                                              String_View runtime_destination,
+                                              String_View includes_destination,
+                                              String_View public_header_destination) {
     Event ev = {0};
     ev.h.kind = EVENT_INSTALL_RULE_ADD;
     ev.h.origin = origin;
     ev.as.install_rule_add.rule_type = rule_type;
     ev.as.install_rule_add.item = sv_copy_to_event_arena(ctx, item);
     ev.as.install_rule_add.destination = sv_copy_to_event_arena(ctx, destination);
+    ev.as.install_rule_add.component = sv_copy_to_event_arena(ctx, component);
+    ev.as.install_rule_add.namelink_component = sv_copy_to_event_arena(ctx, namelink_component);
+    ev.as.install_rule_add.export_name = sv_copy_to_event_arena(ctx, export_name);
+    ev.as.install_rule_add.archive_destination = sv_copy_to_event_arena(ctx, archive_destination);
+    ev.as.install_rule_add.library_destination = sv_copy_to_event_arena(ctx, library_destination);
+    ev.as.install_rule_add.runtime_destination = sv_copy_to_event_arena(ctx, runtime_destination);
+    ev.as.install_rule_add.includes_destination = sv_copy_to_event_arena(ctx, includes_destination);
+    ev.as.install_rule_add.public_header_destination = sv_copy_to_event_arena(ctx, public_header_destination);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_export_install(EvalExecContext *ctx,
+                                            Event_Origin origin,
+                                            String_View export_name,
+                                            String_View destination,
+                                            String_View export_namespace,
+                                            String_View file_name,
+                                            String_View component) {
+    Event ev = {0};
+    ev.h.kind = EVENT_EXPORT_INSTALL;
+    ev.h.origin = origin;
+    ev.as.export_install.export_name = sv_copy_to_event_arena(ctx, export_name);
+    ev.as.export_install.destination = sv_copy_to_event_arena(ctx, destination);
+    ev.as.export_install.export_namespace = sv_copy_to_event_arena(ctx, export_namespace);
+    ev.as.export_install.file_name = sv_copy_to_event_arena(ctx, file_name);
+    ev.as.export_install.component = sv_copy_to_event_arena(ctx, component);
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_cpack_add_install_type(EvalExecContext *ctx,

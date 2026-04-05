@@ -181,9 +181,114 @@ static bool nobify_resolve_host_tool_paths(char cmake_bin[_TINYDIR_PATH_MAX],
     return true;
 }
 
+static const char *nobify_platform_name(Nob_Codegen_Platform platform) {
+    switch (platform) {
+        case NOB_CODEGEN_PLATFORM_HOST: return "host";
+        case NOB_CODEGEN_PLATFORM_LINUX: return "linux";
+        case NOB_CODEGEN_PLATFORM_DARWIN: return "darwin";
+        case NOB_CODEGEN_PLATFORM_WINDOWS: return "windows";
+    }
+    return "unknown";
+}
+
+static const char *nobify_backend_name(Nob_Codegen_Backend backend) {
+    switch (backend) {
+        case NOB_CODEGEN_BACKEND_AUTO: return "auto";
+        case NOB_CODEGEN_BACKEND_POSIX: return "posix";
+        case NOB_CODEGEN_BACKEND_WIN32_MSVC: return "win32-msvc";
+    }
+    return "unknown";
+}
+
+static bool nobify_parse_platform(const char *value, Nob_Codegen_Platform *out) {
+    if (out) *out = NOB_CODEGEN_PLATFORM_HOST;
+    if (!value || !out) return false;
+    if (strcmp(value, "host") == 0) *out = NOB_CODEGEN_PLATFORM_HOST;
+    else if (strcmp(value, "linux") == 0) *out = NOB_CODEGEN_PLATFORM_LINUX;
+    else if (strcmp(value, "darwin") == 0) *out = NOB_CODEGEN_PLATFORM_DARWIN;
+    else if (strcmp(value, "windows") == 0) *out = NOB_CODEGEN_PLATFORM_WINDOWS;
+    else return false;
+    return true;
+}
+
+static bool nobify_parse_backend(const char *value, Nob_Codegen_Backend *out) {
+    if (out) *out = NOB_CODEGEN_BACKEND_AUTO;
+    if (!value || !out) return false;
+    if (strcmp(value, "auto") == 0) *out = NOB_CODEGEN_BACKEND_AUTO;
+    else if (strcmp(value, "posix") == 0) *out = NOB_CODEGEN_BACKEND_POSIX;
+    else if (strcmp(value, "win32-msvc") == 0) *out = NOB_CODEGEN_BACKEND_WIN32_MSVC;
+    else return false;
+    return true;
+}
+
+static Nob_Codegen_Platform nobify_host_platform(void) {
+#if defined(_WIN32)
+    return NOB_CODEGEN_PLATFORM_WINDOWS;
+#elif defined(__APPLE__)
+    return NOB_CODEGEN_PLATFORM_DARWIN;
+#else
+    return NOB_CODEGEN_PLATFORM_LINUX;
+#endif
+}
+
+static bool nobify_resolve_codegen_contract(Nob_Codegen_Platform requested_platform,
+                                            Nob_Codegen_Backend requested_backend,
+                                            Nob_Codegen_Platform *out_platform,
+                                            Nob_Codegen_Backend *out_backend) {
+    Nob_Codegen_Platform platform = requested_platform;
+    Nob_Codegen_Backend backend = requested_backend;
+    if (out_platform) *out_platform = NOB_CODEGEN_PLATFORM_HOST;
+    if (out_backend) *out_backend = NOB_CODEGEN_BACKEND_AUTO;
+
+    if (platform == NOB_CODEGEN_PLATFORM_HOST) {
+        platform = nobify_host_platform();
+    }
+    if (backend == NOB_CODEGEN_BACKEND_AUTO) {
+        switch (platform) {
+            case NOB_CODEGEN_PLATFORM_LINUX:
+            case NOB_CODEGEN_PLATFORM_DARWIN:
+                backend = NOB_CODEGEN_BACKEND_POSIX;
+                break;
+
+            case NOB_CODEGEN_PLATFORM_WINDOWS:
+                backend = NOB_CODEGEN_BACKEND_WIN32_MSVC;
+                break;
+
+            case NOB_CODEGEN_PLATFORM_HOST:
+                backend = NOB_CODEGEN_BACKEND_AUTO;
+                break;
+        }
+    }
+
+    if ((platform == NOB_CODEGEN_PLATFORM_LINUX || platform == NOB_CODEGEN_PLATFORM_DARWIN) &&
+        backend != NOB_CODEGEN_BACKEND_POSIX) {
+        nob_log(NOB_ERROR,
+                "Invalid codegen pair: platform=%s backend=%s",
+                nobify_platform_name(platform),
+                nobify_backend_name(backend));
+        return false;
+    }
+    if (platform == NOB_CODEGEN_PLATFORM_WINDOWS &&
+        backend != NOB_CODEGEN_BACKEND_WIN32_MSVC) {
+        nob_log(NOB_ERROR,
+                "Invalid codegen pair: platform=%s backend=%s",
+                nobify_platform_name(platform),
+                nobify_backend_name(backend));
+        return false;
+    }
+    if (platform == NOB_CODEGEN_PLATFORM_HOST || backend == NOB_CODEGEN_BACKEND_AUTO) {
+        nob_log(NOB_ERROR, "Failed to resolve codegen platform/backend contract");
+        return false;
+    }
+
+    if (out_platform) *out_platform = platform;
+    if (out_backend) *out_backend = backend;
+    return true;
+}
+
 static void print_usage(const char *program) {
     nob_log(NOB_INFO,
-            "Usage: %s [--strict] [--tokens] [--ast] [--events] [--source-root path] [--binary-root path] [--out path] [input]",
+            "Usage: %s [--strict] [--tokens] [--ast] [--events] [--platform host|linux|darwin|windows] [--backend auto|posix|win32-msvc] [--source-root path] [--binary-root path] [--out path] [input]",
             program);
 }
 
@@ -239,6 +344,10 @@ int main(int argc, char **argv) {
     const char *output_path = NULL;
     const char *source_root_path = NULL;
     const char *binary_root_path = NULL;
+    Nob_Codegen_Platform requested_platform = NOB_CODEGEN_PLATFORM_HOST;
+    Nob_Codegen_Backend requested_backend = NOB_CODEGEN_BACKEND_AUTO;
+    Nob_Codegen_Platform resolved_platform = NOB_CODEGEN_PLATFORM_HOST;
+    Nob_Codegen_Backend resolved_backend = NOB_CODEGEN_BACKEND_AUTO;
     char cmake_bin[_TINYDIR_PATH_MAX] = {0};
     char cpack_bin[_TINYDIR_PATH_MAX] = {0};
 
@@ -257,6 +366,32 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--events") == 0) {
             print_events = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--platform") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --platform");
+                print_usage(argv[0]);
+                return 1;
+            }
+            if (!nobify_parse_platform(argv[++i], &requested_platform)) {
+                nob_log(NOB_ERROR, "Invalid value for --platform: %s", argv[i]);
+                print_usage(argv[0]);
+                return 1;
+            }
+            continue;
+        }
+        if (strcmp(argv[i], "--backend") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --backend");
+                print_usage(argv[0]);
+                return 1;
+            }
+            if (!nobify_parse_backend(argv[++i], &requested_backend)) {
+                nob_log(NOB_ERROR, "Invalid value for --backend: %s", argv[i]);
+                print_usage(argv[0]);
+                return 1;
+            }
             continue;
         }
         if (strcmp(argv[i], "--out") == 0) {
@@ -300,6 +435,13 @@ int main(int argc, char **argv) {
 
     if (!output_path) {
         output_path = nob_temp_sprintf("%s/nob.c", nob_temp_dir_name(input_path));
+    }
+    if (!nobify_resolve_codegen_contract(requested_platform,
+                                         requested_backend,
+                                         &resolved_platform,
+                                         &resolved_backend)) {
+        print_usage(argv[0]);
+        return 1;
     }
 
     diag_reset();
@@ -588,6 +730,8 @@ int main(int argc, char **argv) {
         .binary_root = sv_from_cstr(binary_root),
         .embedded_cmake_bin = nob_sv_from_cstr(cmake_bin),
         .embedded_cpack_bin = nob_sv_from_cstr(cpack_bin),
+        .target_platform = resolved_platform,
+        .backend = resolved_backend,
     };
     if (!nob_codegen_write_file(model, codegen_arena, &codegen_opts)) {
         nob_log(NOB_ERROR, "Codegen failed while writing %s", output_path);

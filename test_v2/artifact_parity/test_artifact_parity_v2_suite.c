@@ -1169,7 +1169,11 @@ TEST(artifact_parity_generated_nob_uses_embedded_cmake_without_path_injection) {
 #else
     Test_Host_Env_Guard *path_guard = NULL;
     const char *tool_only_path_abs = nob_temp_sprintf("%s/tool_only_path", nob_get_current_dir_temp());
-    ASSERT(s_artifact_parity_cmake.available);
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake not available for embedded runtime probe");
+    }
     ASSERT(s_artifact_parity_nobify_bin[0] != '\0');
     ASSERT(artifact_parity_materialize_files("source",
                                              (Artifact_Parity_File[]){

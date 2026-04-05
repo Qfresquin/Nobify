@@ -14,3 +14,29 @@ nob_test.exe
 /Temp_test
 nob
 Temp_tests
+
+# Local CMake / CTest / CPack build artifacts
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/CTestTestfile.cmake
+**/install_manifest.txt
+**/compile_commands.json
+**/build.ninja
+**/.ninja_deps
+**/.ninja_log
+**/.cmake/api/
+**/_CPack_Packages/
+**/CPackConfig.cmake
+**/CPackSourceConfig.cmake
+
+# Local Nob backend artifacts
+**/.nob/
+
+# Python / editor noise
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.DS_Store
+**/*.swp
+**/*.swo

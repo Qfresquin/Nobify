@@ -4,6 +4,36 @@
 #include "nob_codegen.h"
 
 typedef struct {
+    String_View prefix;
+    String_View suffix;
+} CG_Artifact_Naming;
+
+typedef struct {
+    Nob_Codegen_Platform platform;
+    Nob_Codegen_Backend backend;
+    String_View platform_id;
+    CG_Artifact_Naming executable;
+    CG_Artifact_Naming static_library;
+    CG_Artifact_Naming shared_runtime;
+    CG_Artifact_Naming shared_linker;
+    CG_Artifact_Naming module_runtime;
+    CG_Artifact_Naming module_linker;
+    String_View object_suffix;
+    String_View c_compiler_default;
+    String_View cxx_compiler_default;
+    String_View archive_tool_default;
+    String_View link_tool_default;
+    String_View shared_link_flag;
+    String_View module_link_flag;
+    bool use_compiler_driver_for_executable_link;
+    bool use_compiler_driver_for_shared_link;
+    bool use_compiler_driver_for_module_link;
+    bool shared_has_distinct_linker_artifact;
+    bool module_has_distinct_linker_artifact;
+    bool execution_supported;
+} CG_Backend_Policy;
+
+typedef struct {
     BM_Target_Id id;
     BM_Target_Id resolved_id;
     BM_Target_Kind kind;
@@ -14,7 +44,9 @@ typedef struct {
     String_View name;
     const char *ident;
     String_View artifact_path;
+    String_View linker_artifact_path;
     String_View state_path;
+    bool has_distinct_linker_artifact;
     bool needs_cxx_linker_known;
     bool needs_cxx_linker;
 } CG_Target_Info;
@@ -106,10 +138,26 @@ typedef struct {
     String_View failure_message;
 } CG_Resolved_Target_Ref;
 
+typedef enum {
+    CG_HELPER_NONE = 0,
+    CG_HELPER_CONFIG_MATCHES = 1ull << 0,
+    CG_HELPER_COMPILE_TOOLCHAIN = 1ull << 1,
+    CG_HELPER_ARCHIVE_TOOL = 1ull << 2,
+    CG_HELPER_LINK_TOOL = 1ull << 3,
+    CG_HELPER_CMAKE_RESOLVER = 1ull << 4,
+    CG_HELPER_CPACK_RESOLVER = 1ull << 5,
+    CG_HELPER_FILESYSTEM = 1ull << 6,
+    CG_HELPER_RUN_CMD = 1ull << 7,
+    CG_HELPER_STAMP = 1ull << 8,
+    CG_HELPER_INSTALL_COPY_FILE = 1ull << 9,
+    CG_HELPER_INSTALL_COPY_DIRECTORY = 1ull << 10,
+} CG_Helper_Flags;
+
 typedef struct {
     const Build_Model *model;
     Arena *scratch;
     Nob_Codegen_Options opts;
+    CG_Backend_Policy policy;
     String_View cwd_abs;
     String_View source_root_abs;
     String_View binary_root_abs;
@@ -126,6 +174,7 @@ typedef struct {
     CG_Effective_Value_Cache_Entry *effective_value_cache;
     CG_Target_File_Cache_Entry *target_file_cache;
     CG_Imported_Link_Lang_Cache_Entry *imported_link_lang_cache;
+    uint64_t helper_bits;
 } CG_Context;
 
 const CG_Target_Info *cg_target_info(const CG_Context *ctx, BM_Target_Id id);

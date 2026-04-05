@@ -1,0 +1,100 @@
+#include "nob_codegen_internal.h"
+
+static bool cg_validate_install_rule(CG_Context *ctx, BM_Install_Rule_Id id) {
+    BM_Install_Rule_Kind kind = bm_query_install_rule_kind(ctx->model, id);
+    String_View item = bm_query_install_rule_item_raw(ctx->model, id);
+    if (!ctx) return false;
+
+    if ((kind == BM_INSTALL_RULE_FILE || kind == BM_INSTALL_RULE_PROGRAM || kind == BM_INSTALL_RULE_DIRECTORY) &&
+        !cg_check_no_genex("install rule item", item)) {
+        return false;
+    }
+    if (kind == BM_INSTALL_RULE_FILE || kind == BM_INSTALL_RULE_PROGRAM) {
+        if (cg_sv_has_prefix(item, "SCRIPT::") ||
+            cg_sv_has_prefix(item, "CODE::") ||
+            cg_sv_has_prefix(item, "EXPORT_ANDROID_MK::")) {
+            nob_log(NOB_ERROR,
+                    "codegen: install pseudo-item is not supported in the install backend: %.*s",
+                    (int)item.count,
+                    item.data ? item.data : "");
+            return false;
+        }
+    }
+    if (kind == BM_INSTALL_RULE_TARGET) {
+        BM_Target_Id target_id = bm_query_install_rule_target(ctx->model, id);
+        BM_Target_Kind target_kind = bm_query_target_kind(ctx->model, target_id);
+        if (target_kind == BM_TARGET_OBJECT_LIBRARY || target_kind == BM_TARGET_UTILITY) {
+            nob_log(NOB_ERROR,
+                    "codegen: install(TARGETS) does not support target kind '%d' yet",
+                    (int)target_kind);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool cg_validate_model_for_backend(CG_Context *ctx) {
+    if (!ctx) return false;
+
+    for (size_t step_index = 0; step_index < ctx->build_step_count; ++step_index) {
+        BM_Build_Step_Id id = (BM_Build_Step_Id)step_index;
+        if (bm_query_build_step_append(ctx->model, id)) {
+            nob_log(NOB_ERROR, "codegen: APPEND custom-command steps are not supported yet");
+            return false;
+        }
+    }
+
+    for (size_t i = 0; i < ctx->target_count; ++i) {
+        const CG_Target_Info *info = &ctx->targets[i];
+        if (!cg_reject_unsupported_precompile_headers(ctx, info) ||
+            !cg_reject_unsupported_platform_target_properties(ctx, info)) {
+            return false;
+        }
+
+        if (!info->alias && !info->imported && info->emits_artifact) {
+            CG_Source_Info *sources = NULL;
+            String_View *compile_args = NULL;
+            String_View *link_args = NULL;
+            String_View *link_rebuild_inputs = NULL;
+            if (!cg_collect_compile_sources(ctx, info->id, &sources)) return false;
+            for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
+                String_View config = branch < arena_arr_len(ctx->known_configs) ? ctx->known_configs[branch] : nob_sv_from_cstr("");
+                for (size_t source_index = 0; source_index < arena_arr_len(sources); ++source_index) {
+                    compile_args = NULL;
+                    if (!cg_collect_compile_args(ctx,
+                                                 info->id,
+                                                 config,
+                                                 sources[source_index].lang,
+                                                 &compile_args)) {
+                        return false;
+                    }
+                }
+                link_args = NULL;
+                link_rebuild_inputs = NULL;
+                if (!cg_collect_link_dir_args(ctx, info->id, config, &link_args) ||
+                    !cg_collect_link_option_args(ctx, info->id, config, &link_args) ||
+                    !cg_collect_link_library_args(ctx, info->id, config, &link_args, &link_rebuild_inputs)) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    for (size_t rule_index = 0; rule_index < bm_query_install_rule_count(ctx->model); ++rule_index) {
+        if (!cg_validate_install_rule(ctx, (BM_Install_Rule_Id)rule_index)) return false;
+    }
+
+    for (size_t export_index = 0; export_index < bm_query_export_count(ctx->model); ++export_index) {
+        BM_Export_Id export_id = (BM_Export_Id)export_index;
+        BM_Target_Id_Span targets = bm_query_export_targets(ctx->model, export_id);
+        if (targets.count == 0) {
+            nob_log(NOB_ERROR,
+                    "codegen: install export '%.*s' has no associated targets",
+                    (int)bm_query_export_name(ctx->model, export_id).count,
+                    bm_query_export_name(ctx->model, export_id).data ? bm_query_export_name(ctx->model, export_id).data : "");
+            return false;
+        }
+    }
+
+    return true;
+}

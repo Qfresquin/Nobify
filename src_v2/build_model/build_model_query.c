@@ -45,6 +45,11 @@ static const BM_Install_Rule_Record *bm_model_install_rule(const Build_Model *mo
     return &model->install_rules[id];
 }
 
+static const BM_Export_Record *bm_model_export(const Build_Model *model, BM_Export_Id id) {
+    if (!model || id == BM_EXPORT_ID_INVALID || (size_t)id >= arena_arr_len(model->exports)) return NULL;
+    return &model->exports[id];
+}
+
 static const BM_Package_Record *bm_model_package(const Build_Model *model, BM_Package_Id id) {
     if (!model || id == BM_PACKAGE_ID_INVALID || (size_t)id >= arena_arr_len(model->packages)) return NULL;
     return &model->packages[id];
@@ -724,6 +729,7 @@ bool bm_target_id_is_valid(BM_Target_Id id) { return id != BM_TARGET_ID_INVALID;
 bool bm_build_step_id_is_valid(BM_Build_Step_Id id) { return id != BM_BUILD_STEP_ID_INVALID; }
 bool bm_directory_id_is_valid(BM_Directory_Id id) { return id != BM_DIRECTORY_ID_INVALID; }
 bool bm_test_id_is_valid(BM_Test_Id id) { return id != BM_TEST_ID_INVALID; }
+bool bm_export_id_is_valid(BM_Export_Id id) { return id != BM_EXPORT_ID_INVALID; }
 bool bm_package_id_is_valid(BM_Package_Id id) { return id != BM_PACKAGE_ID_INVALID; }
 
 size_t bm_query_directory_count(const Build_Model *model) { return model ? arena_arr_len(model->directories) : 0; }
@@ -731,6 +737,7 @@ size_t bm_query_target_count(const Build_Model *model) { return model ? arena_ar
 size_t bm_query_build_step_count(const Build_Model *model) { return model ? arena_arr_len(model->build_steps) : 0; }
 size_t bm_query_test_count(const Build_Model *model) { return model ? arena_arr_len(model->tests) : 0; }
 size_t bm_query_install_rule_count(const Build_Model *model) { return model ? arena_arr_len(model->install_rules) : 0; }
+size_t bm_query_export_count(const Build_Model *model) { return model ? arena_arr_len(model->exports) : 0; }
 size_t bm_query_package_count(const Build_Model *model) { return model ? arena_arr_len(model->packages) : 0; }
 size_t bm_query_cpack_install_type_count(const Build_Model *model) { return model ? arena_arr_len(model->cpack_install_types) : 0; }
 size_t bm_query_cpack_component_group_count(const Build_Model *model) { return model ? arena_arr_len(model->cpack_component_groups) : 0; }
@@ -1044,6 +1051,16 @@ bool bm_query_target_cxx_extensions(const Build_Model *model, BM_Target_Id id) {
     return bm_sv_truthy_query(bm_query_target_raw_property_first_string(model, id, nob_sv_from_cstr("CXX_EXTENSIONS")));
 }
 
+bool bm_query_target_win32_executable(const Build_Model *model, BM_Target_Id id) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? target->win32_executable : false;
+}
+
+bool bm_query_target_macosx_bundle(const Build_Model *model, BM_Target_Id id) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? target->macosx_bundle : false;
+}
+
 BM_Build_Step_Kind bm_query_build_step_kind(const Build_Model *model, BM_Build_Step_Id id) {
     const BM_Build_Step_Record *step = bm_model_build_step(model, id);
     return step ? step->kind : BM_BUILD_STEP_OUTPUT_RULE;
@@ -1204,9 +1221,112 @@ String_View bm_query_install_rule_destination(const Build_Model *model, BM_Insta
     return rule ? rule->destination : (String_View){0};
 }
 
+String_View bm_query_install_rule_component(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->component : (String_View){0};
+}
+
+String_View bm_query_install_rule_namelink_component(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->namelink_component : (String_View){0};
+}
+
+String_View bm_query_install_rule_export_name(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->export_name : (String_View){0};
+}
+
+String_View bm_query_install_rule_archive_destination(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->archive_destination : (String_View){0};
+}
+
+String_View bm_query_install_rule_library_destination(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->library_destination : (String_View){0};
+}
+
+String_View bm_query_install_rule_runtime_destination(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->runtime_destination : (String_View){0};
+}
+
+String_View bm_query_install_rule_includes_destination(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->includes_destination : (String_View){0};
+}
+
+String_View bm_query_install_rule_public_header_destination(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->public_header_destination : (String_View){0};
+}
+
 BM_Target_Id bm_query_install_rule_target(const Build_Model *model, BM_Install_Rule_Id id) {
     const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
     return rule ? rule->resolved_target_id : BM_TARGET_ID_INVALID;
+}
+
+BM_Directory_Id bm_query_export_owner_directory(const Build_Model *model, BM_Export_Id id) {
+    const BM_Export_Record *record = bm_model_export(model, id);
+    return record ? record->owner_directory_id : BM_DIRECTORY_ID_INVALID;
+}
+
+String_View bm_query_export_name(const Build_Model *model, BM_Export_Id id) {
+    const BM_Export_Record *record = bm_model_export(model, id);
+    return record ? record->name : (String_View){0};
+}
+
+String_View bm_query_export_namespace(const Build_Model *model, BM_Export_Id id) {
+    const BM_Export_Record *record = bm_model_export(model, id);
+    return record ? record->export_namespace : (String_View){0};
+}
+
+String_View bm_query_export_destination(const Build_Model *model, BM_Export_Id id) {
+    const BM_Export_Record *record = bm_model_export(model, id);
+    return record ? record->destination : (String_View){0};
+}
+
+String_View bm_query_export_file_name(const Build_Model *model, BM_Export_Id id) {
+    const BM_Export_Record *record = bm_model_export(model, id);
+    if (!record) return (String_View){0};
+    if (record->file_name.count > 0) return record->file_name;
+    return record->name.count > 0 ? nob_sv_from_parts(record->name.data, record->name.count) : (String_View){0};
+}
+
+String_View bm_query_export_output_file_path(const Build_Model *model, BM_Export_Id id, Arena *scratch) {
+    const BM_Export_Record *record = bm_model_export(model, id);
+    String_View file_name = {0};
+    String_View suffixed = {0};
+    char *copy = NULL;
+    int n = 0;
+    if (!record || !scratch) return (String_View){0};
+    file_name = bm_query_export_file_name(model, id);
+    if (file_name.count == 0) return (String_View){0};
+    if (!nob_sv_end_with(file_name, ".cmake")) {
+        copy = arena_alloc(scratch, file_name.count + strlen(".cmake") + 1);
+        if (!copy) return (String_View){0};
+        n = snprintf(copy, file_name.count + strlen(".cmake") + 1, "%.*s.cmake", (int)file_name.count, file_name.data ? file_name.data : "");
+        if (n < 0) return (String_View){0};
+        suffixed = nob_sv_from_parts(copy, (size_t)n);
+        file_name = suffixed;
+    }
+    if (record->destination.count == 0) return file_name;
+    if (!bm_path_join(scratch, record->destination, file_name, &suffixed)) return (String_View){0};
+    return suffixed;
+}
+
+String_View bm_query_export_component(const Build_Model *model, BM_Export_Id id) {
+    const BM_Export_Record *record = bm_model_export(model, id);
+    return record ? record->component : (String_View){0};
+}
+
+BM_Target_Id_Span bm_query_export_targets(const Build_Model *model, BM_Export_Id id) {
+    BM_Target_Id_Span span = {0};
+    const BM_Export_Record *record = bm_model_export(model, id);
+    if (!record) return span;
+    span.items = record->target_ids;
+    span.count = arena_arr_len(record->target_ids);
+    return span;
 }
 
 String_View bm_query_package_name(const Build_Model *model, BM_Package_Id id) {

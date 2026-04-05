@@ -1,0 +1,64 @@
+{
+  "projects": [
+    {
+      "name": "fmt",
+      "upstream_url": "https://github.com/fmtlib/fmt",
+      "archive_url": "https://github.com/fmtlib/fmt/archive/refs/tags/12.1.0.tar.gz",
+      "pinned_ref": "12.1.0",
+      "archive_prefix": "fmt-12.1.0",
+      "retain_paths": [
+        "LICENSE",
+        "include/fmt",
+        "src/format.cc"
+      ],
+      "supported_phases": ["build", "install", "consumer"],
+      "expected_imported_targets": ["fmt::fmt"],
+      "support_tier": "supported"
+    },
+    {
+      "name": "pugixml",
+      "upstream_url": "https://github.com/zeux/pugixml",
+      "archive_url": "https://github.com/zeux/pugixml/archive/refs/tags/v1.15.tar.gz",
+      "pinned_ref": "v1.15",
+      "archive_prefix": "pugixml-1.15",
+      "retain_paths": [
+        "LICENSE.md",
+        "src/pugixml.cpp",
+        "src/pugixml.hpp",
+        "src/pugiconfig.hpp"
+      ],
+      "supported_phases": ["build", "install", "consumer"],
+      "expected_imported_targets": ["pugixml::pugixml"],
+      "support_tier": "supported"
+    },
+    {
+      "name": "nlohmann_json",
+      "upstream_url": "https://github.com/nlohmann/json",
+      "archive_url": "https://github.com/nlohmann/json/archive/refs/tags/v3.12.0.tar.gz",
+      "pinned_ref": "v3.12.0",
+      "archive_prefix": "json-3.12.0",
+      "retain_paths": [
+        "LICENSE.MIT",
+        "single_include/nlohmann/json.hpp"
+      ],
+      "supported_phases": ["build", "install", "consumer"],
+      "expected_imported_targets": ["nlohmann_json::nlohmann_json"],
+      "support_tier": "supported"
+    },
+    {
+      "name": "cjson",
+      "upstream_url": "https://github.com/DaveGamble/cJSON",
+      "archive_url": "https://github.com/DaveGamble/cJSON/archive/refs/tags/v1.7.19.tar.gz",
+      "pinned_ref": "v1.7.19",
+      "archive_prefix": "cJSON-1.7.19",
+      "retain_paths": [
+        "LICENSE",
+        "cJSON.c",
+        "cJSON.h"
+      ],
+      "supported_phases": ["build", "install", "consumer"],
+      "expected_imported_targets": ["cjson"],
+      "support_tier": "supported"
+    }
+  ]
+}

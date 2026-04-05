@@ -1,5 +1,17 @@
 #include "build_model_query_internal.h"
 
+static bool bm_query_platform_eq(String_View platform_id, const char *name) {
+    return bm_sv_eq_ci_query(nob_sv_trim(platform_id), nob_sv_from_cstr(name ? name : ""));
+}
+
+static bool bm_query_platform_is_windows(const BM_Query_Eval_Context *ctx) {
+    return ctx && bm_query_platform_eq(ctx->platform_id, "Windows");
+}
+
+static bool bm_query_platform_is_darwin(const BM_Query_Eval_Context *ctx) {
+    return ctx && bm_query_platform_eq(ctx->platform_id, "Darwin");
+}
+
 static String_View bm_uppercase_copy_query(Arena *scratch, String_View value) {
     char *copy = NULL;
     if (!scratch || value.count == 0) return nob_sv_from_cstr("");
@@ -81,6 +93,7 @@ static bool bm_query_target_imported_property_for_config(const Build_Model *mode
 
 static bool bm_query_target_local_file_internal(const Build_Model *model,
                                                 BM_Target_Id id,
+                                                const BM_Query_Eval_Context *ctx,
                                                 bool linker_file,
                                                 Arena *scratch,
                                                 String_View *out) {
@@ -92,6 +105,8 @@ static bool bm_query_target_local_file_internal(const Build_Model *model,
     String_View suffix = bm_query_target_suffix(model, resolved_id);
     String_View owner_binary_dir = bm_query_directory_binary_dir(model, owner);
     String_View output_dir = nob_sv_from_cstr("");
+    bool is_windows = bm_query_platform_is_windows(ctx);
+    bool is_darwin = bm_query_platform_is_darwin(ctx);
     Nob_String_Builder sb = {0};
     char *copy = NULL;
     String_View basename = {0};
@@ -101,20 +116,37 @@ static bool bm_query_target_local_file_internal(const Build_Model *model,
     if (kind == BM_TARGET_EXECUTABLE) {
         output_dir = bm_query_target_runtime_output_directory(model, resolved_id);
         if (output_name.count == 0) output_name = bm_query_target_name(model, resolved_id);
+        if (suffix.count == 0 && is_windows) suffix = nob_sv_from_cstr(".exe");
+        nob_sb_append_buf(&sb, prefix.data ? prefix.data : "", prefix.count);
         nob_sb_append_buf(&sb, output_name.data ? output_name.data : "", output_name.count);
+        nob_sb_append_buf(&sb, suffix.data ? suffix.data : "", suffix.count);
     } else if (kind == BM_TARGET_STATIC_LIBRARY) {
         output_dir = bm_query_target_archive_output_directory(model, resolved_id);
         if (output_name.count == 0) output_name = bm_query_target_name(model, resolved_id);
-        if (prefix.count == 0) prefix = nob_sv_from_cstr("lib");
-        if (suffix.count == 0) suffix = nob_sv_from_cstr(".a");
+        if (prefix.count == 0 && !is_windows) prefix = nob_sv_from_cstr("lib");
+        if (suffix.count == 0) suffix = is_windows ? nob_sv_from_cstr(".lib") : nob_sv_from_cstr(".a");
         nob_sb_append_buf(&sb, prefix.data ? prefix.data : "", prefix.count);
         nob_sb_append_buf(&sb, output_name.data ? output_name.data : "", output_name.count);
         nob_sb_append_buf(&sb, suffix.data ? suffix.data : "", suffix.count);
     } else if (kind == BM_TARGET_SHARED_LIBRARY || kind == BM_TARGET_MODULE_LIBRARY) {
-        output_dir = bm_query_target_library_output_directory(model, resolved_id);
+        if (is_windows) {
+            output_dir = linker_file
+                ? bm_query_target_archive_output_directory(model, resolved_id)
+                : bm_query_target_runtime_output_directory(model, resolved_id);
+        } else {
+            output_dir = bm_query_target_library_output_directory(model, resolved_id);
+        }
         if (output_name.count == 0) output_name = bm_query_target_name(model, resolved_id);
-        if (prefix.count == 0) prefix = nob_sv_from_cstr("lib");
-        if (suffix.count == 0) suffix = nob_sv_from_cstr(".so");
+        if (prefix.count == 0 && !is_windows) prefix = nob_sv_from_cstr("lib");
+        if (suffix.count == 0) {
+            if (is_windows) {
+                suffix = linker_file ? nob_sv_from_cstr(".lib") : nob_sv_from_cstr(".dll");
+            } else if (kind == BM_TARGET_SHARED_LIBRARY && is_darwin) {
+                suffix = nob_sv_from_cstr(".dylib");
+            } else {
+                suffix = nob_sv_from_cstr(".so");
+            }
+        }
         nob_sb_append_buf(&sb, prefix.data ? prefix.data : "", prefix.count);
         nob_sb_append_buf(&sb, output_name.data ? output_name.data : "", output_name.count);
         nob_sb_append_buf(&sb, suffix.data ? suffix.data : "", suffix.count);
@@ -135,7 +167,6 @@ static bool bm_query_target_local_file_internal(const Build_Model *model,
                                            bm_join_relative_path_query(scratch, owner_binary_dir, output_dir),
                                            basename);
     }
-    (void)linker_file;
     return true;
 }
 
@@ -153,7 +184,7 @@ static bool bm_query_target_effective_file_internal(const Build_Model *model,
     *out = nob_sv_from_cstr("");
 
     if (!target->imported) {
-        return bm_query_target_local_file_internal(model, resolved_id, linker_file, scratch, out);
+        return bm_query_target_local_file_internal(model, resolved_id, ctx, linker_file, scratch, out);
     }
 
     if (linker_file) {

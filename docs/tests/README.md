@@ -52,6 +52,16 @@ The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`
   checks for imported prebuilt libraries, `--config`-driven link selection,
   and usage propagation through `BUILD_INTERFACE`, `LINK_ONLY`, and
   `TARGET_PROPERTY`
+- `P4` proof split:
+  `test_v2/build_model/` locks platform-aware query context behavior,
+  including `$<PLATFORM_ID:...>` and typed `WIN32_EXECUTABLE` /
+  `MACOSX_BUNDLE` accessors
+  `test_v2/codegen/` owns aggregate-safe Linux/POSIX execution plus
+  render-only policy coverage for explicit generation targets
+  `linux + posix`, `darwin + posix`, and `windows + win32-msvc`
+  `test_v2/artifact_parity/` stays explicit-only and remains Linux/POSIX-only
+  for execution parity, now invoking `nobify` explicitly with
+  `--platform linux --backend posix`
 - required external tools:
   real `cmake 3.28.x`
   sibling `cpack` only for package-phase cases
@@ -62,9 +72,18 @@ The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`
   bare `cmake` / `cpack`
   generated Nob config selection is explicit through `--config <cfg>`; the
   empty config remains the default when the flag is omitted
+  generation-time platform/backend selection is explicit through
+  `nobify --platform ... --backend ...`; support tiers are:
+  `linux + posix` supported
+  `darwin + posix` render-only
+  `windows + win32-msvc` render-only
 - execution policy:
   explicit-only via `./build/nob_test test-artifact-parity`
   not part of the default `./build/nob_test test-v2` smoke aggregate
+  the real-project corpus stores pinned upstream inputs as local archives under
+  `test_v2/artifact_parity/real_projects/archives/` and extracts them only
+  inside the isolated `Temp_tests` workspace during execution, so third-party
+  source trees do not stay exploded in the main repo layout
 
 ## Canonical Documents
 

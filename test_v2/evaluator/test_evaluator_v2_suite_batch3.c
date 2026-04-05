@@ -1396,6 +1396,12 @@ TEST(evaluator_install_signatures_emit_expected_rules_and_component_inventory) {
     bool saw_runtime_dependency_set = false;
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind == EVENT_EXPORT_INSTALL &&
+            nob_sv_eq(ev->as.export_install.export_name, nob_sv_from_cstr("InstExport")) &&
+            nob_sv_eq(ev->as.export_install.destination, nob_sv_from_cstr("share/cmake/Inst"))) {
+            saw_export = true;
+            continue;
+        }
         if (ev->h.kind != EV_INSTALL_ADD_RULE) continue;
         if (ev->as.install_add_rule.rule_type == EV_INSTALL_RULE_TARGET &&
             nob_sv_eq(ev->as.install_add_rule.item, nob_sv_from_cstr("inst_meta")) &&
@@ -1421,10 +1427,6 @@ TEST(evaluator_install_signatures_emit_expected_rules_and_component_inventory) {
                    nob_sv_eq(ev->as.install_add_rule.item, nob_sv_from_cstr("CODE::set(INSTALL_CODE_MARKER 1)")) &&
                    nob_sv_eq(ev->as.install_add_rule.destination, nob_sv_from_cstr(""))) {
             saw_code = true;
-        } else if (ev->as.install_add_rule.rule_type == EV_INSTALL_RULE_FILE &&
-                   nob_sv_eq(ev->as.install_add_rule.item, nob_sv_from_cstr("EXPORT::InstExport")) &&
-                   nob_sv_eq(ev->as.install_add_rule.destination, nob_sv_from_cstr("share/cmake/Inst"))) {
-            saw_export = true;
         } else if (ev->as.install_add_rule.rule_type == EV_INSTALL_RULE_FILE &&
                    nob_sv_eq(ev->as.install_add_rule.item, nob_sv_from_cstr("EXPORT_ANDROID_MK::InstExport")) &&
                    nob_sv_eq(ev->as.install_add_rule.destination, nob_sv_from_cstr("share/cmake/android"))) {

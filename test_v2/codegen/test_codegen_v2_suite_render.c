@@ -81,8 +81,30 @@ TEST(codegen_output_properties_shape_artifact_paths) {
     TEST_PASS();
 }
 
+TEST(codegen_runtime_emits_only_helpers_needed_for_simple_builds) {
+    Nob_String_Builder sb = {0};
+    ASSERT(codegen_render_script(
+        "project(Test C)\n"
+        "add_executable(app main.c)\n",
+        "CMakeLists.txt",
+        "nob.c",
+        &sb));
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items ? sb.items : "");
+    ASSERT(strstr(output, "remove_path_recursive(") != NULL);
+    ASSERT(strstr(output, "require_paths(") != NULL);
+    ASSERT(strstr(output, "resolve_cpack_bin(") == NULL);
+    ASSERT(strstr(output, "install_copy_file(") == NULL);
+    ASSERT(strstr(output, "install_copy_directory(") == NULL);
+    ASSERT(strstr(output, "append_archive_tool_cmd(") == NULL);
+    ASSERT(strstr(output, "resolve_link_bin(") == NULL);
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
 void run_codegen_v2_render_tests(int *passed, int *failed, int *skipped) {
     test_codegen_simple_executable_generates_compilable_nob(passed, failed, skipped);
     test_codegen_static_interface_alias_usage_propagates_flags(passed, failed, skipped);
     test_codegen_output_properties_shape_artifact_paths(passed, failed, skipped);
+    test_codegen_runtime_emits_only_helpers_needed_for_simple_builds(passed, failed, skipped);
 }
