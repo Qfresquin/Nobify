@@ -51,6 +51,7 @@ typedef struct {
     String_View emit_dir_abs;
     String_View embedded_cmake_bin_abs;
     String_View embedded_cpack_bin_abs;
+    String_View *known_configs;
     CG_Target_Info *targets;
     size_t target_count;
     CG_Build_Step_Info *build_steps;
@@ -64,6 +65,13 @@ bool cg_sb_append_c_string(Nob_String_Builder *sb, String_View sv);
 bool cg_rebase_path_from_cwd(CG_Context *ctx, String_View in, String_View *out);
 bool cg_emit_cmd_append_sv(Nob_String_Builder *out, const char *cmd_var, String_View arg);
 bool cg_emit_cmd_append_expr(Nob_String_Builder *out, const char *cmd_var, const char *expr);
+bool cg_eval_string_for_config(CG_Context *ctx,
+                               BM_Target_Id current_target_id,
+                               BM_Query_Usage_Mode usage_mode,
+                               String_View config,
+                               String_View compile_language,
+                               String_View raw,
+                               String_View *out);
 bool cg_emit_step_function(CG_Context *ctx,
                            const CG_Build_Step_Info *info,
                            Nob_String_Builder *out);

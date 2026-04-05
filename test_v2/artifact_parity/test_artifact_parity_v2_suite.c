@@ -50,13 +50,30 @@ static bool artifact_parity_env_guard_set(Artifact_Parity_Env_Guard *guard,
     return true;
 }
 
+static bool artifact_parity_env_guard_begin(Artifact_Parity_Env_Guard **out_guard,
+                                            const char *name,
+                                            const char *value) {
+    Artifact_Parity_Env_Guard *guard = NULL;
+    if (!out_guard) return false;
+    *out_guard = NULL;
+    guard = (Artifact_Parity_Env_Guard*)calloc(1, sizeof(*guard));
+    if (!guard) return false;
+    if (!artifact_parity_env_guard_set(guard, name, value)) {
+        free(guard->prev_value);
+        free(guard);
+        return false;
+    }
+    *out_guard = guard;
+    return true;
+}
+
 static void artifact_parity_env_guard_cleanup(void *ctx) {
     Artifact_Parity_Env_Guard *guard = (Artifact_Parity_Env_Guard*)ctx;
     if (!guard) return;
     artifact_parity_set_env_or_unset(guard->name,
                                      guard->had_prev_value ? guard->prev_value : NULL);
     free(guard->prev_value);
-    guard->prev_value = NULL;
+    free(guard);
 }
 
 #if !defined(_WIN32)
@@ -111,20 +128,69 @@ static const char *artifact_parity_case_generated_nob_bin_path(const Artifact_Pa
     return nob_temp_sprintf("%s/nob_gen", artifact_parity_case_nob_run_dir(case_def));
 }
 
+static bool artifact_parity_run_cmd_in_dir(const char *dir, Nob_Cmd *cmd) {
+    char prev_cwd[_TINYDIR_PATH_MAX] = {0};
+    const char *cwd = nob_get_current_dir_temp();
+    bool ok = false;
+    if (!dir || !cmd || !cwd) return false;
+    if (strlen(cwd) + 1 > sizeof(prev_cwd)) return false;
+    memcpy(prev_cwd, cwd, strlen(cwd) + 1);
+
+    if (!nob_set_current_dir(dir)) return false;
+    ok = nob_cmd_run(cmd);
+    if (!nob_set_current_dir(prev_cwd)) return false;
+    return ok;
+}
+
+static bool artifact_parity_build_archive_in_dir(const char *dir,
+                                                 const char *compiler,
+                                                 const char *source_relpath,
+                                                 const char *output_relpath) {
+    Nob_Cmd compile_cmd = {0};
+    Nob_Cmd archive_cmd = {0};
+    const char *object_relpath = nob_temp_sprintf("%s.obj.o", output_relpath);
+    if (!dir || !compiler || !source_relpath || !output_relpath) return false;
+
+    nob_cmd_append(&compile_cmd, compiler, "-c", source_relpath, "-o", object_relpath);
+    if (!artifact_parity_run_cmd_in_dir(dir, &compile_cmd)) {
+        nob_cmd_free(compile_cmd);
+        return false;
+    }
+    nob_cmd_free(compile_cmd);
+
+    nob_cmd_append(&archive_cmd, "ar", "rcs", output_relpath, object_relpath);
+    if (!artifact_parity_run_cmd_in_dir(dir, &archive_cmd)) {
+        nob_cmd_free(archive_cmd);
+        return false;
+    }
+    nob_cmd_free(archive_cmd);
+
+    return true;
+}
+
 static bool artifact_parity_run_nob_command(const Artifact_Parity_Case *case_def,
                                             const Artifact_Parity_Nob_Command *command) {
     const char *run_dir = artifact_parity_case_nob_run_dir(case_def);
+    const char *argv[3] = {0};
+    size_t argc = 0;
     if (!case_def || !command) return false;
+
+    if (command->config && command->config[0] != '\0') {
+        argv[argc++] = "--config";
+        argv[argc++] = command->config;
+    }
 
     switch (command->kind) {
         case ARTIFACT_PARITY_NOB_COMMAND_BUILD_DEFAULT:
-            return artifact_parity_run_binary_in_dir(run_dir, "./nob_gen", NULL, NULL);
+            return artifact_parity_run_binary_in_dir_argv(run_dir, "./nob_gen", argv, argc);
 
         case ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET:
-            return artifact_parity_run_binary_in_dir(run_dir, "./nob_gen", command->arg, NULL);
+            argv[argc++] = command->arg;
+            return artifact_parity_run_binary_in_dir_argv(run_dir, "./nob_gen", argv, argc);
 
         case ARTIFACT_PARITY_NOB_COMMAND_CLEAN:
-            if (!artifact_parity_run_binary_in_dir(run_dir, "./nob_gen", "clean", NULL)) return false;
+            argv[argc++] = "clean";
+            if (!artifact_parity_run_binary_in_dir_argv(run_dir, "./nob_gen", argv, argc)) return false;
             if (case_def->clean_absence_relpath && case_def->clean_absence_relpath[0] != '\0') {
                 if (test_ws_host_path_exists(case_def->clean_absence_relpath)) {
                     nob_log(NOB_ERROR,
@@ -136,10 +202,12 @@ static bool artifact_parity_run_nob_command(const Artifact_Parity_Case *case_def
             return true;
 
         case ARTIFACT_PARITY_NOB_COMMAND_INSTALL:
-            return artifact_parity_run_binary_in_dir(run_dir, "./nob_gen", "install", NULL);
+            argv[argc++] = "install";
+            return artifact_parity_run_binary_in_dir_argv(run_dir, "./nob_gen", argv, argc);
 
         case ARTIFACT_PARITY_NOB_COMMAND_PACKAGE:
-            return artifact_parity_run_binary_in_dir(run_dir, "./nob_gen", "package", NULL);
+            argv[argc++] = "package";
+            return artifact_parity_run_binary_in_dir_argv(run_dir, "./nob_gen", argv, argc);
     }
 
     return false;
@@ -186,13 +254,15 @@ static bool artifact_parity_run_case(const Artifact_Parity_Case *case_def) {
     }
 
     if (!artifact_parity_materialize_files(source_root, case_def->files, case_def->file_count)) return false;
+    if (case_def->prepare && !case_def->prepare(case_def)) return false;
 
     if ((case_def->phases & ARTIFACT_PARITY_PHASE_CONFIGURE) ||
         (case_def->phases & ARTIFACT_PARITY_PHASE_BUILD) ||
         (case_def->phases & ARTIFACT_PARITY_PHASE_INSTALL)) {
         if (!artifact_parity_run_cmake_configure(&s_artifact_parity_cmake,
                                                  source_root,
-                                                 cmake_binary_dir)) {
+                                                 cmake_binary_dir,
+                                                 case_def->cmake_build_type)) {
             return false;
         }
     }
@@ -305,9 +375,9 @@ static const Artifact_Parity_File s_build_files[] = {
 };
 
 static const Artifact_Parity_Nob_Command s_build_commands[] = {
-    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_DEFAULT, NULL},
-    {ARTIFACT_PARITY_NOB_COMMAND_CLEAN, NULL},
-    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, "app"},
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_DEFAULT, NULL, NULL},
+    {ARTIFACT_PARITY_NOB_COMMAND_CLEAN, NULL, NULL},
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, NULL, "app"},
 };
 
 static const Artifact_Parity_Case s_build_case = {
@@ -362,8 +432,8 @@ static const Artifact_Parity_File s_install_files[] = {
 };
 
 static const Artifact_Parity_Nob_Command s_install_commands[] = {
-    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, "app"},
-    {ARTIFACT_PARITY_NOB_COMMAND_INSTALL, NULL},
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, NULL, "app"},
+    {ARTIFACT_PARITY_NOB_COMMAND_INSTALL, NULL, NULL},
 };
 
 static const Artifact_Parity_Case s_install_case = {
@@ -399,7 +469,7 @@ static const Artifact_Parity_File s_empty_export_package_files[] = {
 };
 
 static const Artifact_Parity_Nob_Command s_empty_export_package_commands[] = {
-    {ARTIFACT_PARITY_NOB_COMMAND_PACKAGE, NULL},
+    {ARTIFACT_PARITY_NOB_COMMAND_PACKAGE, NULL, NULL},
 };
 
 static const Artifact_Parity_Case s_empty_export_package_case = {
@@ -457,7 +527,7 @@ static const Artifact_Parity_File s_out_of_source_top_level_files[] = {
 };
 
 static const Artifact_Parity_Nob_Command s_out_of_source_top_level_commands[] = {
-    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_DEFAULT, NULL},
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_DEFAULT, NULL, NULL},
 };
 
 static const Artifact_Parity_Case s_out_of_source_top_level_case = {
@@ -529,7 +599,7 @@ static const Artifact_Parity_File s_out_of_source_subdir_files[] = {
 };
 
 static const Artifact_Parity_Nob_Command s_out_of_source_subdir_commands[] = {
-    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_DEFAULT, NULL},
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_DEFAULT, NULL, NULL},
 };
 
 static const Artifact_Parity_Case s_out_of_source_subdir_case = {
@@ -593,7 +663,7 @@ static const Artifact_Parity_File s_p2_generated_source_files[] = {
 };
 
 static const Artifact_Parity_Nob_Command s_p2_generated_source_commands[] = {
-    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, "app"},
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, NULL, "app"},
 };
 
 static const Artifact_Parity_Case s_p2_generated_source_case = {
@@ -646,7 +716,7 @@ static const Artifact_Parity_File s_p2_custom_target_files[] = {
 };
 
 static const Artifact_Parity_Nob_Command s_p2_custom_target_commands[] = {
-    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, "app"},
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, NULL, "app"},
 };
 
 static const Artifact_Parity_Case s_p2_custom_target_case = {
@@ -698,7 +768,7 @@ static const Artifact_Parity_File s_p2_post_build_files[] = {
 };
 
 static const Artifact_Parity_Nob_Command s_p2_post_build_commands[] = {
-    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, "app"},
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, NULL, "app"},
 };
 
 static const Artifact_Parity_Case s_p2_post_build_case = {
@@ -720,6 +790,231 @@ static const Artifact_Parity_Case s_p2_post_build_case = {
     .nob_base_dir = "p2_post_nob_build",
     .clean_absence_relpath = NULL,
     .subject = "p2_post_build_sidecar",
+};
+
+static bool artifact_parity_prepare_p3_imported_case(const Artifact_Parity_Case *case_def) {
+    const char *source_root = artifact_parity_case_source_root(case_def);
+    return artifact_parity_build_archive_in_dir(source_root,
+                                                "cc",
+                                                "imports/ext_static.c",
+                                                "imports/libext_static.a") &&
+           artifact_parity_build_archive_in_dir(source_root,
+                                                "cc",
+                                                "imports/ext_unknown.c",
+                                                "imports/libext_unknown.a");
+}
+
+static bool artifact_parity_prepare_p3_debug_config_case(const Artifact_Parity_Case *case_def) {
+    const char *source_root = artifact_parity_case_source_root(case_def);
+    return artifact_parity_build_archive_in_dir(source_root,
+                                                "cc",
+                                                "imports/opt.c",
+                                                "imports/libopt.a") &&
+           artifact_parity_build_archive_in_dir(source_root,
+                                                "cc",
+                                                "imports/dbg.c",
+                                                "imports/libdbg.a");
+}
+
+static const Artifact_Parity_Manifest_Request s_p3_build_manifest_requests[] = {
+    {ARTIFACT_PARITY_DOMAIN_BUILD_OUTPUTS, ARTIFACT_PARITY_CAPTURE_TREE, "build_outputs", "artifacts"},
+};
+
+static const Artifact_Parity_File s_p3_imported_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityP3Imported LANGUAGES C)\n"
+        "add_library(ext_static STATIC IMPORTED)\n"
+        "set_target_properties(ext_static PROPERTIES IMPORTED_LOCATION imports/libext_static.a)\n"
+        "add_library(ext_unknown UNKNOWN IMPORTED)\n"
+        "set_target_properties(ext_unknown PROPERTIES IMPORTED_LOCATION imports/libext_unknown.a)\n"
+        "add_library(ext_iface INTERFACE IMPORTED)\n"
+        "set_target_properties(ext_iface PROPERTIES\n"
+        "  INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_LIST_DIR}/imports/include\n"
+        "  INTERFACE_COMPILE_DEFINITIONS IFACE_EXPECT=23)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE ext_static ext_unknown ext_iface)\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n",
+    },
+    {
+        "imports/ext_static.c",
+        "int ext_static(void) { return 3; }\n",
+    },
+    {
+        "imports/ext_unknown.c",
+        "int ext_unknown(void) { return 11; }\n",
+    },
+    {
+        "imports/include/iface.h",
+        "#ifndef IFACE_EXPECT\n"
+        "#error IFACE_EXPECT missing\n"
+        "#endif\n"
+        "#if IFACE_EXPECT != 23\n"
+        "#error IFACE_EXPECT mismatch\n"
+        "#endif\n",
+    },
+    {
+        "main.c",
+        "#include \"iface.h\"\n"
+        "int ext_static(void);\n"
+        "int ext_unknown(void);\n"
+        "int main(void) { return (ext_static() + ext_unknown()) == 14 ? 0 : 1; }\n",
+    },
+};
+
+static const Artifact_Parity_Nob_Command s_p3_imported_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, NULL, "app"},
+};
+
+static const Artifact_Parity_Case s_p3_imported_case = {
+    .name = "p3_imported_prebuilt_libraries",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE | ARTIFACT_PARITY_PHASE_BUILD,
+    .files = s_p3_imported_files,
+    .file_count = NOB_ARRAY_LEN(s_p3_imported_files),
+    .nob_commands = s_p3_imported_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_p3_imported_commands),
+    .manifest_requests = s_p3_build_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_p3_build_manifest_requests),
+    .source_root = "p3_imported_source",
+    .cmake_binary_dir = "p3_imported_source",
+    .nob_binary_dir = "p3_imported_source",
+    .generated_nob_path = "p3_imported_source/nob.c",
+    .nob_run_dir = "p3_imported_source",
+    .cmake_build_target = "app",
+    .cmake_base_dir = "p3_imported_source",
+    .nob_base_dir = "p3_imported_source",
+    .clean_absence_relpath = NULL,
+    .subject = "p3_imported_prebuilt_libraries",
+    .prepare = artifact_parity_prepare_p3_imported_case,
+};
+
+static const Artifact_Parity_File s_p3_debug_config_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityP3Config LANGUAGES C)\n"
+        "add_library(opt STATIC IMPORTED)\n"
+        "set_target_properties(opt PROPERTIES IMPORTED_LOCATION imports/libopt.a)\n"
+        "add_library(dbg STATIC IMPORTED)\n"
+        "set_target_properties(dbg PROPERTIES IMPORTED_LOCATION imports/libdbg.a)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE optimized opt debug dbg)\n"
+        "target_compile_definitions(app PRIVATE\n"
+        "  \"$<$<CONFIG:Debug>:EXPECTED_VALUE=23>\"\n"
+        "  \"$<$<CONFIG:Debug>:SELECTED_FN=selected_value_23>\"\n"
+        "  \"$<$<NOT:$<CONFIG:Debug>>:EXPECTED_VALUE=17>\"\n"
+        "  \"$<$<NOT:$<CONFIG:Debug>>:SELECTED_FN=selected_value_17>\")\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n",
+    },
+    {
+        "imports/opt.c",
+        "int selected_value_17(void) { return 17; }\n",
+    },
+    {
+        "imports/dbg.c",
+        "int selected_value_23(void) { return 23; }\n",
+    },
+    {
+        "main.c",
+        "#ifndef EXPECTED_VALUE\n"
+        "#error EXPECTED_VALUE missing\n"
+        "#endif\n"
+        "#ifndef SELECTED_FN\n"
+        "#error SELECTED_FN missing\n"
+        "#endif\n"
+        "int SELECTED_FN(void);\n"
+        "int main(void) { return SELECTED_FN() == EXPECTED_VALUE ? 0 : 1; }\n",
+    },
+};
+
+static const Artifact_Parity_Nob_Command s_p3_debug_config_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, "Debug", "app"},
+};
+
+static const Artifact_Parity_Case s_p3_debug_config_case = {
+    .name = "p3_debug_config_link_selection",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE | ARTIFACT_PARITY_PHASE_BUILD,
+    .files = s_p3_debug_config_files,
+    .file_count = NOB_ARRAY_LEN(s_p3_debug_config_files),
+    .nob_commands = s_p3_debug_config_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_p3_debug_config_commands),
+    .manifest_requests = s_p3_build_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_p3_build_manifest_requests),
+    .source_root = "p3_config_source",
+    .cmake_binary_dir = "p3_config_source",
+    .nob_binary_dir = "p3_config_source",
+    .generated_nob_path = "p3_config_source/nob.c",
+    .nob_run_dir = "p3_config_source",
+    .cmake_build_target = "app",
+    .cmake_build_type = "Debug",
+    .cmake_base_dir = "p3_config_source",
+    .nob_base_dir = "p3_config_source",
+    .clean_absence_relpath = NULL,
+    .subject = "p3_debug_config_link_selection",
+    .prepare = artifact_parity_prepare_p3_debug_config_case,
+};
+
+static const Artifact_Parity_File s_p3_usage_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityP3Usage LANGUAGES C)\n"
+        "add_library(iface INTERFACE)\n"
+        "set_target_properties(iface PROPERTIES CUSTOM_TAG USAGE_EXPECT=29)\n"
+        "target_include_directories(iface INTERFACE\n"
+        "  \"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/iface_build/include>\"\n"
+        "  \"$<INSTALL_INTERFACE:iface_install/include>\")\n"
+        "target_link_libraries(iface INTERFACE \"$<LINK_ONLY:m>\")\n"
+        "add_executable(app main.c)\n"
+        "target_compile_options(app PRIVATE -fno-builtin)\n"
+        "target_link_libraries(app PRIVATE iface)\n"
+        "target_compile_definitions(app PRIVATE \"$<TARGET_PROPERTY:iface,CUSTOM_TAG>\")\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n",
+    },
+    {
+        "iface_build/include/iface.h",
+        "#ifndef USAGE_EXPECT\n"
+        "#error USAGE_EXPECT missing\n"
+        "#endif\n"
+        "#if USAGE_EXPECT != 29\n"
+        "#error USAGE_EXPECT mismatch\n"
+        "#endif\n",
+    },
+    {
+        "main.c",
+        "#include \"iface.h\"\n"
+        "#include <math.h>\n"
+        "int main(void) {\n"
+        "    volatile double value = 0.0;\n"
+        "    return cos(value) == 1.0 ? 0 : 1;\n"
+        "}\n",
+    },
+};
+
+static const Artifact_Parity_Nob_Command s_p3_usage_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, NULL, "app"},
+};
+
+static const Artifact_Parity_Case s_p3_usage_case = {
+    .name = "p3_usage_requirement_propagation",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE | ARTIFACT_PARITY_PHASE_BUILD,
+    .files = s_p3_usage_files,
+    .file_count = NOB_ARRAY_LEN(s_p3_usage_files),
+    .nob_commands = s_p3_usage_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_p3_usage_commands),
+    .manifest_requests = s_p3_build_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_p3_build_manifest_requests),
+    .source_root = "p3_usage_source",
+    .cmake_binary_dir = "p3_usage_cmake_build",
+    .nob_binary_dir = "p3_usage_nob_build",
+    .generated_nob_path = "p3_usage_nob.c",
+    .nob_run_dir = ".",
+    .cmake_build_target = "app",
+    .cmake_base_dir = "p3_usage_cmake_build",
+    .nob_base_dir = "p3_usage_nob_build",
+    .clean_absence_relpath = NULL,
+    .subject = "p3_usage_requirement_propagation",
 };
 
 TEST(artifact_parity_build_and_generated_manifest_matches_cmake_via_nobify) {
@@ -810,15 +1105,48 @@ TEST(artifact_parity_post_build_sidecar_matches_cmake) {
     TEST_PASS();
 }
 
+TEST(artifact_parity_imported_prebuilt_libraries_match_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_p3_imported_case));
+    TEST_PASS();
+}
+
+TEST(artifact_parity_debug_config_link_selection_matches_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_p3_debug_config_case));
+    TEST_PASS();
+}
+
+TEST(artifact_parity_usage_requirement_propagation_matches_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_p3_usage_case));
+    TEST_PASS();
+}
+
 TEST(artifact_parity_skips_when_cmake_env_points_to_missing_binary) {
-    Artifact_Parity_Env_Guard env_guard = {0};
+    Artifact_Parity_Env_Guard *env_guard = NULL;
     Artifact_Parity_Cmake_Config config = {0};
     char skip_reason[256] = {0};
 
-    ASSERT(artifact_parity_env_guard_set(&env_guard,
-                                         CMK2NOB_TEST_CMAKE_BIN_ENV,
-                                         "./missing-cmake-for-artifact-parity"));
-    TEST_DEFER(artifact_parity_env_guard_cleanup, &env_guard);
+    ASSERT(artifact_parity_env_guard_begin(&env_guard,
+                                           CMK2NOB_TEST_CMAKE_BIN_ENV,
+                                           "./missing-cmake-for-artifact-parity"));
+    TEST_DEFER(artifact_parity_env_guard_cleanup, env_guard);
 
     ASSERT(artifact_parity_resolve_cmake(&config, false, skip_reason));
     ASSERT(!config.available);
@@ -830,7 +1158,7 @@ TEST(artifact_parity_skips_when_cmake_version_is_not_3_28) {
 #if defined(_WIN32)
     TEST_SKIP("fake cmake version probe is POSIX-only");
 #else
-    Artifact_Parity_Env_Guard env_guard = {0};
+    Artifact_Parity_Env_Guard *env_guard = NULL;
     Artifact_Parity_Cmake_Config config = {0};
     char skip_reason[256] = {0};
 
@@ -842,10 +1170,10 @@ TEST(artifact_parity_skips_when_cmake_version_is_not_3_28) {
         "  exit 0\n"
         "fi\n"
         "exit 0\n"));
-    ASSERT(artifact_parity_env_guard_set(&env_guard,
-                                         CMK2NOB_TEST_CMAKE_BIN_ENV,
-                                         "fake_bin/cmake"));
-    TEST_DEFER(artifact_parity_env_guard_cleanup, &env_guard);
+    ASSERT(artifact_parity_env_guard_begin(&env_guard,
+                                           CMK2NOB_TEST_CMAKE_BIN_ENV,
+                                           "fake_bin/cmake"));
+    TEST_DEFER(artifact_parity_env_guard_cleanup, env_guard);
 
     ASSERT(artifact_parity_resolve_cmake(&config, false, skip_reason));
     ASSERT(!config.available);
@@ -858,7 +1186,7 @@ TEST(artifact_parity_skips_when_cpack_is_missing_for_package_phase) {
 #if defined(_WIN32)
     TEST_SKIP("fake cpack sibling probe is POSIX-only");
 #else
-    Artifact_Parity_Env_Guard env_guard = {0};
+    Artifact_Parity_Env_Guard *env_guard = NULL;
     Artifact_Parity_Cmake_Config config = {0};
     char skip_reason[256] = {0};
 
@@ -870,10 +1198,10 @@ TEST(artifact_parity_skips_when_cpack_is_missing_for_package_phase) {
         "  exit 0\n"
         "fi\n"
         "exit 0\n"));
-    ASSERT(artifact_parity_env_guard_set(&env_guard,
-                                         CMK2NOB_TEST_CMAKE_BIN_ENV,
-                                         "fake_pkg_bin/cmake"));
-    TEST_DEFER(artifact_parity_env_guard_cleanup, &env_guard);
+    ASSERT(artifact_parity_env_guard_begin(&env_guard,
+                                           CMK2NOB_TEST_CMAKE_BIN_ENV,
+                                           "fake_pkg_bin/cmake"));
+    TEST_DEFER(artifact_parity_env_guard_cleanup, env_guard);
 
     ASSERT(artifact_parity_resolve_cmake(&config, true, skip_reason));
     ASSERT(config.available);
@@ -898,7 +1226,7 @@ TEST(artifact_parity_generated_nob_uses_embedded_cmake_without_path_injection) {
 #if defined(_WIN32)
     TEST_SKIP("tool-only PATH probe is POSIX-only");
 #else
-    Artifact_Parity_Env_Guard path_guard = {0};
+    Artifact_Parity_Env_Guard *path_guard = NULL;
     const char *tool_only_path_abs = nob_temp_sprintf("%s/tool_only_path", nob_get_current_dir_temp());
     ASSERT(s_artifact_parity_cmake.available);
     ASSERT(s_artifact_parity_nobify_bin[0] != '\0');
@@ -939,8 +1267,8 @@ TEST(artifact_parity_generated_nob_uses_embedded_cmake_without_path_injection) {
                                       nob_temp_sprintf("%s/nob_build", nob_get_current_dir_temp())));
     ASSERT(artifact_parity_compile_generated_nob("source/nob.c", "source/nob_gen"));
     ASSERT(artifact_parity_make_tool_only_path_dir("tool_only_path"));
-    ASSERT(artifact_parity_env_guard_set(&path_guard, "PATH", tool_only_path_abs));
-    TEST_DEFER(artifact_parity_env_guard_cleanup, &path_guard);
+    ASSERT(artifact_parity_env_guard_begin(&path_guard, "PATH", tool_only_path_abs));
+    TEST_DEFER(artifact_parity_env_guard_cleanup, path_guard);
     ASSERT(artifact_parity_run_binary_in_dir("source", "./nob_gen", "app", NULL));
     ASSERT(test_ws_host_path_exists("nob_build/app"));
     ASSERT(test_ws_host_path_exists("nob_build/generated/generated.c"));
@@ -999,6 +1327,9 @@ void run_artifact_parity_v2_tests(int *passed, int *failed, int *skipped) {
         test_artifact_parity_generated_source_consumer_matches_cmake(passed, failed, skipped);
         test_artifact_parity_custom_target_dependency_matches_cmake(passed, failed, skipped);
         test_artifact_parity_post_build_sidecar_matches_cmake(passed, failed, skipped);
+        test_artifact_parity_imported_prebuilt_libraries_match_cmake(passed, failed, skipped);
+        test_artifact_parity_debug_config_link_selection_matches_cmake(passed, failed, skipped);
+        test_artifact_parity_usage_requirement_propagation_matches_cmake(passed, failed, skipped);
     }
 
     test_artifact_parity_skips_when_cmake_env_points_to_missing_binary(passed, failed, skipped);

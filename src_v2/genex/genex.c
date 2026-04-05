@@ -470,6 +470,52 @@ static Genex_Result gx_eval_body(const Genex_Context *ctx,
                            nob_sv_from_cstr(""));
     }
 
+    if (gx_sv_eq_ci(op, nob_sv_from_cstr("NOT"))) {
+        Genex_Result arg_eval = gx_eval_inner(ctx, args_expr, depth + 1, stack);
+        if (arg_eval.status != GENEX_OK) return gx_result(arg_eval.status, raw_expr, arg_eval.diag_message);
+        return gx_result(GENEX_OK,
+                         gx_cmake_string_is_false(arg_eval.value) ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"),
+                         nob_sv_from_cstr(""));
+    }
+
+    if (gx_sv_eq_ci(op, nob_sv_from_cstr("AND")) ||
+        gx_sv_eq_ci(op, nob_sv_from_cstr("OR"))) {
+        Gx_Sv_List args = gx_split_top_level_alloc(ctx, args_expr, ',');
+        bool want_and = gx_sv_eq_ci(op, nob_sv_from_cstr("AND"));
+        if (args_expr.count > 0 && args.count == 0) {
+            return gx_result(GENEX_ERROR, raw_expr, gx_copy_cstr_to_arena(ctx->arena, "Out of memory while splitting logical operator arguments"));
+        }
+        if (args.count == 0) {
+            return gx_result(GENEX_ERROR, raw_expr, gx_copy_cstr_to_arena(ctx->arena, "Logical generator expressions require at least one argument"));
+        }
+        for (size_t i = 0; i < args.count; ++i) {
+            Genex_Result arg_eval = gx_eval_inner(ctx, args.items[i], depth + 1, stack);
+            bool truthy = false;
+            if (arg_eval.status != GENEX_OK) return gx_result(arg_eval.status, raw_expr, arg_eval.diag_message);
+            truthy = !gx_cmake_string_is_false(arg_eval.value);
+            if (want_and && !truthy) return gx_result(GENEX_OK, nob_sv_from_cstr("0"), nob_sv_from_cstr(""));
+            if (!want_and && truthy) return gx_result(GENEX_OK, nob_sv_from_cstr("1"), nob_sv_from_cstr(""));
+        }
+        return gx_result(GENEX_OK, want_and ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"), nob_sv_from_cstr(""));
+    }
+
+    if (gx_sv_eq_ci(op, nob_sv_from_cstr("STREQUAL"))) {
+        Gx_Sv_List args = gx_split_top_level_alloc(ctx, args_expr, ',');
+        Genex_Result lhs = {0};
+        Genex_Result rhs = {0};
+        if (args_expr.count > 0 && args.count == 0) {
+            return gx_result(GENEX_ERROR, raw_expr, gx_copy_cstr_to_arena(ctx->arena, "Out of memory while splitting STREQUAL arguments"));
+        }
+        if (args.count != 2) {
+            return gx_result(GENEX_ERROR, raw_expr, gx_copy_cstr_to_arena(ctx->arena, "STREQUAL expects 2 arguments"));
+        }
+        lhs = gx_eval_inner(ctx, args.items[0], depth + 1, stack);
+        if (lhs.status != GENEX_OK) return gx_result(lhs.status, raw_expr, lhs.diag_message);
+        rhs = gx_eval_inner(ctx, args.items[1], depth + 1, stack);
+        if (rhs.status != GENEX_OK) return gx_result(rhs.status, raw_expr, rhs.diag_message);
+        return gx_result(GENEX_OK, nob_sv_eq(lhs.value, rhs.value) ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"), nob_sv_from_cstr(""));
+    }
+
     if (gx_sv_eq_ci(op, nob_sv_from_cstr("IF"))) {
         Gx_Sv_List args = gx_split_top_level_alloc(ctx, args_expr, ',');
         if (args_expr.count > 0 && args.count == 0) {

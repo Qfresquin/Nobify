@@ -722,13 +722,41 @@ bool artifact_parity_run_binary_in_dir(const char *dir,
     return ok;
 }
 
+bool artifact_parity_run_binary_in_dir_argv(const char *dir,
+                                            const char *binary_path,
+                                            const char *const *argv,
+                                            size_t argc) {
+    Nob_Cmd cmd = {0};
+    char prev_cwd[_TINYDIR_PATH_MAX] = {0};
+    const char *cwd = nob_get_current_dir_temp();
+    bool ok = false;
+    if (!dir || !binary_path || !cwd) return false;
+    if (strlen(cwd) + 1 > sizeof(prev_cwd)) return false;
+    memcpy(prev_cwd, cwd, strlen(cwd) + 1);
+
+    if (!nob_set_current_dir(dir)) return false;
+    nob_cmd_append(&cmd, binary_path);
+    for (size_t i = 0; i < argc; ++i) {
+        if (!argv || !argv[i]) continue;
+        nob_cmd_append(&cmd, argv[i]);
+    }
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    if (!nob_set_current_dir(prev_cwd)) return false;
+    return ok;
+}
+
 bool artifact_parity_run_cmake_configure(const Artifact_Parity_Cmake_Config *config,
                                          const char *source_dir,
-                                         const char *binary_dir) {
+                                         const char *binary_dir,
+                                         const char *build_type) {
     Nob_Cmd cmd = {0};
     bool ok = false;
     if (!config || !config->available || !source_dir || !binary_dir) return false;
     nob_cmd_append(&cmd, config->cmake_bin, "-S", source_dir, "-B", binary_dir);
+    if (build_type && build_type[0] != '\0') {
+        nob_cmd_append(&cmd, nob_temp_sprintf("-DCMAKE_BUILD_TYPE=%s", build_type));
+    }
     ok = nob_cmd_run(&cmd);
     nob_cmd_free(cmd);
     return ok;

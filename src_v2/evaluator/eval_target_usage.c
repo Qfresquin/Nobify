@@ -1,4 +1,5 @@
 #include "eval_target_internal.h"
+#include "bm_compile_features.h"
 
 static bool target_usage_store_target_property(EvalExecContext *ctx,
                                                Cmake_Event_Origin origin,
@@ -97,53 +98,8 @@ typedef struct {
     Target_Sources_Entry *entries;
 } Target_Sources_Request;
 
-typedef enum {
-    TARGET_COMPILE_FEATURE_LANG_UNKNOWN = 0,
-    TARGET_COMPILE_FEATURE_LANG_C,
-    TARGET_COMPILE_FEATURE_LANG_CXX,
-    TARGET_COMPILE_FEATURE_LANG_CUDA,
-} Target_Compile_Feature_Lang;
-
-typedef struct {
-    const char *name;
-    Target_Compile_Feature_Lang lang;
-    int standard;
-    bool meta;
-} Target_Compile_Feature_Info;
-
-static const Target_Compile_Feature_Info k_target_compile_feature_info[] = {
-    {"c_std_90", TARGET_COMPILE_FEATURE_LANG_C, 90, true},
-    {"c_std_99", TARGET_COMPILE_FEATURE_LANG_C, 99, true},
-    {"c_std_11", TARGET_COMPILE_FEATURE_LANG_C, 11, true},
-    {"c_std_17", TARGET_COMPILE_FEATURE_LANG_C, 17, true},
-    {"c_std_23", TARGET_COMPILE_FEATURE_LANG_C, 23, true},
-    {"c_function_prototypes", TARGET_COMPILE_FEATURE_LANG_C, 0, false},
-    {"c_restrict", TARGET_COMPILE_FEATURE_LANG_C, 0, false},
-    {"c_static_assert", TARGET_COMPILE_FEATURE_LANG_C, 0, false},
-    {"c_variadic_macros", TARGET_COMPILE_FEATURE_LANG_C, 0, false},
-    {"cxx_std_98", TARGET_COMPILE_FEATURE_LANG_CXX, 98, true},
-    {"cxx_std_11", TARGET_COMPILE_FEATURE_LANG_CXX, 11, true},
-    {"cxx_std_14", TARGET_COMPILE_FEATURE_LANG_CXX, 14, true},
-    {"cxx_std_17", TARGET_COMPILE_FEATURE_LANG_CXX, 17, true},
-    {"cxx_std_20", TARGET_COMPILE_FEATURE_LANG_CXX, 20, true},
-    {"cxx_std_23", TARGET_COMPILE_FEATURE_LANG_CXX, 23, true},
-    {"cxx_alias_templates", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
-    {"cxx_constexpr", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
-    {"cxx_decltype", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
-    {"cxx_final", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
-    {"cxx_generic_lambdas", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
-    {"cxx_lambdas", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
-    {"cxx_nullptr", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
-    {"cxx_range_for", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
-    {"cxx_rvalue_references", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
-    {"cxx_static_assert", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
-    {"cxx_variadic_templates", TARGET_COMPILE_FEATURE_LANG_CXX, 0, false},
-    {"cuda_std_03", TARGET_COMPILE_FEATURE_LANG_CUDA, 3, true},
-    {"cuda_std_11", TARGET_COMPILE_FEATURE_LANG_CUDA, 11, true},
-    {"cuda_std_14", TARGET_COMPILE_FEATURE_LANG_CUDA, 14, true},
-    {"cuda_std_17", TARGET_COMPILE_FEATURE_LANG_CUDA, 17, true},
-    {"cuda_std_20", TARGET_COMPILE_FEATURE_LANG_CUDA, 20, true},
-};
+typedef BM_Compile_Feature_Lang Target_Compile_Feature_Lang;
+typedef BM_Compile_Feature_Info Target_Compile_Feature_Info;
 
 typedef String_View (*Target_Usage_Normalize_Fn)(EvalExecContext *ctx, String_View item);
 typedef bool (*Target_Usage_Emit_Item_Fn)(EvalExecContext *ctx,
@@ -255,39 +211,19 @@ static bool target_usage_parse_int_sv(String_View value, int *out_value) {
 }
 
 static const Target_Compile_Feature_Info *target_compile_feature_lookup(String_View feature) {
-    for (size_t i = 0; i < NOB_ARRAY_LEN(k_target_compile_feature_info); i++) {
-        if (eval_sv_eq_ci_lit(feature, k_target_compile_feature_info[i].name)) {
-            return &k_target_compile_feature_info[i];
-        }
-    }
-    return NULL;
+    return bm_compile_feature_lookup(feature);
 }
 
 static String_View target_compile_feature_lang_compile_var(Target_Compile_Feature_Lang lang) {
-    switch (lang) {
-        case TARGET_COMPILE_FEATURE_LANG_C: return nob_sv_from_cstr("CMAKE_C_COMPILE_FEATURES");
-        case TARGET_COMPILE_FEATURE_LANG_CXX: return nob_sv_from_cstr("CMAKE_CXX_COMPILE_FEATURES");
-        case TARGET_COMPILE_FEATURE_LANG_CUDA: return nob_sv_from_cstr("CMAKE_CUDA_COMPILE_FEATURES");
-        default: return nob_sv_from_cstr("");
-    }
+    return bm_compile_feature_lang_compile_var(lang);
 }
 
 static String_View target_compile_feature_lang_standard_prop(Target_Compile_Feature_Lang lang) {
-    switch (lang) {
-        case TARGET_COMPILE_FEATURE_LANG_C: return nob_sv_from_cstr("C_STANDARD");
-        case TARGET_COMPILE_FEATURE_LANG_CXX: return nob_sv_from_cstr("CXX_STANDARD");
-        case TARGET_COMPILE_FEATURE_LANG_CUDA: return nob_sv_from_cstr("CUDA_STANDARD");
-        default: return nob_sv_from_cstr("");
-    }
+    return bm_compile_feature_lang_standard_prop(lang);
 }
 
 static String_View target_compile_feature_lang_standard_required_prop(Target_Compile_Feature_Lang lang) {
-    switch (lang) {
-        case TARGET_COMPILE_FEATURE_LANG_C: return nob_sv_from_cstr("C_STANDARD_REQUIRED");
-        case TARGET_COMPILE_FEATURE_LANG_CXX: return nob_sv_from_cstr("CXX_STANDARD_REQUIRED");
-        case TARGET_COMPILE_FEATURE_LANG_CUDA: return nob_sv_from_cstr("CUDA_STANDARD_REQUIRED");
-        default: return nob_sv_from_cstr("");
-    }
+    return bm_compile_feature_lang_standard_required_prop(lang);
 }
 
 static bool target_compile_feature_supported(EvalExecContext *ctx,

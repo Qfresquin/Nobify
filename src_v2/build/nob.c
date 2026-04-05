@@ -54,6 +54,7 @@ static void append_evaluator_sources(Nob_Cmd *cmd) {
         "src_v2/build_model/build_model_builder_test.c",
         "src_v2/build_model/build_model_builder_install.c",
         "src_v2/build_model/build_model_builder_package.c",
+        "src_v2/build_model/bm_compile_features.c",
         "src_v2/build_model/build_model_validate.c",
         "src_v2/build_model/build_model_validate_cycles.c",
         "src_v2/build_model/build_model_freeze.c",

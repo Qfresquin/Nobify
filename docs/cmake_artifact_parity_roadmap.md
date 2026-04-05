@@ -360,7 +360,26 @@ Evidence delivered:
 ### P3 Usage-Requirement And Link Parity
 
 Status:
-- planned
+- completed on April 4, 2026
+- delivered:
+  context-aware frozen-model query evaluation through `BM_Query_Eval_Context`,
+  including canonical support for `BUILD_INTERFACE`, `INSTALL_INTERFACE`,
+  `LINK_ONLY`, `CONFIG`, `COMPILE_LANGUAGE`, and `TARGET_PROPERTY`
+  positive genex support for `NOT`, `AND`, `OR`, and `STREQUAL`, with
+  unsupported operators still failing explicitly
+  shared compile-feature catalog usage across evaluator validation,
+  build-model query, and codegen so compile-feature floors now drive emitted
+  `-std=` flags for supported C and C++ targets
+  imported-target downstream support for `INTERFACE`, `STATIC`, `SHARED`, and
+  `UNKNOWN` targets in usage/link contexts, including config-aware imported
+  file and linker-file resolution plus imported link-language hinting
+  generated Nob `--config <cfg>` support so config-sensitive genex and
+  `debug`/`optimized` link items are deterministic at runtime
+  per-source compile-side usage evaluation in codegen so mixed-language
+  `COMPILE_LANGUAGE` conditions are honored on the current POSIX backend
+  explicit backend rejection for still-out-of-scope concrete dependencies on
+  `PRECOMPILE_HEADERS*`, imported executables as link inputs, and module
+  libraries as link inputs
 
 Deliverables:
 - support the build-relevant subset of generator expressions required for the
@@ -382,6 +401,12 @@ Exit criteria:
 - subsystem tests lock the new Event IR/build-model/query behavior
 - unsupported downstream link cases are materially reduced and explicitly
   tracked
+
+Evidence delivered:
+- `./build/nob_test test-build-model`
+- `./build/nob_test test-codegen`
+- `./build/nob_test test-artifact-parity`
+- `./build/nob_test test-v2`
 
 ### P4 Backend Abstraction And Platform Artifact Rules
 

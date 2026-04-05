@@ -89,6 +89,22 @@ static size_t build_model_find_target_source_index_containing(const Build_Model 
     return count;
 }
 
+static bool build_model_string_span_contains(BM_String_Span span, const char *needle) {
+    String_View needle_sv = nob_sv_from_cstr(needle ? needle : "");
+    for (size_t i = 0; i < span.count; ++i) {
+        if (nob_sv_eq(span.items[i], needle_sv)) return true;
+    }
+    return false;
+}
+
+static bool build_model_string_item_span_contains(BM_String_Item_Span span, const char *needle) {
+    String_View needle_sv = nob_sv_from_cstr(needle ? needle : "");
+    for (size_t i = 0; i < span.count; ++i) {
+        if (nob_sv_eq(span.items[i].value, needle_sv)) return true;
+    }
+    return false;
+}
+
 TEST(build_model_builder_directory_scope_events) {
     Arena *arena = arena_create(2 * 1024 * 1024);
     Arena *validate_arena = arena_create(512 * 1024);
@@ -777,6 +793,347 @@ TEST(build_model_freeze_rejects_duplicate_effective_producers_and_execution_cycl
     TEST_PASS();
 }
 
+TEST(build_model_context_aware_queries_expand_usage_requirements_and_target_property_genex) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id iface_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    BM_Query_Eval_Context compile_c = {0};
+    BM_Query_Eval_Context compile_cxx = {0};
+    BM_Query_Eval_Context compile_install = {0};
+    BM_Query_Eval_Context link_ctx = {0};
+    BM_Query_Eval_Context debug_compile = {0};
+    BM_String_Item_Span include_items = {0};
+    BM_String_Item_Span compile_opts = {0};
+    BM_String_Item_Span link_items = {0};
+    BM_String_Span defs = {0};
+    String_View property_value = {0};
+    String_View raw_property_value = {0};
+    bool found_custom_prop = false;
+
+    ASSERT(query_arena != NULL);
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "p3_query_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("p3_query_src");
+    config.binary_dir = nob_sv_from_cstr("p3_query_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C CXX)\n"
+        "add_library(iface INTERFACE)\n"
+        "set_target_properties(iface PROPERTIES CUSTOM_TAG dbg-tag)\n"
+        "target_include_directories(iface INTERFACE\n"
+        "  \"$<BUILD_INTERFACE:iface_build/include>\"\n"
+        "  \"$<INSTALL_INTERFACE:iface_install/include>\")\n"
+        "target_compile_options(iface INTERFACE\n"
+        "  \"$<$<COMPILE_LANGUAGE:C>:-DC_ONLY>\"\n"
+        "  \"$<$<COMPILE_LANGUAGE:CXX>:-DCXX_ONLY>\")\n"
+        "target_link_libraries(iface INTERFACE \"$<LINK_ONLY:m>\")\n"
+        "add_library(raw_iface INTERFACE IMPORTED)\n"
+        "set_target_properties(raw_iface PROPERTIES\n"
+        "  INTERFACE_INCLUDE_DIRECTORIES raw_iface/include\n"
+        "  INTERFACE_COMPILE_DEFINITIONS RAW_IFACE_DEF=1)\n"
+        "add_executable(app main.c main.cpp)\n"
+        "target_link_libraries(app PRIVATE iface raw_iface)\n"
+        "target_compile_definitions(app PRIVATE \"$<$<CONFIG:Debug>:$<TARGET_PROPERTY:iface,CUSTOM_TAG>>\")\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    iface_id = bm_query_target_by_name(model, nob_sv_from_cstr("iface"));
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    ASSERT(iface_id != BM_TARGET_ID_INVALID);
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+
+    compile_c.current_target_id = app_id;
+    compile_c.usage_mode = BM_QUERY_USAGE_COMPILE;
+    compile_c.compile_language = nob_sv_from_cstr("C");
+    compile_c.build_interface_active = true;
+    compile_c.install_interface_active = false;
+
+    compile_cxx = compile_c;
+    compile_cxx.compile_language = nob_sv_from_cstr("CXX");
+
+    compile_install = compile_c;
+    compile_install.build_interface_active = false;
+    compile_install.install_interface_active = true;
+
+    link_ctx.current_target_id = app_id;
+    link_ctx.usage_mode = BM_QUERY_USAGE_LINK;
+    link_ctx.build_interface_active = true;
+    link_ctx.install_interface_active = false;
+
+    debug_compile = compile_c;
+    debug_compile.config = nob_sv_from_cstr("Debug");
+
+    ASSERT(bm_query_target_effective_include_directories_items_with_context(model,
+                                                                            app_id,
+                                                                            &compile_c,
+                                                                            query_arena,
+                                                                            &include_items));
+    ASSERT(build_model_string_item_span_contains(include_items, "iface_build/include"));
+    ASSERT(build_model_string_item_span_contains(include_items, "raw_iface/include"));
+    ASSERT(!build_model_string_item_span_contains(include_items, "iface_install/include"));
+
+    ASSERT(bm_query_target_effective_include_directories_items_with_context(model,
+                                                                            app_id,
+                                                                            &compile_install,
+                                                                            query_arena,
+                                                                            &include_items));
+    ASSERT(!build_model_string_item_span_contains(include_items, "iface_build/include"));
+    ASSERT(build_model_string_item_span_contains(include_items, "iface_install/include"));
+
+    ASSERT(bm_query_target_effective_compile_options_items_with_context(model,
+                                                                        app_id,
+                                                                        &compile_c,
+                                                                        query_arena,
+                                                                        &compile_opts));
+    ASSERT(build_model_string_item_span_contains(compile_opts, "-DC_ONLY"));
+    ASSERT(!build_model_string_item_span_contains(compile_opts, "-DCXX_ONLY"));
+
+    ASSERT(bm_query_target_effective_compile_options_items_with_context(model,
+                                                                        app_id,
+                                                                        &compile_cxx,
+                                                                        query_arena,
+                                                                        &compile_opts));
+    ASSERT(!build_model_string_item_span_contains(compile_opts, "-DC_ONLY"));
+    ASSERT(build_model_string_item_span_contains(compile_opts, "-DCXX_ONLY"));
+
+    ASSERT(bm_query_target_effective_link_libraries_items_with_context(model,
+                                                                       app_id,
+                                                                       &link_ctx,
+                                                                       query_arena,
+                                                                       &link_items));
+    ASSERT(build_model_string_item_span_contains(link_items, "m"));
+
+    ASSERT(bm_query_target_effective_link_libraries_items_with_context(model,
+                                                                       app_id,
+                                                                       &compile_c,
+                                                                       query_arena,
+                                                                       &link_items));
+    ASSERT(!build_model_string_item_span_contains(link_items, "m"));
+
+    ASSERT(bm_query_target_effective_compile_definitions_with_context(model,
+                                                                      app_id,
+                                                                      &compile_c,
+                                                                      query_arena,
+                                                                      &defs));
+    ASSERT(!build_model_string_span_contains(defs, "dbg-tag"));
+
+    ASSERT(bm_query_target_effective_compile_definitions_with_context(model,
+                                                                      app_id,
+                                                                      &debug_compile,
+                                                                      query_arena,
+                                                                      &defs));
+    ASSERT(build_model_string_span_contains(defs, "dbg-tag"));
+    ASSERT(build_model_string_span_contains(defs, "RAW_IFACE_DEF=1"));
+
+    ASSERT(bm_query_target_property_value(model,
+                                          iface_id,
+                                          nob_sv_from_cstr("CUSTOM_TAG"),
+                                          query_arena,
+                                          &property_value));
+    ASSERT(nob_sv_eq(property_value, nob_sv_from_cstr("dbg-tag")));
+
+    ASSERT(bm_query_target_property_value(model,
+                                          bm_query_target_by_name(model, nob_sv_from_cstr("raw_iface")),
+                                          nob_sv_from_cstr("INTERFACE_INCLUDE_DIRECTORIES"),
+                                          query_arena,
+                                          &raw_property_value));
+    ASSERT(nob_sv_eq(raw_property_value, nob_sv_from_cstr("raw_iface/include")));
+
+    for (size_t i = 0; i < bm_query_target_raw_property_count(model, iface_id); ++i) {
+        if (nob_sv_eq(bm_query_target_raw_property_name(model, iface_id, i), nob_sv_from_cstr("CUSTOM_TAG"))) {
+            found_custom_prop = true;
+            ASSERT(build_model_string_span_contains(
+                bm_query_target_raw_property_items(model, iface_id, nob_sv_from_cstr("CUSTOM_TAG")),
+                "dbg-tag"));
+            break;
+        }
+    }
+    ASSERT(found_custom_prop);
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_imported_target_queries_resolve_configs_and_mapped_locations) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id ext_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id missing_id = BM_TARGET_ID_INVALID;
+    BM_Query_Eval_Context default_ctx = {0};
+    BM_Query_Eval_Context debug_ctx = {0};
+    BM_Query_Eval_Context relwithdebinfo_ctx = {0};
+    String_View effective_file = {0};
+    String_View effective_linker_file = {0};
+    BM_String_Span link_langs = {0};
+    ASSERT(query_arena != NULL);
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "p3_imported_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("p3_imported_src");
+    config.binary_dir = nob_sv_from_cstr("p3_imported_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "add_library(ext SHARED IMPORTED)\n"
+        "set_target_properties(ext PROPERTIES\n"
+        "  IMPORTED_LOCATION imports/libbase.so\n"
+        "  IMPORTED_LOCATION_DEBUG imports/libdebug.so\n"
+        "  IMPORTED_IMPLIB_DEBUG imports/libdebug_link.so\n"
+        "  MAP_IMPORTED_CONFIG_RELWITHDEBINFO Debug\n"
+        "  IMPORTED_LINK_INTERFACE_LANGUAGES_DEBUG \"CXX;C\")\n"
+        "add_library(missing STATIC IMPORTED)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    ext_id = bm_query_target_by_name(model, nob_sv_from_cstr("ext"));
+    missing_id = bm_query_target_by_name(model, nob_sv_from_cstr("missing"));
+    ASSERT(ext_id != BM_TARGET_ID_INVALID);
+    ASSERT(missing_id != BM_TARGET_ID_INVALID);
+
+    default_ctx.current_target_id = ext_id;
+    default_ctx.usage_mode = BM_QUERY_USAGE_LINK;
+    default_ctx.build_interface_active = true;
+    default_ctx.install_interface_active = false;
+
+    debug_ctx = default_ctx;
+    debug_ctx.config = nob_sv_from_cstr("Debug");
+
+    relwithdebinfo_ctx = default_ctx;
+    relwithdebinfo_ctx.config = nob_sv_from_cstr("RelWithDebInfo");
+
+    ASSERT(bm_query_target_effective_file(model, ext_id, &default_ctx, query_arena, &effective_file));
+    ASSERT(nob_sv_eq(effective_file, nob_sv_from_cstr("p3_imported_src/imports/libbase.so")));
+
+    ASSERT(bm_query_target_effective_file(model, ext_id, &debug_ctx, query_arena, &effective_file));
+    ASSERT(nob_sv_eq(effective_file, nob_sv_from_cstr("p3_imported_src/imports/libdebug.so")));
+
+    ASSERT(bm_query_target_effective_file(model, ext_id, &relwithdebinfo_ctx, query_arena, &effective_file));
+    ASSERT(nob_sv_eq(effective_file, nob_sv_from_cstr("p3_imported_src/imports/libdebug.so")));
+
+    ASSERT(bm_query_target_effective_linker_file(model, ext_id, &debug_ctx, query_arena, &effective_linker_file));
+    ASSERT(nob_sv_eq(effective_linker_file, nob_sv_from_cstr("p3_imported_src/imports/libdebug_link.so")));
+
+    ASSERT(bm_query_target_effective_linker_file(model, ext_id, &default_ctx, query_arena, &effective_linker_file));
+    ASSERT(nob_sv_eq(effective_linker_file, nob_sv_from_cstr("p3_imported_src/imports/libbase.so")));
+
+    ASSERT(bm_query_target_imported_link_languages(model, ext_id, &debug_ctx, query_arena, &link_langs));
+    ASSERT(build_model_string_span_contains(link_langs, "CXX"));
+    ASSERT(build_model_string_span_contains(link_langs, "C"));
+
+    ASSERT(build_model_string_span_contains(
+        bm_query_target_raw_property_items(model, ext_id, nob_sv_from_cstr("MAP_IMPORTED_CONFIG_RELWITHDEBINFO")),
+        "Debug"));
+
+    ASSERT(bm_query_target_effective_file(model, missing_id, &default_ctx, query_arena, &effective_file));
+    ASSERT(effective_file.count == 0);
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_compile_feature_catalog_and_effective_features_are_shared) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id core_c_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id core_cxx_id = BM_TARGET_ID_INVALID;
+    BM_Query_Eval_Context compile_ctx = {0};
+    BM_String_Span features = {0};
+    const BM_Compile_Feature_Info *c_restrict = bm_compile_feature_lookup(nob_sv_from_cstr("c_restrict"));
+    const BM_Compile_Feature_Info *cxx_generic_lambdas =
+        bm_compile_feature_lookup(nob_sv_from_cstr("cxx_generic_lambdas"));
+    const BM_Compile_Feature_Info *cxx_std_20 = bm_compile_feature_lookup(nob_sv_from_cstr("cxx_std_20"));
+
+    ASSERT(query_arena != NULL);
+    ASSERT(c_restrict != NULL);
+    ASSERT(cxx_generic_lambdas != NULL);
+    ASSERT(cxx_std_20 != NULL);
+    ASSERT(c_restrict->lang == BM_COMPILE_FEATURE_LANG_C);
+    ASSERT(c_restrict->standard == 99);
+    ASSERT(!c_restrict->meta);
+    ASSERT(cxx_generic_lambdas->lang == BM_COMPILE_FEATURE_LANG_CXX);
+    ASSERT(cxx_generic_lambdas->standard == 14);
+    ASSERT(!cxx_generic_lambdas->meta);
+    ASSERT(cxx_std_20->lang == BM_COMPILE_FEATURE_LANG_CXX);
+    ASSERT(cxx_std_20->standard == 20);
+    ASSERT(cxx_std_20->meta);
+    ASSERT(nob_sv_eq(bm_compile_feature_lang_compile_var(BM_COMPILE_FEATURE_LANG_C), nob_sv_from_cstr("CMAKE_C_COMPILE_FEATURES")));
+    ASSERT(nob_sv_eq(bm_compile_feature_lang_standard_prop(BM_COMPILE_FEATURE_LANG_CXX), nob_sv_from_cstr("CXX_STANDARD")));
+    ASSERT(nob_sv_eq(bm_compile_feature_lang_standard_required_prop(BM_COMPILE_FEATURE_LANG_CXX),
+                     nob_sv_from_cstr("CXX_STANDARD_REQUIRED")));
+    ASSERT(nob_sv_eq(bm_compile_feature_lang_extensions_prop(BM_COMPILE_FEATURE_LANG_C), nob_sv_from_cstr("C_EXTENSIONS")));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "p3_features_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("p3_features_src");
+    config.binary_dir = nob_sv_from_cstr("p3_features_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C CXX)\n"
+        "add_library(core_c STATIC core.c)\n"
+        "target_compile_features(core_c PRIVATE c_std_11)\n"
+        "set_target_properties(core_c PROPERTIES\n"
+        "  C_STANDARD 11\n"
+        "  C_STANDARD_REQUIRED ON\n"
+        "  C_EXTENSIONS OFF)\n"
+        "add_library(core_cxx STATIC core.cpp)\n"
+        "target_compile_features(core_cxx PRIVATE cxx_std_20)\n"
+        "set_target_properties(core_cxx PROPERTIES\n"
+        "  CXX_STANDARD 20\n"
+        "  CXX_STANDARD_REQUIRED ON\n"
+        "  CXX_EXTENSIONS OFF)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    core_c_id = bm_query_target_by_name(model, nob_sv_from_cstr("core_c"));
+    core_cxx_id = bm_query_target_by_name(model, nob_sv_from_cstr("core_cxx"));
+    ASSERT(core_c_id != BM_TARGET_ID_INVALID);
+    ASSERT(core_cxx_id != BM_TARGET_ID_INVALID);
+
+    compile_ctx.current_target_id = core_c_id;
+    compile_ctx.usage_mode = BM_QUERY_USAGE_COMPILE;
+    compile_ctx.build_interface_active = true;
+    compile_ctx.install_interface_active = false;
+
+    ASSERT(bm_query_target_effective_compile_features(model, core_c_id, &compile_ctx, query_arena, &features));
+    ASSERT(build_model_string_span_contains(features, "c_std_11"));
+
+    compile_ctx.current_target_id = core_cxx_id;
+    ASSERT(bm_query_target_effective_compile_features(model, core_cxx_id, &compile_ctx, query_arena, &features));
+    ASSERT(build_model_string_span_contains(features, "cxx_std_20"));
+
+    ASSERT(nob_sv_eq(bm_query_target_c_standard(model, core_c_id), nob_sv_from_cstr("11")));
+    ASSERT(bm_query_target_c_standard_required(model, core_c_id));
+    ASSERT(!bm_query_target_c_extensions(model, core_c_id));
+    ASSERT(nob_sv_eq(bm_query_target_cxx_standard(model, core_cxx_id), nob_sv_from_cstr("20")));
+    ASSERT(bm_query_target_cxx_standard_required(model, core_cxx_id));
+    ASSERT(!bm_query_target_cxx_extensions(model, core_cxx_id));
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -807,6 +1164,9 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_resolves_byproduct_producers_and_keeps_unresolved_file_dependencies(passed, failed, skipped);
     test_build_model_marks_generated_sources_without_producer_steps(passed, failed, skipped);
     test_build_model_freeze_rejects_duplicate_effective_producers_and_execution_cycles(passed, failed, skipped);
+    test_build_model_context_aware_queries_expand_usage_requirements_and_target_property_genex(passed, failed, skipped);
+    test_build_model_imported_target_queries_resolve_configs_and_mapped_locations(passed, failed, skipped);
+    test_build_model_compile_feature_catalog_and_effective_features_are_shared(passed, failed, skipped);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

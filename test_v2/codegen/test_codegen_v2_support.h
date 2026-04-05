@@ -44,5 +44,9 @@ bool codegen_run_binary_in_dir(const char *dir,
                                const char *binary_path,
                                const char *arg1,
                                const char *arg2);
+bool codegen_run_binary_in_dir_argv(const char *dir,
+                                    const char *binary_path,
+                                    const char *const *argv,
+                                    size_t argc);
 
 #endif // TEST_CODEGEN_V2_SUPPORT_H_

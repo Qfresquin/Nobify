@@ -42,6 +42,16 @@ The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`
   `test_v2/artifact_parity/` stays explicit-only and owns real-CMake
   parity checks for generated sources, custom-target dependencies, and
   post-build sidecar outputs
+- `P3` proof split:
+  `test_v2/build_model/` locks context-aware query evaluation, imported-target
+  resolution, and shared compile-feature floors
+  `test_v2/codegen/` owns aggregate-safe smoke for mixed-language usage
+  propagation, imported prebuilt libraries, config-sensitive link selection,
+  and `TARGET_FILE*` build-step argv expansion
+  `test_v2/artifact_parity/` stays explicit-only and owns real-CMake parity
+  checks for imported prebuilt libraries, `--config`-driven link selection,
+  and usage propagation through `BUILD_INTERFACE`, `LINK_ONLY`, and
+  `TARGET_PROPERTY`
 - required external tools:
   real `cmake 3.28.x`
   sibling `cpack` only for package-phase cases
@@ -50,6 +60,8 @@ The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`
   generated Nob runtime tool precedence is
   `NOB_CMAKE_BIN` / `NOB_CPACK_BIN` -> embedded absolute path from `nobify` ->
   bare `cmake` / `cpack`
+  generated Nob config selection is explicit through `--config <cfg>`; the
+  empty config remains the default when the flag is omitted
 - execution policy:
   explicit-only via `./build/nob_test test-artifact-parity`
   not part of the default `./build/nob_test test-v2` smoke aggregate

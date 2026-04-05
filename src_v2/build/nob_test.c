@@ -541,6 +541,7 @@ static void append_v2_evaluator_runtime_sources(Nob_Cmd *cmd) {
         "src_v2/parser/parser.c",
         "src_v2/diagnostics/diagnostics.c",
         "src_v2/transpiler/event_ir.c",
+        "src_v2/build_model/bm_compile_features.c",
         "src_v2/genex/genex.c",
         "src_v2/evaluator/stb_ds_impl.c",
         "src_v2/evaluator/eval_exec_core.c",

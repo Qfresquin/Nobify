@@ -2,6 +2,22 @@
 #define BUILD_MODEL_QUERY_H_
 
 #include "build_model_types.h"
+#include "bm_compile_features.h"
+
+typedef enum {
+    BM_QUERY_USAGE_COMPILE = 0,
+    BM_QUERY_USAGE_LINK,
+} BM_Query_Usage_Mode;
+
+typedef struct {
+    String_View config;
+    String_View platform_id;
+    String_View compile_language;
+    BM_Target_Id current_target_id;
+    BM_Query_Usage_Mode usage_mode;
+    bool build_interface_active;
+    bool install_interface_active;
+} BM_Query_Eval_Context;
 
 bool bm_model_has_project(const Build_Model *model);
 bool bm_target_id_is_valid(BM_Target_Id id);
@@ -31,6 +47,10 @@ String_View bm_query_directory_binary_dir(const Build_Model *model, BM_Directory
 BM_String_Item_Span bm_query_directory_include_directories_raw(const Build_Model *model, BM_Directory_Id id);
 BM_String_Item_Span bm_query_directory_system_include_directories_raw(const Build_Model *model, BM_Directory_Id id);
 BM_String_Item_Span bm_query_directory_link_directories_raw(const Build_Model *model, BM_Directory_Id id);
+BM_String_Item_Span bm_query_directory_compile_definitions_raw(const Build_Model *model, BM_Directory_Id id);
+BM_String_Item_Span bm_query_directory_compile_options_raw(const Build_Model *model, BM_Directory_Id id);
+BM_String_Item_Span bm_query_directory_link_options_raw(const Build_Model *model, BM_Directory_Id id);
+BM_String_Span bm_query_directory_raw_property_items(const Build_Model *model, BM_Directory_Id id, String_View property_name);
 
 BM_Target_Id bm_query_target_by_name(const Build_Model *model, String_View name);
 BM_Test_Id bm_query_test_by_name(const Build_Model *model, String_View name);
@@ -64,6 +84,14 @@ BM_String_Item_Span bm_query_target_compile_definitions_raw(const Build_Model *m
 BM_String_Item_Span bm_query_target_compile_options_raw(const Build_Model *model, BM_Target_Id id);
 BM_String_Item_Span bm_query_target_link_options_raw(const Build_Model *model, BM_Target_Id id);
 BM_String_Item_Span bm_query_target_link_directories_raw(const Build_Model *model, BM_Target_Id id);
+size_t bm_query_target_raw_property_count(const Build_Model *model, BM_Target_Id id);
+String_View bm_query_target_raw_property_name(const Build_Model *model, BM_Target_Id id, size_t property_index);
+BM_String_Span bm_query_target_raw_property_items(const Build_Model *model, BM_Target_Id id, String_View property_name);
+bool bm_query_target_property_value(const Build_Model *model,
+                                    BM_Target_Id id,
+                                    String_View property_name,
+                                    Arena *scratch,
+                                    String_View *out);
 String_View bm_query_target_output_name(const Build_Model *model, BM_Target_Id id);
 String_View bm_query_target_prefix(const Build_Model *model, BM_Target_Id id);
 String_View bm_query_target_suffix(const Build_Model *model, BM_Target_Id id);
@@ -71,6 +99,12 @@ String_View bm_query_target_archive_output_directory(const Build_Model *model, B
 String_View bm_query_target_library_output_directory(const Build_Model *model, BM_Target_Id id);
 String_View bm_query_target_runtime_output_directory(const Build_Model *model, BM_Target_Id id);
 String_View bm_query_target_folder(const Build_Model *model, BM_Target_Id id);
+String_View bm_query_target_c_standard(const Build_Model *model, BM_Target_Id id);
+bool bm_query_target_c_standard_required(const Build_Model *model, BM_Target_Id id);
+bool bm_query_target_c_extensions(const Build_Model *model, BM_Target_Id id);
+String_View bm_query_target_cxx_standard(const Build_Model *model, BM_Target_Id id);
+bool bm_query_target_cxx_standard_required(const Build_Model *model, BM_Target_Id id);
+bool bm_query_target_cxx_extensions(const Build_Model *model, BM_Target_Id id);
 
 BM_Build_Step_Kind bm_query_build_step_kind(const Build_Model *model, BM_Build_Step_Id id);
 BM_Directory_Id bm_query_build_step_owner_directory(const Build_Model *model, BM_Build_Step_Id id);
@@ -102,50 +136,130 @@ bool bm_query_target_effective_include_directories_items(const Build_Model *mode
                                                          BM_Target_Id id,
                                                          Arena *scratch,
                                                          BM_String_Item_Span *out);
+bool bm_query_target_effective_include_directories_items_with_context(const Build_Model *model,
+                                                                      BM_Target_Id id,
+                                                                      const BM_Query_Eval_Context *ctx,
+                                                                      Arena *scratch,
+                                                                      BM_String_Item_Span *out);
 bool bm_query_target_effective_compile_definitions_items(const Build_Model *model,
                                                          BM_Target_Id id,
                                                          Arena *scratch,
                                                          BM_String_Item_Span *out);
+bool bm_query_target_effective_compile_definitions_items_with_context(const Build_Model *model,
+                                                                      BM_Target_Id id,
+                                                                      const BM_Query_Eval_Context *ctx,
+                                                                      Arena *scratch,
+                                                                      BM_String_Item_Span *out);
 bool bm_query_target_effective_compile_options_items(const Build_Model *model,
                                                      BM_Target_Id id,
                                                      Arena *scratch,
                                                      BM_String_Item_Span *out);
+bool bm_query_target_effective_compile_options_items_with_context(const Build_Model *model,
+                                                                  BM_Target_Id id,
+                                                                  const BM_Query_Eval_Context *ctx,
+                                                                  Arena *scratch,
+                                                                  BM_String_Item_Span *out);
 bool bm_query_target_effective_link_libraries_items(const Build_Model *model,
                                                     BM_Target_Id id,
                                                     Arena *scratch,
                                                     BM_String_Item_Span *out);
+bool bm_query_target_effective_link_libraries_items_with_context(const Build_Model *model,
+                                                                 BM_Target_Id id,
+                                                                 const BM_Query_Eval_Context *ctx,
+                                                                 Arena *scratch,
+                                                                 BM_String_Item_Span *out);
 bool bm_query_target_effective_link_options_items(const Build_Model *model,
                                                   BM_Target_Id id,
                                                   Arena *scratch,
                                                   BM_String_Item_Span *out);
+bool bm_query_target_effective_link_options_items_with_context(const Build_Model *model,
+                                                               BM_Target_Id id,
+                                                               const BM_Query_Eval_Context *ctx,
+                                                               Arena *scratch,
+                                                               BM_String_Item_Span *out);
 bool bm_query_target_effective_link_directories_items(const Build_Model *model,
                                                       BM_Target_Id id,
                                                       Arena *scratch,
                                                       BM_String_Item_Span *out);
+bool bm_query_target_effective_link_directories_items_with_context(const Build_Model *model,
+                                                                   BM_Target_Id id,
+                                                                   const BM_Query_Eval_Context *ctx,
+                                                                   Arena *scratch,
+                                                                   BM_String_Item_Span *out);
 bool bm_query_target_effective_include_directories(const Build_Model *model,
                                                    BM_Target_Id id,
                                                    Arena *scratch,
                                                    BM_String_Span *out);
+bool bm_query_target_effective_include_directories_with_context(const Build_Model *model,
+                                                                BM_Target_Id id,
+                                                                const BM_Query_Eval_Context *ctx,
+                                                                Arena *scratch,
+                                                                BM_String_Span *out);
 bool bm_query_target_effective_compile_definitions(const Build_Model *model,
                                                    BM_Target_Id id,
                                                    Arena *scratch,
                                                    BM_String_Span *out);
+bool bm_query_target_effective_compile_definitions_with_context(const Build_Model *model,
+                                                                BM_Target_Id id,
+                                                                const BM_Query_Eval_Context *ctx,
+                                                                Arena *scratch,
+                                                                BM_String_Span *out);
 bool bm_query_target_effective_compile_options(const Build_Model *model,
                                                BM_Target_Id id,
                                                Arena *scratch,
                                                BM_String_Span *out);
+bool bm_query_target_effective_compile_options_with_context(const Build_Model *model,
+                                                            BM_Target_Id id,
+                                                            const BM_Query_Eval_Context *ctx,
+                                                            Arena *scratch,
+                                                            BM_String_Span *out);
 bool bm_query_target_effective_link_libraries(const Build_Model *model,
                                               BM_Target_Id id,
                                               Arena *scratch,
                                               BM_String_Span *out);
+bool bm_query_target_effective_link_libraries_with_context(const Build_Model *model,
+                                                           BM_Target_Id id,
+                                                           const BM_Query_Eval_Context *ctx,
+                                                           Arena *scratch,
+                                                           BM_String_Span *out);
 bool bm_query_target_effective_link_options(const Build_Model *model,
                                             BM_Target_Id id,
                                             Arena *scratch,
                                             BM_String_Span *out);
+bool bm_query_target_effective_link_options_with_context(const Build_Model *model,
+                                                         BM_Target_Id id,
+                                                         const BM_Query_Eval_Context *ctx,
+                                                         Arena *scratch,
+                                                         BM_String_Span *out);
 bool bm_query_target_effective_link_directories(const Build_Model *model,
                                                 BM_Target_Id id,
                                                 Arena *scratch,
                                                 BM_String_Span *out);
+bool bm_query_target_effective_link_directories_with_context(const Build_Model *model,
+                                                             BM_Target_Id id,
+                                                             const BM_Query_Eval_Context *ctx,
+                                                             Arena *scratch,
+                                                             BM_String_Span *out);
+bool bm_query_target_effective_compile_features(const Build_Model *model,
+                                                BM_Target_Id id,
+                                                const BM_Query_Eval_Context *ctx,
+                                                Arena *scratch,
+                                                BM_String_Span *out);
+bool bm_query_target_effective_file(const Build_Model *model,
+                                    BM_Target_Id id,
+                                    const BM_Query_Eval_Context *ctx,
+                                    Arena *scratch,
+                                    String_View *out);
+bool bm_query_target_effective_linker_file(const Build_Model *model,
+                                           BM_Target_Id id,
+                                           const BM_Query_Eval_Context *ctx,
+                                           Arena *scratch,
+                                           String_View *out);
+bool bm_query_target_imported_link_languages(const Build_Model *model,
+                                             BM_Target_Id id,
+                                             const BM_Query_Eval_Context *ctx,
+                                             Arena *scratch,
+                                             BM_String_Span *out);
 
 bool bm_query_testing_enabled(const Build_Model *model);
 String_View bm_query_test_name(const Build_Model *model, BM_Test_Id id);

@@ -120,6 +120,7 @@ typedef struct {
     BM_Directory_Id owner_directory_id;
     BM_Provenance provenance;
     BM_Target_Kind kind;
+    bool declared;
     bool imported;
     bool alias;
     bool exclude_from_all;

@@ -96,6 +96,30 @@ static bool bm_build_step_append_command(BM_Builder *builder,
     return true;
 }
 
+static BM_Target_Record *bm_target_ensure_placeholder(BM_Builder *builder,
+                                                      const Event *ev,
+                                                      String_View name) {
+    Build_Model_Draft *draft = builder ? builder->draft : NULL;
+    BM_Directory_Id current_directory_id = bm_builder_current_directory_id(builder);
+    BM_Target_Record target = {0};
+    BM_Target_Record *existing = NULL;
+    if (!builder || !draft) return NULL;
+    existing = bm_draft_find_target(draft, name);
+    if (existing) return existing;
+    if (current_directory_id == BM_DIRECTORY_ID_INVALID) return NULL;
+
+    target.id = (BM_Target_Id)arena_arr_len(draft->targets);
+    target.owner_directory_id = current_directory_id;
+    target.provenance = bm_provenance_from_event(builder->arena, ev);
+    target.kind = BM_TARGET_UTILITY;
+    if (!bm_copy_string(builder->arena, name, &target.name) ||
+        !arena_arr_push(builder->arena, draft->targets, target) ||
+        !bm_add_name_index(builder->arena, &draft->target_name_index, target.name, target.id)) {
+        return NULL;
+    }
+    return &arena_arr_last(draft->targets);
+}
+
 bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
     Build_Model_Draft *draft = builder ? builder->draft : NULL;
     if (!builder || !draft || !ev) return false;
@@ -103,27 +127,27 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
     switch (ev->h.kind) {
         case EVENT_TARGET_DECLARE: {
             BM_Directory_Id current_directory_id = bm_builder_current_directory_id(builder);
-            BM_Target_Record target = {0};
+            BM_Target_Record *target = NULL;
             if (current_directory_id == BM_DIRECTORY_ID_INVALID) {
                 return bm_builder_error(builder, ev, "target declaration without an active directory", "emit directory enter before declaring targets");
             }
-            if (bm_draft_find_target_const(draft, ev->as.target_declare.name)) {
+            target = bm_draft_find_target(draft, ev->as.target_declare.name);
+            if (target && target->declared) {
                 return bm_builder_error(builder, ev, "duplicate target name", "ensure target names are unique");
             }
-
-            target.id = (BM_Target_Id)arena_arr_len(draft->targets);
-            target.owner_directory_id = current_directory_id;
-            target.provenance = bm_provenance_from_event(builder->arena, ev);
-            target.kind = bm_target_kind_from_event(ev->as.target_declare.target_type);
-            target.imported = ev->as.target_declare.imported;
-            target.alias = ev->as.target_declare.alias;
-            target.alias_of_id = BM_TARGET_ID_INVALID;
-
-            if (!bm_copy_string(builder->arena, ev->as.target_declare.name, &target.name) ||
-                !bm_copy_string(builder->arena, ev->as.target_declare.alias_of, &target.alias_of_name) ||
-                !arena_arr_push(builder->arena, draft->targets, target) ||
-                !bm_add_name_index(builder->arena, &draft->target_name_index, target.name, target.id)) {
-                return bm_builder_error(builder, ev, "failed to append target", "increase arena capacity");
+            if (!target) {
+                target = bm_target_ensure_placeholder(builder, ev, ev->as.target_declare.name);
+                if (!target) return bm_builder_error(builder, ev, "failed to append target", "increase arena capacity");
+            }
+            target->owner_directory_id = current_directory_id;
+            target->provenance = bm_provenance_from_event(builder->arena, ev);
+            target->kind = bm_target_kind_from_event(ev->as.target_declare.target_type);
+            target->imported = ev->as.target_declare.imported;
+            target->alias = ev->as.target_declare.alias;
+            target->declared = true;
+            target->alias_of_id = BM_TARGET_ID_INVALID;
+            if (!bm_copy_string(builder->arena, ev->as.target_declare.alias_of, &target->alias_of_name)) {
+                return bm_builder_error(builder, ev, "failed to copy target alias metadata", "increase arena capacity");
             }
             return true;
         }
@@ -153,6 +177,9 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
 
         case EVENT_TARGET_PROP_SET: {
             BM_Target_Record *target = bm_draft_find_target(draft, ev->as.target_prop_set.target_name);
+            if (!target) {
+                target = bm_target_ensure_placeholder(builder, ev, ev->as.target_prop_set.target_name);
+            }
             if (!target) return bm_builder_error(builder, ev, "target property references an unknown target", "declare the target before setting properties");
 
             if (bm_sv_eq_ci_lit(ev->as.target_prop_set.key, "OUTPUT_NAME")) return bm_assign_target_string(builder, ev, &target->output_name, ev->as.target_prop_set.value);
@@ -173,6 +200,9 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
             if (bm_sv_eq_ci_lit(ev->as.target_prop_set.key, "MACOSX_BUNDLE")) {
                 target->macosx_bundle = bm_sv_truthy(ev->as.target_prop_set.value);
                 return true;
+            }
+            if (bm_sv_eq_ci_lit(ev->as.target_prop_set.key, "IMPORTED")) {
+                target->imported = bm_sv_truthy(ev->as.target_prop_set.value);
             }
 
             if (!bm_target_record_raw_set(builder,

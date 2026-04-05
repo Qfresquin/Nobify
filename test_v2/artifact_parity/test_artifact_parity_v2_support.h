@@ -52,10 +52,14 @@ typedef struct {
 
 typedef struct {
     Artifact_Parity_Nob_Command_Kind kind;
+    const char *config;
     const char *arg;
 } Artifact_Parity_Nob_Command;
 
-typedef struct {
+struct Artifact_Parity_Case;
+typedef bool (*Artifact_Parity_Prepare_Fn)(const struct Artifact_Parity_Case *case_def);
+
+typedef struct Artifact_Parity_Case {
     const char *name;
     Artifact_Parity_Phase phases;
     const Artifact_Parity_File *files;
@@ -70,10 +74,12 @@ typedef struct {
     const char *generated_nob_path;
     const char *nob_run_dir;
     const char *cmake_build_target;
+    const char *cmake_build_type;
     const char *cmake_base_dir;
     const char *nob_base_dir;
     const char *clean_absence_relpath;
     const char *subject;
+    Artifact_Parity_Prepare_Fn prepare;
 } Artifact_Parity_Case;
 
 typedef struct {
@@ -106,9 +112,14 @@ bool artifact_parity_run_binary_in_dir(const char *dir,
                                        const char *binary_path,
                                        const char *arg1,
                                        const char *arg2);
+bool artifact_parity_run_binary_in_dir_argv(const char *dir,
+                                            const char *binary_path,
+                                            const char *const *argv,
+                                            size_t argc);
 bool artifact_parity_run_cmake_configure(const Artifact_Parity_Cmake_Config *config,
                                          const char *source_dir,
-                                         const char *binary_dir);
+                                         const char *binary_dir,
+                                         const char *build_type);
 bool artifact_parity_run_cmake_build(const Artifact_Parity_Cmake_Config *config,
                                      const char *binary_dir,
                                      const char *target_name);

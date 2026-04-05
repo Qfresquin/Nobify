@@ -42,13 +42,30 @@ static bool codegen_env_guard_set(Codegen_Env_Guard *guard,
     return true;
 }
 
+static bool codegen_env_guard_begin(Codegen_Env_Guard **out_guard,
+                                    const char *name,
+                                    const char *value) {
+    Codegen_Env_Guard *guard = NULL;
+    if (!out_guard) return false;
+    *out_guard = NULL;
+    guard = (Codegen_Env_Guard*)calloc(1, sizeof(*guard));
+    if (!guard) return false;
+    if (!codegen_env_guard_set(guard, name, value)) {
+        free(guard->prev_value);
+        free(guard);
+        return false;
+    }
+    *out_guard = guard;
+    return true;
+}
+
 static void codegen_env_guard_cleanup(void *ctx) {
     Codegen_Env_Guard *guard = (Codegen_Env_Guard*)ctx;
     if (!guard) return;
     codegen_set_env_or_unset(guard->name,
                              guard->had_prev_value ? guard->prev_value : NULL);
     free(guard->prev_value);
-    guard->prev_value = NULL;
+    free(guard);
 }
 
 static size_t codegen_count_substr(String_View sv, const char *needle) {
@@ -60,6 +77,48 @@ static size_t codegen_count_substr(String_View sv, const char *needle) {
         count++;
     }
     return count;
+}
+
+static bool codegen_run_argv_in_dir(const char *dir,
+                                    const char *const *argv,
+                                    size_t argc) {
+    Nob_Cmd cmd = {0};
+    char prev_cwd[_TINYDIR_PATH_MAX] = {0};
+    const char *cwd = nob_get_current_dir_temp();
+    bool ok = false;
+    if (!dir || !argv || argc == 0 || !cwd) return false;
+    if (strlen(cwd) + 1 > sizeof(prev_cwd)) return false;
+    memcpy(prev_cwd, cwd, strlen(cwd) + 1);
+    if (!nob_set_current_dir(dir)) return false;
+    for (size_t i = 0; i < argc; ++i) {
+        if (!argv[i]) continue;
+        nob_cmd_append(&cmd, argv[i]);
+    }
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    if (!nob_set_current_dir(prev_cwd)) return false;
+    return ok;
+}
+
+static bool codegen_build_static_archive(const char *dir,
+                                         const char *compiler,
+                                         const char *source_path,
+                                         const char *archive_path) {
+    const char *obj_path = nob_temp_sprintf("%s.obj.o", archive_path);
+    const char *compile_argv[] = {compiler, "-c", source_path, "-o", obj_path};
+    const char *archive_argv[] = {"ar", "rcs", archive_path, obj_path};
+    if (!dir || !compiler || !source_path || !archive_path) return false;
+    return codegen_run_argv_in_dir(dir, compile_argv, NOB_ARRAY_LEN(compile_argv)) &&
+           codegen_run_argv_in_dir(dir, archive_argv, NOB_ARRAY_LEN(archive_argv));
+}
+
+static bool codegen_build_shared_library(const char *dir,
+                                         const char *compiler,
+                                         const char *source_path,
+                                         const char *shared_path) {
+    const char *argv[] = {compiler, "-shared", "-fPIC", source_path, "-o", shared_path};
+    if (!dir || !compiler || !source_path || !shared_path) return false;
+    return codegen_run_argv_in_dir(dir, argv, NOB_ARRAY_LEN(argv));
 }
 
 #if !defined(_WIN32)
@@ -396,7 +455,7 @@ TEST(codegen_uses_embedded_cmake_for_runtime_steps_without_cmake_on_path) {
 #if defined(_WIN32)
     TEST_SKIP("tool-only PATH probe is POSIX-only");
 #else
-    Codegen_Env_Guard path_guard = {0};
+    Codegen_Env_Guard *path_guard = NULL;
     const char *script =
         "project(Test C)\n"
         "add_custom_command(\n"
@@ -427,8 +486,8 @@ TEST(codegen_uses_embedded_cmake_for_runtime_steps_without_cmake_on_path) {
     ASSERT(codegen_write_script_with_config(script, &config));
     ASSERT(codegen_compile_generated_nob("cmake_embed_nob.c", "cmake_embed_nob_gen"));
     ASSERT(codegen_make_tool_only_path_dir("tool_only_path"));
-    ASSERT(codegen_env_guard_set(&path_guard, "PATH", "tool_only_path"));
-    TEST_DEFER(codegen_env_guard_cleanup, &path_guard);
+    ASSERT(codegen_env_guard_begin(&path_guard, "PATH", "tool_only_path"));
+    TEST_DEFER(codegen_env_guard_cleanup, path_guard);
     ASSERT(codegen_run_binary_in_dir(".", "./cmake_embed_nob_gen", "app", NULL));
     ASSERT(test_ws_host_path_exists("cmake_embed_build/app"));
     ASSERT(test_ws_host_path_exists("cmake_embed_build/generated/generated.c"));
@@ -490,6 +549,224 @@ TEST(codegen_target_hooks_run_at_pre_link_and_post_build_boundaries) {
     TEST_PASS();
 }
 
+TEST(codegen_mixed_c_and_cxx_compile_contexts_apply_language_options_and_standard_flags) {
+    Arena *arena = arena_create(512 * 1024);
+    String_View generated = {0};
+    const char *script =
+        "project(Test C CXX)\n"
+        "add_executable(app main.c main.cpp)\n"
+        "target_compile_options(app PRIVATE\n"
+        "  \"$<$<COMPILE_LANGUAGE:C>:-DC_ONLY>\"\n"
+        "  \"$<$<COMPILE_LANGUAGE:CXX>:-DCXX_ONLY>\")\n"
+        "target_compile_features(app PRIVATE c_std_99 cxx_std_14)\n"
+        "set_target_properties(app PROPERTIES\n"
+        "  C_EXTENSIONS OFF\n"
+        "  CXX_EXTENSIONS OFF\n"
+        "  RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n";
+    Codegen_Test_Config config = {
+        .input_path = "lang_cfg_src/CMakeLists.txt",
+        .output_path = "lang_cfg_nob.c",
+        .source_dir = "lang_cfg_src",
+        .binary_dir = "lang_cfg_build",
+    };
+    ASSERT(arena != NULL);
+
+    ASSERT(codegen_write_text_file(
+        "lang_cfg_src/main.c",
+        "#ifndef C_ONLY\n"
+        "#error C_ONLY missing\n"
+        "#endif\n"
+        "int c_part(int * restrict value) { return *value; }\n"));
+    ASSERT(codegen_write_text_file(
+        "lang_cfg_src/main.cpp",
+        "#ifndef CXX_ONLY\n"
+        "#error CXX_ONLY missing\n"
+        "#endif\n"
+        "extern \"C\" int c_part(int *value);\n"
+        "int main() {\n"
+        "    auto next = [](auto value) { return value + 1; };\n"
+        "    int v = 41;\n"
+        "    return next(c_part(&v)) == 42 ? 0 : 1;\n"
+        "}\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_load_text_file_to_arena(arena, "lang_cfg_nob.c", &generated));
+    ASSERT(codegen_sv_contains(generated, "\"-std=c99\""));
+    ASSERT(codegen_sv_contains(generated, "\"-std=c++14\""));
+    ASSERT(codegen_compile_generated_nob("lang_cfg_nob.c", "lang_cfg_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir(".", "./lang_cfg_nob_gen", "app", NULL));
+    ASSERT(codegen_run_binary_in_dir(".", "lang_cfg_build/artifacts/bin/app", NULL, NULL));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(codegen_imported_static_unknown_and_interface_targets_build_and_run) {
+    const char *script =
+        "project(Test C)\n"
+        "add_library(ext_static STATIC IMPORTED)\n"
+        "set_target_properties(ext_static PROPERTIES\n"
+        "  IMPORTED_LOCATION imports/libext_static.a\n"
+        "  IMPORTED_LINK_INTERFACE_LANGUAGES \"CXX\")\n"
+        "add_library(ext_unknown UNKNOWN IMPORTED)\n"
+        "set_target_properties(ext_unknown PROPERTIES IMPORTED_LOCATION imports/libext_unknown.a)\n"
+        "add_library(ext_iface INTERFACE IMPORTED)\n"
+        "set_target_properties(ext_iface PROPERTIES\n"
+        "  INTERFACE_INCLUDE_DIRECTORIES imports/include\n"
+        "  INTERFACE_COMPILE_DEFINITIONS IFACE_EXPECT=23)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE ext_static ext_unknown ext_iface)\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n";
+    Codegen_Test_Config config = {
+        .input_path = "import_mix_src/CMakeLists.txt",
+        .output_path = "import_mix_nob.c",
+        .source_dir = "import_mix_src",
+        .binary_dir = "import_mix_build",
+    };
+
+    ASSERT(codegen_write_text_file(
+        "import_mix_src/imports/ext_static.cpp",
+        "#include <string>\n"
+        "extern \"C\" int ext_static(void) {\n"
+        "    static std::string value = \"xyz\";\n"
+        "    return (int)value.size();\n"
+        "}\n"));
+    ASSERT(codegen_write_text_file(
+        "import_mix_src/imports/ext_unknown.c",
+        "int ext_unknown(void) { return 11; }\n"));
+    ASSERT(codegen_write_text_file(
+        "import_mix_src/imports/include/iface.h",
+        "#ifndef IFACE_EXPECT\n"
+        "#error IFACE_EXPECT missing\n"
+        "#endif\n"
+        "#if IFACE_EXPECT != 23\n"
+        "#error IFACE_EXPECT mismatch\n"
+        "#endif\n"));
+    ASSERT(codegen_write_text_file(
+        "import_mix_src/main.c",
+        "#include \"iface.h\"\n"
+        "int ext_static(void);\n"
+        "int ext_unknown(void);\n"
+        "int main(void) { return (ext_static() + ext_unknown()) == 14 ? 0 : 1; }\n"));
+    ASSERT(codegen_build_static_archive("import_mix_src", "c++", "imports/ext_static.cpp", "imports/libext_static.a"));
+    ASSERT(codegen_build_static_archive("import_mix_src", "cc", "imports/ext_unknown.c", "imports/libext_unknown.a"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("import_mix_nob.c", "import_mix_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir(".", "./import_mix_nob_gen", "app", NULL));
+    ASSERT(codegen_run_binary_in_dir(".", "import_mix_build/artifacts/bin/app", NULL, NULL));
+    TEST_PASS();
+}
+
+TEST(codegen_imported_shared_target_links_successfully) {
+    const char *script =
+        "project(Test C)\n"
+        "add_library(ext_shared SHARED IMPORTED)\n"
+        "set_target_properties(ext_shared PROPERTIES IMPORTED_LOCATION imports/libext_shared.so)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE ext_shared)\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n";
+    Codegen_Test_Config config = {
+        .input_path = "import_shared_src/CMakeLists.txt",
+        .output_path = "import_shared_nob.c",
+        .source_dir = "import_shared_src",
+        .binary_dir = "import_shared_build",
+    };
+
+    ASSERT(codegen_write_text_file(
+        "import_shared_src/imports/ext_shared.c",
+        "int ext_shared(void) { return 29; }\n"));
+    ASSERT(codegen_write_text_file(
+        "import_shared_src/main.c",
+        "int ext_shared(void);\n"
+        "int main(void) { return ext_shared() == 29 ? 0 : 1; }\n"));
+    ASSERT(codegen_build_shared_library("import_shared_src", "cc", "imports/ext_shared.c", "imports/libext_shared.so"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("import_shared_nob.c", "import_shared_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir(".", "./import_shared_nob_gen", "app", NULL));
+    ASSERT(test_ws_host_path_exists("import_shared_build/artifacts/bin/app"));
+    TEST_PASS();
+}
+
+TEST(codegen_debug_and_optimized_link_items_follow_generated_config) {
+    const char *debug_build_argv[] = {"--config", "Debug", "app"};
+    const char *script =
+        "project(Test C)\n"
+        "add_library(opt STATIC IMPORTED)\n"
+        "set_target_properties(opt PROPERTIES IMPORTED_LOCATION imports/libopt.a)\n"
+        "add_library(dbg STATIC IMPORTED)\n"
+        "set_target_properties(dbg PROPERTIES IMPORTED_LOCATION imports/libdbg.a)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE optimized opt debug dbg)\n"
+        "target_compile_definitions(app PRIVATE\n"
+        "  \"$<$<CONFIG:Debug>:EXPECTED_VALUE=23>\"\n"
+        "  \"$<$<NOT:$<CONFIG:Debug>>:EXPECTED_VALUE=17>\")\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n";
+    Codegen_Test_Config config = {
+        .input_path = "import_cfg_src/CMakeLists.txt",
+        .output_path = "import_cfg_nob.c",
+        .source_dir = "import_cfg_src",
+        .binary_dir = "import_cfg_build",
+    };
+
+    ASSERT(codegen_write_text_file(
+        "import_cfg_src/imports/opt.c",
+        "int selected_value(void) { return 17; }\n"));
+    ASSERT(codegen_write_text_file(
+        "import_cfg_src/imports/dbg.c",
+        "int selected_value(void) { return 23; }\n"));
+    ASSERT(codegen_write_text_file(
+        "import_cfg_src/main.c",
+        "#ifndef EXPECTED_VALUE\n"
+        "#error EXPECTED_VALUE missing\n"
+        "#endif\n"
+        "int selected_value(void);\n"
+        "int main(void) { return selected_value() == EXPECTED_VALUE ? 0 : 1; }\n"));
+    ASSERT(codegen_build_static_archive("import_cfg_src", "cc", "imports/opt.c", "imports/libopt.a"));
+    ASSERT(codegen_build_static_archive("import_cfg_src", "cc", "imports/dbg.c", "imports/libdbg.a"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("import_cfg_nob.c", "import_cfg_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir(".", "./import_cfg_nob_gen", "app", NULL));
+    ASSERT(codegen_run_binary_in_dir(".", "import_cfg_build/artifacts/bin/app", NULL, NULL));
+    ASSERT(codegen_run_binary_in_dir(".", "./import_cfg_nob_gen", "clean", NULL));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./import_cfg_nob_gen", debug_build_argv, NOB_ARRAY_LEN(debug_build_argv)));
+    ASSERT(codegen_run_binary_in_dir(".", "import_cfg_build/artifacts/bin/app", NULL, NULL));
+    TEST_PASS();
+}
+
+TEST(codegen_build_steps_resolve_target_file_and_target_linker_file_genex) {
+    const char *script =
+        "project(Test C)\n"
+        "add_library(core STATIC core.c)\n"
+        "set_target_properties(core PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/lib)\n"
+        "add_custom_command(TARGET core POST_BUILD\n"
+        "  COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/artifacts/copies\n"
+        "  COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:core> ${CMAKE_CURRENT_BINARY_DIR}/artifacts/copies/core-file.a\n"
+        "  COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_LINKER_FILE:core> ${CMAKE_CURRENT_BINARY_DIR}/artifacts/copies/core-linker.a\n"
+        "  BYPRODUCTS artifacts/copies/core-file.a artifacts/copies/core-linker.a)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE core)\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n";
+    Codegen_Test_Config config = {
+        .input_path = "target_file_src/CMakeLists.txt",
+        .output_path = "target_file_nob.c",
+        .source_dir = "target_file_src",
+        .binary_dir = "target_file_build",
+    };
+
+    ASSERT(codegen_write_text_file("target_file_src/core.c", "int core_value(void) { return 5; }\n"));
+    ASSERT(codegen_write_text_file(
+        "target_file_src/main.c",
+        "int core_value(void);\n"
+        "int main(void) { return core_value() == 5 ? 0 : 1; }\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("target_file_nob.c", "target_file_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir(".", "./target_file_nob_gen", "app", NULL));
+    ASSERT(test_ws_host_path_exists("target_file_build/artifacts/lib/libcore.a"));
+    ASSERT(test_ws_host_path_exists("target_file_build/artifacts/copies/core-file.a"));
+    ASSERT(test_ws_host_path_exists("target_file_build/artifacts/copies/core-linker.a"));
+    TEST_PASS();
+}
+
 void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_write_file_rebases_source_and_binary_roots_for_out_of_source_nob(passed, failed, skipped);
     test_codegen_default_out_of_source_top_level_targets_build_in_binary_root(passed, failed, skipped);
@@ -503,4 +780,9 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_uses_embedded_cmake_for_runtime_steps_without_cmake_on_path(passed, failed, skipped);
     test_codegen_custom_target_dependency_runs_and_clean_removes_step_stamps(passed, failed, skipped);
     test_codegen_target_hooks_run_at_pre_link_and_post_build_boundaries(passed, failed, skipped);
+    test_codegen_mixed_c_and_cxx_compile_contexts_apply_language_options_and_standard_flags(passed, failed, skipped);
+    test_codegen_imported_static_unknown_and_interface_targets_build_and_run(passed, failed, skipped);
+    test_codegen_imported_shared_target_links_successfully(passed, failed, skipped);
+    test_codegen_debug_and_optimized_link_items_follow_generated_config(passed, failed, skipped);
+    test_codegen_build_steps_resolve_target_file_and_target_linker_file_genex(passed, failed, skipped);
 }

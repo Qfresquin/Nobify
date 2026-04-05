@@ -96,7 +96,11 @@ code.
   owns the aggregate-safe out-of-source `P1` smoke coverage for local build
   artifact placement plus aggregate-safe `P2` smoke coverage for generated
   sources, custom-target scheduling, hook ordering, and explicit `APPEND`
-  rejection.
+  rejection. `P3` extends that aggregate-safe ownership again with mixed
+  language `COMPILE_LANGUAGE` cases, imported prebuilt library coverage,
+  config-sensitive `debug`/`optimized` link selection, `TARGET_FILE*`
+  build-step argv coverage, and explicit rejection paths for unsupported genex
+  operators plus concrete `PRECOMPILE_HEADERS*` dependencies.
   Current aggregate status: included.
 
 - `artifact-parity`
@@ -108,12 +112,17 @@ code.
   explicit out-of-source build parity fixtures while keeping it outside the
   default aggregate. `P2` extends it again with real-CMake parity fixtures for
   generated-source consumers, custom-target dependency edges, and post-build
-  sidecar outputs. The suite requires a real `cmake 3.28.x` plus the
+  sidecar outputs. `P3` adds explicit-only real-CMake parity fixtures for
+  imported prebuilt libraries, config-sensitive link selection, and
+  usage-requirement propagation through `BUILD_INTERFACE`, `LINK_ONLY`, and
+  `TARGET_PROPERTY`. The suite requires a real `cmake 3.28.x` plus the
   runner-provided `CMK2NOB_TEST_NOBIFY_BIN` tool path. Generated Nob runtime
   resolution for CMake-family tools now follows this precedence:
   `NOB_CMAKE_BIN` / `NOB_CPACK_BIN` -> embedded absolute path captured by
   `nobify` at generation time -> bare `cmake` / `cpack`. The harness no
-  longer relies on PATH injection to make `cmake -E` steps work.
+  longer relies on PATH injection to make `cmake -E` steps work. Generated Nob
+  runtime config selection is now explicit through `--config <cfg>`; the empty
+  config remains the default when the flag is omitted.
   Current aggregate status: excluded from the default aggregate path.
 
 - `evaluator-integration`

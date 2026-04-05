@@ -216,6 +216,22 @@ static bool codegen_run_binary(const char *binary_path, const char *arg1, const 
     return ok;
 }
 
+static bool codegen_run_binary_argv(const char *binary_path,
+                                    const char *const *argv,
+                                    size_t argc) {
+    Nob_Cmd cmd = {0};
+    bool ok = false;
+    if (!binary_path) return false;
+    nob_cmd_append(&cmd, binary_path);
+    for (size_t i = 0; i < argc; ++i) {
+        if (!argv || !argv[i]) continue;
+        nob_cmd_append(&cmd, argv[i]);
+    }
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
+}
+
 void codegen_test_set_repo_root(const char *repo_root) {
     snprintf(s_codegen_repo_root, sizeof(s_codegen_repo_root), "%s", repo_root ? repo_root : "");
 }
@@ -316,6 +332,22 @@ bool codegen_run_binary_in_dir(const char *dir,
     memcpy(prev_cwd, cwd, strlen(cwd) + 1);
     if (!nob_set_current_dir(dir)) return false;
     ok = codegen_run_binary(binary_path, arg1, arg2);
+    if (!nob_set_current_dir(prev_cwd)) return false;
+    return ok;
+}
+
+bool codegen_run_binary_in_dir_argv(const char *dir,
+                                    const char *binary_path,
+                                    const char *const *argv,
+                                    size_t argc) {
+    char prev_cwd[_TINYDIR_PATH_MAX] = {0};
+    const char *cwd = nob_get_current_dir_temp();
+    bool ok = false;
+    if (!dir || !binary_path || !cwd) return false;
+    if (strlen(cwd) + 1 > sizeof(prev_cwd)) return false;
+    memcpy(prev_cwd, cwd, strlen(cwd) + 1);
+    if (!nob_set_current_dir(dir)) return false;
+    ok = codegen_run_binary_argv(binary_path, argv, argc);
     if (!nob_set_current_dir(prev_cwd)) return false;
     return ok;
 }

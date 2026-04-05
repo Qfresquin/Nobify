@@ -129,6 +129,15 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
             *had_error = true;
             bm_diag_error(sink, target->provenance, "build_model_validate", "structural", "target has empty name", "ensure EVENT_TARGET_DECLARE carries a target name");
         }
+        if (!target->declared) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          target->provenance,
+                          "build_model_validate",
+                          "structural",
+                          "target placeholder was never declared",
+                          "ensure target property events do not outlive a missing EVENT_TARGET_DECLARE");
+        }
         if (target->kind > BM_TARGET_UTILITY) {
             *had_error = true;
             bm_diag_error(sink, target->provenance, "build_model_validate", "structural", "target kind is invalid", "map every target type to a canonical BM_Target_Kind");
