@@ -23,6 +23,8 @@ typedef struct Nob_Codegen_Options {
     String_View binary_root;
     String_View embedded_cmake_bin;
     String_View embedded_cpack_bin;
+    String_View embedded_gzip_bin;
+    String_View embedded_xz_bin;
     Nob_Codegen_Platform target_platform;
     Nob_Codegen_Backend backend;
 } Nob_Codegen_Options;

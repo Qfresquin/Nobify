@@ -10,6 +10,8 @@
 #include <unistd.h>
 #endif
 
+static bool codegen_mkdirs(const char *path);
+
 static size_t codegen_count_substr(String_View sv, const char *needle) {
     size_t needle_len = needle ? strlen(needle) : 0;
     size_t count = 0;
@@ -19,6 +21,24 @@ static size_t codegen_count_substr(String_View sv, const char *needle) {
         count++;
     }
     return count;
+}
+
+static bool codegen_mkdirs(const char *path) {
+    char buf[_TINYDIR_PATH_MAX] = {0};
+    size_t len = 0;
+    if (!path || path[0] == '\0' || strcmp(path, ".") == 0) return true;
+    len = strlen(path);
+    if (len >= sizeof(buf)) return false;
+    memcpy(buf, path, len + 1);
+
+    for (size_t i = 1; i < len; ++i) {
+        if (buf[i] != '/') continue;
+        buf[i] = '\0';
+        if (buf[0] != '\0' && !nob_mkdir_if_not_exists(buf)) return false;
+        buf[i] = '/';
+    }
+
+    return nob_mkdir_if_not_exists(buf);
 }
 
 static bool codegen_run_argv_in_dir(const char *dir,
@@ -114,6 +134,191 @@ static bool codegen_find_first_dir_entry(const char *dir_path,
     }
     nob_dir_entry_close(dir);
     return false;
+}
+
+static bool codegen_host_program_available(const char *name) {
+    char path[_TINYDIR_PATH_MAX] = {0};
+    return name && test_ws_host_program_in_path(name, path);
+}
+
+static const char *codegen_package_extension(const char *generator) {
+    if (!generator) return "";
+    if (strcmp(generator, "TGZ") == 0) return ".tar.gz";
+    if (strcmp(generator, "TXZ") == 0) return ".tar.xz";
+    if (strcmp(generator, "ZIP") == 0) return ".zip";
+    return "";
+}
+
+static bool codegen_extract_archive_to_dir(const char *archive_path,
+                                           const char *generator,
+                                           const char *dst_dir) {
+    Nob_Cmd cmd = {0};
+    bool ok = false;
+    if (!archive_path || !generator || !dst_dir) return false;
+    if (!codegen_mkdirs(dst_dir)) return false;
+
+    if (strcmp(generator, "TGZ") == 0 || strcmp(generator, "TXZ") == 0) {
+        nob_cmd_append(&cmd, "tar", "-xf", archive_path, "-C", dst_dir);
+        ok = nob_cmd_run(&cmd);
+        nob_cmd_free(cmd);
+        return ok;
+    }
+
+    if (strcmp(generator, "ZIP") == 0) {
+        char python_bin[_TINYDIR_PATH_MAX] = {0};
+        if (!test_ws_host_program_in_path("python3", python_bin) &&
+            !test_ws_host_program_in_path("python", python_bin)) {
+            return false;
+        }
+        nob_cmd_append(&cmd,
+                       python_bin,
+                       "-c",
+                       "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])",
+                       archive_path,
+                       dst_dir);
+        ok = nob_cmd_run(&cmd);
+        nob_cmd_free(cmd);
+        return ok;
+    }
+
+    return false;
+}
+
+static bool codegen_run_package_case(const char *case_name,
+                                     const char *generator,
+                                     bool include_toplevel,
+                                     bool request_custom_output_dir,
+                                     bool run_all_generators) {
+    char script[4096] = {0};
+    char source_dir[_TINYDIR_PATH_MAX] = {0};
+    char binary_dir[_TINYDIR_PATH_MAX] = {0};
+    char input_path[_TINYDIR_PATH_MAX] = {0};
+    char output_path[_TINYDIR_PATH_MAX] = {0};
+    char nob_bin[_TINYDIR_PATH_MAX] = {0};
+    char package_dir[_TINYDIR_PATH_MAX] = {0};
+    char extract_dir[_TINYDIR_PATH_MAX] = {0};
+    char archive_path[_TINYDIR_PATH_MAX] = {0};
+    char expected_root[_TINYDIR_PATH_MAX] = {0};
+    char readme_path[_TINYDIR_PATH_MAX] = {0};
+    char header_path[_TINYDIR_PATH_MAX] = {0};
+    char export_path[_TINYDIR_PATH_MAX] = {0};
+    const char *package_file_name = NULL;
+    const char *configured_generators = NULL;
+    const char *argv[6] = {0};
+    size_t argc = 0;
+    Codegen_Test_Config config = {0};
+
+    if (!case_name || !generator) return false;
+    if ((strcmp(generator, "TGZ") == 0 && !codegen_host_program_available("gzip")) ||
+        (strcmp(generator, "TXZ") == 0 && !codegen_host_program_available("xz")) ||
+        (strcmp(generator, "ZIP") == 0 &&
+         !codegen_host_program_available("python3") &&
+         !codegen_host_program_available("python"))) {
+        return false;
+    }
+
+    if (snprintf(source_dir, sizeof(source_dir), "%s_src", case_name) >= (int)sizeof(source_dir) ||
+        snprintf(binary_dir, sizeof(binary_dir), "%s_build", case_name) >= (int)sizeof(binary_dir) ||
+        snprintf(input_path, sizeof(input_path), "%s/CMakeLists.txt", source_dir) >= (int)sizeof(input_path) ||
+        snprintf(output_path, sizeof(output_path), "%s_nob.c", case_name) >= (int)sizeof(output_path) ||
+        snprintf(nob_bin, sizeof(nob_bin), "%s_nob_gen", case_name) >= (int)sizeof(nob_bin) ||
+        snprintf(package_dir,
+                 sizeof(package_dir),
+                 "%s",
+                 request_custom_output_dir ? nob_temp_sprintf("%s_pkg_out", case_name)
+                                           : nob_temp_sprintf("%s_build/packages", case_name)) >=
+            (int)sizeof(package_dir) ||
+        snprintf(extract_dir, sizeof(extract_dir), "%s_extract", case_name) >= (int)sizeof(extract_dir)) {
+        return false;
+    }
+
+    package_file_name = strcmp(generator, "TGZ") == 0 ? "demo-pkg-tgz"
+                        : strcmp(generator, "TXZ") == 0 ? "demo-pkg-txz"
+                                                        : "demo-pkg-zip";
+    configured_generators = run_all_generators ? "TGZ;ZIP" : generator;
+
+    if (snprintf(
+            script,
+            sizeof(script),
+            "project(Test C)\n"
+            "add_library(core STATIC core.c)\n"
+            "set_target_properties(core PROPERTIES PUBLIC_HEADER include/core.h)\n"
+            "install(TARGETS core EXPORT DemoTargets ARCHIVE DESTINATION lib PUBLIC_HEADER DESTINATION include/demo)\n"
+            "install(FILES README.txt DESTINATION share/demo)\n"
+            "install(EXPORT DemoTargets DESTINATION lib/cmake/Demo FILE DemoTargets.cmake NAMESPACE Demo::)\n"
+            "set(CPACK_GENERATOR \"%s\")\n"
+            "set(CPACK_PACKAGE_NAME \"DemoPkg\")\n"
+            "set(CPACK_PACKAGE_VERSION \"1.2.3\")\n"
+            "set(CPACK_PACKAGE_FILE_NAME \"%s\")\n"
+            "set(CPACK_PACKAGE_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}/packages\")\n"
+            "set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY %s)\n"
+            "include(CPack)\n",
+            configured_generators,
+            package_file_name,
+            include_toplevel ? "ON" : "OFF") >= (int)sizeof(script)) {
+        return false;
+    }
+
+    if (!codegen_write_text_file(nob_temp_sprintf("%s/core.c", source_dir), "int core_value(void) { return 1; }\n") ||
+        !codegen_write_text_file(nob_temp_sprintf("%s/include/core.h", source_dir), "#define CORE_VALUE 1\n") ||
+        !codegen_write_text_file(nob_temp_sprintf("%s/README.txt", source_dir), "package readme\n")) {
+        return false;
+    }
+
+    config.input_path = input_path;
+    config.output_path = output_path;
+    config.source_dir = source_dir;
+    config.binary_dir = binary_dir;
+    if (!codegen_write_script_with_config(script, &config) ||
+        !codegen_compile_generated_nob(output_path, nob_bin)) {
+        return false;
+    }
+
+    argv[argc++] = "package";
+    if (!run_all_generators) {
+        argv[argc++] = "--generator";
+        argv[argc++] = generator;
+    }
+    if (request_custom_output_dir) {
+        argv[argc++] = "--output-dir";
+        argv[argc++] = package_dir;
+    }
+    if (!codegen_run_binary_in_dir_argv(".", nob_temp_sprintf("./%s", nob_bin), argv, argc) ||
+        snprintf(archive_path,
+                 sizeof(archive_path),
+                 "%s/%s%s",
+                 package_dir,
+                 package_file_name,
+                 codegen_package_extension(generator)) >= (int)sizeof(archive_path) ||
+        !test_ws_host_path_exists(archive_path)) {
+        return false;
+    }
+
+    if (test_ws_host_path_exists(extract_dir) && !test_fs_remove_tree(extract_dir)) return false;
+    if (!codegen_extract_archive_to_dir(archive_path, generator, extract_dir)) return false;
+
+    if (include_toplevel) {
+        if (snprintf(expected_root, sizeof(expected_root), "%s/%s", extract_dir, package_file_name) >=
+            (int)sizeof(expected_root)) {
+            return false;
+        }
+    } else {
+        if (snprintf(expected_root, sizeof(expected_root), "%s", extract_dir) >= (int)sizeof(expected_root)) {
+            return false;
+        }
+    }
+    if (snprintf(readme_path, sizeof(readme_path), "%s/share/demo/README.txt", expected_root) >=
+            (int)sizeof(readme_path) ||
+        snprintf(header_path, sizeof(header_path), "%s/include/demo/core.h", expected_root) >=
+            (int)sizeof(header_path) ||
+        snprintf(export_path, sizeof(export_path), "%s/lib/cmake/Demo/DemoTargets.cmake", expected_root) >=
+            (int)sizeof(export_path) ||
+        !test_ws_host_path_exists(readme_path) ||
+        !test_ws_host_path_exists(header_path) ||
+        !test_ws_host_path_exists(export_path)) {
+        return false;
+    }
+    return true;
 }
 
 TEST(codegen_write_file_rebases_source_and_binary_roots_for_out_of_source_nob) {
@@ -1148,6 +1353,53 @@ TEST(codegen_export_package_writes_registry_and_clean_preserves_it) {
     TEST_PASS();
 }
 
+TEST(codegen_package_tgz_generator_creates_archive_in_custom_output_dir) {
+    if (!codegen_host_program_available("gzip")) {
+        TEST_SKIP("requires gzip for TGZ package generation");
+    }
+    ASSERT(codegen_run_package_case("package_tgz", "TGZ", true, true, false));
+    TEST_PASS();
+}
+
+TEST(codegen_package_txz_generator_creates_archive_in_custom_output_dir) {
+    if (!codegen_host_program_available("xz")) {
+        TEST_SKIP("requires xz for TXZ package generation");
+    }
+    ASSERT(codegen_run_package_case("package_txz", "TXZ", true, true, false));
+    TEST_PASS();
+}
+
+TEST(codegen_package_zip_generator_creates_archive_in_custom_output_dir) {
+    if (!codegen_host_program_available("python3") &&
+        !codegen_host_program_available("python")) {
+        TEST_SKIP("requires python zipfile support for ZIP extraction checks");
+    }
+    ASSERT(codegen_run_package_case("package_zip", "ZIP", true, true, false));
+    TEST_PASS();
+}
+
+TEST(codegen_package_without_generator_runs_all_configured_archives) {
+    if (!codegen_host_program_available("gzip") ||
+        (!codegen_host_program_available("python3") && !codegen_host_program_available("python"))) {
+        TEST_SKIP("requires gzip and python zipfile support");
+    }
+    ASSERT(codegen_run_package_case("package_all_gens", "TGZ", true, true, true));
+    ASSERT(test_ws_host_path_exists("package_all_gens_pkg_out/demo-pkg-tgz.tar.gz"));
+    ASSERT(test_ws_host_path_exists("package_all_gens_pkg_out/demo-pkg-tgz.zip"));
+    TEST_PASS();
+}
+
+TEST(codegen_package_include_toplevel_off_places_payload_at_archive_root) {
+    if (!codegen_host_program_available("python3") &&
+        !codegen_host_program_available("python")) {
+        TEST_SKIP("requires python zipfile support for ZIP extraction checks");
+    }
+    ASSERT(codegen_run_package_case("package_zip_flat", "ZIP", false, true, false));
+    ASSERT(test_ws_host_path_exists("package_zip_flat_extract/share/demo/README.txt"));
+    ASSERT(!test_ws_host_path_exists("package_zip_flat_extract/demo-pkg-zip/share/demo/README.txt"));
+    TEST_PASS();
+}
+
 void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_write_file_rebases_source_and_binary_roots_for_out_of_source_nob(passed, failed, skipped);
     test_codegen_default_out_of_source_top_level_targets_build_in_binary_root(passed, failed, skipped);
@@ -1176,4 +1428,9 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_export_targets_writes_build_tree_exports_without_implicit_build(passed, failed, skipped);
     test_codegen_export_export_set_writes_build_tree_exports_from_install_sets(passed, failed, skipped);
     test_codegen_export_package_writes_registry_and_clean_preserves_it(passed, failed, skipped);
+    test_codegen_package_tgz_generator_creates_archive_in_custom_output_dir(passed, failed, skipped);
+    test_codegen_package_txz_generator_creates_archive_in_custom_output_dir(passed, failed, skipped);
+    test_codegen_package_zip_generator_creates_archive_in_custom_output_dir(passed, failed, skipped);
+    test_codegen_package_without_generator_runs_all_configured_archives(passed, failed, skipped);
+    test_codegen_package_include_toplevel_off_places_payload_at_archive_root(passed, failed, skipped);
 }

@@ -42,6 +42,7 @@ bool codegen_load_text_file_to_arena(Arena *arena, const char *path, String_View
 bool codegen_sv_contains(String_View sv, const char *needle);
 bool codegen_host_cmake_available(void);
 bool codegen_compile_generated_nob(const char *generated_path, const char *output_path);
+bool codegen_compile_generated_nob_strict(const char *generated_path, const char *output_path);
 bool codegen_write_text_file(const char *path, const char *text);
 bool codegen_run_binary_in_dir(const char *dir,
                                const char *binary_path,

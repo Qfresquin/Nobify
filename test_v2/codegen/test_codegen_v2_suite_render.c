@@ -102,9 +102,103 @@ TEST(codegen_runtime_emits_only_helpers_needed_for_simple_builds) {
     TEST_PASS();
 }
 
+TEST(codegen_export_only_render_does_not_emit_install_only_helpers) {
+    Nob_String_Builder sb = {0};
+    ASSERT(codegen_render_script(
+        "project(Test C)\n"
+        "add_library(core STATIC core.c)\n"
+        "export(TARGETS core FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/CoreTargets.cmake)\n",
+        "CMakeLists.txt",
+        "nob.c",
+        &sb));
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items ? sb.items : "");
+    ASSERT(strstr(output, "join_install_prefix(") == NULL);
+    ASSERT(strstr(output, "install_component_matches(") == NULL);
+    ASSERT(strstr(output, "install_copy_file(") == NULL);
+    ASSERT(strstr(output, "install_copy_directory(") == NULL);
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
+TEST(codegen_generated_nob_compiles_cleanly_with_werror_for_representative_paths) {
+    const char *install_script =
+        "project(Test C)\n"
+        "add_library(core STATIC core.c)\n"
+        "set_target_properties(core PROPERTIES PUBLIC_HEADER include/core.h)\n"
+        "add_executable(app main.c)\n"
+        "install(TARGETS app DESTINATION bin)\n"
+        "install(TARGETS core EXPORT DemoTargets ARCHIVE DESTINATION lib PUBLIC_HEADER DESTINATION include/demo)\n"
+        "install(EXPORT DemoTargets DESTINATION lib/cmake/demo FILE DemoTargets.cmake)\n";
+    const char *export_script =
+        "project(Test C)\n"
+        "add_library(core STATIC core.c)\n"
+        "export(TARGETS core FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/CoreTargets.cmake)\n";
+    const char *package_script =
+        "project(Test C)\n"
+        "add_library(core STATIC core.c)\n"
+        "install(TARGETS core EXPORT DemoTargets ARCHIVE DESTINATION lib)\n"
+        "set(CPACK_GENERATOR \"ZIP\")\n"
+        "set(CPACK_PACKAGE_NAME \"DemoPkg\")\n"
+        "set(CPACK_PACKAGE_VERSION \"1.2.3\")\n"
+        "set(CPACK_PACKAGE_FILE_NAME \"demo-pkg\")\n"
+        "include(CPack)\n";
+
+    ASSERT(codegen_write_text_file("strict_simple_src/main.c", "int main(void) { return 0; }\n"));
+    ASSERT(codegen_write_script_with_config(
+        "project(Test C)\n"
+        "add_executable(app main.c)\n",
+        &(Codegen_Test_Config){
+            .input_path = "strict_simple_src/CMakeLists.txt",
+            .output_path = "strict_simple_nob.c",
+            .source_dir = "strict_simple_src",
+            .binary_dir = "strict_simple_build",
+        }));
+    ASSERT(codegen_compile_generated_nob_strict("strict_simple_nob.c", "strict_simple_nob_gen"));
+
+    ASSERT(codegen_write_text_file("strict_install_src/core.c", "int core_value(void) { return 1; }\n"));
+    ASSERT(codegen_write_text_file("strict_install_src/include/core.h", "#define CORE_VALUE 1\n"));
+    ASSERT(codegen_write_text_file("strict_install_src/main.c", "int main(void) { return 0; }\n"));
+    ASSERT(codegen_write_script_with_config(
+        install_script,
+        &(Codegen_Test_Config){
+            .input_path = "strict_install_src/CMakeLists.txt",
+            .output_path = "strict_install_nob.c",
+            .source_dir = "strict_install_src",
+            .binary_dir = "strict_install_build",
+        }));
+    ASSERT(codegen_compile_generated_nob_strict("strict_install_nob.c", "strict_install_nob_gen"));
+
+    ASSERT(codegen_write_text_file("strict_export_src/core.c", "int core_value(void) { return 1; }\n"));
+    ASSERT(codegen_write_script_with_config(
+        export_script,
+        &(Codegen_Test_Config){
+            .input_path = "strict_export_src/CMakeLists.txt",
+            .output_path = "strict_export_nob.c",
+            .source_dir = "strict_export_src",
+            .binary_dir = "strict_export_build",
+        }));
+    ASSERT(codegen_compile_generated_nob_strict("strict_export_nob.c", "strict_export_nob_gen"));
+
+    ASSERT(codegen_write_text_file("strict_package_src/core.c", "int core_value(void) { return 1; }\n"));
+    ASSERT(codegen_write_script_with_config(
+        package_script,
+        &(Codegen_Test_Config){
+            .input_path = "strict_package_src/CMakeLists.txt",
+            .output_path = "strict_package_nob.c",
+            .source_dir = "strict_package_src",
+            .binary_dir = "strict_package_build",
+        }));
+    ASSERT(codegen_compile_generated_nob_strict("strict_package_nob.c", "strict_package_nob_gen"));
+
+    TEST_PASS();
+}
+
 void run_codegen_v2_render_tests(int *passed, int *failed, int *skipped) {
     test_codegen_simple_executable_generates_compilable_nob(passed, failed, skipped);
     test_codegen_static_interface_alias_usage_propagates_flags(passed, failed, skipped);
     test_codegen_output_properties_shape_artifact_paths(passed, failed, skipped);
     test_codegen_runtime_emits_only_helpers_needed_for_simple_builds(passed, failed, skipped);
+    test_codegen_export_only_render_does_not_emit_install_only_helpers(passed, failed, skipped);
+    test_codegen_generated_nob_compiles_cleanly_with_werror_for_representative_paths(passed, failed, skipped);
 }

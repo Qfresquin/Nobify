@@ -1,5 +1,5 @@
 MODULE pipeline_build_graph
-CASES 1
+CASES 2
 
 === CASE build_graph_generated_source_and_hooks ===
 EVAL_OK 1
@@ -17,10 +17,29 @@ EXPORTS count=3
 EXPORT[0] kind=BUILD_TREE source=TARGETS name='HelperTargets' namespace='Demo::' output='graph_build/exports/HelperTargets.cmake' registry_prefix='' enabled=1 targets=1
 EXPORT[1] kind=BUILD_TREE source=EXPORT_SET name='DemoTargets' namespace='Demo::' output='graph_build/exports/DemoTargets.cmake' registry_prefix='' enabled=1 targets=1
 EXPORT[2] kind=PACKAGE_REGISTRY source=PACKAGE name='DemoPkg' namespace='' output='' registry_prefix='graph_build' enabled=1 targets=0
+CPACK_PACKAGES count=0
 TARGET name='helper' source_count=1
 SOURCE[0] generated=0 producer=INVALID effective='graph_src/helper.c'
 TARGET name='prepare' source_count=0
 TARGET name='app' source_count=2
 SOURCE[0] generated=0 producer=INVALID effective='graph_src/main.c'
 SOURCE[1] generated=1 producer=0 effective='graph_build/generated.c'
+=== END CASE ===
+
+=== CASE cpack_package_plan_snapshot ===
+EVAL_OK 1
+BUILDER_OK 1
+FREEZE_OK 1
+DIAG errors=1 warnings=0
+EVENTS count=32
+BUILD_STEPS count=0
+EXPORTS count=0
+CPACK_PACKAGES count=1
+CPACK_PACKAGE[0] name='PackDemo' version='1.0.0' file='pack-demo' output='graph_build/packages/out' include_toplevel=0 archive_component_install=0 generators=2 components=2
+GENERATOR 'TGZ'
+GENERATOR 'ZIP'
+COMPONENT 'Runtime'
+COMPONENT 'Development'
+TARGET name='core' source_count=1
+SOURCE[0] generated=0 producer=INVALID effective='graph_src/core.c'
 === END CASE ===

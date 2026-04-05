@@ -39,6 +39,7 @@ typedef uint32_t BM_Package_Id;
 typedef uint32_t BM_CPack_Install_Type_Id;
 typedef uint32_t BM_CPack_Component_Group_Id;
 typedef uint32_t BM_CPack_Component_Id;
+typedef uint32_t BM_CPack_Package_Id;
 
 #define BM_DIRECTORY_ID_INVALID ((BM_Directory_Id)UINT32_MAX)
 #define BM_TARGET_ID_INVALID ((BM_Target_Id)UINT32_MAX)
@@ -50,6 +51,7 @@ typedef uint32_t BM_CPack_Component_Id;
 #define BM_CPACK_INSTALL_TYPE_ID_INVALID ((BM_CPack_Install_Type_Id)UINT32_MAX)
 #define BM_CPACK_COMPONENT_GROUP_ID_INVALID ((BM_CPack_Component_Group_Id)UINT32_MAX)
 #define BM_CPACK_COMPONENT_ID_INVALID ((BM_CPack_Component_Id)UINT32_MAX)
+#define BM_CPACK_PACKAGE_ID_INVALID ((BM_CPack_Package_Id)UINT32_MAX)
 
 typedef struct {
     const String_View *items;
@@ -60,6 +62,16 @@ typedef struct {
     const BM_Target_Id *items;
     size_t count;
 } BM_Target_Id_Span;
+
+typedef struct {
+    const BM_Install_Rule_Id *items;
+    size_t count;
+} BM_Install_Rule_Id_Span;
+
+typedef struct {
+    const BM_Export_Id *items;
+    size_t count;
+} BM_Export_Id_Span;
 
 typedef struct {
     const BM_Build_Step_Id *items;

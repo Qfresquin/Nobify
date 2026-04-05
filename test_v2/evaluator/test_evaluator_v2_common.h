@@ -563,6 +563,8 @@ static const char *snapshot_event_kind_name(const Cmake_Event *ev) {
         case EV_CPACK_ADD_INSTALL_TYPE: return "EV_CPACK_ADD_INSTALL_TYPE";
         case EV_CPACK_ADD_COMPONENT_GROUP: return "EV_CPACK_ADD_COMPONENT_GROUP";
         case EV_CPACK_ADD_COMPONENT: return "EV_CPACK_ADD_COMPONENT";
+        case EV_CPACK_PACKAGE_DECLARE: return "EV_CPACK_PACKAGE_DECLARE";
+        case EV_CPACK_PACKAGE_ADD_GENERATOR: return "EV_CPACK_PACKAGE_ADD_GENERATOR";
         case EV_FIND_PACKAGE: return "EV_FIND_PACKAGE";
         default: return "EV_UNKNOWN";
     }
@@ -606,6 +608,8 @@ static bool snapshot_event_is_visible(const Cmake_Event *ev) {
         case EV_CPACK_ADD_INSTALL_TYPE:
         case EV_CPACK_ADD_COMPONENT_GROUP:
         case EV_CPACK_ADD_COMPONENT:
+        case EV_CPACK_PACKAGE_DECLARE:
+        case EV_CPACK_PACKAGE_ADD_GENERATOR:
         case EV_FIND_PACKAGE:
             return true;
         default:
@@ -916,6 +920,32 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
                 ev->as.cpack_add_component.hidden ? 1 : 0,
                 ev->as.cpack_add_component.disabled ? 1 : 0,
                 ev->as.cpack_add_component.downloaded ? 1 : 0));
+            break;
+
+        case EV_CPACK_PACKAGE_DECLARE:
+            nob_sb_append_cstr(sb, " key=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_package_declare.package_key);
+            nob_sb_append_cstr(sb, " name=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_package_declare.package_name);
+            nob_sb_append_cstr(sb, " version=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_package_declare.package_version);
+            nob_sb_append_cstr(sb, " file_name=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_package_declare.package_file_name);
+            nob_sb_append_cstr(sb, " package_directory=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_package_declare.package_directory);
+            nob_sb_append_cstr(sb, " components_all=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_package_declare.components_all);
+            nob_sb_append_cstr(sb,
+                               nob_temp_sprintf(" include_toplevel=%d archive_component_install=%d",
+                                                ev->as.cpack_package_declare.include_toplevel_directory ? 1 : 0,
+                                                ev->as.cpack_package_declare.archive_component_install ? 1 : 0));
+            break;
+
+        case EV_CPACK_PACKAGE_ADD_GENERATOR:
+            nob_sb_append_cstr(sb, " key=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_package_add_generator.package_key);
+            nob_sb_append_cstr(sb, " generator=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_package_add_generator.generator);
             break;
 
         case EV_FIND_PACKAGE:

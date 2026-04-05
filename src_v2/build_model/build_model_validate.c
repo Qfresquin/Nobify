@@ -298,6 +298,53 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
         bm_validate_owner_directory(draft, record->owner_directory_id, record->provenance, "cpack component", sink, had_error);
     }
 
+    for (size_t i = 0; i < arena_arr_len(draft->cpack_packages); ++i) {
+        const BM_CPack_Package_Record *record = &draft->cpack_packages[i];
+        bm_validate_contiguous_id(record->id == (BM_CPack_Package_Id)i,
+                                  record->provenance,
+                                  sink,
+                                  had_error,
+                                  "CPack package id mismatch",
+                                  "CPack package ids must be contiguous");
+        if (bm_string_view_is_empty(record->package_key)) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          record->provenance,
+                          "build_model_validate",
+                          "structural",
+                          "CPack package snapshot is missing key",
+                          "package snapshots require a stable package key");
+        }
+        if (bm_string_view_is_empty(record->package_name)) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          record->provenance,
+                          "build_model_validate",
+                          "structural",
+                          "CPack package snapshot is missing package name",
+                          "package snapshots require an effective package name");
+        }
+        if (bm_string_view_is_empty(record->package_file_name)) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          record->provenance,
+                          "build_model_validate",
+                          "structural",
+                          "CPack package snapshot is missing package file name",
+                          "package snapshots require an effective package file name");
+        }
+        if (arena_arr_len(record->generators) == 0) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          record->provenance,
+                          "build_model_validate",
+                          "structural",
+                          "CPack package snapshot has no generators",
+                          "package snapshots require at least one effective generator");
+        }
+        bm_validate_owner_directory(draft, record->owner_directory_id, record->provenance, "cpack package", sink, had_error);
+    }
+
     return true;
 }
 

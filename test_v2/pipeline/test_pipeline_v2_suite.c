@@ -185,6 +185,7 @@ static void append_pipeline_build_graph_snapshot(Nob_String_Builder *sb, const B
     size_t build_step_count = bm_query_build_step_count(model);
     size_t target_count = bm_query_target_count(model);
     size_t export_count = bm_query_export_count(model);
+    size_t cpack_package_count = bm_query_cpack_package_count(model);
     Arena *scratch = arena_create(64 * 1024);
 
     nob_sb_append_cstr(sb, nob_temp_sprintf("BUILD_STEPS count=%zu\n", build_step_count));
@@ -232,6 +233,41 @@ static void append_pipeline_build_graph_snapshot(Nob_String_Builder *sb, const B
         nob_sb_append_cstr(sb, nob_temp_sprintf(" enabled=%d targets=%zu\n",
                                                 bm_query_export_enabled(model, export_id) ? 1 : 0,
                                                 targets.count));
+    }
+
+    nob_sb_append_cstr(sb, nob_temp_sprintf("CPACK_PACKAGES count=%zu\n", cpack_package_count));
+    for (size_t i = 0; i < cpack_package_count; ++i) {
+        BM_CPack_Package_Id package_id = (BM_CPack_Package_Id)i;
+        BM_String_Span generators = bm_query_cpack_package_generators(model, package_id);
+        BM_String_Span components = bm_query_cpack_package_components_all(model, package_id);
+        nob_sb_append_cstr(sb, nob_temp_sprintf("CPACK_PACKAGE[%zu] name=", i));
+        test_snapshot_append_escaped_sv(sb, bm_query_cpack_package_name(model, package_id));
+        nob_sb_append_cstr(sb, " version=");
+        test_snapshot_append_escaped_sv(sb, bm_query_cpack_package_version(model, package_id));
+        nob_sb_append_cstr(sb, " file=");
+        test_snapshot_append_escaped_sv(sb, bm_query_cpack_package_file_name(model, package_id));
+        nob_sb_append_cstr(sb, " output=");
+        test_snapshot_append_escaped_sv(sb,
+                                        scratch
+                                            ? pipeline_stable_path_in_workspace(
+                                                  scratch,
+                                                  bm_query_cpack_package_output_directory(model, package_id, scratch))
+                                            : nob_sv_from_cstr(""));
+        nob_sb_append_cstr(sb, nob_temp_sprintf(" include_toplevel=%d archive_component_install=%d generators=%zu components=%zu\n",
+                                                bm_query_cpack_package_include_toplevel_directory(model, package_id) ? 1 : 0,
+                                                bm_query_cpack_package_archive_component_install(model, package_id) ? 1 : 0,
+                                                generators.count,
+                                                components.count));
+        for (size_t generator_index = 0; generator_index < generators.count; ++generator_index) {
+            nob_sb_append_cstr(sb, "GENERATOR ");
+            test_snapshot_append_escaped_sv(sb, generators.items[generator_index]);
+            nob_sb_append_cstr(sb, "\n");
+        }
+        for (size_t component_index = 0; component_index < components.count; ++component_index) {
+            nob_sb_append_cstr(sb, "COMPONENT ");
+            test_snapshot_append_escaped_sv(sb, components.items[component_index]);
+            nob_sb_append_cstr(sb, "\n");
+        }
     }
 
     for (size_t target_index = 0; target_index < target_count; ++target_index) {

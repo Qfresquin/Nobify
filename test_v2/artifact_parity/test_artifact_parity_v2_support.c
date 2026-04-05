@@ -488,6 +488,213 @@ static bool artifact_parity_append_file_sha256_manifest(Arena *arena,
     return true;
 }
 
+static bool artifact_parity_cstr_has_suffix(const char *value, const char *suffix) {
+    size_t value_len = value ? strlen(value) : 0;
+    size_t suffix_len = suffix ? strlen(suffix) : 0;
+    if (!value || !suffix || suffix_len > value_len) return false;
+    return memcmp(value + value_len - suffix_len, suffix, suffix_len) == 0;
+}
+
+static const char *artifact_parity_package_generator_from_path(const char *path) {
+    if (!path) return NULL;
+    if (artifact_parity_cstr_has_suffix(path, ".tar.gz")) return "TGZ";
+    if (artifact_parity_cstr_has_suffix(path, ".tar.xz")) return "TXZ";
+    if (artifact_parity_cstr_has_suffix(path, ".zip")) return "ZIP";
+    return NULL;
+}
+
+static bool artifact_parity_find_python_bin(char out_path[_TINYDIR_PATH_MAX]) {
+    if (!out_path) return false;
+    return test_ws_host_program_in_path("python3", out_path) ||
+           test_ws_host_program_in_path("python", out_path);
+}
+
+static bool artifact_parity_extract_archive_to_dir(const char *archive_path,
+                                                   const char *generator,
+                                                   char out_dir[_TINYDIR_PATH_MAX]) {
+    Nob_Cmd cmd = {0};
+    bool ok = false;
+#if defined(_WIN32)
+    (void)archive_path;
+    (void)generator;
+    (void)out_dir;
+    return false;
+#else
+    char temp_template[] = "/tmp/cmk2nob_pkg_extract_XXXXXX";
+    char python_bin[_TINYDIR_PATH_MAX] = {0};
+    if (!archive_path || !generator || !out_dir) return false;
+    if (!mkdtemp(temp_template)) return false;
+    if (!artifact_parity_copy_string(temp_template, out_dir)) return false;
+
+    if (strcmp(generator, "TGZ") == 0 || strcmp(generator, "TXZ") == 0) {
+        nob_cmd_append(&cmd, "tar", "-xf", archive_path, "-C", out_dir);
+        ok = nob_cmd_run(&cmd);
+        nob_cmd_free(cmd);
+        return ok;
+    }
+
+    if (strcmp(generator, "ZIP") == 0) {
+        if (!artifact_parity_find_python_bin(python_bin)) return false;
+        nob_cmd_append(&cmd,
+                       python_bin,
+                       "-c",
+                       "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])",
+                       archive_path,
+                       out_dir);
+        ok = nob_cmd_run(&cmd);
+        nob_cmd_free(cmd);
+        return ok;
+    }
+
+    return false;
+#endif
+}
+
+static bool artifact_parity_append_tree_with_hashes_manifest(Arena *arena,
+                                                             Nob_String_Builder *sb,
+                                                             const char *abs_path) {
+    Test_Fs_Path_Info info = {0};
+    Artifact_Parity_Tree_Entry *entries = NULL;
+    if (!arena || !sb || !abs_path) return false;
+    if (!test_fs_get_path_info(abs_path, &info)) return false;
+
+    if (!info.exists) {
+        nob_sb_append_cstr(sb, "EXTRACT_ROOT MISSING\n");
+        return true;
+    }
+
+    nob_sb_append_cstr(sb, "EXTRACT_ROOT ");
+    nob_sb_append_cstr(sb, info.is_link_like ? "LINK" : (info.is_dir ? "DIR" : "FILE"));
+    nob_sb_append_cstr(sb, "\n");
+
+    if (!artifact_parity_collect_tree_entries(arena, abs_path, "", &entries)) return false;
+    if (arena_arr_len(entries) > 1) {
+        qsort(entries,
+              arena_arr_len(entries),
+              sizeof(entries[0]),
+              artifact_parity_tree_entry_compare);
+    }
+
+    for (size_t i = 0; i < arena_arr_len(entries); ++i) {
+        char entry_abs[_TINYDIR_PATH_MAX] = {0};
+        nob_sb_append_cstr(sb, artifact_parity_tree_entry_kind_name(entries[i].kind));
+        nob_sb_append_cstr(sb, " ");
+        test_snapshot_append_escaped_sv(sb, entries[i].relpath);
+        if (entries[i].kind == ARTIFACT_PARITY_TREE_ENTRY_FILE) {
+            String_View hash = {0};
+            struct stat st = {0};
+            if (!test_fs_join_path(abs_path, nob_temp_sv_to_cstr(entries[i].relpath), entry_abs) ||
+                stat(entry_abs, &st) != 0) {
+                return false;
+            }
+            hash = artifact_parity_hash_file_sha256_to_arena(arena, entry_abs);
+            if (hash.count == 0) return false;
+            nob_sb_append_cstr(sb, " size=");
+            nob_sb_append_cstr(sb, nob_temp_sprintf("%llu", (unsigned long long)st.st_size));
+            nob_sb_append_cstr(sb, " sha256=");
+            test_snapshot_append_escaped_sv(sb, hash);
+        }
+        nob_sb_append_cstr(sb, "\n");
+    }
+    return true;
+}
+
+static bool artifact_parity_append_package_metadata_entry(Arena *arena,
+                                                          Nob_String_Builder *sb,
+                                                          const char *archive_abs_path,
+                                                          const char *archive_relpath) {
+    Test_Fs_Path_Info info = {0};
+    String_View hash = {0};
+    char extract_dir[_TINYDIR_PATH_MAX] = {0};
+    const char *generator = artifact_parity_package_generator_from_path(archive_abs_path);
+    struct stat st = {0};
+    if (!arena || !sb || !archive_abs_path || !archive_relpath || !generator) return false;
+    if (!test_fs_get_path_info(archive_abs_path, &info) ||
+        !info.exists ||
+        info.is_dir ||
+        stat(archive_abs_path, &st) != 0) {
+        return false;
+    }
+    hash = artifact_parity_hash_file_sha256_to_arena(arena, archive_abs_path);
+    if (hash.count == 0) return false;
+
+    nob_sb_append_cstr(sb, "PACKAGE generator=");
+    nob_sb_append_cstr(sb, generator);
+    nob_sb_append_cstr(sb, " file=");
+    test_snapshot_append_escaped_sv(sb, nob_sv_from_cstr(archive_relpath));
+    nob_sb_append_cstr(sb, " size=");
+    nob_sb_append_cstr(sb, nob_temp_sprintf("%llu", (unsigned long long)st.st_size));
+    nob_sb_append_cstr(sb, " sha256=");
+    test_snapshot_append_escaped_sv(sb, hash);
+    nob_sb_append_cstr(sb, "\n");
+
+    if (!artifact_parity_extract_archive_to_dir(archive_abs_path, generator, extract_dir)) return false;
+    if (!artifact_parity_append_tree_with_hashes_manifest(arena, sb, extract_dir)) {
+        (void)test_fs_remove_tree(extract_dir);
+        return false;
+    }
+    if (!test_fs_remove_tree(extract_dir)) return false;
+    nob_sb_append_cstr(sb, "\n");
+    return true;
+}
+
+static bool artifact_parity_append_package_metadata_manifest(Arena *arena,
+                                                             Nob_String_Builder *sb,
+                                                             const char *abs_path) {
+    Test_Fs_Path_Info info = {0};
+    Artifact_Parity_Tree_Entry *entries = NULL;
+    size_t package_count = 0;
+    if (!arena || !sb || !abs_path) return false;
+    if (!test_fs_get_path_info(abs_path, &info)) return false;
+
+    if (!info.exists) {
+        nob_sb_append_cstr(sb, "STATUS MISSING\n");
+        return true;
+    }
+
+    nob_sb_append_cstr(sb, "STATUS PRESENT\n");
+    if (!info.is_dir) {
+        const char *generator = artifact_parity_package_generator_from_path(abs_path);
+        nob_sb_append_cstr(sb, "PACKAGE_COUNT ");
+        nob_sb_append_cstr(sb, generator ? "1\n" : "0\n");
+        if (generator) {
+            return artifact_parity_append_package_metadata_entry(arena,
+                                                                 sb,
+                                                                 abs_path,
+                                                                 nob_temp_file_name(abs_path));
+        }
+        return true;
+    }
+
+    if (!artifact_parity_collect_tree_entries(arena, abs_path, "", &entries)) return false;
+    if (arena_arr_len(entries) > 1) {
+        qsort(entries,
+              arena_arr_len(entries),
+              sizeof(entries[0]),
+              artifact_parity_tree_entry_compare);
+    }
+
+    for (size_t i = 0; i < arena_arr_len(entries); ++i) {
+        if (entries[i].kind != ARTIFACT_PARITY_TREE_ENTRY_FILE) continue;
+        if (artifact_parity_package_generator_from_path(nob_temp_sv_to_cstr(entries[i].relpath))) {
+            package_count++;
+        }
+    }
+
+    nob_sb_append_cstr(sb, "PACKAGE_COUNT ");
+    nob_sb_append_cstr(sb, nob_temp_sprintf("%zu\n", package_count));
+    for (size_t i = 0; i < arena_arr_len(entries); ++i) {
+        char archive_abs[_TINYDIR_PATH_MAX] = {0};
+        const char *rel_cstr = NULL;
+        if (entries[i].kind != ARTIFACT_PARITY_TREE_ENTRY_FILE) continue;
+        rel_cstr = nob_temp_sv_to_cstr(entries[i].relpath);
+        if (!artifact_parity_package_generator_from_path(rel_cstr)) continue;
+        if (!test_fs_join_path(abs_path, rel_cstr, archive_abs)) return false;
+        if (!artifact_parity_append_package_metadata_entry(arena, sb, archive_abs, rel_cstr)) return false;
+    }
+    return true;
+}
+
 void artifact_parity_test_set_repo_root(const char *repo_root) {
     snprintf(s_artifact_parity_repo_root,
              sizeof(s_artifact_parity_repo_root),
@@ -857,7 +1064,12 @@ bool artifact_parity_capture_manifest(
                 break;
 
             case ARTIFACT_PARITY_CAPTURE_FILE_TEXT:
-                if (!artifact_parity_append_file_text_manifest(arena, &sb, abs_path)) {
+                if (request->domain == ARTIFACT_PARITY_DOMAIN_PACKAGE_METADATA) {
+                    if (!artifact_parity_append_package_metadata_manifest(arena, &sb, abs_path)) {
+                        nob_sb_free(sb);
+                        return false;
+                    }
+                } else if (!artifact_parity_append_file_text_manifest(arena, &sb, abs_path)) {
                     nob_sb_free(sb);
                     return false;
                 }

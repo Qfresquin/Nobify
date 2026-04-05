@@ -37,6 +37,7 @@ size_t bm_query_package_count(const Build_Model *model);
 size_t bm_query_cpack_install_type_count(const Build_Model *model);
 size_t bm_query_cpack_component_group_count(const Build_Model *model);
 size_t bm_query_cpack_component_count(const Build_Model *model);
+size_t bm_query_cpack_package_count(const Build_Model *model);
 
 String_View bm_query_project_name(const Build_Model *model);
 String_View bm_query_project_version(const Build_Model *model);
@@ -282,6 +283,12 @@ String_View bm_query_install_rule_runtime_destination(const Build_Model *model, 
 String_View bm_query_install_rule_includes_destination(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_public_header_destination(const Build_Model *model, BM_Install_Rule_Id id);
 BM_Target_Id bm_query_install_rule_target(const Build_Model *model, BM_Install_Rule_Id id);
+BM_Install_Rule_Id bm_query_install_rule_for_export_target(const Build_Model *model,
+                                                           BM_Export_Id export_id,
+                                                           BM_Target_Id target_id);
+BM_Install_Rule_Id_Span bm_query_install_rules_for_component(const Build_Model *model,
+                                                             String_View component,
+                                                             Arena *scratch);
 
 BM_Export_Kind bm_query_export_kind(const Build_Model *model, BM_Export_Id id);
 BM_Export_Source_Kind bm_query_export_source_kind(const Build_Model *model, BM_Export_Id id);
@@ -298,6 +305,9 @@ String_View bm_query_export_package_name(const Build_Model *model, BM_Export_Id 
 String_View bm_query_export_registry_prefix(const Build_Model *model, BM_Export_Id id);
 String_View bm_query_export_cxx_modules_directory(const Build_Model *model, BM_Export_Id id);
 bool bm_query_export_append(const Build_Model *model, BM_Export_Id id);
+BM_Export_Id_Span bm_query_exports_for_component(const Build_Model *model,
+                                                 String_View component,
+                                                 Arena *scratch);
 
 String_View bm_query_package_name(const Build_Model *model, BM_Package_Id id);
 BM_Directory_Id bm_query_package_owner_directory(const Build_Model *model, BM_Package_Id id);
@@ -307,10 +317,12 @@ bool bm_query_package_found(const Build_Model *model, BM_Package_Id id);
 bool bm_query_package_required(const Build_Model *model, BM_Package_Id id);
 bool bm_query_package_quiet(const Build_Model *model, BM_Package_Id id);
 
+BM_CPack_Install_Type_Id bm_query_cpack_install_type_by_name(const Build_Model *model, String_View name);
 String_View bm_query_cpack_install_type_name(const Build_Model *model, BM_CPack_Install_Type_Id id);
 String_View bm_query_cpack_install_type_display_name(const Build_Model *model, BM_CPack_Install_Type_Id id);
 BM_Directory_Id bm_query_cpack_install_type_owner_directory(const Build_Model *model, BM_CPack_Install_Type_Id id);
 
+BM_CPack_Component_Group_Id bm_query_cpack_component_group_by_name(const Build_Model *model, String_View name);
 String_View bm_query_cpack_component_group_name(const Build_Model *model, BM_CPack_Component_Group_Id id);
 String_View bm_query_cpack_component_group_display_name(const Build_Model *model, BM_CPack_Component_Group_Id id);
 String_View bm_query_cpack_component_group_description(const Build_Model *model, BM_CPack_Component_Group_Id id);
@@ -319,12 +331,19 @@ BM_Directory_Id bm_query_cpack_component_group_owner_directory(const Build_Model
 bool bm_query_cpack_component_group_expanded(const Build_Model *model, BM_CPack_Component_Group_Id id);
 bool bm_query_cpack_component_group_bold_title(const Build_Model *model, BM_CPack_Component_Group_Id id);
 
+BM_CPack_Component_Id bm_query_cpack_component_by_name(const Build_Model *model, String_View name);
 String_View bm_query_cpack_component_name(const Build_Model *model, BM_CPack_Component_Id id);
 String_View bm_query_cpack_component_display_name(const Build_Model *model, BM_CPack_Component_Id id);
 String_View bm_query_cpack_component_description(const Build_Model *model, BM_CPack_Component_Id id);
 BM_CPack_Component_Group_Id bm_query_cpack_component_group(const Build_Model *model, BM_CPack_Component_Id id);
 BM_CPack_Component_Id_Span bm_query_cpack_component_dependencies(const Build_Model *model, BM_CPack_Component_Id id);
 BM_CPack_Install_Type_Id_Span bm_query_cpack_component_install_types(const Build_Model *model, BM_CPack_Component_Id id);
+BM_Install_Rule_Id_Span bm_query_cpack_component_install_rules(const Build_Model *model,
+                                                               BM_CPack_Component_Id id,
+                                                               Arena *scratch);
+BM_Export_Id_Span bm_query_cpack_component_exports(const Build_Model *model,
+                                                   BM_CPack_Component_Id id,
+                                                   Arena *scratch);
 String_View bm_query_cpack_component_archive_file(const Build_Model *model, BM_CPack_Component_Id id);
 String_View bm_query_cpack_component_plist(const Build_Model *model, BM_CPack_Component_Id id);
 bool bm_query_cpack_component_required(const Build_Model *model, BM_CPack_Component_Id id);
@@ -332,5 +351,15 @@ bool bm_query_cpack_component_hidden(const Build_Model *model, BM_CPack_Componen
 bool bm_query_cpack_component_disabled(const Build_Model *model, BM_CPack_Component_Id id);
 bool bm_query_cpack_component_downloaded(const Build_Model *model, BM_CPack_Component_Id id);
 BM_Directory_Id bm_query_cpack_component_owner_directory(const Build_Model *model, BM_CPack_Component_Id id);
+
+BM_Directory_Id bm_query_cpack_package_owner_directory(const Build_Model *model, BM_CPack_Package_Id id);
+String_View bm_query_cpack_package_name(const Build_Model *model, BM_CPack_Package_Id id);
+String_View bm_query_cpack_package_version(const Build_Model *model, BM_CPack_Package_Id id);
+String_View bm_query_cpack_package_file_name(const Build_Model *model, BM_CPack_Package_Id id);
+String_View bm_query_cpack_package_output_directory(const Build_Model *model, BM_CPack_Package_Id id, Arena *scratch);
+BM_String_Span bm_query_cpack_package_generators(const Build_Model *model, BM_CPack_Package_Id id);
+bool bm_query_cpack_package_include_toplevel_directory(const Build_Model *model, BM_CPack_Package_Id id);
+bool bm_query_cpack_package_archive_component_install(const Build_Model *model, BM_CPack_Package_Id id);
+BM_String_Span bm_query_cpack_package_components_all(const Build_Model *model, BM_CPack_Package_Id id);
 
 #endif

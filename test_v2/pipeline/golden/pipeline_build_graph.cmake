@@ -20,3 +20,18 @@ add_custom_command(TARGET app PRE_BUILD COMMAND echo before BYPRODUCTS before.tx
 add_custom_command(TARGET app PRE_LINK COMMAND echo pre BYPRODUCTS pre.txt)
 add_custom_command(TARGET app POST_BUILD COMMAND echo post BYPRODUCTS post.txt)
 #@@ENDCASE
+
+#@@CASE cpack_package_plan_snapshot
+project(PackDemo C)
+add_library(core STATIC core.c)
+install(TARGETS core DESTINATION lib)
+set(CPACK_GENERATOR "TGZ;ZIP")
+set(CPACK_PACKAGE_NAME "PackDemo")
+set(CPACK_PACKAGE_VERSION "1.0.0")
+set(CPACK_PACKAGE_FILE_NAME "pack-demo")
+set(CPACK_PACKAGE_DIRECTORY packages/out)
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
+set(CPACK_ARCHIVE_COMPONENT_INSTALL OFF)
+set(CPACK_COMPONENTS_ALL Runtime Development)
+include(CPack)
+#@@ENDCASE

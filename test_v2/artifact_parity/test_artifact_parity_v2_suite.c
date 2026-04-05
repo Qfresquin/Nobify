@@ -765,7 +765,7 @@ static const Artifact_Parity_Case s_install_component_default_case = {
 static const Artifact_Parity_Manifest_Request s_empty_export_package_manifest_requests[] = {
     {ARTIFACT_PARITY_DOMAIN_EXPORT_FILES, ARTIFACT_PARITY_CAPTURE_TREE, "export_files", "exports"},
     {ARTIFACT_PARITY_DOMAIN_PACKAGE_FILES, ARTIFACT_PARITY_CAPTURE_TREE, "package_files", "packages"},
-    {ARTIFACT_PARITY_DOMAIN_PACKAGE_METADATA, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "package_metadata", "package_metadata.txt"},
+    {ARTIFACT_PARITY_DOMAIN_PACKAGE_METADATA, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "package_metadata", "packages"},
 };
 
 static const Artifact_Parity_File s_empty_export_package_files[] = {
@@ -931,6 +931,151 @@ static const Artifact_Parity_Case s_export_package_case = {
     .nob_base_dir = "export_pkg_nob_home",
     .subject = "export_package_registry",
     .verify = artifact_parity_verify_export_package_case,
+};
+
+static const Artifact_Parity_Manifest_Request s_package_archive_manifest_requests[] = {
+    {ARTIFACT_PARITY_DOMAIN_PACKAGE_FILES, ARTIFACT_PARITY_CAPTURE_TREE, "package_files", "packages"},
+    {ARTIFACT_PARITY_DOMAIN_PACKAGE_METADATA, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "package_metadata", "packages"},
+};
+
+static const Artifact_Parity_File s_package_tgz_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityPackageTGZ LANGUAGES C)\n"
+        "add_library(core STATIC core.c)\n"
+        "set_target_properties(core PROPERTIES PUBLIC_HEADER include/core.h)\n"
+        "install(TARGETS core EXPORT DemoTargets ARCHIVE DESTINATION lib PUBLIC_HEADER DESTINATION include/demo)\n"
+        "install(FILES README.txt DESTINATION share/demo)\n"
+        "install(DIRECTORY assets/ DESTINATION share/assets)\n"
+        "install(EXPORT DemoTargets DESTINATION lib/cmake/Demo FILE DemoTargets.cmake NAMESPACE Demo::)\n"
+        "set(CPACK_GENERATOR \"TGZ\")\n"
+        "set(CPACK_PACKAGE_NAME \"DemoPkg\")\n"
+        "set(CPACK_PACKAGE_VERSION \"1.2.3\")\n"
+        "set(CPACK_PACKAGE_FILE_NAME \"demo-pkg-tgz\")\n"
+        "set(CPACK_PACKAGE_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}/packages\")\n"
+        "set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)\n"
+        "include(CPack)\n",
+    },
+    {"core.c", "int core_value(void) { return 11; }\n"},
+    {"include/core.h", "#define CORE_VALUE 11\n"},
+    {"README.txt", "package tgz readme\n"},
+    {"assets/data.txt", "asset tgz\n"},
+};
+
+static const Artifact_Parity_File s_package_txz_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityPackageTXZ LANGUAGES C)\n"
+        "add_library(core STATIC core.c)\n"
+        "set_target_properties(core PROPERTIES PUBLIC_HEADER include/core.h)\n"
+        "install(TARGETS core EXPORT DemoTargets ARCHIVE DESTINATION lib PUBLIC_HEADER DESTINATION include/demo)\n"
+        "install(FILES README.txt DESTINATION share/demo)\n"
+        "install(DIRECTORY assets/ DESTINATION share/assets)\n"
+        "install(EXPORT DemoTargets DESTINATION lib/cmake/Demo FILE DemoTargets.cmake NAMESPACE Demo::)\n"
+        "set(CPACK_GENERATOR \"TXZ\")\n"
+        "set(CPACK_PACKAGE_NAME \"DemoPkg\")\n"
+        "set(CPACK_PACKAGE_VERSION \"1.2.3\")\n"
+        "set(CPACK_PACKAGE_FILE_NAME \"demo-pkg-txz\")\n"
+        "set(CPACK_PACKAGE_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}/packages\")\n"
+        "set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)\n"
+        "include(CPack)\n",
+    },
+    {"core.c", "int core_value(void) { return 13; }\n"},
+    {"include/core.h", "#define CORE_VALUE 13\n"},
+    {"README.txt", "package txz readme\n"},
+    {"assets/data.txt", "asset txz\n"},
+};
+
+static const Artifact_Parity_File s_package_zip_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityPackageZIP LANGUAGES C)\n"
+        "add_library(core STATIC core.c)\n"
+        "set_target_properties(core PROPERTIES PUBLIC_HEADER include/core.h)\n"
+        "install(TARGETS core EXPORT DemoTargets ARCHIVE DESTINATION lib PUBLIC_HEADER DESTINATION include/demo)\n"
+        "install(FILES README.txt DESTINATION share/demo)\n"
+        "install(DIRECTORY assets/ DESTINATION share/assets)\n"
+        "install(EXPORT DemoTargets DESTINATION lib/cmake/Demo FILE DemoTargets.cmake NAMESPACE Demo::)\n"
+        "set(CPACK_GENERATOR \"ZIP\")\n"
+        "set(CPACK_PACKAGE_NAME \"DemoPkg\")\n"
+        "set(CPACK_PACKAGE_VERSION \"1.2.3\")\n"
+        "set(CPACK_PACKAGE_FILE_NAME \"demo-pkg-zip\")\n"
+        "set(CPACK_PACKAGE_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}/packages\")\n"
+        "set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)\n"
+        "include(CPack)\n",
+    },
+    {"core.c", "int core_value(void) { return 17; }\n"},
+    {"include/core.h", "#define CORE_VALUE 17\n"},
+    {"README.txt", "package zip readme\n"},
+    {"assets/data.txt", "asset zip\n"},
+};
+
+static const Artifact_Parity_Nob_Command s_package_archive_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, NULL, "core"},
+    {ARTIFACT_PARITY_NOB_COMMAND_PACKAGE, NULL, NULL},
+};
+
+static const Artifact_Parity_Case s_package_tgz_case = {
+    .name = "package_tgz_archive",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE | ARTIFACT_PARITY_PHASE_BUILD | ARTIFACT_PARITY_PHASE_PACKAGE,
+    .files = s_package_tgz_files,
+    .file_count = NOB_ARRAY_LEN(s_package_tgz_files),
+    .nob_commands = s_package_archive_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_package_archive_commands),
+    .manifest_requests = s_package_archive_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_package_archive_manifest_requests),
+    .source_root = "package_tgz_source",
+    .cmake_binary_dir = "package_tgz_cmake_build",
+    .nob_binary_dir = "package_tgz_nob_build",
+    .generated_nob_path = "package_tgz_source/nob.c",
+    .nob_run_dir = "package_tgz_source",
+    .cmake_build_target = "core",
+    .cmake_base_dir = "package_tgz_cmake_build",
+    .nob_base_dir = "package_tgz_nob_build",
+    .subject = "package_tgz_archive",
+};
+
+static const Artifact_Parity_Case s_package_txz_case = {
+    .name = "package_txz_archive",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE | ARTIFACT_PARITY_PHASE_BUILD | ARTIFACT_PARITY_PHASE_PACKAGE,
+    .files = s_package_txz_files,
+    .file_count = NOB_ARRAY_LEN(s_package_txz_files),
+    .nob_commands = s_package_archive_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_package_archive_commands),
+    .manifest_requests = s_package_archive_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_package_archive_manifest_requests),
+    .source_root = "package_txz_source",
+    .cmake_binary_dir = "package_txz_cmake_build",
+    .nob_binary_dir = "package_txz_nob_build",
+    .generated_nob_path = "package_txz_source/nob.c",
+    .nob_run_dir = "package_txz_source",
+    .cmake_build_target = "core",
+    .cmake_base_dir = "package_txz_cmake_build",
+    .nob_base_dir = "package_txz_nob_build",
+    .subject = "package_txz_archive",
+};
+
+static const Artifact_Parity_Case s_package_zip_case = {
+    .name = "package_zip_archive",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE | ARTIFACT_PARITY_PHASE_BUILD | ARTIFACT_PARITY_PHASE_PACKAGE,
+    .files = s_package_zip_files,
+    .file_count = NOB_ARRAY_LEN(s_package_zip_files),
+    .nob_commands = s_package_archive_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_package_archive_commands),
+    .manifest_requests = s_package_archive_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_package_archive_manifest_requests),
+    .source_root = "package_zip_source",
+    .cmake_binary_dir = "package_zip_cmake_build",
+    .nob_binary_dir = "package_zip_nob_build",
+    .generated_nob_path = "package_zip_source/nob.c",
+    .nob_run_dir = "package_zip_source",
+    .cmake_build_target = "core",
+    .cmake_base_dir = "package_zip_cmake_build",
+    .nob_base_dir = "package_zip_nob_build",
+    .subject = "package_zip_archive",
 };
 
 static const Artifact_Parity_Manifest_Request s_out_of_source_top_level_manifest_requests[] = {
@@ -1550,6 +1695,39 @@ TEST(artifact_parity_export_package_registry_matches_cmake) {
     TEST_PASS();
 }
 
+TEST(artifact_parity_package_tgz_matches_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_package_tgz_case));
+    TEST_PASS();
+}
+
+TEST(artifact_parity_package_txz_matches_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_package_txz_case));
+    TEST_PASS();
+}
+
+TEST(artifact_parity_package_zip_matches_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_package_zip_case));
+    TEST_PASS();
+}
+
 TEST(artifact_parity_out_of_source_top_level_build_outputs_match_cmake) {
     if (!s_artifact_parity_cmake.available) {
         TEST_SKIP(s_artifact_parity_skip_reason[0]
@@ -1831,6 +2009,9 @@ void run_artifact_parity_v2_tests(int *passed, int *failed, int *skipped) {
         test_artifact_parity_export_targets_build_tree_matches_cmake(passed, failed, skipped);
         test_artifact_parity_export_export_set_matches_cmake(passed, failed, skipped);
         test_artifact_parity_export_package_registry_matches_cmake(passed, failed, skipped);
+        test_artifact_parity_package_tgz_matches_cmake(passed, failed, skipped);
+        test_artifact_parity_package_txz_matches_cmake(passed, failed, skipped);
+        test_artifact_parity_package_zip_matches_cmake(passed, failed, skipped);
         test_artifact_parity_out_of_source_top_level_build_outputs_match_cmake(passed, failed, skipped);
         test_artifact_parity_out_of_source_subdirectory_build_outputs_match_cmake(passed, failed, skipped);
         test_artifact_parity_generated_source_consumer_matches_cmake(passed, failed, skipped);

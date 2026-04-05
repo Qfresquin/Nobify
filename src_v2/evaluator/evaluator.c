@@ -4,6 +4,7 @@
 #include "eval_exec_core.h"
 #include "eval_expr.h"
 #include "eval_file_internal.h"
+#include "eval_meta.h"
 #include "eval_compat.h"
 #include "eval_diag_classify.h"
 #include "eval_report.h"
@@ -962,6 +963,7 @@ bool eval_command_tx_begin(EvalExecContext *ctx, Eval_Command_Transaction *tx) {
     tx->visible_scope_depth = ctx->scope_state.visible_scope_depth;
     tx->dependency_provider = ctx->semantic_state.package.dependency_provider;
     tx->next_deferred_call_id = ctx->file_state.next_deferred_call_id;
+    tx->cpack_module_loaded = ctx->cpack_module_loaded;
     tx->cpack_component_module_loaded = ctx->cpack_component_module_loaded;
     tx->fetchcontent_module_loaded = ctx->fetchcontent_module_loaded;
 
@@ -1323,6 +1325,7 @@ bool eval_command_tx_finish(EvalExecContext *ctx, Eval_Command_Transaction *tx, 
                               ctx->canonical_state.ctest_steps,
                               tx->ctest_steps,
                               tx->ctest_step_count);
+        ctx->cpack_module_loaded = tx->cpack_module_loaded;
         ctx->cpack_component_module_loaded = tx->cpack_component_module_loaded;
         ctx->fetchcontent_module_loaded = tx->fetchcontent_module_loaded;
     }
@@ -2406,6 +2409,7 @@ static void eval_exec_load_session_state(EvalExecContext *ctx, EvalSession *sess
     ctx->policy_levels = session->state.policy_levels;
     ctx->visible_policy_depth = session->state.visible_policy_depth;
     ctx->runtime_state = session->state.runtime_state;
+    ctx->cpack_module_loaded = session->state.cpack_module_loaded;
     ctx->cpack_component_module_loaded = session->state.cpack_component_module_loaded;
     ctx->fetchcontent_module_loaded = session->state.fetchcontent_module_loaded;
     ctx->source_dir = session->source_root;
@@ -2450,6 +2454,7 @@ static void eval_session_commit_state_from_exec(EvalSession *session, const Eval
     session->state.runtime_state.run_report = (Eval_Run_Report){0};
     session->state.runtime_state.in_variable_watch_notification = false;
     session->state.transaction_arena = exec->transaction_arena;
+    session->state.cpack_module_loaded = exec->cpack_module_loaded;
     session->state.cpack_component_module_loaded = exec->cpack_component_module_loaded;
     session->state.fetchcontent_module_loaded = exec->fetchcontent_module_loaded;
 }
@@ -2561,6 +2566,9 @@ static Eval_Result eval_context_run_prepared(EvalExecContext *ctx, Ast_Root ast)
     }
     if (!eval_result_is_fatal(result) && !eval_should_stop(ctx)) {
         if (!eval_file_generate_flush(ctx)) result = eval_result_fatal();
+    }
+    if (!eval_result_is_fatal(result) && !eval_should_stop(ctx)) {
+        if (!eval_finalize_cpack_package_snapshot(ctx)) result = eval_result_fatal();
     }
     eval_clear_return_state(ctx);
     if (!eval_defer_pop_directory(ctx)) result = eval_result_fatal();

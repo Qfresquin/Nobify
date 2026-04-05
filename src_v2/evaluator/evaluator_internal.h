@@ -542,6 +542,7 @@ typedef struct {
     size_t next_deferred_call_id;
     size_t next_build_step_id;
     size_t next_export_id;
+    size_t next_cpack_package_id;
 } Eval_File_State;
 
 typedef struct {
@@ -744,6 +745,7 @@ typedef struct Eval_Command_Transaction {
     Eval_Ctest_Step_Record *ctest_steps;
     size_t ctest_step_count;
 
+    bool cpack_module_loaded;
     bool cpack_component_module_loaded;
     bool fetchcontent_module_loaded;
 } Eval_Command_Transaction;
@@ -761,6 +763,7 @@ typedef struct {
     size_t visible_policy_depth;
     Eval_Runtime_State runtime_state;
     Arena *transaction_arena;
+    bool cpack_module_loaded;
     bool cpack_component_module_loaded;
     bool fetchcontent_module_loaded;
 } EvalSessionState;
@@ -793,6 +796,7 @@ struct EvalExecContext {
     Eval_Exec_Context_Stack exec_contexts;
     // Invariant: visible_policy_depth <= arena_arr_len(policy_levels)
     size_t visible_policy_depth;
+    bool cpack_module_loaded;
     bool cpack_component_module_loaded;
     bool fetchcontent_module_loaded;
     size_t file_eval_depth;
@@ -1200,6 +1204,14 @@ static inline String_View eval_alloc_build_step_key(EvalExecContext *ctx) {
 static inline String_View eval_alloc_export_key(EvalExecContext *ctx) {
     if (!ctx) return nob_sv_from_cstr("");
     char *tmp = nob_temp_sprintf("export_%zu", ctx->file_state.next_export_id++);
+    char *buf = tmp ? arena_strndup(eval_event_arena(ctx), tmp, strlen(tmp)) : NULL;
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    return nob_sv_from_cstr(buf);
+}
+
+static inline String_View eval_alloc_cpack_package_key(EvalExecContext *ctx) {
+    if (!ctx) return nob_sv_from_cstr("");
+    char *tmp = nob_temp_sprintf("cpack_package_%zu", ctx->file_state.next_cpack_package_id++);
     char *buf = tmp ? arena_strndup(eval_event_arena(ctx), tmp, strlen(tmp)) : NULL;
     EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
     return nob_sv_from_cstr(buf);
@@ -1676,6 +1688,40 @@ static inline bool eval_emit_cpack_add_component(EvalExecContext *ctx,
     ev.as.cpack_add_component.hidden = hidden;
     ev.as.cpack_add_component.disabled = disabled;
     ev.as.cpack_add_component.downloaded = downloaded;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_cpack_package_declare(EvalExecContext *ctx,
+                                                   Event_Origin origin,
+                                                   String_View package_key,
+                                                   String_View package_name,
+                                                   String_View package_version,
+                                                   String_View package_file_name,
+                                                   String_View package_directory,
+                                                   bool include_toplevel_directory,
+                                                   bool archive_component_install,
+                                                   String_View components_all) {
+    Event ev = {0};
+    ev.h.kind = EVENT_CPACK_PACKAGE_DECLARE;
+    ev.h.origin = origin;
+    ev.as.cpack_package_declare.package_key = sv_copy_to_event_arena(ctx, package_key);
+    ev.as.cpack_package_declare.package_name = sv_copy_to_event_arena(ctx, package_name);
+    ev.as.cpack_package_declare.package_version = sv_copy_to_event_arena(ctx, package_version);
+    ev.as.cpack_package_declare.package_file_name = sv_copy_to_event_arena(ctx, package_file_name);
+    ev.as.cpack_package_declare.package_directory = sv_copy_to_event_arena(ctx, package_directory);
+    ev.as.cpack_package_declare.include_toplevel_directory = include_toplevel_directory;
+    ev.as.cpack_package_declare.archive_component_install = archive_component_install;
+    ev.as.cpack_package_declare.components_all = sv_copy_to_event_arena(ctx, components_all);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_cpack_package_add_generator(EvalExecContext *ctx,
+                                                         Event_Origin origin,
+                                                         String_View package_key,
+                                                         String_View generator) {
+    Event ev = {0};
+    ev.h.kind = EVENT_CPACK_PACKAGE_ADD_GENERATOR;
+    ev.h.origin = origin;
+    ev.as.cpack_package_add_generator.package_key = sv_copy_to_event_arena(ctx, package_key);
+    ev.as.cpack_package_add_generator.generator = sv_copy_to_event_arena(ctx, generator);
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_package_find_result(EvalExecContext *ctx,

@@ -79,6 +79,14 @@ static const BM_CPack_Component_Record *bm_model_cpack_component(const Build_Mod
     return &model->cpack_components[id];
 }
 
+static const BM_CPack_Package_Record *bm_model_cpack_package(const Build_Model *model,
+                                                             BM_CPack_Package_Id id) {
+    if (!model || id == BM_CPACK_PACKAGE_ID_INVALID || (size_t)id >= arena_arr_len(model->cpack_packages)) {
+        return NULL;
+    }
+    return &model->cpack_packages[id];
+}
+
 static BM_String_Item_Span bm_item_span(const BM_String_Item_View *items) {
     BM_String_Item_Span span = {0};
     span.items = items;
@@ -100,6 +108,20 @@ static BM_Target_Id_Span bm_target_id_span(const BM_Target_Id *items) {
     return span;
 }
 
+static BM_Install_Rule_Id_Span bm_install_rule_id_span(const BM_Install_Rule_Id *items) {
+    BM_Install_Rule_Id_Span span = {0};
+    span.items = items;
+    span.count = arena_arr_len(items);
+    return span;
+}
+
+static BM_Export_Id_Span bm_export_id_span(const BM_Export_Id *items) {
+    BM_Export_Id_Span span = {0};
+    span.items = items;
+    span.count = arena_arr_len(items);
+    return span;
+}
+
 static BM_Build_Step_Id_Span bm_build_step_id_span(const BM_Build_Step_Id *items) {
     BM_Build_Step_Id_Span span = {0};
     span.items = items;
@@ -115,6 +137,12 @@ static bool bm_sv_eq_ci_query(String_View lhs, String_View rhs) {
         if (tolower(a) != tolower(b)) return false;
     }
     return true;
+}
+
+static bool bm_component_name_matches(String_View lhs, String_View rhs) {
+    String_View effective_lhs = lhs.count > 0 ? lhs : nob_sv_from_cstr("Unspecified");
+    String_View effective_rhs = rhs.count > 0 ? rhs : nob_sv_from_cstr("Unspecified");
+    return nob_sv_eq(effective_lhs, effective_rhs);
 }
 
 static const BM_Raw_Property_Record *bm_find_raw_property(const BM_Raw_Property_Record *records,
@@ -742,6 +770,7 @@ size_t bm_query_package_count(const Build_Model *model) { return model ? arena_a
 size_t bm_query_cpack_install_type_count(const Build_Model *model) { return model ? arena_arr_len(model->cpack_install_types) : 0; }
 size_t bm_query_cpack_component_group_count(const Build_Model *model) { return model ? arena_arr_len(model->cpack_component_groups) : 0; }
 size_t bm_query_cpack_component_count(const Build_Model *model) { return model ? arena_arr_len(model->cpack_components) : 0; }
+size_t bm_query_cpack_package_count(const Build_Model *model) { return model ? arena_arr_len(model->cpack_packages) : 0; }
 
 String_View bm_query_project_name(const Build_Model *model) { return model ? model->project.name : (String_View){0}; }
 String_View bm_query_project_version(const Build_Model *model) { return model ? model->project.version : (String_View){0}; }
@@ -1266,6 +1295,40 @@ BM_Target_Id bm_query_install_rule_target(const Build_Model *model, BM_Install_R
     return rule ? rule->resolved_target_id : BM_TARGET_ID_INVALID;
 }
 
+BM_Install_Rule_Id bm_query_install_rule_for_export_target(const Build_Model *model,
+                                                           BM_Export_Id export_id,
+                                                           BM_Target_Id target_id) {
+    String_View export_name = bm_query_export_name(model, export_id);
+    if (!model || target_id == BM_TARGET_ID_INVALID || export_name.count == 0) {
+        return BM_INSTALL_RULE_ID_INVALID;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(model->install_rules); ++i) {
+        const BM_Install_Rule_Record *rule = &model->install_rules[i];
+        if (rule->kind != BM_INSTALL_RULE_TARGET) continue;
+        if (rule->resolved_target_id != target_id) continue;
+        if (!nob_sv_eq(rule->export_name, export_name)) continue;
+        return (BM_Install_Rule_Id)i;
+    }
+
+    return BM_INSTALL_RULE_ID_INVALID;
+}
+
+BM_Install_Rule_Id_Span bm_query_install_rules_for_component(const Build_Model *model,
+                                                             String_View component,
+                                                             Arena *scratch) {
+    BM_Install_Rule_Id *matches = NULL;
+    if (!model || !scratch) return (BM_Install_Rule_Id_Span){0};
+
+    for (size_t i = 0; i < arena_arr_len(model->install_rules); ++i) {
+        const BM_Install_Rule_Record *rule = &model->install_rules[i];
+        if (!bm_component_name_matches(rule->component, component)) continue;
+        if (!arena_arr_push(scratch, matches, (BM_Install_Rule_Id)i)) return (BM_Install_Rule_Id_Span){0};
+    }
+
+    return bm_install_rule_id_span(matches);
+}
+
 BM_Export_Kind bm_query_export_kind(const Build_Model *model, BM_Export_Id id) {
     const BM_Export_Record *record = bm_model_export(model, id);
     return record ? record->kind : BM_EXPORT_INSTALL;
@@ -1382,6 +1445,22 @@ bool bm_query_export_append(const Build_Model *model, BM_Export_Id id) {
     return record ? record->append : false;
 }
 
+BM_Export_Id_Span bm_query_exports_for_component(const Build_Model *model,
+                                                 String_View component,
+                                                 Arena *scratch) {
+    BM_Export_Id *matches = NULL;
+    if (!model || !scratch) return (BM_Export_Id_Span){0};
+
+    for (size_t i = 0; i < arena_arr_len(model->exports); ++i) {
+        const BM_Export_Record *record = &model->exports[i];
+        if (record->kind != BM_EXPORT_INSTALL) continue;
+        if (!bm_component_name_matches(record->component, component)) continue;
+        if (!arena_arr_push(scratch, matches, (BM_Export_Id)i)) return (BM_Export_Id_Span){0};
+    }
+
+    return bm_export_id_span(matches);
+}
+
 String_View bm_query_package_name(const Build_Model *model, BM_Package_Id id) {
     const BM_Package_Record *package = bm_model_package(model, id);
     return package ? package->package_name : (String_View){0};
@@ -1417,6 +1496,14 @@ bool bm_query_package_quiet(const Build_Model *model, BM_Package_Id id) {
     return package ? package->quiet : false;
 }
 
+BM_CPack_Install_Type_Id bm_query_cpack_install_type_by_name(const Build_Model *model, String_View name) {
+    if (!model) return BM_CPACK_INSTALL_TYPE_ID_INVALID;
+    for (size_t i = 0; i < arena_arr_len(model->cpack_install_types); ++i) {
+        if (nob_sv_eq(model->cpack_install_types[i].name, name)) return (BM_CPack_Install_Type_Id)i;
+    }
+    return BM_CPACK_INSTALL_TYPE_ID_INVALID;
+}
+
 String_View bm_query_cpack_install_type_name(const Build_Model *model, BM_CPack_Install_Type_Id id) {
     const BM_CPack_Install_Type_Record *record = bm_model_cpack_install_type(model, id);
     return record ? record->name : (String_View){0};
@@ -1430,6 +1517,14 @@ String_View bm_query_cpack_install_type_display_name(const Build_Model *model, B
 BM_Directory_Id bm_query_cpack_install_type_owner_directory(const Build_Model *model, BM_CPack_Install_Type_Id id) {
     const BM_CPack_Install_Type_Record *record = bm_model_cpack_install_type(model, id);
     return record ? record->owner_directory_id : BM_DIRECTORY_ID_INVALID;
+}
+
+BM_CPack_Component_Group_Id bm_query_cpack_component_group_by_name(const Build_Model *model, String_View name) {
+    if (!model) return BM_CPACK_COMPONENT_GROUP_ID_INVALID;
+    for (size_t i = 0; i < arena_arr_len(model->cpack_component_groups); ++i) {
+        if (nob_sv_eq(model->cpack_component_groups[i].name, name)) return (BM_CPack_Component_Group_Id)i;
+    }
+    return BM_CPACK_COMPONENT_GROUP_ID_INVALID;
 }
 
 String_View bm_query_cpack_component_group_name(const Build_Model *model, BM_CPack_Component_Group_Id id) {
@@ -1465,6 +1560,14 @@ bool bm_query_cpack_component_group_expanded(const Build_Model *model, BM_CPack_
 bool bm_query_cpack_component_group_bold_title(const Build_Model *model, BM_CPack_Component_Group_Id id) {
     const BM_CPack_Component_Group_Record *record = bm_model_cpack_component_group(model, id);
     return record ? record->bold_title : false;
+}
+
+BM_CPack_Component_Id bm_query_cpack_component_by_name(const Build_Model *model, String_View name) {
+    if (!model) return BM_CPACK_COMPONENT_ID_INVALID;
+    for (size_t i = 0; i < arena_arr_len(model->cpack_components); ++i) {
+        if (nob_sv_eq(model->cpack_components[i].name, name)) return (BM_CPack_Component_Id)i;
+    }
+    return BM_CPACK_COMPONENT_ID_INVALID;
 }
 
 String_View bm_query_cpack_component_name(const Build_Model *model, BM_CPack_Component_Id id) {
@@ -1505,6 +1608,22 @@ BM_CPack_Install_Type_Id_Span bm_query_cpack_component_install_types(const Build
     return span;
 }
 
+BM_Install_Rule_Id_Span bm_query_cpack_component_install_rules(const Build_Model *model,
+                                                               BM_CPack_Component_Id id,
+                                                               Arena *scratch) {
+    const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
+    if (!record || !scratch) return (BM_Install_Rule_Id_Span){0};
+    return bm_query_install_rules_for_component(model, record->name, scratch);
+}
+
+BM_Export_Id_Span bm_query_cpack_component_exports(const Build_Model *model,
+                                                   BM_CPack_Component_Id id,
+                                                   Arena *scratch) {
+    const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
+    if (!record || !scratch) return (BM_Export_Id_Span){0};
+    return bm_query_exports_for_component(model, record->name, scratch);
+}
+
 String_View bm_query_cpack_component_archive_file(const Build_Model *model, BM_CPack_Component_Id id) {
     const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
     return record ? record->archive_file : (String_View){0};
@@ -1538,4 +1657,56 @@ bool bm_query_cpack_component_downloaded(const Build_Model *model, BM_CPack_Comp
 BM_Directory_Id bm_query_cpack_component_owner_directory(const Build_Model *model, BM_CPack_Component_Id id) {
     const BM_CPack_Component_Record *record = bm_model_cpack_component(model, id);
     return record ? record->owner_directory_id : BM_DIRECTORY_ID_INVALID;
+}
+
+BM_Directory_Id bm_query_cpack_package_owner_directory(const Build_Model *model, BM_CPack_Package_Id id) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    return record ? record->owner_directory_id : BM_DIRECTORY_ID_INVALID;
+}
+
+String_View bm_query_cpack_package_name(const Build_Model *model, BM_CPack_Package_Id id) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    return record ? record->package_name : (String_View){0};
+}
+
+String_View bm_query_cpack_package_version(const Build_Model *model, BM_CPack_Package_Id id) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    return record ? record->package_version : (String_View){0};
+}
+
+String_View bm_query_cpack_package_file_name(const Build_Model *model, BM_CPack_Package_Id id) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    return record ? record->package_file_name : (String_View){0};
+}
+
+String_View bm_query_cpack_package_output_directory(const Build_Model *model,
+                                                    BM_CPack_Package_Id id,
+                                                    Arena *scratch) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    const BM_Directory_Record *owner = NULL;
+    if (!record) return (String_View){0};
+    if (!scratch || bm_sv_is_abs_path_query(record->package_directory)) return record->package_directory;
+    owner = bm_model_directory(model, record->owner_directory_id);
+    if (!owner) return record->package_directory;
+    return bm_join_relative_path_query(scratch, owner->binary_dir, record->package_directory);
+}
+
+BM_String_Span bm_query_cpack_package_generators(const Build_Model *model, BM_CPack_Package_Id id) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    return record ? bm_string_span(record->generators) : (BM_String_Span){0};
+}
+
+bool bm_query_cpack_package_include_toplevel_directory(const Build_Model *model, BM_CPack_Package_Id id) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    return record ? record->include_toplevel_directory : false;
+}
+
+bool bm_query_cpack_package_archive_component_install(const Build_Model *model, BM_CPack_Package_Id id) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    return record ? record->archive_component_install : false;
+}
+
+BM_String_Span bm_query_cpack_package_components_all(const Build_Model *model, BM_CPack_Package_Id id) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    return record ? bm_string_span(record->components_all) : (BM_String_Span){0};
 }

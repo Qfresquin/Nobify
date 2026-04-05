@@ -2210,6 +2210,7 @@ static bool cg_emit_clean_function(CG_Context *ctx, Nob_String_Builder *out) {
     return true;
 }
 
+#include "nob_codegen_cmake_writer.c"
 #include "nob_codegen_install.c"
 #include "nob_codegen_export.c"
 #include "nob_codegen_package.c"
@@ -2279,7 +2280,44 @@ static bool cg_emit_main(CG_Context *ctx, Nob_String_Builder *out) {
         "        return export_all() ? 0 : 1;\n"
         "    }\n"
         "    if (argi < argc && strcmp(argv[argi], \"package\") == 0) {\n"
-        "        return package_all() ? 0 : 1;\n"
+        "        const char *package_generator = NULL;\n"
+        "        const char *package_output_dir = NULL;\n"
+        "        bool saw_generator = false;\n"
+        "        bool saw_output_dir = false;\n"
+        "        ++argi;\n"
+        "        while (argi < argc) {\n"
+        "            if (strcmp(argv[argi], \"--generator\") == 0) {\n"
+        "                if (saw_generator) {\n"
+        "                    nob_log(NOB_ERROR, \"package: duplicate --generator\");\n"
+        "                    return 1;\n"
+        "                }\n"
+        "                if (argi + 1 >= argc) {\n"
+        "                    nob_log(NOB_ERROR, \"package: --generator expects a value\");\n"
+        "                    return 1;\n"
+        "                }\n"
+        "                package_generator = argv[argi + 1];\n"
+        "                saw_generator = true;\n"
+        "                argi += 2;\n"
+        "                continue;\n"
+        "            }\n"
+        "            if (strcmp(argv[argi], \"--output-dir\") == 0) {\n"
+        "                if (saw_output_dir) {\n"
+        "                    nob_log(NOB_ERROR, \"package: duplicate --output-dir\");\n"
+        "                    return 1;\n"
+        "                }\n"
+        "                if (argi + 1 >= argc) {\n"
+        "                    nob_log(NOB_ERROR, \"package: --output-dir expects a value\");\n"
+        "                    return 1;\n"
+        "                }\n"
+        "                package_output_dir = argv[argi + 1];\n"
+        "                saw_output_dir = true;\n"
+        "                argi += 2;\n"
+        "                continue;\n"
+        "            }\n"
+        "            nob_log(NOB_ERROR, \"package: unexpected argument '%s'\", argv[argi]);\n"
+        "            return 1;\n"
+        "        }\n"
+        "        return package_all(package_generator, package_output_dir) ? 0 : 1;\n"
         "    }\n"
         "    if (argi < argc) {\n"
         "        for (int i = argi; i < argc; ++i) {\n"
@@ -2335,6 +2373,8 @@ static bool cg_init_context(CG_Context *ctx,
         .binary_root = binary_root,
         .embedded_cmake_bin = opts->embedded_cmake_bin,
         .embedded_cpack_bin = opts->embedded_cpack_bin,
+        .embedded_gzip_bin = opts->embedded_gzip_bin,
+        .embedded_xz_bin = opts->embedded_xz_bin,
         .target_platform = opts->target_platform,
         .backend = opts->backend,
     };
@@ -2358,6 +2398,14 @@ static bool cg_init_context(CG_Context *ctx,
     }
     if (ctx->opts.embedded_cpack_bin.count > 0 &&
         !cg_absolute_from_cwd(ctx, ctx->opts.embedded_cpack_bin, &ctx->embedded_cpack_bin_abs)) {
+        return false;
+    }
+    if (ctx->opts.embedded_gzip_bin.count > 0 &&
+        !cg_absolute_from_cwd(ctx, ctx->opts.embedded_gzip_bin, &ctx->embedded_gzip_bin_abs)) {
+        return false;
+    }
+    if (ctx->opts.embedded_xz_bin.count > 0 &&
+        !cg_absolute_from_cwd(ctx, ctx->opts.embedded_xz_bin, &ctx->embedded_xz_bin_abs)) {
         return false;
     }
 

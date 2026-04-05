@@ -30,6 +30,9 @@ As of April 5, 2026:
   `evaluator`, `build-model`, `pipeline`, and `codegen` coverage, while
   `artifact-parity` remains explicit-only for real-CMake export parity plus
   downstream consumer proof
+- package parity proof is now split between aggregate-safe `evaluator`,
+  `build-model`, `pipeline`, and `codegen` coverage, while `artifact-parity`
+  remains explicit-only for real-CMake archive-package parity
 
 This file is the canonical baseline for test architecture, ownership, and suite
 taxonomy. The multi-wave change roadmap lives in
@@ -125,7 +128,11 @@ code.
   build-tree export file emission from `export(TARGETS ...)` and
   `export(EXPORT ...)`, Linux/POSIX package-registry writes from
   `export(PACKAGE ...)`, and explicit rejection of unsupported
-  `APPEND` / `CXX_MODULES_DIRECTORY` export forms.
+  `APPEND` / `CXX_MODULES_DIRECTORY` export forms. `P7` extends it again with
+  Linux/POSIX internal package-backend smoke for `TGZ`, `TXZ`, and `ZIP`,
+  explicit `package [--generator <name>] [--output-dir <path>]` execution,
+  custom output directories, include-top-level on/off behavior, and explicit
+  rejection of unsupported component packaging.
   Current aggregate status: included.
 
 - `artifact-parity`
@@ -159,7 +166,12 @@ code.
   custom prefixes before the consumer-against-installed-prefix checks. `P6`
   extends the explicit harness again with an explicit `export` phase and
   downstream-consumer proof for `export(TARGETS ...)`, `export(EXPORT ...)`,
-  and isolated-home `export(PACKAGE ...)`.
+  and isolated-home `export(PACKAGE ...)`. `P7` extends the explicit harness
+  again with real-CMake package parity for archive-style generators `TGZ`,
+  `TXZ`, and `ZIP`, using structural package metadata plus normalized
+  extracted-tree diffs. Package parity remains Linux/POSIX-only and
+  full-package-only; installer generators and positive component packaging
+  stay out of scope in this wave.
   Current aggregate status: excluded from the default aggregate path.
 
 - `evaluator-integration`

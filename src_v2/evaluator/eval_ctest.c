@@ -55,6 +55,7 @@ typedef struct {
     size_t active_fetchcontent_makeavailable_count;
     size_t watched_variables_count;
     size_t watched_variable_commands_count;
+    bool cpack_module_loaded;
     bool cpack_component_module_loaded;
     bool fetchcontent_module_loaded;
     bool scope_pushed;
@@ -2638,6 +2639,7 @@ static bool ctest_new_process_begin(EvalExecContext *ctx, Ctest_New_Process_Stat
         arena_arr_len(ctx->semantic_state.fetchcontent.active_makeavailable);
     state->watched_variables_count = arena_arr_len(ctx->command_state.watched_variables);
     state->watched_variable_commands_count = arena_arr_len(ctx->command_state.watched_variable_commands);
+    state->cpack_module_loaded = ctx->cpack_module_loaded;
     state->cpack_component_module_loaded = ctx->cpack_component_module_loaded;
     state->fetchcontent_module_loaded = ctx->fetchcontent_module_loaded;
 
@@ -2689,6 +2691,7 @@ static void ctest_new_process_end(EvalExecContext *ctx, const Ctest_New_Process_
     if (ctx->command_state.watched_variable_commands) {
         arena_arr_set_len(ctx->command_state.watched_variable_commands, state->watched_variable_commands_count);
     }
+    ctx->cpack_module_loaded = state->cpack_module_loaded;
     ctx->cpack_component_module_loaded = state->cpack_component_module_loaded;
     ctx->fetchcontent_module_loaded = state->fetchcontent_module_loaded;
     eval_exec_clear_pending_flow(ctx);

@@ -61,14 +61,13 @@ The roadmap starts from the current repository reality:
 - evaluator coverage is effectively closed for the audited evaluator scope, but
   that audit explicitly does not prove downstream build-model, codegen, or
   backend parity
-- `build_model` already reconstructs and exposes install, package, and CPack
-  data through the frozen/query-facing model
-- export behavior is not yet a first-class downstream semantic domain in the
-  same way as targets, install rules, packages, or CPack objects
+- `build_model` now reconstructs and exposes install, standalone export,
+  package-registry export, and CPack package-planning data through the
+  frozen/query-facing model
 - codegen now has explicit platform/backend policy selection, with
   `linux + posix` as the execution-proven baseline and
   `darwin + posix` / `windows + win32-msvc` as render-only baselines, but it
-  still rejects several later-wave semantic surfaces
+  still rejects several out-of-scope later-wave semantic surfaces
 - the default `test-v2` smoke path is green again and is once more the trusted
   aggregate smoke baseline
 - the repo now has an explicit-only artifact-parity harness under
@@ -594,25 +593,65 @@ Evidence delivered:
 ### P7 Packaging Parity
 
 Status:
-- planned
+- completed on April 5, 2026
+- delivered:
+  CPack package-planning semantics now flow canonically through `Event IR`,
+  `build_model`, query, and codegen instead of remaining a loose backend-side
+  reconstruction
+  `include(CPack)` now materializes a downstream package snapshot with
+  effective generators, package name/version, file name, output directory,
+  include-top-level flag, archive-component-install flag, and preserved
+  component metadata
+  generated `nob.c` now has an explicit Linux/POSIX-only packaging backend for
+  archive-style generators `TGZ`, `TXZ`, and `ZIP`, with
+  `package [--generator <name>] [--output-dir <path>]`
+  package generation is now full-package-only and reuses the install backend to
+  stage payloads before creating archives and normalized package metadata
+  aggregate-safe proof now covers package snapshot lowering, frozen-model
+  queries, pipeline snapshots, generated package execution, custom output
+  directories, include-top-level on/off behavior, and explicit rejection of
+  unsupported component packaging
+  explicit-only parity proof now covers real-CMake package parity for `TGZ`,
+  `TXZ`, and `ZIP` through structural archive metadata plus normalized
+  extracted-tree diffs
 
 Deliverables:
-- consume package and CPack model data in the backend or packaging driver path
-- stage archive-style package generators first, then installer-style generators
-  after the archive baseline is proven
-- add package manifest and metadata diff support to the parity harness
-- define which package generators are supported, experimental, or intentionally
-  out of scope at each milestone
+- consume canonical CPack package-planning data in the backend instead of
+  reconstructing package behavior from loose install/export state
+- support archive-style package generators first:
+  `TGZ`
+  `TXZ`
+  `ZIP`
+- add structural package manifest and metadata diff support to the parity
+  harness
+- define the positive baseline clearly:
+  Linux/POSIX only
+  internal backend only
+  full-package-only execution
 
 Non-goals:
-- no generator explosion without proof ownership
+- no installer-generator support in this wave
+- no positive component-packaging support in this wave
+- no generator explosion beyond `TGZ`, `TXZ`, and `ZIP`
 - no platform-installer claims before archive-style parity is stable
 
 Exit criteria:
 - archive-style package fixtures match CMake outputs for supported generators
-- installer-style work only advances once archive parity is stable
+- the generated backend owns archive creation directly instead of delegating to
+  `cpack`
+- full-package-only execution is explicit and diagnosable
 - package outputs and metadata are compared structurally, not only by file
   existence
+
+Evidence delivered:
+- `./build/nob_test test-evaluator`
+- `./build/nob_test test-build-model`
+- `CMK2NOB_UPDATE_GOLDEN=1 ./build/nob_test test-pipeline`
+- `./build/nob_test test-pipeline`
+- `./build/nob_test test-codegen`
+- `./build/nob_test test-artifact-parity`
+- `./build/nob_test test-artifact-parity-corpus`
+- `./build/nob_test test-v2`
 
 ### P8 Real-Project Hardening
 

@@ -81,6 +81,64 @@ static bool cg_validate_export_record(CG_Context *ctx, BM_Export_Id export_id) {
     return true;
 }
 
+static bool cg_validate_package_model(CG_Context *ctx) {
+    bool saw_supported_generator = false;
+    if (!ctx) return false;
+    if (bm_query_cpack_package_count(ctx->model) == 0) {
+        return true;
+    }
+
+    for (size_t package_index = 0; package_index < bm_query_cpack_package_count(ctx->model); ++package_index) {
+        BM_CPack_Package_Id id = (BM_CPack_Package_Id)package_index;
+        String_View package_name = bm_query_cpack_package_name(ctx->model, id);
+        String_View file_name = bm_query_cpack_package_file_name(ctx->model, id);
+        String_View output_dir = bm_query_cpack_package_output_directory(ctx->model, id, ctx->scratch);
+        BM_String_Span generators = bm_query_cpack_package_generators(ctx->model, id);
+
+        if (package_name.count == 0 || file_name.count == 0 || output_dir.count == 0) {
+            nob_log(NOB_ERROR,
+                    "codegen: CPack package plan is incomplete for '%.*s'",
+                    (int)package_name.count,
+                    package_name.data ? package_name.data : "");
+            return false;
+        }
+
+        if (bm_query_cpack_package_archive_component_install(ctx->model, id)) {
+            nob_log(NOB_ERROR,
+                    "codegen: CPACK_ARCHIVE_COMPONENT_INSTALL=ON is not supported in the package backend yet");
+            return false;
+        }
+
+        if (generators.count == 0) {
+            nob_log(NOB_ERROR,
+                    "codegen: CPack package plan '%.*s' has no configured generators",
+                    (int)package_name.count,
+                    package_name.data ? package_name.data : "");
+            return false;
+        }
+
+        for (size_t i = 0; i < generators.count; ++i) {
+            if (nob_sv_eq(generators.items[i], nob_sv_from_cstr("TGZ")) ||
+                nob_sv_eq(generators.items[i], nob_sv_from_cstr("TXZ")) ||
+                nob_sv_eq(generators.items[i], nob_sv_from_cstr("ZIP"))) {
+                saw_supported_generator = true;
+                continue;
+            }
+            nob_log(NOB_ERROR,
+                    "codegen: unsupported package generator '%.*s' (supported: TGZ, TXZ, ZIP)",
+                    (int)generators.items[i].count,
+                    generators.items[i].data ? generators.items[i].data : "");
+            return false;
+        }
+    }
+
+    if (!saw_supported_generator) {
+        nob_log(NOB_ERROR, "codegen: no supported package generators are configured");
+        return false;
+    }
+    return true;
+}
+
 bool cg_validate_model_for_backend(CG_Context *ctx) {
     if (!ctx) return false;
 
@@ -135,6 +193,8 @@ bool cg_validate_model_for_backend(CG_Context *ctx) {
     for (size_t export_index = 0; export_index < bm_query_export_count(ctx->model); ++export_index) {
         if (!cg_validate_export_record(ctx, (BM_Export_Id)export_index)) return false;
     }
+
+    if (!cg_validate_package_model(ctx)) return false;
 
     return true;
 }

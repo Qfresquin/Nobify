@@ -81,9 +81,13 @@ static bool codegen_resolve_sibling_tool(const char *tool_path,
 static bool codegen_fill_host_tool_paths(Arena *arena, Nob_Codegen_Options *opts) {
     char cmake_bin[_TINYDIR_PATH_MAX] = {0};
     char cpack_bin[_TINYDIR_PATH_MAX] = {0};
+    char gzip_bin[_TINYDIR_PATH_MAX] = {0};
+    char xz_bin[_TINYDIR_PATH_MAX] = {0};
     const char *env_cmake = NULL;
     char *cmake_copy = NULL;
     char *cpack_copy = NULL;
+    char *gzip_copy = NULL;
+    char *xz_copy = NULL;
     if (!arena || !opts) return false;
 
     env_cmake = getenv(CMK2NOB_TEST_CMAKE_BIN_ENV);
@@ -103,7 +107,21 @@ static bool codegen_fill_host_tool_paths(Arena *arena, Nob_Codegen_Options *opts
         cmake_bin[0] = '\0';
     }
 
-    if (cmake_bin[0] == '\0') return true;
+    (void)test_ws_host_program_in_path("gzip", gzip_bin);
+    (void)test_ws_host_program_in_path("xz", xz_bin);
+    if (cmake_bin[0] == '\0') {
+        if (gzip_bin[0] != '\0') {
+            gzip_copy = arena_strdup(arena, gzip_bin);
+            if (!gzip_copy) return false;
+            opts->embedded_gzip_bin = nob_sv_from_cstr(gzip_copy);
+        }
+        if (xz_bin[0] != '\0') {
+            xz_copy = arena_strdup(arena, xz_bin);
+            if (!xz_copy) return false;
+            opts->embedded_xz_bin = nob_sv_from_cstr(xz_copy);
+        }
+        return true;
+    }
     (void)codegen_resolve_sibling_tool(cmake_bin, "cpack", cpack_bin);
 
     cmake_copy = arena_strdup(arena, cmake_bin);
@@ -113,6 +131,16 @@ static bool codegen_fill_host_tool_paths(Arena *arena, Nob_Codegen_Options *opts
         cpack_copy = arena_strdup(arena, cpack_bin);
         if (!cpack_copy) return false;
         opts->embedded_cpack_bin = nob_sv_from_cstr(cpack_copy);
+    }
+    if (gzip_bin[0] != '\0') {
+        gzip_copy = arena_strdup(arena, gzip_bin);
+        if (!gzip_copy) return false;
+        opts->embedded_gzip_bin = nob_sv_from_cstr(gzip_copy);
+    }
+    if (xz_bin[0] != '\0') {
+        xz_copy = arena_strdup(arena, xz_bin);
+        if (!xz_copy) return false;
+        opts->embedded_xz_bin = nob_sv_from_cstr(xz_copy);
     }
     return true;
 }
@@ -309,7 +337,9 @@ bool codegen_sv_contains(String_View sv, const char *needle) {
     return false;
 }
 
-bool codegen_compile_generated_nob(const char *generated_path, const char *output_path) {
+static bool codegen_compile_generated_nob_with_flags(const char *generated_path,
+                                                     const char *output_path,
+                                                     bool warnings_as_errors) {
     Nob_Cmd cmd = {0};
     bool ok = false;
     if (s_codegen_repo_root[0] == '\0' || !generated_path || !output_path) return false;
@@ -323,9 +353,18 @@ bool codegen_compile_generated_nob(const char *generated_path, const char *outpu
                    "-o",
                    output_path,
                    generated_path);
+    if (warnings_as_errors) nob_cmd_append(&cmd, "-Werror");
     ok = nob_cmd_run(&cmd);
     nob_cmd_free(cmd);
     return ok;
+}
+
+bool codegen_compile_generated_nob(const char *generated_path, const char *output_path) {
+    return codegen_compile_generated_nob_with_flags(generated_path, output_path, false);
+}
+
+bool codegen_compile_generated_nob_strict(const char *generated_path, const char *output_path) {
+    return codegen_compile_generated_nob_with_flags(generated_path, output_path, true);
 }
 
 bool codegen_write_text_file(const char *path, const char *text) {

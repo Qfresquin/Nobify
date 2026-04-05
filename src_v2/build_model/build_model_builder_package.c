@@ -1,5 +1,14 @@
 #include "build_model_internal.h"
 
+static BM_CPack_Package_Record *bm_draft_find_cpack_package(Build_Model_Draft *draft,
+                                                            String_View package_key) {
+    if (!draft) return NULL;
+    for (size_t i = 0; i < arena_arr_len(draft->cpack_packages); ++i) {
+        if (nob_sv_eq(draft->cpack_packages[i].package_key, package_key)) return &draft->cpack_packages[i];
+    }
+    return NULL;
+}
+
 bool bm_builder_handle_package_event(BM_Builder *builder, const Event *ev) {
     Build_Model_Draft *draft = builder ? builder->draft : NULL;
     BM_Directory_Id current_directory_id = bm_builder_current_directory_id(builder);
@@ -78,6 +87,41 @@ bool bm_builder_handle_package_event(BM_Builder *builder, const Event *ev) {
                 !bm_copy_string(builder->arena, ev->as.cpack_add_component.plist, &component.plist) ||
                 !arena_arr_push(builder->arena, draft->cpack_components, component)) {
                 return bm_builder_error(builder, ev, "failed to append CPack component", "increase arena capacity");
+            }
+            return true;
+        }
+
+        case EVENT_CPACK_PACKAGE_DECLARE: {
+            BM_CPack_Package_Record record = {0};
+            record.id = (BM_CPack_Package_Id)arena_arr_len(draft->cpack_packages);
+            record.owner_directory_id = current_directory_id;
+            record.provenance = bm_provenance_from_event(builder->arena, ev);
+            record.include_toplevel_directory = ev->as.cpack_package_declare.include_toplevel_directory;
+            record.archive_component_install = ev->as.cpack_package_declare.archive_component_install;
+            if (!bm_copy_string(builder->arena, ev->as.cpack_package_declare.package_key, &record.package_key) ||
+                !bm_copy_string(builder->arena, ev->as.cpack_package_declare.package_name, &record.package_name) ||
+                !bm_copy_string(builder->arena, ev->as.cpack_package_declare.package_version, &record.package_version) ||
+                !bm_copy_string(builder->arena, ev->as.cpack_package_declare.package_file_name, &record.package_file_name) ||
+                !bm_copy_string(builder->arena, ev->as.cpack_package_declare.package_directory, &record.package_directory) ||
+                !bm_split_cmake_list(builder->arena, ev->as.cpack_package_declare.components_all, &record.components_all) ||
+                !arena_arr_push(builder->arena, draft->cpack_packages, record)) {
+                return bm_builder_error(builder, ev, "failed to append CPack package plan", "increase arena capacity");
+            }
+            return true;
+        }
+
+        case EVENT_CPACK_PACKAGE_ADD_GENERATOR: {
+            BM_CPack_Package_Record *record = bm_draft_find_cpack_package(draft, ev->as.cpack_package_add_generator.package_key);
+            String_View generator = {0};
+            if (!record) {
+                return bm_builder_error(builder,
+                                        ev,
+                                        "CPack package generator referenced unknown package plan",
+                                        "emit cpack_package_declare before cpack_package_add_generator");
+            }
+            if (!bm_copy_string(builder->arena, ev->as.cpack_package_add_generator.generator, &generator) ||
+                !bm_append_string(builder->arena, &record->generators, generator)) {
+                return bm_builder_error(builder, ev, "failed to append CPack package generator", "increase arena capacity");
             }
             return true;
         }

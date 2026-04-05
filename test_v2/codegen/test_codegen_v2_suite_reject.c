@@ -179,6 +179,27 @@ TEST(codegen_rejects_macosx_bundle_targets) {
     TEST_PASS();
 }
 
+TEST(codegen_rejects_cpack_archive_component_install_before_render) {
+    Nob_String_Builder sb = {0};
+    diag_reset();
+    diag_set_strict(false);
+    diag_telemetry_reset();
+    ASSERT(!codegen_render_script(
+        "project(Test C)\n"
+        "include(CPackComponent)\n"
+        "set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)\n"
+        "set(CPACK_GENERATOR TGZ)\n"
+        "include(CPack)\n"
+        "cpack_add_install_type(Full)\n"
+        "cpack_add_component(Runtime INSTALL_TYPES Full)\n"
+        "add_executable(app main.c)\n",
+        "CMakeLists.txt",
+        "nob.c",
+        &sb));
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
 void run_codegen_v2_reject_tests(int *passed, int *failed, int *skipped) {
     test_codegen_rejects_module_target_as_link_dependency(passed, failed, skipped);
     test_codegen_rejects_unsupported_generator_expression_operator(passed, failed, skipped);
@@ -190,4 +211,5 @@ void run_codegen_v2_reject_tests(int *passed, int *failed, int *skipped) {
     test_codegen_rejects_export_cxx_modules_directory_in_standalone_export_backend(passed, failed, skipped);
     test_codegen_rejects_invalid_platform_backend_pair(passed, failed, skipped);
     test_codegen_rejects_macosx_bundle_targets(passed, failed, skipped);
+    test_codegen_rejects_cpack_archive_component_install_before_render(passed, failed, skipped);
 }

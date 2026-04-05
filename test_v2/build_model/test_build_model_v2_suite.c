@@ -1546,6 +1546,138 @@ TEST(build_model_standalone_export_queries_cover_build_tree_and_package_registry
     TEST_PASS();
 }
 
+TEST(build_model_package_queries_surface_component_associations) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_CPack_Install_Type_Id full_id = BM_CPACK_INSTALL_TYPE_ID_INVALID;
+    BM_CPack_Component_Group_Id base_group_id = BM_CPACK_COMPONENT_GROUP_ID_INVALID;
+    BM_CPack_Component_Id runtime_id = BM_CPACK_COMPONENT_ID_INVALID;
+    BM_CPack_Component_Id development_id = BM_CPACK_COMPONENT_ID_INVALID;
+    BM_Install_Rule_Id_Span runtime_rules = {0};
+    BM_Install_Rule_Id_Span development_rules = {0};
+    BM_Export_Id_Span development_exports = {0};
+
+    ASSERT(build_model_write_text_file("package_query_src/core.c", "int core_value(void) { return 9; }\n"));
+    ASSERT(build_model_write_text_file("package_query_src/main.c", "int main(void) { return 0; }\n"));
+    ASSERT(build_model_write_text_file("package_query_src/include/core.h", "#define CORE_VALUE 9\n"));
+    ASSERT(build_model_write_text_file("package_query_src/docs/runtime.txt", "runtime\n"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "package_query_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("package_query_src");
+    config.binary_dir = nob_sv_from_cstr("package_query_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "include(CPackComponent)\n"
+        "cpack_add_install_type(Full DISPLAY_NAME \"Full Install\")\n"
+        "cpack_add_component_group(base DISPLAY_NAME \"Base\")\n"
+        "cpack_add_component(Runtime GROUP base INSTALL_TYPES Full)\n"
+        "cpack_add_component(Development GROUP base DEPENDS Runtime INSTALL_TYPES Full)\n"
+        "add_library(core STATIC core.c)\n"
+        "set_target_properties(core PROPERTIES PUBLIC_HEADER include/core.h)\n"
+        "add_executable(app main.c)\n"
+        "install(TARGETS app RUNTIME DESTINATION bin COMPONENT Runtime)\n"
+        "install(TARGETS core EXPORT DemoTargets ARCHIVE DESTINATION lib PUBLIC_HEADER DESTINATION include/demo COMPONENT Development)\n"
+        "install(FILES docs/runtime.txt DESTINATION share/runtime COMPONENT Runtime)\n"
+        "install(EXPORT DemoTargets DESTINATION lib/cmake/demo FILE DemoTargets.cmake COMPONENT Development)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    full_id = bm_query_cpack_install_type_by_name(model, nob_sv_from_cstr("Full"));
+    base_group_id = bm_query_cpack_component_group_by_name(model, nob_sv_from_cstr("base"));
+    runtime_id = bm_query_cpack_component_by_name(model, nob_sv_from_cstr("Runtime"));
+    development_id = bm_query_cpack_component_by_name(model, nob_sv_from_cstr("Development"));
+
+    ASSERT(full_id != BM_CPACK_INSTALL_TYPE_ID_INVALID);
+    ASSERT(base_group_id != BM_CPACK_COMPONENT_GROUP_ID_INVALID);
+    ASSERT(runtime_id != BM_CPACK_COMPONENT_ID_INVALID);
+    ASSERT(development_id != BM_CPACK_COMPONENT_ID_INVALID);
+    ASSERT(nob_sv_eq(bm_query_cpack_install_type_display_name(model, full_id), nob_sv_from_cstr("Full Install")));
+    ASSERT(nob_sv_eq(bm_query_cpack_component_group_name(model, base_group_id), nob_sv_from_cstr("base")));
+    ASSERT(bm_query_cpack_component_group(model, runtime_id) == base_group_id);
+    ASSERT(bm_query_cpack_component_group(model, development_id) == base_group_id);
+    ASSERT(bm_query_cpack_component_dependencies(model, development_id).count == 1);
+    ASSERT(bm_query_cpack_component_dependencies(model, development_id).items[0] == runtime_id);
+    ASSERT(bm_query_cpack_component_install_types(model, runtime_id).count == 1);
+    ASSERT(bm_query_cpack_component_install_types(model, runtime_id).items[0] == full_id);
+
+    runtime_rules = bm_query_cpack_component_install_rules(model, runtime_id, fixture.scratch_arena);
+    development_rules = bm_query_cpack_component_install_rules(model, development_id, fixture.scratch_arena);
+    development_exports = bm_query_cpack_component_exports(model, development_id, fixture.scratch_arena);
+
+    ASSERT(runtime_rules.count == 2);
+    ASSERT(development_rules.count == 1);
+    ASSERT(development_exports.count == 1);
+    ASSERT(bm_query_install_rule_kind(model, runtime_rules.items[0]) == BM_INSTALL_RULE_TARGET);
+    ASSERT(bm_query_install_rule_kind(model, runtime_rules.items[1]) == BM_INSTALL_RULE_FILE);
+    ASSERT(bm_query_install_rule_kind(model, development_rules.items[0]) == BM_INSTALL_RULE_TARGET);
+    ASSERT(nob_sv_eq(bm_query_export_name(model, development_exports.items[0]), nob_sv_from_cstr("DemoTargets")));
+    ASSERT(bm_query_install_rule_for_export_target(model,
+                                                   development_exports.items[0],
+                                                   bm_query_target_by_name(model, nob_sv_from_cstr("core"))) != BM_INSTALL_RULE_ID_INVALID);
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_cpack_package_queries_surface_generation_plan) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_String_Span generators = {0};
+    BM_String_Span components_all = {0};
+    String_View output_dir = {0};
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "cpack_plan_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("cpack_plan_src");
+    config.binary_dir = nob_sv_from_cstr("cpack_plan_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(PackMe VERSION 3.5.1 LANGUAGES C)\n"
+        "include(CPackComponent)\n"
+        "cpack_add_component(Runtime)\n"
+        "set(CPACK_GENERATOR \"TGZ;ZIP\")\n"
+        "set(CPACK_PACKAGE_DIRECTORY packages/out)\n"
+        "set(CPACK_PACKAGE_FILE_NAME PackMe-custom)\n"
+        "set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)\n"
+        "set(CPACK_COMPONENTS_ALL Runtime)\n"
+        "include(CPack)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    ASSERT(bm_query_cpack_package_count(model) == 1);
+    ASSERT(nob_sv_eq(bm_query_cpack_package_name(model, (BM_CPack_Package_Id)0), nob_sv_from_cstr("PackMe")));
+    ASSERT(nob_sv_eq(bm_query_cpack_package_version(model, (BM_CPack_Package_Id)0), nob_sv_from_cstr("3.5.1")));
+    ASSERT(nob_sv_eq(bm_query_cpack_package_file_name(model, (BM_CPack_Package_Id)0), nob_sv_from_cstr("PackMe-custom")));
+    ASSERT(!bm_query_cpack_package_include_toplevel_directory(model, (BM_CPack_Package_Id)0));
+    ASSERT(!bm_query_cpack_package_archive_component_install(model, (BM_CPack_Package_Id)0));
+
+    output_dir = bm_query_cpack_package_output_directory(model, (BM_CPack_Package_Id)0, fixture.scratch_arena);
+    ASSERT(build_model_sv_contains(output_dir, nob_sv_from_cstr("cpack_plan_build/packages/out")));
+
+    generators = bm_query_cpack_package_generators(model, (BM_CPack_Package_Id)0);
+    components_all = bm_query_cpack_package_components_all(model, (BM_CPack_Package_Id)0);
+    ASSERT(generators.count == 2);
+    ASSERT(build_model_string_equals_at(generators, 0, "TGZ"));
+    ASSERT(build_model_string_equals_at(generators, 1, "ZIP"));
+    ASSERT(components_all.count == 1);
+    ASSERT(build_model_string_equals_at(components_all, 0, "Runtime"));
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -1584,6 +1716,8 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_install_and_export_queries_surface_typed_metadata(passed, failed, skipped);
     test_build_model_install_queries_materialize_effective_default_components(passed, failed, skipped);
     test_build_model_standalone_export_queries_cover_build_tree_and_package_registry(passed, failed, skipped);
+    test_build_model_package_queries_surface_component_associations(passed, failed, skipped);
+    test_build_model_cpack_package_queries_surface_generation_plan(passed, failed, skipped);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

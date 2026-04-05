@@ -154,11 +154,15 @@ static bool nobify_find_repo_probe_cmake(char out_path[_TINYDIR_PATH_MAX]) {
 }
 
 static bool nobify_resolve_host_tool_paths(char cmake_bin[_TINYDIR_PATH_MAX],
-                                           char cpack_bin[_TINYDIR_PATH_MAX]) {
+                                           char cpack_bin[_TINYDIR_PATH_MAX],
+                                           char gzip_bin[_TINYDIR_PATH_MAX],
+                                           char xz_bin[_TINYDIR_PATH_MAX]) {
     const char *env_cmake = NULL;
-    if (!cmake_bin || !cpack_bin) return false;
+    if (!cmake_bin || !cpack_bin || !gzip_bin || !xz_bin) return false;
     cmake_bin[0] = '\0';
     cpack_bin[0] = '\0';
+    gzip_bin[0] = '\0';
+    xz_bin[0] = '\0';
 
     env_cmake = getenv("CMK2NOB_TEST_CMAKE_BIN");
     if (env_cmake && env_cmake[0] != '\0') {
@@ -176,6 +180,8 @@ static bool nobify_resolve_host_tool_paths(char cmake_bin[_TINYDIR_PATH_MAX],
         /* Resolved from repo-local probe cache. */
     }
 
+    (void)nobify_find_executable_in_path("gzip", gzip_bin);
+    (void)nobify_find_executable_in_path("xz", xz_bin);
     if (cmake_bin[0] == '\0') return true;
     (void)nobify_resolve_sibling_tool(cmake_bin, "cpack", cpack_bin);
     return true;
@@ -350,6 +356,8 @@ int main(int argc, char **argv) {
     Nob_Codegen_Backend resolved_backend = NOB_CODEGEN_BACKEND_AUTO;
     char cmake_bin[_TINYDIR_PATH_MAX] = {0};
     char cpack_bin[_TINYDIR_PATH_MAX] = {0};
+    char gzip_bin[_TINYDIR_PATH_MAX] = {0};
+    char xz_bin[_TINYDIR_PATH_MAX] = {0};
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--strict") == 0) {
@@ -485,7 +493,7 @@ int main(int argc, char **argv) {
         arena_destroy(arena);
         return 1;
     }
-    if (!nobify_resolve_host_tool_paths(cmake_bin, cpack_bin)) {
+    if (!nobify_resolve_host_tool_paths(cmake_bin, cpack_bin, gzip_bin, xz_bin)) {
         nob_log(NOB_ERROR, "Failed to resolve host tool paths");
         arena_destroy(arena);
         return 1;
@@ -731,6 +739,8 @@ int main(int argc, char **argv) {
         .binary_root = sv_from_cstr(binary_root),
         .embedded_cmake_bin = nob_sv_from_cstr(cmake_bin),
         .embedded_cpack_bin = nob_sv_from_cstr(cpack_bin),
+        .embedded_gzip_bin = nob_sv_from_cstr(gzip_bin),
+        .embedded_xz_bin = nob_sv_from_cstr(xz_bin),
         .target_platform = resolved_platform,
         .backend = resolved_backend,
     };

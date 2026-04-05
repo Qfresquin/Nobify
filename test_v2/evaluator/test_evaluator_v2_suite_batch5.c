@@ -3170,6 +3170,97 @@ TEST(evaluator_cleanup_stack_restores_log_env_and_workspace_after_assert_failure
     TEST_PASS();
 }
 
+TEST(evaluator_include_cpack_materializes_package_snapshot_events) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr("build");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "project(PackMe VERSION 1.4.2)\n"
+        "set(CPACK_GENERATOR \"TGZ;ZIP\")\n"
+        "set(CPACK_PACKAGE_DIRECTORY out/packages)\n"
+        "set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)\n"
+        "include(CPack)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    bool saw_declare = false;
+    bool saw_tgz = false;
+    bool saw_zip = false;
+    for (size_t i = 0; i < stream->count; ++i) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind == EV_CPACK_PACKAGE_DECLARE) {
+            saw_declare = true;
+            ASSERT(nob_sv_eq(ev->as.cpack_package_declare.package_name, nob_sv_from_cstr("PackMe")));
+            ASSERT(nob_sv_eq(ev->as.cpack_package_declare.package_version, nob_sv_from_cstr("1.4.2")));
+            ASSERT(nob_sv_eq(ev->as.cpack_package_declare.package_directory, nob_sv_from_cstr("out/packages")));
+            ASSERT(!ev->as.cpack_package_declare.include_toplevel_directory);
+        } else if (ev->h.kind == EV_CPACK_PACKAGE_ADD_GENERATOR) {
+            if (nob_sv_eq(ev->as.cpack_package_add_generator.generator, nob_sv_from_cstr("TGZ"))) saw_tgz = true;
+            if (nob_sv_eq(ev->as.cpack_package_add_generator.generator, nob_sv_from_cstr("ZIP"))) saw_zip = true;
+        }
+    }
+    ASSERT(saw_declare);
+    ASSERT(saw_tgz);
+    ASSERT(saw_zip);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_include_cpackcomponent_alone_does_not_materialize_package_snapshot) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr("build");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "project(OnlyComponents)\n"
+        "include(CPackComponent)\n"
+        "cpack_add_install_type(Full)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    for (size_t i = 0; i < stream->count; ++i) {
+        ASSERT(stream->items[i].h.kind != EV_CPACK_PACKAGE_DECLARE);
+        ASSERT(stream->items[i].h.kind != EV_CPACK_PACKAGE_ADD_GENERATOR);
+    }
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 void run_evaluator_v2_batch5(int *passed, int *failed, int *skipped) {
     test_evaluator_find_item_commands_resolve_local_paths_and_model_package_root_policies(passed, failed, skipped);
     test_evaluator_find_item_command_rejects_unknown_option(passed, failed, skipped);
@@ -3210,6 +3301,8 @@ void run_evaluator_v2_batch5(int *passed, int *failed, int *skipped) {
     test_evaluator_try_compile_failure_populates_output_variable(passed, failed, skipped);
     test_evaluator_try_compile_empty_capture_file_is_silent(passed, failed, skipped);
     test_evaluator_cleanup_stack_restores_log_env_and_workspace_after_assert_failure(passed, failed, skipped);
+    test_evaluator_include_cpack_materializes_package_snapshot_events(passed, failed, skipped);
+    test_evaluator_include_cpackcomponent_alone_does_not_materialize_package_snapshot(passed, failed, skipped);
 }
 
 void run_evaluator_v2_integration_batch5(int *passed, int *failed, int *skipped) {

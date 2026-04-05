@@ -13,6 +13,18 @@ static bool cg_step_uses_bare_tool(CG_Context *ctx, const char *tool_name) {
     return false;
 }
 
+static bool cg_package_generator_enabled(CG_Context *ctx, const char *generator_name) {
+    if (!ctx || !generator_name) return false;
+    for (size_t package_index = 0; package_index < bm_query_cpack_package_count(ctx->model); ++package_index) {
+        BM_String_Span generators =
+            bm_query_cpack_package_generators(ctx->model, (BM_CPack_Package_Id)package_index);
+        for (size_t i = 0; i < generators.count; ++i) {
+            if (nob_sv_eq(generators.items[i], nob_sv_from_cstr(generator_name))) return true;
+        }
+    }
+    return false;
+}
+
 void cg_collect_helper_requirements(CG_Context *ctx) {
     bool needs_compile_toolchain = false;
     bool needs_archive_tool = false;
@@ -20,6 +32,8 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
     bool needs_install_copy_file = false;
     bool needs_install_copy_directory = false;
     bool needs_require_paths = false;
+    bool needs_write_stamp = false;
+    bool needs_package_archive = false;
     if (!ctx) return;
 
     /* clean_all() always owns backend-private paths, so filesystem helpers are always needed */
@@ -31,24 +45,33 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
         if (ctx->targets[i].alias || ctx->targets[i].imported) continue;
         if (ctx->targets[i].emits_artifact) {
             needs_compile_toolchain = true;
-            needs_require_paths = true;
             if (ctx->targets[i].kind == BM_TARGET_STATIC_LIBRARY) {
                 needs_archive_tool = true;
             } else if (ctx->targets[i].kind == BM_TARGET_EXECUTABLE ||
                        ctx->targets[i].kind == BM_TARGET_SHARED_LIBRARY ||
                        ctx->targets[i].kind == BM_TARGET_MODULE_LIBRARY) {
+                needs_require_paths = true;
                 if (!ctx->policy.use_compiler_driver_for_executable_link ||
                     !ctx->policy.use_compiler_driver_for_shared_link ||
                     !ctx->policy.use_compiler_driver_for_module_link) {
                     needs_link_tool = true;
                 }
             }
+        } else if (ctx->targets[i].kind == BM_TARGET_UTILITY && ctx->targets[i].state_path.count > 0) {
+            needs_write_stamp = true;
         }
     }
 
     if (ctx->build_step_count > 0) {
         ctx->helper_bits |= CG_HELPER_RUN_CMD;
-        needs_require_paths = true;
+        for (size_t i = 0; i < ctx->build_step_count; ++i) {
+            BM_Build_Step_Id id = (BM_Build_Step_Id)i;
+            if (bm_query_build_step_outputs(ctx->model, id).count > 0 ||
+                bm_query_build_step_byproducts(ctx->model, id).count > 0) {
+                needs_require_paths = true;
+            }
+            if (ctx->build_steps[i].uses_stamp) needs_write_stamp = true;
+        }
     }
     if (cg_step_uses_bare_tool(ctx, "cmake")) ctx->helper_bits |= CG_HELPER_CMAKE_RESOLVER;
     if (cg_step_uses_bare_tool(ctx, "cpack")) ctx->helper_bits |= CG_HELPER_CPACK_RESOLVER;
@@ -62,12 +85,22 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
         }
     }
 
+    if (bm_query_cpack_package_count(ctx->model) > 0) {
+        needs_install_copy_file = true;
+        needs_install_copy_directory = true;
+        needs_package_archive = true;
+        if (cg_package_generator_enabled(ctx, "TGZ")) ctx->helper_bits |= CG_HELPER_GZIP_RESOLVER;
+        if (cg_package_generator_enabled(ctx, "TXZ")) ctx->helper_bits |= CG_HELPER_XZ_RESOLVER;
+    }
+
     if (needs_compile_toolchain) ctx->helper_bits |= CG_HELPER_COMPILE_TOOLCHAIN;
     if (needs_archive_tool) ctx->helper_bits |= CG_HELPER_ARCHIVE_TOOL;
     if (needs_link_tool) ctx->helper_bits |= CG_HELPER_LINK_TOOL;
-    if (needs_require_paths) ctx->helper_bits |= CG_HELPER_STAMP;
+    if (needs_require_paths) ctx->helper_bits |= CG_HELPER_REQUIRE_PATHS;
+    if (needs_write_stamp) ctx->helper_bits |= CG_HELPER_WRITE_STAMP;
     if (needs_install_copy_file) ctx->helper_bits |= CG_HELPER_INSTALL_COPY_FILE;
     if (needs_install_copy_directory) ctx->helper_bits |= CG_HELPER_INSTALL_COPY_DIRECTORY;
+    if (needs_package_archive) ctx->helper_bits |= CG_HELPER_PACKAGE_ARCHIVE;
 }
 
 bool cg_emit_support_helpers(CG_Context *ctx, Nob_String_Builder *out) {
@@ -165,6 +198,24 @@ bool cg_emit_support_helpers(CG_Context *ctx, Nob_String_Builder *out) {
             return false;
         }
     }
+    if (ctx->helper_bits & CG_HELPER_GZIP_RESOLVER) {
+        if (!cg_emit_preferred_tool_resolver(out,
+                                             "resolve_gzip_bin",
+                                             "NOB_GZIP_BIN",
+                                             ctx->embedded_gzip_bin_abs,
+                                             "gzip")) {
+            return false;
+        }
+    }
+    if (ctx->helper_bits & CG_HELPER_XZ_RESOLVER) {
+        if (!cg_emit_preferred_tool_resolver(out,
+                                             "resolve_xz_bin",
+                                             "NOB_XZ_BIN",
+                                             ctx->embedded_xz_bin_abs,
+                                             "xz")) {
+            return false;
+        }
+    }
 
     if (ctx->helper_bits & CG_HELPER_FILESYSTEM) {
         nob_sb_append_cstr(out,
@@ -185,7 +236,7 @@ bool cg_emit_support_helpers(CG_Context *ctx, Nob_String_Builder *out) {
             "    }\n"
             "    return nob_mkdir_if_not_exists(buf);\n"
             "}\n\n"
-            "static bool ensure_parent_dir(const char *path) {\n"
+            "static bool __attribute__((unused)) ensure_parent_dir(const char *path) {\n"
             "    const char *dir = nob_temp_dir_name(path);\n"
             "    if (!dir || strcmp(dir, \".\") == 0) return true;\n"
             "    return ensure_dir(dir);\n"
@@ -220,12 +271,16 @@ bool cg_emit_support_helpers(CG_Context *ctx, Nob_String_Builder *out) {
             "}\n\n");
     }
 
-    if (ctx->helper_bits & CG_HELPER_STAMP) {
+    if (ctx->helper_bits & CG_HELPER_WRITE_STAMP) {
         nob_sb_append_cstr(out,
             "static bool write_stamp(const char *path) {\n"
             "    if (!ensure_parent_dir(path)) return false;\n"
             "    return nob_write_entire_file(path, \"\", 0);\n"
-            "}\n\n"
+            "}\n\n");
+    }
+
+    if (ctx->helper_bits & CG_HELPER_REQUIRE_PATHS) {
+        nob_sb_append_cstr(out,
             "static bool require_paths(const char *const *paths, size_t count) {\n"
             "    for (size_t i = 0; i < count; ++i) {\n"
             "        if (nob_file_exists(paths[i])) continue;\n"

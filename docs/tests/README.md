@@ -89,6 +89,22 @@ The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`
   `test_v2/artifact_parity/` stays explicit-only and owns real-CMake parity
   plus downstream-consumer proof for `export(TARGETS ...)`,
   `export(EXPORT ...)`, and `export(PACKAGE ...)`
+- `P7` proof split:
+  `test_v2/evaluator/` locks canonical CPack package-plan lowering, including
+  the rule that `include(CPack)` materializes package records while
+  `include(CPackComponent)` alone does not
+  `test_v2/build_model/` locks typed package-planning queries for generators,
+  effective output directories, file names, include-top-level behavior, and
+  preserved component metadata
+  `test_v2/pipeline/` snapshots package-plan events and frozen package
+  configuration in the evaluator-to-build-model path
+  `test_v2/codegen/` owns aggregate-safe Linux/POSIX smoke for generated-Nob
+  package execution with `TGZ`, `TXZ`, and `ZIP`, custom `--output-dir`,
+  include-top-level on/off behavior, and explicit rejection of unsupported
+  component packaging
+  `test_v2/artifact_parity/` stays explicit-only and owns real-CMake package
+  parity for `TGZ`, `TXZ`, and `ZIP` through structural package metadata plus
+  normalized extracted-tree diffs
 - required external tools:
   real `cmake 3.28.x`
   sibling `cpack` only for package-phase cases
@@ -97,11 +113,17 @@ The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`
   generated Nob runtime tool precedence is
   `NOB_CMAKE_BIN` / `NOB_CPACK_BIN` -> embedded absolute path from `nobify` ->
   bare `cmake` / `cpack`
+  generated Nob package compressor precedence is
+  `NOB_GZIP_BIN` / `NOB_XZ_BIN` -> embedded absolute path from `nobify` ->
+  bare `gzip` / `xz`
   generated Nob install execution is now explicit through
   `install [--prefix <path>] [--component <name>]`; omitting `--component`
   means full install
   generated Nob standalone export execution is now explicit through `export`,
   which honors the same global `--config <cfg>` selection used by `build`
+  generated Nob package execution is now explicit through
+  `package [--generator <name>] [--output-dir <path>]`; the positive baseline
+  is Linux/POSIX-only and full-package-only for `TGZ`, `TXZ`, and `ZIP`
   generated Nob config selection is explicit through `--config <cfg>`; the
   empty config remains the default when the flag is omitted
   generation-time platform/backend selection is explicit through

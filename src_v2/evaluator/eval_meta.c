@@ -69,6 +69,24 @@ static bool meta_path_has_prefix(String_View path, String_View prefix) {
     return path.data[prefix.count] == '/' || path.data[prefix.count] == '\\';
 }
 
+static Event_Origin meta_current_origin(EvalExecContext *ctx) {
+    Event_Origin origin = {0};
+    if (!ctx) return origin;
+    origin.file_path = ctx->current_file
+        ? nob_sv_from_cstr(ctx->current_file)
+        : eval_var_get_visible(ctx, nob_sv_from_cstr(EVAL_VAR_CURRENT_LIST_FILE));
+    return origin;
+}
+
+static String_View meta_visible_var_or(EvalExecContext *ctx,
+                                       const char *name,
+                                       String_View fallback) {
+    String_View value = {0};
+    if (!ctx || !name) return fallback;
+    value = eval_var_get_visible(ctx, nob_sv_from_cstr(name));
+    return value.count > 0 ? value : fallback;
+}
+
 static void meta_sb_append_cmake_escaped(Nob_String_Builder *sb, String_View value) {
     if (!sb || value.count == 0) return;
     for (size_t i = 0; i < value.count; i++) {
@@ -1057,6 +1075,98 @@ static bool meta_export_execute_request(EvalExecContext *ctx,
                                    req->ns,
                                    req->cxx_modules_directory,
                                    cxx_modules_name);
+}
+
+bool eval_finalize_cpack_package_snapshot(EvalExecContext *ctx) {
+    SV_List generators = NULL;
+    String_View generator_list = {0};
+    String_View package_name = {0};
+    String_View package_version = {0};
+    String_View package_file_name = {0};
+    String_View package_directory = {0};
+    String_View components_all = {0};
+    String_View package_key = {0};
+    Event_Origin origin = {0};
+    bool include_toplevel_directory = true;
+    bool archive_component_install = false;
+    Nob_String_Builder sb = {0};
+    char *copy = NULL;
+
+    if (!ctx || !ctx->cpack_module_loaded) return true;
+
+    generator_list = eval_var_get_visible(ctx, nob_sv_from_cstr("CPACK_GENERATOR"));
+    if (generator_list.count == 0) generator_list = nob_sv_from_cstr("TGZ");
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), generator_list, &generators)) return false;
+    if (eval_should_stop(ctx)) return false;
+
+    package_name = meta_visible_var_or(ctx,
+                                       "CPACK_PACKAGE_NAME",
+                                       meta_visible_var_or(ctx,
+                                                           "CMAKE_PROJECT_NAME",
+                                                           meta_visible_var_or(ctx,
+                                                                               "PROJECT_NAME",
+                                                                               nob_sv_from_cstr("Package"))));
+    package_version = meta_visible_var_or(ctx,
+                                          "CPACK_PACKAGE_VERSION",
+                                          meta_visible_var_or(ctx,
+                                                              "CMAKE_PROJECT_VERSION",
+                                                              meta_visible_var_or(ctx,
+                                                                                  "PROJECT_VERSION",
+                                                                                  nob_sv_from_cstr(""))));
+    package_file_name = eval_var_get_visible(ctx, nob_sv_from_cstr("CPACK_PACKAGE_FILE_NAME"));
+    if (package_file_name.count == 0) {
+        nob_sb_append_buf(&sb, package_name.data ? package_name.data : "", package_name.count);
+        if (package_version.count > 0) {
+            nob_sb_append_cstr(&sb, "-");
+            nob_sb_append_buf(&sb, package_version.data ? package_version.data : "", package_version.count);
+        }
+        copy = arena_strndup(eval_temp_arena(ctx), sb.items ? sb.items : "", sb.count);
+        nob_sb_free(sb);
+        if (!copy) return false;
+        package_file_name = nob_sv_from_cstr(copy);
+    }
+
+    package_directory = meta_visible_var_or(ctx, "CPACK_PACKAGE_DIRECTORY", meta_current_bin_dir(ctx));
+    {
+        String_View raw = eval_var_get_visible(ctx, nob_sv_from_cstr("CPACK_INCLUDE_TOPLEVEL_DIRECTORY"));
+        if (raw.count > 0) include_toplevel_directory = eval_truthy(ctx, raw);
+    }
+    archive_component_install =
+        eval_truthy(ctx, eval_var_get_visible(ctx, nob_sv_from_cstr("CPACK_ARCHIVE_COMPONENT_INSTALL")));
+    components_all = eval_var_get_visible(ctx, nob_sv_from_cstr("CPACK_COMPONENTS_ALL"));
+    package_key = eval_alloc_cpack_package_key(ctx);
+    if (eval_should_stop(ctx)) return false;
+    origin = meta_current_origin(ctx);
+
+    if (!eval_emit_cpack_package_declare(ctx,
+                                         origin,
+                                         package_key,
+                                         package_name,
+                                         package_version,
+                                         package_file_name,
+                                         package_directory,
+                                         include_toplevel_directory,
+                                         archive_component_install,
+                                         components_all)) {
+        return false;
+    }
+
+    {
+        bool emitted_generator = false;
+        for (size_t i = 0; i < arena_arr_len(generators); ++i) {
+            String_View generator = nob_sv_trim(generators[i]);
+            if (generator.count == 0) continue;
+            emitted_generator = true;
+            if (!eval_emit_cpack_package_add_generator(ctx, origin, package_key, generator)) return false;
+        }
+        if (!emitted_generator) {
+            if (!eval_emit_cpack_package_add_generator(ctx, origin, package_key, nob_sv_from_cstr("TGZ"))) {
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
 
 Eval_Result eval_handle_export(EvalExecContext *ctx, const Node *node) {

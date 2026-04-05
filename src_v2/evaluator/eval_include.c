@@ -27,6 +27,11 @@ static bool include_enables_cpack_component_commands(String_View arg) {
            eval_sv_eq_ci_lit(arg, "CPack.cmake");
 }
 
+static bool include_is_cpack_module(String_View arg) {
+    return eval_sv_eq_ci_lit(arg, "CPack") ||
+           eval_sv_eq_ci_lit(arg, "CPack.cmake");
+}
+
 static bool include_enables_fetchcontent_commands(String_View arg) {
     return eval_sv_eq_ci_lit(arg, "FetchContent") ||
            eval_sv_eq_ci_lit(arg, "FetchContent.cmake");
@@ -374,6 +379,9 @@ Eval_Result eval_handle_include(EvalExecContext *ctx, const Node *node) {
 
     // CPack component commands are provided by CPackComponent (and by CPack, which includes it).
     if (include_enables_cpack_component_commands(file_or_module)) {
+        if (include_is_cpack_module(file_or_module)) {
+            ctx->cpack_module_loaded = true;
+        }
         ctx->cpack_component_module_loaded = true;
         if (result_variable.count > 0) {
             (void)eval_var_set_current(ctx, result_variable, file_or_module);

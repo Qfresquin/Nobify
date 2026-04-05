@@ -123,6 +123,8 @@ typedef enum {
     X(EVENT_CPACK_ADD_INSTALL_TYPE, EVENT_FAMILY_CPACK, "cpack_add_install_type", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_CPACK_ADD_COMPONENT_GROUP, EVENT_FAMILY_CPACK, "cpack_add_component_group", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_CPACK_ADD_COMPONENT, EVENT_FAMILY_CPACK, "cpack_add_component", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_CPACK_PACKAGE_DECLARE, EVENT_FAMILY_CPACK, "cpack_package_declare", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_CPACK_PACKAGE_ADD_GENERATOR, EVENT_FAMILY_CPACK, "cpack_package_add_generator", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_PACKAGE_FIND_RESULT, EVENT_FAMILY_PACKAGE, "package_find_result", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_PROJECT_DECLARE, EVENT_FAMILY_PROJECT, "project_declare", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_PROJECT_MINIMUM_REQUIRED, EVENT_FAMILY_PROJECT, "project_minimum_required", EVENT_ROLE_BUILD_SEMANTIC) \
@@ -660,6 +662,22 @@ typedef struct {
 } Event_Cpack_Add_Component;
 
 typedef struct {
+    String_View package_key;
+    String_View package_name;
+    String_View package_version;
+    String_View package_file_name;
+    String_View package_directory;
+    bool include_toplevel_directory;
+    bool archive_component_install;
+    String_View components_all;
+} Event_Cpack_Package_Declare;
+
+typedef struct {
+    String_View package_key;
+    String_View generator;
+} Event_Cpack_Package_Add_Generator;
+
+typedef struct {
     String_View package_name;
     String_View mode;
     union {
@@ -926,6 +944,8 @@ typedef struct {
         Event_Cpack_Add_Install_Type cpack_add_install_type;
         Event_Cpack_Add_Component_Group cpack_add_component_group;
         Event_Cpack_Add_Component cpack_add_component;
+        Event_Cpack_Package_Declare cpack_package_declare;
+        Event_Cpack_Package_Add_Generator cpack_package_add_generator;
         Event_Package_Find_Result package_find_result;
         Event_Package_Find_Result find_package; // legacy alias
         Event_Project_Declare project_declare;
@@ -1006,6 +1026,8 @@ typedef Event_Diag_Severity Cmake_Diag_Severity;
 #define EV_CPACK_ADD_INSTALL_TYPE EVENT_CPACK_ADD_INSTALL_TYPE
 #define EV_CPACK_ADD_COMPONENT_GROUP EVENT_CPACK_ADD_COMPONENT_GROUP
 #define EV_CPACK_ADD_COMPONENT EVENT_CPACK_ADD_COMPONENT
+#define EV_CPACK_PACKAGE_DECLARE EVENT_CPACK_PACKAGE_DECLARE
+#define EV_CPACK_PACKAGE_ADD_GENERATOR EVENT_CPACK_PACKAGE_ADD_GENERATOR
 #define EV_FIND_PACKAGE EVENT_PACKAGE_FIND_RESULT
 #define EV_COMMAND_CALL EVENT_COMMAND_BEGIN
 

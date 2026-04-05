@@ -3,6 +3,8 @@
 
 #include "nob_codegen.h"
 
+typedef struct CG_Context CG_Context;
+
 typedef struct {
     String_View prefix;
     String_View suffix;
@@ -138,6 +140,28 @@ typedef struct {
     String_View failure_message;
 } CG_Resolved_Target_Ref;
 
+typedef bool (*CG_CMake_Target_Properties_Emitter)(CG_Context *ctx,
+                                                   BM_Export_Id export_id,
+                                                   BM_Target_Id target_id,
+                                                   String_View exported_name,
+                                                   String_View export_namespace,
+                                                   String_View config,
+                                                   void *userdata,
+                                                   Nob_String_Builder *sb);
+
+typedef struct {
+    String_View config;
+    String_View generator;
+    String_View output_dir;
+    String_View package_name;
+    String_View package_version;
+    String_View package_file_name;
+    String_View staging_root;
+    String_View payload_root;
+    String_View metadata_output_path;
+    bool include_toplevel_directory;
+} CG_Package_Request;
+
 typedef enum {
     CG_HELPER_NONE = 0,
     CG_HELPER_CONFIG_MATCHES = 1ull << 0,
@@ -148,12 +172,16 @@ typedef enum {
     CG_HELPER_CPACK_RESOLVER = 1ull << 5,
     CG_HELPER_FILESYSTEM = 1ull << 6,
     CG_HELPER_RUN_CMD = 1ull << 7,
-    CG_HELPER_STAMP = 1ull << 8,
-    CG_HELPER_INSTALL_COPY_FILE = 1ull << 9,
-    CG_HELPER_INSTALL_COPY_DIRECTORY = 1ull << 10,
+    CG_HELPER_REQUIRE_PATHS = 1ull << 8,
+    CG_HELPER_WRITE_STAMP = 1ull << 9,
+    CG_HELPER_INSTALL_COPY_FILE = 1ull << 10,
+    CG_HELPER_INSTALL_COPY_DIRECTORY = 1ull << 11,
+    CG_HELPER_GZIP_RESOLVER = 1ull << 12,
+    CG_HELPER_XZ_RESOLVER = 1ull << 13,
+    CG_HELPER_PACKAGE_ARCHIVE = 1ull << 14,
 } CG_Helper_Flags;
 
-typedef struct {
+typedef struct CG_Context {
     const Build_Model *model;
     Arena *scratch;
     Nob_Codegen_Options opts;
@@ -165,6 +193,8 @@ typedef struct {
     String_View emit_dir_abs;
     String_View embedded_cmake_bin_abs;
     String_View embedded_cpack_bin_abs;
+    String_View embedded_gzip_bin_abs;
+    String_View embedded_xz_bin_abs;
     String_View *known_configs;
     CG_Target_Info *targets;
     size_t target_count;
@@ -217,5 +247,35 @@ bool cg_resolve_target_ref(CG_Context *ctx,
 bool cg_emit_step_function(CG_Context *ctx,
                            const CG_Build_Step_Info *info,
                            Nob_String_Builder *out);
+bool cg_target_export_name(CG_Context *ctx, BM_Target_Id id, String_View *out);
+bool cg_target_exported_name(CG_Context *ctx,
+                             BM_Target_Id id,
+                             String_View export_namespace,
+                             String_View *out);
+bool cg_cmake_append_escaped(Nob_String_Builder *sb, String_View value);
+bool cg_join_sv_list(Arena *scratch, String_View *items, String_View *out);
+bool cg_export_noconfig_file_name(CG_Context *ctx,
+                                  BM_Export_Id export_id,
+                                  String_View *out);
+bool cg_export_noconfig_output_file_path(CG_Context *ctx,
+                                         BM_Export_Id export_id,
+                                         String_View *out);
+bool cg_export_target_in_span(BM_Target_Id_Span span, BM_Target_Id id);
+bool cg_emit_cmake_imported_target_declaration(BM_Target_Kind kind,
+                                               String_View exported_name,
+                                               Nob_String_Builder *sb);
+bool cg_build_cmake_targets_file_contents(CG_Context *ctx,
+                                          BM_Export_Id export_id,
+                                          String_View config,
+                                          bool include_noconfig,
+                                          CG_CMake_Target_Properties_Emitter emit_properties,
+                                          void *userdata,
+                                          String_View *out);
+bool cg_build_cmake_targets_noconfig_file_contents(CG_Context *ctx,
+                                                   BM_Export_Id export_id,
+                                                   String_View config,
+                                                   CG_CMake_Target_Properties_Emitter emit_properties,
+                                                   void *userdata,
+                                                   String_View *out);
 
 #endif

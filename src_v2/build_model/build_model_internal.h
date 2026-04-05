@@ -251,6 +251,21 @@ typedef struct {
     bool downloaded;
 } BM_CPack_Component_Record;
 
+typedef struct {
+    BM_CPack_Package_Id id;
+    BM_Directory_Id owner_directory_id;
+    BM_Provenance provenance;
+    String_View package_key;
+    String_View package_name;
+    String_View package_version;
+    String_View package_file_name;
+    String_View package_directory;
+    String_View *generators;
+    String_View *components_all;
+    bool include_toplevel_directory;
+    bool archive_component_install;
+} BM_CPack_Package_Record;
+
 struct Build_Model_Draft {
     Arena *arena;
     Diag_Sink *sink;
@@ -270,6 +285,7 @@ struct Build_Model_Draft {
     BM_CPack_Install_Type_Record *cpack_install_types;
     BM_CPack_Component_Group_Record *cpack_component_groups;
     BM_CPack_Component_Record *cpack_components;
+    BM_CPack_Package_Record *cpack_packages;
     BM_Name_Index_Entry *target_name_index;
     BM_Name_Index_Entry *test_name_index;
     BM_Name_Index_Entry *package_name_index;
@@ -291,6 +307,7 @@ struct Build_Model {
     BM_CPack_Install_Type_Record *cpack_install_types;
     BM_CPack_Component_Group_Record *cpack_component_groups;
     BM_CPack_Component_Record *cpack_components;
+    BM_CPack_Package_Record *cpack_packages;
     BM_Name_Index_Entry *target_name_index;
     BM_Name_Index_Entry *test_name_index;
     BM_Name_Index_Entry *package_name_index;
