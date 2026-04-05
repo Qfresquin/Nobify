@@ -785,6 +785,7 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
         String_View output_rel = bm_query_export_output_file_path(ctx->model, export_id, ctx->scratch);
         String_View noconfig_output_rel = {0};
         bool use_noconfig = cg_export_has_non_interface_targets(ctx, export_id);
+        if (bm_query_export_kind(ctx->model, export_id) != BM_EXPORT_INSTALL) continue;
         if (!cg_build_export_file_contents(ctx, export_id, &export_text)) {
             return false;
         }

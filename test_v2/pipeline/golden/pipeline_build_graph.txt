@@ -6,13 +6,17 @@ EVAL_OK 1
 BUILDER_OK 1
 FREEZE_OK 1
 DIAG errors=1 warnings=0
-EVENTS count=50
+EVENTS count=68
 BUILD_STEPS count=5
 STEP[0] kind=OUTPUT_RULE owner_target='' outputs=1 byproducts=1 target_deps=0 producer_deps=0 file_deps=1 commands=1
 STEP[1] kind=CUSTOM_TARGET owner_target='prepare' outputs=0 byproducts=1 target_deps=1 producer_deps=1 file_deps=1 commands=0
 STEP[2] kind=TARGET_PRE_BUILD owner_target='app' outputs=0 byproducts=1 target_deps=0 producer_deps=0 file_deps=0 commands=1
 STEP[3] kind=TARGET_PRE_LINK owner_target='app' outputs=0 byproducts=1 target_deps=0 producer_deps=0 file_deps=0 commands=1
 STEP[4] kind=TARGET_POST_BUILD owner_target='app' outputs=0 byproducts=1 target_deps=0 producer_deps=0 file_deps=0 commands=1
+EXPORTS count=3
+EXPORT[0] kind=BUILD_TREE source=TARGETS name='HelperTargets' namespace='Demo::' output='graph_build/exports/HelperTargets.cmake' registry_prefix='' enabled=1 targets=1
+EXPORT[1] kind=BUILD_TREE source=EXPORT_SET name='DemoTargets' namespace='Demo::' output='graph_build/exports/DemoTargets.cmake' registry_prefix='' enabled=1 targets=1
+EXPORT[2] kind=PACKAGE_REGISTRY source=PACKAGE name='DemoPkg' namespace='' output='' registry_prefix='graph_build' enabled=1 targets=0
 TARGET name='helper' source_count=1
 SOURCE[0] generated=0 producer=INVALID effective='graph_src/helper.c'
 TARGET name='prepare' source_count=0

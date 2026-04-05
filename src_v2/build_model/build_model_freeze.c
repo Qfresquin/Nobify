@@ -598,28 +598,49 @@ static bool bm_clone_exports(const Build_Model_Draft *draft, Build_Model *model,
     for (size_t i = 0; i < arena_arr_len(draft->exports); ++i) {
         const BM_Export_Record *src = &draft->exports[i];
         BM_Export_Record record = *src;
-        if (!bm_copy_string(arena, src->name, &record.name) ||
+        if (!bm_copy_string(arena, src->export_key, &record.export_key) ||
+            !bm_copy_string(arena, src->name, &record.name) ||
             !bm_copy_string(arena, src->export_namespace, &record.export_namespace) ||
             !bm_copy_string(arena, src->destination, &record.destination) ||
             !bm_copy_string(arena, src->file_name, &record.file_name) ||
             !bm_copy_string(arena, src->component, &record.component) ||
+            !bm_copy_string(arena, src->output_file_path, &record.output_file_path) ||
+            !bm_copy_string(arena, src->cxx_modules_directory, &record.cxx_modules_directory) ||
+            !bm_copy_string(arena, src->registry_prefix, &record.registry_prefix) ||
+            !bm_clone_string_array(arena, &record.target_names, src->target_names) ||
             !bm_clone_provenance(arena, &record.provenance, src->provenance)) {
             return false;
         }
         record.target_ids = NULL;
-        for (size_t rule_index = 0; rule_index < arena_arr_len(model->install_rules); ++rule_index) {
-            const BM_Install_Rule_Record *rule = &model->install_rules[rule_index];
-            if (rule->kind != BM_INSTALL_RULE_TARGET || !nob_sv_eq(rule->export_name, src->name)) continue;
-            if (rule->resolved_target_id == BM_TARGET_ID_INVALID) {
-                bm_diag_error(sink,
-                              rule->provenance,
-                              "build_model_freeze",
-                              "freeze",
-                              "install export target could not be resolved during freeze",
-                              "fix unresolved install target names before freezing exports");
-                return false;
+        if (src->kind == BM_EXPORT_INSTALL) {
+            for (size_t rule_index = 0; rule_index < arena_arr_len(model->install_rules); ++rule_index) {
+                const BM_Install_Rule_Record *rule = &model->install_rules[rule_index];
+                if (rule->kind != BM_INSTALL_RULE_TARGET || !nob_sv_eq(rule->export_name, src->name)) continue;
+                if (rule->resolved_target_id == BM_TARGET_ID_INVALID) {
+                    bm_diag_error(sink,
+                                  rule->provenance,
+                                  "build_model_freeze",
+                                  "freeze",
+                                  "install export target could not be resolved during freeze",
+                                  "fix unresolved install target names before freezing exports");
+                    return false;
+                }
+                if (!arena_arr_push(arena, record.target_ids, rule->resolved_target_id)) return false;
             }
-            if (!arena_arr_push(arena, record.target_ids, rule->resolved_target_id)) return false;
+        } else if (src->kind == BM_EXPORT_BUILD_TREE) {
+            for (size_t target_index = 0; target_index < arena_arr_len(src->target_names); ++target_index) {
+                BM_Target_Id target_id = bm_draft_find_target_id(draft, src->target_names[target_index]);
+                if (target_id == BM_TARGET_ID_INVALID) {
+                    bm_diag_error(sink,
+                                  src->provenance,
+                                  "build_model_freeze",
+                                  "freeze",
+                                  "build-tree export target could not be resolved during freeze",
+                                  "fix unresolved export target names before freezing standalone exports");
+                    return false;
+                }
+                if (!arena_arr_push(arena, record.target_ids, target_id)) return false;
+            }
         }
         if (!arena_arr_push(arena, model->exports, record)) return false;
     }

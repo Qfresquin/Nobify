@@ -83,6 +83,16 @@ static const char *event_build_step_kind_name(Event_Build_Step_Kind kind) {
     return "unknown";
 }
 
+static const char *event_export_source_kind_name(Event_Export_Source_Kind kind) {
+    switch (kind) {
+        case EVENT_EXPORT_SOURCE_INSTALL_EXPORT: return "install_export";
+        case EVENT_EXPORT_SOURCE_TARGETS: return "targets";
+        case EVENT_EXPORT_SOURCE_EXPORT_SET: return "export_set";
+        case EVENT_EXPORT_SOURCE_PACKAGE: return "package";
+    }
+    return "unknown";
+}
+
 static const char *event_property_mutate_op_name(Event_Property_Mutate_Op op) {
     switch (op) {
         case EVENT_PROPERTY_MUTATE_SET: return "set";
@@ -346,6 +356,21 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.export_install.export_namespace)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.export_install.file_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.export_install.component)) return false;
+            break;
+        case EVENT_EXPORT_BUILD_DECLARE:
+            if (!event_copy_sv_inplace(arena, &ev->as.export_build_declare.export_key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.export_build_declare.logical_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.export_build_declare.file_path)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.export_build_declare.export_namespace)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.export_build_declare.cxx_modules_directory)) return false;
+            break;
+        case EVENT_EXPORT_BUILD_ADD_TARGET:
+            if (!event_copy_sv_inplace(arena, &ev->as.export_build_add_target.export_key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.export_build_add_target.target_name)) return false;
+            break;
+        case EVENT_EXPORT_PACKAGE_REGISTRY:
+            if (!event_copy_sv_inplace(arena, &ev->as.export_package_registry.package_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.export_package_registry.prefix)) return false;
             break;
         case EVENT_CPACK_ADD_INSTALL_TYPE:
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_add_install_type.name)) return false;
@@ -686,6 +711,36 @@ static void event_dump_one(const Event *ev) {
                    ev->as.export_install.file_name.data ? ev->as.export_install.file_name.data : "",
                    (int)ev->as.export_install.component.count,
                    ev->as.export_install.component.data ? ev->as.export_install.component.data : "");
+            break;
+        case EVENT_EXPORT_BUILD_DECLARE:
+            printf(" export_key=%.*s source_kind=%s name=%.*s file=%.*s namespace=%.*s append=%d cxx_modules_directory=%.*s",
+                   (int)ev->as.export_build_declare.export_key.count,
+                   ev->as.export_build_declare.export_key.data ? ev->as.export_build_declare.export_key.data : "",
+                   event_export_source_kind_name(ev->as.export_build_declare.source_kind),
+                   (int)ev->as.export_build_declare.logical_name.count,
+                   ev->as.export_build_declare.logical_name.data ? ev->as.export_build_declare.logical_name.data : "",
+                   (int)ev->as.export_build_declare.file_path.count,
+                   ev->as.export_build_declare.file_path.data ? ev->as.export_build_declare.file_path.data : "",
+                   (int)ev->as.export_build_declare.export_namespace.count,
+                   ev->as.export_build_declare.export_namespace.data ? ev->as.export_build_declare.export_namespace.data : "",
+                   ev->as.export_build_declare.append ? 1 : 0,
+                   (int)ev->as.export_build_declare.cxx_modules_directory.count,
+                   ev->as.export_build_declare.cxx_modules_directory.data ? ev->as.export_build_declare.cxx_modules_directory.data : "");
+            break;
+        case EVENT_EXPORT_BUILD_ADD_TARGET:
+            printf(" export_key=%.*s target=%.*s",
+                   (int)ev->as.export_build_add_target.export_key.count,
+                   ev->as.export_build_add_target.export_key.data ? ev->as.export_build_add_target.export_key.data : "",
+                   (int)ev->as.export_build_add_target.target_name.count,
+                   ev->as.export_build_add_target.target_name.data ? ev->as.export_build_add_target.target_name.data : "");
+            break;
+        case EVENT_EXPORT_PACKAGE_REGISTRY:
+            printf(" package=%.*s prefix=%.*s enabled=%d",
+                   (int)ev->as.export_package_registry.package_name.count,
+                   ev->as.export_package_registry.package_name.data ? ev->as.export_package_registry.package_name.data : "",
+                   (int)ev->as.export_package_registry.prefix.count,
+                   ev->as.export_package_registry.prefix.data ? ev->as.export_package_registry.prefix.data : "",
+                   ev->as.export_package_registry.enabled ? 1 : 0);
             break;
 
         case EVENT_TARGET_DECLARE:

@@ -142,7 +142,10 @@ typedef enum {
     X(EVENT_TARGET_INCLUDE_DIRECTORIES, EVENT_FAMILY_TARGET, "target_include_directories", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TARGET_COMPILE_DEFINITIONS, EVENT_FAMILY_TARGET, "target_compile_definitions", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TARGET_COMPILE_OPTIONS, EVENT_FAMILY_TARGET, "target_compile_options", EVENT_ROLE_BUILD_SEMANTIC) \
-    X(EVENT_EXPORT_INSTALL, EVENT_FAMILY_EXPORT, "export_install", EVENT_ROLE_BUILD_SEMANTIC)
+    X(EVENT_EXPORT_INSTALL, EVENT_FAMILY_EXPORT, "export_install", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_EXPORT_BUILD_DECLARE, EVENT_FAMILY_EXPORT, "export_build_declare", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_EXPORT_BUILD_ADD_TARGET, EVENT_FAMILY_EXPORT, "export_build_add_target", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_EXPORT_PACKAGE_REGISTRY, EVENT_FAMILY_EXPORT, "export_package_registry", EVENT_ROLE_BUILD_SEMANTIC)
 
 typedef enum {
 #define DECLARE_EVENT_KIND(kind, family, label, roles) kind,
@@ -208,6 +211,13 @@ typedef enum {
     EVENT_BUILD_STEP_TARGET_PRE_LINK,
     EVENT_BUILD_STEP_TARGET_POST_BUILD,
 } Event_Build_Step_Kind;
+
+typedef enum {
+    EVENT_EXPORT_SOURCE_INSTALL_EXPORT = 0,
+    EVENT_EXPORT_SOURCE_TARGETS,
+    EVENT_EXPORT_SOURCE_EXPORT_SET,
+    EVENT_EXPORT_SOURCE_PACKAGE,
+} Event_Export_Source_Kind;
 
 typedef enum {
     EVENT_PROPERTY_MUTATE_SET = 0,
@@ -600,6 +610,27 @@ typedef struct {
 } Event_Export_Install;
 
 typedef struct {
+    String_View export_key;
+    Event_Export_Source_Kind source_kind;
+    String_View logical_name;
+    String_View file_path;
+    String_View export_namespace;
+    bool append;
+    String_View cxx_modules_directory;
+} Event_Export_Build_Declare;
+
+typedef struct {
+    String_View export_key;
+    String_View target_name;
+} Event_Export_Build_Add_Target;
+
+typedef struct {
+    String_View package_name;
+    String_View prefix;
+    bool enabled;
+} Event_Export_Package_Registry;
+
+typedef struct {
     String_View name;
     String_View display_name;
 } Event_Cpack_Add_Install_Type;
@@ -916,6 +947,9 @@ typedef struct {
         Event_Target_Compile_Definitions target_compile_definitions;
         Event_Target_Compile_Options target_compile_options;
         Event_Export_Install export_install;
+        Event_Export_Build_Declare export_build_declare;
+        Event_Export_Build_Add_Target export_build_add_target;
+        Event_Export_Package_Registry export_package_registry;
     } as;
 } Event;
 

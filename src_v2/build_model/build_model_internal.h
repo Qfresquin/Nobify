@@ -180,11 +180,20 @@ typedef struct {
     BM_Export_Id id;
     BM_Directory_Id owner_directory_id;
     BM_Provenance provenance;
+    BM_Export_Kind kind;
+    BM_Export_Source_Kind source_kind;
+    String_View export_key;
     String_View name;
     String_View export_namespace;
     String_View destination;
     String_View file_name;
     String_View component;
+    String_View output_file_path;
+    String_View cxx_modules_directory;
+    String_View registry_prefix;
+    bool enabled;
+    bool append;
+    String_View *target_names;
     BM_Target_Id *target_ids;
 } BM_Export_Record;
 

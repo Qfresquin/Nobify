@@ -226,6 +226,7 @@ TEST(evaluator_session_api_runs_with_explicit_request_and_stream) {
     cfg.compat_profile = EVAL_PROFILE_STRICT;
     cfg.source_root = nob_sv_from_cstr(".");
     cfg.binary_root = nob_sv_from_cstr(".");
+    cfg.enable_export_host_effects = true;
 
     EvalSession *session = eval_session_create(&cfg);
     ASSERT(session != NULL);
@@ -282,6 +283,7 @@ TEST(evaluator_registry_api_supports_custom_commands_and_null_stream_runs) {
     cfg.registry = registry;
     cfg.source_root = nob_sv_from_cstr(".");
     cfg.binary_root = nob_sv_from_cstr(".");
+    cfg.enable_export_host_effects = true;
 
     EvalSession *session = eval_session_create(&cfg);
     ASSERT(session != NULL);
@@ -335,6 +337,7 @@ TEST(evaluator_session_services_env_lookup_is_injected) {
     cfg.services = &services;
     cfg.source_root = nob_sv_from_cstr(".");
     cfg.binary_root = nob_sv_from_cstr(".");
+    cfg.enable_export_host_effects = true;
 
     EvalSession *session = eval_session_create(&cfg);
     ASSERT(session != NULL);

@@ -1266,6 +1266,16 @@ BM_Target_Id bm_query_install_rule_target(const Build_Model *model, BM_Install_R
     return rule ? rule->resolved_target_id : BM_TARGET_ID_INVALID;
 }
 
+BM_Export_Kind bm_query_export_kind(const Build_Model *model, BM_Export_Id id) {
+    const BM_Export_Record *record = bm_model_export(model, id);
+    return record ? record->kind : BM_EXPORT_INSTALL;
+}
+
+BM_Export_Source_Kind bm_query_export_source_kind(const Build_Model *model, BM_Export_Id id) {
+    const BM_Export_Record *record = bm_model_export(model, id);
+    return record ? record->source_kind : BM_EXPORT_SOURCE_INSTALL_EXPORT;
+}
+
 BM_Directory_Id bm_query_export_owner_directory(const Build_Model *model, BM_Export_Id id) {
     const BM_Export_Record *record = bm_model_export(model, id);
     return record ? record->owner_directory_id : BM_DIRECTORY_ID_INVALID;
@@ -1289,6 +1299,20 @@ String_View bm_query_export_destination(const Build_Model *model, BM_Export_Id i
 String_View bm_query_export_file_name(const Build_Model *model, BM_Export_Id id) {
     const BM_Export_Record *record = bm_model_export(model, id);
     if (!record) return (String_View){0};
+    if (record->kind == BM_EXPORT_BUILD_TREE) {
+        if (record->file_name.count > 0) return record->file_name;
+        if (record->output_file_path.count == 0) return (String_View){0};
+        {
+            size_t start = 0;
+            for (size_t i = 0; i < record->output_file_path.count; ++i) {
+                if (record->output_file_path.data[i] == '/' || record->output_file_path.data[i] == '\\') {
+                    start = i + 1;
+                }
+            }
+            return nob_sv_from_parts(record->output_file_path.data + start,
+                                     record->output_file_path.count - start);
+        }
+    }
     if (record->file_name.count > 0) return record->file_name;
     return record->name.count > 0 ? nob_sv_from_parts(record->name.data, record->name.count) : (String_View){0};
 }
@@ -1300,6 +1324,8 @@ String_View bm_query_export_output_file_path(const Build_Model *model, BM_Export
     char *copy = NULL;
     int n = 0;
     if (!record || !scratch) return (String_View){0};
+    if (record->kind == BM_EXPORT_BUILD_TREE) return record->output_file_path;
+    if (record->kind == BM_EXPORT_PACKAGE_REGISTRY) return (String_View){0};
     file_name = bm_query_export_file_name(model, id);
     if (file_name.count == 0) return (String_View){0};
     if (!nob_sv_end_with(file_name, ".cmake")) {
@@ -1327,6 +1353,33 @@ BM_Target_Id_Span bm_query_export_targets(const Build_Model *model, BM_Export_Id
     span.items = record->target_ids;
     span.count = arena_arr_len(record->target_ids);
     return span;
+}
+
+bool bm_query_export_enabled(const Build_Model *model, BM_Export_Id id) {
+    const BM_Export_Record *record = bm_model_export(model, id);
+    return record ? record->enabled : false;
+}
+
+String_View bm_query_export_package_name(const Build_Model *model, BM_Export_Id id) {
+    const BM_Export_Record *record = bm_model_export(model, id);
+    if (!record || record->kind != BM_EXPORT_PACKAGE_REGISTRY) return (String_View){0};
+    return record->name;
+}
+
+String_View bm_query_export_registry_prefix(const Build_Model *model, BM_Export_Id id) {
+    const BM_Export_Record *record = bm_model_export(model, id);
+    if (!record || record->kind != BM_EXPORT_PACKAGE_REGISTRY) return (String_View){0};
+    return record->registry_prefix;
+}
+
+String_View bm_query_export_cxx_modules_directory(const Build_Model *model, BM_Export_Id id) {
+    const BM_Export_Record *record = bm_model_export(model, id);
+    return record ? record->cxx_modules_directory : (String_View){0};
+}
+
+bool bm_query_export_append(const Build_Model *model, BM_Export_Id id) {
+    const BM_Export_Record *record = bm_model_export(model, id);
+    return record ? record->append : false;
 }
 
 String_View bm_query_package_name(const Build_Model *model, BM_Package_Id id) {

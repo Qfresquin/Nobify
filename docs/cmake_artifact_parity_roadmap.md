@@ -532,26 +532,64 @@ Evidence delivered:
 ### P6 Export Parity
 
 Status:
-- planned
+- completed on April 5, 2026
+- delivered:
+  standalone export semantics now flow canonically through `Event IR`,
+  `build_model`, query, and codegen instead of relying on evaluator-only host
+  writes
+  new downstream export events cover build-tree exports from
+  `export(TARGETS ...)`, build-tree exports from `export(EXPORT ...)`, and
+  package-registry exports from `export(PACKAGE ...)`
+  evaluator host-effect gating is now explicit:
+  `nobify` disables export host effects while evaluator-focused tests can keep
+  them enabled to preserve contract coverage
+  generated `nob.c` now has an explicit `export` command that emits build-tree
+  export files and Linux/POSIX package-registry entries without implicitly
+  building or installing targets
+  aggregate-safe proof now covers standalone export lowering, frozen-model
+  queries, pipeline snapshots, backend execution, and explicit rejection of
+  unsupported `APPEND` / `CXX_MODULES_DIRECTORY` export forms
+  explicit-only parity proof now includes build-tree export parity for
+  `export(TARGETS ...)` and `export(EXPORT ...)`, plus package-registry parity
+  for `export(PACKAGE ...)`, all with tiny downstream consumer projects
 
 Deliverables:
-- introduce a first-class downstream export semantic path through Event IR and
-  build-model where needed, instead of relying on evaluator-local metadata
-  writing alone
-- model and query export-relevant data needed for generated export files and
-  downstream target references
-- generate export files/metadata from canonical downstream state
-- add parity fixtures that compare export file content and referenced metadata
-  against CMake
+- introduce a first-class downstream standalone-export path through
+  `Event IR`, build-model, query, and codegen
+- model the supported standalone export surface explicitly:
+  `export(TARGETS ...)`
+  `export(EXPORT ...)`
+  `export(PACKAGE ...)`
+- generate build-tree export files and package-registry entries from canonical
+  downstream state
+- prove build-tree export parity through file/content diffs and downstream
+  consumers, and prove package-registry parity through isolated-home consumer
+  flows
 
 Non-goals:
 - no attempt to solve package generators in the same wave
-- no promise that every export signature lands before a minimal proven subset
+- no positive support for `APPEND` or `CXX_MODULES_DIRECTORY`
+- no standalone C++ modules export parity yet
+- no attempt to broaden this into install/package generator work that belongs
+  to adjacent waves
 
 Exit criteria:
-- export metadata is no longer only an evaluator-local side effect
-- build-model/query can answer the export questions the backend needs
-- export fixtures prove file/content parity for the supported signatures
+- standalone export metadata is no longer only an evaluator-local side effect
+- build-model/query can answer the standalone export questions the backend
+  needs
+- generated `nob.c` can execute explicit `export` runs without implicit build
+  or install behavior
+- explicit parity fixtures prove the supported standalone export signatures
+  against real CMake outputs and downstream consumers
+
+Evidence delivered:
+- `./build/nob_test test-evaluator`
+- `./build/nob_test test-build-model`
+- `./build/nob_test test-codegen`
+- `CMK2NOB_UPDATE_GOLDEN=1 ./build/nob_test test-pipeline`
+- `./build/nob_test test-artifact-parity`
+- `./build/nob_test test-artifact-parity-corpus`
+- `./build/nob_test test-v2`
 
 ### P7 Packaging Parity
 

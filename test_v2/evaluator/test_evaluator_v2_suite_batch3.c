@@ -3258,6 +3258,42 @@ TEST(evaluator_batch6_metadata_commands_cover_documented_subset) {
     ASSERT(evaluator_load_text_file_to_arena(temp_arena, "meta-export.cmake", &export_text));
     ASSERT(sv_contains_sv(export_text, nob_sv_from_cstr("set(NOBIFY_EXPORT_TARGETS \"meta_lib\")")));
 
+    bool saw_targets_export_declare = false;
+    bool saw_targets_export_target = false;
+    bool saw_export_set_declare = false;
+    bool saw_export_set_target = false;
+    String_View targets_export_key = {0};
+    String_View export_set_key = {0};
+    for (size_t i = 0; i < stream->count; ++i) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind == EVENT_EXPORT_BUILD_DECLARE &&
+            nob_sv_eq(ev->as.export_build_declare.logical_name, nob_sv_from_cstr("meta-targets")) &&
+            ev->as.export_build_declare.source_kind == EVENT_EXPORT_SOURCE_TARGETS &&
+            nob_sv_eq(ev->as.export_build_declare.export_namespace, nob_sv_from_cstr("Demo::"))) {
+            saw_targets_export_declare = true;
+            targets_export_key = ev->as.export_build_declare.export_key;
+        } else if (ev->h.kind == EVENT_EXPORT_BUILD_ADD_TARGET &&
+                   nob_sv_eq(ev->as.export_build_add_target.target_name, nob_sv_from_cstr("meta_lib"))) {
+            if (targets_export_key.count > 0 &&
+                nob_sv_eq(ev->as.export_build_add_target.export_key, targets_export_key)) {
+                saw_targets_export_target = true;
+            } else if (export_set_key.count > 0 &&
+                       nob_sv_eq(ev->as.export_build_add_target.export_key, export_set_key)) {
+                saw_export_set_target = true;
+            }
+        } else if (ev->h.kind == EVENT_EXPORT_BUILD_DECLARE &&
+                   nob_sv_eq(ev->as.export_build_declare.logical_name, nob_sv_from_cstr("DemoExport")) &&
+                   ev->as.export_build_declare.source_kind == EVENT_EXPORT_SOURCE_EXPORT_SET &&
+                   nob_sv_eq(ev->as.export_build_declare.export_namespace, nob_sv_from_cstr("Demo::"))) {
+            saw_export_set_declare = true;
+            export_set_key = ev->as.export_build_declare.export_key;
+        }
+    }
+    ASSERT(saw_targets_export_declare);
+    ASSERT(saw_targets_export_target);
+    ASSERT(saw_export_set_declare);
+    ASSERT(saw_export_set_target);
+
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CMAKE_FILE_API::QUERY_FILE")),
                      nob_sv_from_cstr("")));
     ASSERT(!nob_file_exists(".cmake/api/v1/query/query.json"));

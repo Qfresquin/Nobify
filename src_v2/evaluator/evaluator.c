@@ -2614,6 +2614,7 @@ static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg) {
     session->persistent_arena = cfg->persistent_arena;
     session->source_root = sv_copy_to_arena(cfg->persistent_arena, source_root);
     session->binary_root = sv_copy_to_arena(cfg->persistent_arena, binary_root);
+    session->enable_export_host_effects = cfg->enable_export_host_effects;
     EVAL_SESSION_CREATE_REQUIRE(!(source_root.count > 0 && session->source_root.count == 0), "copy source_root");
     EVAL_SESSION_CREATE_REQUIRE(!(binary_root.count > 0 && session->binary_root.count == 0), "copy binary_root");
 

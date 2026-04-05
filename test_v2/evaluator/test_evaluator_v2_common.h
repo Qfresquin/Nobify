@@ -49,6 +49,7 @@ typedef struct {
     const EvalServices *services;
     Eval_Compat_Profile compat_profile;
     EvalRegistry *registry;
+    bool disable_export_host_effects;
 } Eval_Test_Init;
 
 typedef struct {
@@ -200,6 +201,7 @@ static Eval_Test_Runtime *eval_test_create(const Eval_Test_Init *init) {
     cfg.compat_profile = init->compat_profile;
     cfg.source_root = init->source_dir;
     cfg.binary_root = init->binary_dir;
+    cfg.enable_export_host_effects = !init->disable_export_host_effects;
 
     ctx->session = eval_session_create(&cfg);
     if (!ctx->session) {
@@ -555,6 +557,9 @@ static const char *snapshot_event_kind_name(const Cmake_Event *ev) {
         case EV_TEST_ADD: return "EV_TEST_ADD";
         case EV_INSTALL_ADD_RULE: return "EV_INSTALL_ADD_RULE";
         case EVENT_EXPORT_INSTALL: return "EV_EXPORT_INSTALL";
+        case EVENT_EXPORT_BUILD_DECLARE: return "EV_EXPORT_BUILD_DECLARE";
+        case EVENT_EXPORT_BUILD_ADD_TARGET: return "EV_EXPORT_BUILD_ADD_TARGET";
+        case EVENT_EXPORT_PACKAGE_REGISTRY: return "EV_EXPORT_PACKAGE_REGISTRY";
         case EV_CPACK_ADD_INSTALL_TYPE: return "EV_CPACK_ADD_INSTALL_TYPE";
         case EV_CPACK_ADD_COMPONENT_GROUP: return "EV_CPACK_ADD_COMPONENT_GROUP";
         case EV_CPACK_ADD_COMPONENT: return "EV_CPACK_ADD_COMPONENT";
@@ -595,6 +600,9 @@ static bool snapshot_event_is_visible(const Cmake_Event *ev) {
         case EV_TEST_ADD:
         case EV_INSTALL_ADD_RULE:
         case EVENT_EXPORT_INSTALL:
+        case EVENT_EXPORT_BUILD_DECLARE:
+        case EVENT_EXPORT_BUILD_ADD_TARGET:
+        case EVENT_EXPORT_PACKAGE_REGISTRY:
         case EV_CPACK_ADD_INSTALL_TYPE:
         case EV_CPACK_ADD_COMPONENT_GROUP:
         case EV_CPACK_ADD_COMPONENT:
@@ -820,6 +828,49 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
             snapshot_append_escaped_sv(sb, ev->as.export_install.file_name);
             nob_sb_append_cstr(sb, " component=");
             snapshot_append_escaped_sv(sb, ev->as.export_install.component);
+            break;
+
+        case EVENT_EXPORT_BUILD_DECLARE:
+            nob_sb_append_cstr(sb, " export_key=");
+            snapshot_append_escaped_sv(sb, ev->as.export_build_declare.export_key);
+            nob_sb_append_cstr(sb, " source_kind=");
+            snapshot_append_escaped_sv(
+                sb,
+                ev->as.export_build_declare.source_kind == EVENT_EXPORT_SOURCE_TARGETS
+                    ? nob_sv_from_cstr("TARGETS")
+                    : (ev->as.export_build_declare.source_kind == EVENT_EXPORT_SOURCE_EXPORT_SET
+                           ? nob_sv_from_cstr("EXPORT_SET")
+                           : (ev->as.export_build_declare.source_kind == EVENT_EXPORT_SOURCE_INSTALL_EXPORT
+                                  ? nob_sv_from_cstr("INSTALL_EXPORT")
+                                  : nob_sv_from_cstr("PACKAGE"))));
+            nob_sb_append_cstr(sb, " name=");
+            snapshot_append_escaped_sv(sb, ev->as.export_build_declare.logical_name);
+            nob_sb_append_cstr(sb, " file=");
+            snapshot_append_escaped_sv(sb, ev->as.export_build_declare.file_path);
+            nob_sb_append_cstr(sb, " namespace=");
+            snapshot_append_escaped_sv(sb, ev->as.export_build_declare.export_namespace);
+            nob_sb_append_cstr(sb,
+                               nob_temp_sprintf(" append=%d",
+                                                ev->as.export_build_declare.append ? 1 : 0));
+            nob_sb_append_cstr(sb, " cxx_modules_directory=");
+            snapshot_append_escaped_sv(sb, ev->as.export_build_declare.cxx_modules_directory);
+            break;
+
+        case EVENT_EXPORT_BUILD_ADD_TARGET:
+            nob_sb_append_cstr(sb, " export_key=");
+            snapshot_append_escaped_sv(sb, ev->as.export_build_add_target.export_key);
+            nob_sb_append_cstr(sb, " target=");
+            snapshot_append_escaped_sv(sb, ev->as.export_build_add_target.target_name);
+            break;
+
+        case EVENT_EXPORT_PACKAGE_REGISTRY:
+            nob_sb_append_cstr(sb, " package=");
+            snapshot_append_escaped_sv(sb, ev->as.export_package_registry.package_name);
+            nob_sb_append_cstr(sb, " prefix=");
+            snapshot_append_escaped_sv(sb, ev->as.export_package_registry.prefix);
+            nob_sb_append_cstr(sb,
+                               nob_temp_sprintf(" enabled=%d",
+                                                ev->as.export_package_registry.enabled ? 1 : 0));
             break;
 
         case EV_CPACK_ADD_INSTALL_TYPE:

@@ -53,6 +53,22 @@ static bool meta_sv_ends_with_ci_lit(String_View value, const char *suffix) {
     return true;
 }
 
+static String_View meta_path_basename_temp(EvalExecContext *ctx, String_View path) {
+    size_t start = 0;
+    if (!ctx || path.count == 0) return nob_sv_from_cstr("");
+    for (size_t i = 0; i < path.count; ++i) {
+        if (path.data[i] == '/' || path.data[i] == '\\') start = i + 1;
+    }
+    return nob_sv_from_parts(path.data + start, path.count - start);
+}
+
+static bool meta_path_has_prefix(String_View path, String_View prefix) {
+    if (prefix.count == 0 || path.count < prefix.count) return false;
+    if (!nob_sv_starts_with(path, prefix)) return false;
+    if (path.count == prefix.count) return true;
+    return path.data[prefix.count] == '/' || path.data[prefix.count] == '\\';
+}
+
 static void meta_sb_append_cmake_escaped(Nob_String_Builder *sb, String_View value) {
     if (!sb || value.count == 0) return;
     for (size_t i = 0; i < value.count; i++) {
@@ -314,6 +330,22 @@ typedef struct {
     String_View platform;
     SV_List deps;
 } Meta_Include_External_MSProject_Request;
+
+static String_View meta_export_logical_name_temp(EvalExecContext *ctx,
+                                                 const Meta_Export_Request *req,
+                                                 String_View file_path) {
+    String_View base = {0};
+    if (!ctx || !req) return nob_sv_from_cstr("");
+    if (req->signature == META_EXPORT_SIG_EXPORT || req->signature == META_EXPORT_SIG_PACKAGE) {
+        return req->export_name;
+    }
+    base = meta_path_basename_temp(ctx, file_path);
+    if (base.count >= strlen(".cmake") &&
+        meta_sv_ends_with_ci_lit(base, ".cmake")) {
+        base.count -= strlen(".cmake");
+    }
+    return base;
+}
 
 static bool meta_export_write(EvalExecContext *ctx,
                               String_View out_path,
@@ -846,6 +878,10 @@ static bool meta_export_resolve_file_path(EvalExecContext *ctx,
                                           const Node *node,
                                           const Meta_Export_Request *req,
                                           String_View *out_file_path) {
+    String_View current_bin_dir = {0};
+    String_View normalized_file_path = {0};
+    String_View normalized_current_bin_dir = {0};
+    String_View cwd = {0};
     if (!ctx || !node || !req || !out_file_path) return false;
 
     String_View file_path = req->file_path;
@@ -873,8 +909,23 @@ static bool meta_export_resolve_file_path(EvalExecContext *ctx,
     }
 
     if (!eval_sv_is_abs_path(file_path)) {
-        file_path = eval_sv_path_join(eval_temp_arena(ctx), meta_current_bin_dir(ctx), file_path);
-        if (eval_should_stop(ctx)) return false;
+        current_bin_dir = meta_current_bin_dir(ctx);
+        normalized_file_path = eval_sv_path_normalize_temp(ctx, file_path);
+        normalized_current_bin_dir = eval_sv_path_normalize_temp(ctx, current_bin_dir);
+        if (normalized_current_bin_dir.count > 0 &&
+            !eval_sv_is_abs_path(normalized_current_bin_dir) &&
+            meta_path_has_prefix(normalized_file_path, normalized_current_bin_dir)) {
+            cwd = eval_process_cwd_temp(ctx);
+            if (cwd.count > 0) {
+                file_path = eval_sv_path_join(eval_temp_arena(ctx), cwd, normalized_file_path);
+                if (eval_should_stop(ctx)) return false;
+            } else {
+                file_path = normalized_file_path;
+            }
+        } else {
+            file_path = eval_sv_path_join(eval_temp_arena(ctx), current_bin_dir, file_path);
+            if (eval_should_stop(ctx)) return false;
+        }
     }
 
     *out_file_path = file_path;
@@ -887,18 +938,26 @@ static bool meta_export_execute_request(EvalExecContext *ctx,
     if (!ctx || !node || !req) return false;
 
     if (req->signature == META_EXPORT_SIG_PACKAGE) {
+        bool enabled = true;
         if (eval_truthy(ctx, eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_EXPORT_NO_PACKAGE_REGISTRY")))) {
-            return meta_export_assign_last(ctx,
-                                           meta_export_mode_sv(req->signature),
-                                           nob_sv_from_cstr(""),
-                                           nob_sv_from_cstr(""),
-                                           nob_sv_from_cstr(""),
-                                           nob_sv_from_cstr(""),
-                                           nob_sv_from_cstr(""));
+            enabled = false;
         }
 
-        if (eval_policy_is_new(ctx, EVAL_POLICY_CMP0090) &&
+        if (enabled &&
+            eval_policy_is_new(ctx, EVAL_POLICY_CMP0090) &&
             !eval_truthy(ctx, eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_EXPORT_PACKAGE_REGISTRY")))) {
+            enabled = false;
+        }
+
+        if (!eval_emit_export_package_registry(ctx,
+                                               eval_origin_from_node(ctx, node),
+                                               req->export_name,
+                                               meta_current_bin_dir(ctx),
+                                               enabled)) {
+            return false;
+        }
+
+        if (!enabled) {
             return meta_export_assign_last(ctx,
                                            meta_export_mode_sv(req->signature),
                                            nob_sv_from_cstr(""),
@@ -908,7 +967,10 @@ static bool meta_export_execute_request(EvalExecContext *ctx,
                                            nob_sv_from_cstr(""));
         }
 
-        if (!eval_package_registry_add(ctx, req->export_name, meta_current_bin_dir(ctx))) return false;
+        if (eval_enable_export_host_effects(ctx) &&
+            !eval_package_registry_add(ctx, req->export_name, meta_current_bin_dir(ctx))) {
+            return false;
+        }
         return meta_export_assign_last(ctx,
                                        meta_export_mode_sv(req->signature),
                                        nob_sv_from_cstr(""),
@@ -928,38 +990,64 @@ static bool meta_export_execute_request(EvalExecContext *ctx,
     if (eval_should_stop(ctx)) return false;
     String_View mode = meta_export_mode_sv(req->signature);
     String_View cxx_modules_name = meta_export_cxx_modules_name_temp(ctx, req->export_name, targets);
+    String_View logical_name = meta_export_logical_name_temp(ctx, req, file_path);
+    String_View export_key = eval_alloc_export_key(ctx);
     if (eval_should_stop(ctx)) return false;
 
-    if (!meta_export_write(ctx,
-                           file_path,
-                           req->append,
-                           mode,
-                           targets_joined,
-                           req->export_name,
-                           req->ns,
-                           req->cxx_modules_directory,
-                           cxx_modules_name)) {
-        (void)meta_emit_diag(ctx,
-                             node,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("export() failed to write metadata file"),
-                             file_path);
+    if (!eval_emit_export_build_declare(ctx,
+                                        eval_origin_from_node(ctx, node),
+                                        export_key,
+                                        req->signature == META_EXPORT_SIG_TARGETS
+                                            ? EVENT_EXPORT_SOURCE_TARGETS
+                                            : EVENT_EXPORT_SOURCE_EXPORT_SET,
+                                        logical_name,
+                                        file_path,
+                                        req->ns,
+                                        req->append,
+                                        req->cxx_modules_directory)) {
         return false;
     }
+    for (size_t i = 0; i < arena_arr_len(targets); ++i) {
+        if (!eval_emit_export_build_add_target(ctx,
+                                               eval_origin_from_node(ctx, node),
+                                               export_key,
+                                               targets[i])) {
+            return false;
+        }
+    }
 
-    if (!meta_export_write_cxx_module_sidecars(ctx,
-                                               file_path,
-                                               req->append,
-                                               req->cxx_modules_directory,
-                                               cxx_modules_name,
-                                               targets,
-                                               req->ns)) {
-        (void)meta_emit_diag(ctx,
-                             node,
-                             EV_DIAG_ERROR,
-                             nob_sv_from_cstr("export() failed to write C++ module metadata"),
-                             file_path);
-        return false;
+    if (eval_enable_export_host_effects(ctx)) {
+        if (!meta_export_write(ctx,
+                               file_path,
+                               req->append,
+                               mode,
+                               targets_joined,
+                               req->export_name,
+                               req->ns,
+                               req->cxx_modules_directory,
+                               cxx_modules_name)) {
+            (void)meta_emit_diag(ctx,
+                                 node,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("export() failed to write metadata file"),
+                                 file_path);
+            return false;
+        }
+
+        if (!meta_export_write_cxx_module_sidecars(ctx,
+                                                   file_path,
+                                                   req->append,
+                                                   req->cxx_modules_directory,
+                                                   cxx_modules_name,
+                                                   targets,
+                                                   req->ns)) {
+            (void)meta_emit_diag(ctx,
+                                 node,
+                                 EV_DIAG_ERROR,
+                                 nob_sv_from_cstr("export() failed to write C++ module metadata"),
+                                 file_path);
+            return false;
+        }
     }
 
     return meta_export_assign_last(ctx,

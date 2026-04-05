@@ -283,6 +283,8 @@ String_View bm_query_install_rule_includes_destination(const Build_Model *model,
 String_View bm_query_install_rule_public_header_destination(const Build_Model *model, BM_Install_Rule_Id id);
 BM_Target_Id bm_query_install_rule_target(const Build_Model *model, BM_Install_Rule_Id id);
 
+BM_Export_Kind bm_query_export_kind(const Build_Model *model, BM_Export_Id id);
+BM_Export_Source_Kind bm_query_export_source_kind(const Build_Model *model, BM_Export_Id id);
 BM_Directory_Id bm_query_export_owner_directory(const Build_Model *model, BM_Export_Id id);
 String_View bm_query_export_name(const Build_Model *model, BM_Export_Id id);
 String_View bm_query_export_namespace(const Build_Model *model, BM_Export_Id id);
@@ -291,6 +293,11 @@ String_View bm_query_export_file_name(const Build_Model *model, BM_Export_Id id)
 String_View bm_query_export_output_file_path(const Build_Model *model, BM_Export_Id id, Arena *scratch);
 String_View bm_query_export_component(const Build_Model *model, BM_Export_Id id);
 BM_Target_Id_Span bm_query_export_targets(const Build_Model *model, BM_Export_Id id);
+bool bm_query_export_enabled(const Build_Model *model, BM_Export_Id id);
+String_View bm_query_export_package_name(const Build_Model *model, BM_Export_Id id);
+String_View bm_query_export_registry_prefix(const Build_Model *model, BM_Export_Id id);
+String_View bm_query_export_cxx_modules_directory(const Build_Model *model, BM_Export_Id id);
+bool bm_query_export_append(const Build_Model *model, BM_Export_Id id);
 
 String_View bm_query_package_name(const Build_Model *model, BM_Package_Id id);
 BM_Directory_Id bm_query_package_owner_directory(const Build_Model *model, BM_Package_Id id);

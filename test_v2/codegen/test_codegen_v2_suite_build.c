@@ -98,6 +98,24 @@ static bool codegen_test_path_is_executable(const char *path) {
 #endif
 }
 
+static bool codegen_find_first_dir_entry(const char *dir_path,
+                                         char out_path[_TINYDIR_PATH_MAX]) {
+    Nob_Dir_Entry dir = {0};
+    if (!dir_path || !out_path) return false;
+    if (!nob_dir_entry_open(dir_path, &dir)) return false;
+    while (nob_dir_entry_next(&dir)) {
+        if (test_fs_is_dot_or_dotdot(dir.name)) continue;
+        if (!test_fs_join_path(dir_path, dir.name, out_path)) {
+            nob_dir_entry_close(dir);
+            return false;
+        }
+        nob_dir_entry_close(dir);
+        return true;
+    }
+    nob_dir_entry_close(dir);
+    return false;
+}
+
 TEST(codegen_write_file_rebases_source_and_binary_roots_for_out_of_source_nob) {
     Arena *arena = arena_create(512 * 1024);
     String_View generated = {0};
@@ -1034,6 +1052,102 @@ TEST(codegen_build_steps_resolve_target_file_and_target_linker_file_genex) {
     TEST_PASS();
 }
 
+TEST(codegen_export_targets_writes_build_tree_exports_without_implicit_build) {
+    const char *export_argv[] = {"export"};
+    const char *clean_argv[] = {"clean"};
+    const char *script =
+        "project(Test C)\n"
+        "add_library(core STATIC core.c)\n"
+        "set_target_properties(core PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/lib)\n"
+        "target_include_directories(core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)\n"
+        "export(TARGETS core FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/CoreTargets.cmake NAMESPACE Demo::)\n";
+    Codegen_Test_Config config = {
+        .input_path = "export_targets_src/CMakeLists.txt",
+        .output_path = "export_targets_nob.c",
+        .source_dir = "export_targets_src",
+        .binary_dir = "export_targets_build",
+    };
+
+    ASSERT(codegen_write_text_file("export_targets_src/core.c", "int core_value(void) { return 1; }\n"));
+    ASSERT(codegen_write_text_file("export_targets_src/include/core.h", "#define CORE_VALUE 1\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("export_targets_nob.c", "export_targets_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./export_targets_nob_gen", export_argv, NOB_ARRAY_LEN(export_argv)));
+    ASSERT(test_ws_host_path_exists("export_targets_build/exports/CoreTargets.cmake"));
+    ASSERT(test_ws_host_path_exists("export_targets_build/exports/CoreTargets-noconfig.cmake"));
+    ASSERT(!test_ws_host_path_exists("export_targets_build/artifacts/lib/libcore.a"));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./export_targets_nob_gen", clean_argv, NOB_ARRAY_LEN(clean_argv)));
+    ASSERT(test_ws_host_path_exists("export_targets_build/exports/CoreTargets.cmake"));
+    ASSERT(test_ws_host_path_exists("export_targets_build/exports/CoreTargets-noconfig.cmake"));
+    TEST_PASS();
+}
+
+TEST(codegen_export_export_set_writes_build_tree_exports_from_install_sets) {
+    const char *export_argv[] = {"export"};
+    const char *script =
+        "project(Test C)\n"
+        "add_library(core STATIC core.c)\n"
+        "install(TARGETS core EXPORT DemoTargets DESTINATION lib)\n"
+        "export(EXPORT DemoTargets FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/DemoTargets.cmake NAMESPACE Demo::)\n";
+    Codegen_Test_Config config = {
+        .input_path = "export_set_src/CMakeLists.txt",
+        .output_path = "export_set_nob.c",
+        .source_dir = "export_set_src",
+        .binary_dir = "export_set_build",
+    };
+
+    ASSERT(codegen_write_text_file("export_set_src/core.c", "int core_value(void) { return 2; }\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("export_set_nob.c", "export_set_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./export_set_nob_gen", export_argv, NOB_ARRAY_LEN(export_argv)));
+    ASSERT(test_ws_host_path_exists("export_set_build/exports/DemoTargets.cmake"));
+    ASSERT(test_ws_host_path_exists("export_set_build/exports/DemoTargets-noconfig.cmake"));
+    TEST_PASS();
+}
+
+TEST(codegen_export_package_writes_registry_and_clean_preserves_it) {
+    const char *export_argv[] = {"export"};
+    const char *clean_argv[] = {"clean"};
+    char home_dir[_TINYDIR_PATH_MAX] = {0};
+    char registry_dir[_TINYDIR_PATH_MAX] = {0};
+    char entry_path[_TINYDIR_PATH_MAX] = {0};
+    char binary_dir_abs[_TINYDIR_PATH_MAX] = {0};
+    Test_Host_Env_Guard *home_guard = NULL;
+    const char *cwd = nob_get_current_dir_temp();
+    String_View entry_text = {0};
+    Arena *arena = arena_create(64 * 1024);
+    const char *script =
+        "project(Test C)\n"
+        "cmake_policy(SET CMP0090 NEW)\n"
+        "set(CMAKE_EXPORT_PACKAGE_REGISTRY ON)\n"
+        "export(PACKAGE DemoPkg)\n";
+    Codegen_Test_Config config = {0};
+
+    ASSERT(cwd != NULL);
+    ASSERT(arena != NULL);
+    ASSERT(snprintf(home_dir, sizeof(home_dir), "%s/export_pkg_home", cwd) < (int)sizeof(home_dir));
+    ASSERT(snprintf(registry_dir, sizeof(registry_dir), "%s/.cmake/packages/DemoPkg", home_dir) < (int)sizeof(registry_dir));
+    ASSERT(snprintf(binary_dir_abs, sizeof(binary_dir_abs), "%s/export_pkg_build", cwd) < (int)sizeof(binary_dir_abs));
+    config.input_path = "export_pkg_src/CMakeLists.txt";
+    config.output_path = "export_pkg_nob.c";
+    config.source_dir = "export_pkg_src";
+    config.binary_dir = binary_dir_abs;
+
+    ASSERT(test_host_env_guard_begin_heap(&home_guard, "HOME", home_dir));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("export_pkg_nob.c", "export_pkg_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./export_pkg_nob_gen", export_argv, NOB_ARRAY_LEN(export_argv)));
+    ASSERT(test_ws_host_path_exists(registry_dir));
+    ASSERT(codegen_find_first_dir_entry(registry_dir, entry_path));
+    ASSERT(codegen_load_text_file_to_arena(arena, entry_path, &entry_text));
+    ASSERT(nob_sv_eq(entry_text, nob_sv_from_cstr(nob_temp_sprintf("%s\n", binary_dir_abs))));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./export_pkg_nob_gen", clean_argv, NOB_ARRAY_LEN(clean_argv)));
+    ASSERT(test_ws_host_path_exists(entry_path));
+    test_host_env_guard_cleanup(home_guard);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_write_file_rebases_source_and_binary_roots_for_out_of_source_nob(passed, failed, skipped);
     test_codegen_default_out_of_source_top_level_targets_build_in_binary_root(passed, failed, skipped);
@@ -1059,4 +1173,7 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_imported_shared_target_links_successfully(passed, failed, skipped);
     test_codegen_debug_and_optimized_link_items_follow_generated_config(passed, failed, skipped);
     test_codegen_build_steps_resolve_target_file_and_target_linker_file_genex(passed, failed, skipped);
+    test_codegen_export_targets_writes_build_tree_exports_without_implicit_build(passed, failed, skipped);
+    test_codegen_export_export_set_writes_build_tree_exports_from_install_sets(passed, failed, skipped);
+    test_codegen_export_package_writes_registry_and_clean_preserves_it(passed, failed, skipped);
 }

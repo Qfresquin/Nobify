@@ -217,6 +217,7 @@ typedef struct {
     Eval_Compat_Profile compat_profile;
     String_View source_root;
     String_View binary_root;
+    bool enable_export_host_effects;
 } EvalSession_Config;
 
 typedef struct {

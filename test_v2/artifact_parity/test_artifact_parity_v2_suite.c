@@ -89,6 +89,18 @@ static const char *artifact_parity_case_nob_install_component(const Artifact_Par
     return case_def ? case_def->nob_install_component : NULL;
 }
 
+static const char *artifact_parity_case_cmake_home_dir(const Artifact_Parity_Case *case_def) {
+    return case_def && case_def->cmake_home_dir && case_def->cmake_home_dir[0] != '\0'
+        ? case_def->cmake_home_dir
+        : NULL;
+}
+
+static const char *artifact_parity_case_nob_home_dir(const Artifact_Parity_Case *case_def) {
+    return case_def && case_def->nob_home_dir && case_def->nob_home_dir[0] != '\0'
+        ? case_def->nob_home_dir
+        : NULL;
+}
+
 static bool artifact_parity_run_cmd_in_dir(const char *dir, Nob_Cmd *cmd) {
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
     const char *cwd = nob_get_current_dir_temp();
@@ -135,6 +147,117 @@ static bool artifact_parity_prepare_install_case(const Artifact_Parity_Case *cas
     return artifact_parity_write_executable_file(nob_temp_sprintf("%s/scripts/run-helper.sh", source_root),
                                                  "#!/bin/sh\n"
                                                  "exit 0\n");
+}
+
+static bool artifact_parity_make_abs_path(const char *relpath,
+                                          char out_path[_TINYDIR_PATH_MAX]) {
+    const char *cwd = nob_get_current_dir_temp();
+    int n = 0;
+    if (!relpath || !out_path || !cwd) return false;
+    n = snprintf(out_path, _TINYDIR_PATH_MAX, "%s/%s", cwd, relpath);
+    return n >= 0 && n < _TINYDIR_PATH_MAX;
+}
+
+static bool artifact_parity_write_consumer_project(const char *source_dir,
+                                                   const char *cmakelists_text,
+                                                   const char *main_text) {
+    if (!source_dir || !cmakelists_text || !main_text) return false;
+    if (!nob_mkdir_if_not_exists(source_dir)) return false;
+    if (!artifact_parity_write_text_file(nob_temp_sprintf("%s/CMakeLists.txt", source_dir), cmakelists_text)) {
+        return false;
+    }
+    return artifact_parity_write_text_file(nob_temp_sprintf("%s/main.c", source_dir), main_text);
+}
+
+static bool artifact_parity_build_consumer_project(const char *source_dir,
+                                                   const char *binary_dir,
+                                                   const char *home_dir) {
+    Test_Host_Env_Guard home_guard = {0};
+    bool home_guard_active = false;
+    if (!source_dir || !binary_dir) return false;
+    if (home_dir && home_dir[0] != '\0') {
+        if (!nob_mkdir_if_not_exists(home_dir) ||
+            !test_host_env_guard_begin(&home_guard, "HOME", home_dir)) {
+            return false;
+        }
+        home_guard_active = true;
+    }
+
+    if (!artifact_parity_run_cmake_configure(&s_artifact_parity_cmake, source_dir, binary_dir, NULL) ||
+        !artifact_parity_run_cmake_build(&s_artifact_parity_cmake, binary_dir, "consumer")) {
+        if (home_guard_active) test_host_env_guard_cleanup(&home_guard);
+        return false;
+    }
+
+    if (home_guard_active) test_host_env_guard_cleanup(&home_guard);
+    return artifact_parity_run_binary_in_dir(binary_dir, "./consumer", NULL, NULL);
+}
+
+static bool artifact_parity_verify_export_include_consumer(const char *export_relpath,
+                                                           const char *consumer_source_dir,
+                                                           const char *consumer_binary_dir,
+                                                           const char *home_dir) {
+    char export_abs[_TINYDIR_PATH_MAX] = {0};
+    if (!export_relpath || !consumer_source_dir || !consumer_binary_dir) return false;
+    if (!artifact_parity_make_abs_path(export_relpath, export_abs)) return false;
+    return artifact_parity_write_consumer_project(
+               consumer_source_dir,
+               nob_temp_sprintf("cmake_minimum_required(VERSION 3.28)\n"
+                                "project(ExportConsumer LANGUAGES C)\n"
+                                "include(\"%s\")\n"
+                                "add_executable(consumer main.c)\n"
+                                "target_link_libraries(consumer PRIVATE Demo::core)\n",
+                                export_abs),
+               "int main(void) { return 0; }\n") &&
+           artifact_parity_build_consumer_project(consumer_source_dir, consumer_binary_dir, home_dir);
+}
+
+static bool artifact_parity_verify_package_registry_consumer(const char *consumer_source_dir,
+                                                             const char *consumer_binary_dir,
+                                                             const char *home_dir) {
+    return artifact_parity_write_consumer_project(
+               consumer_source_dir,
+               "cmake_minimum_required(VERSION 3.28)\n"
+               "project(PackageRegistryConsumer LANGUAGES C)\n"
+               "set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)\n"
+               "find_package(DemoPkg CONFIG REQUIRED)\n"
+               "add_executable(consumer main.c)\n"
+               "target_link_libraries(consumer PRIVATE DemoPkg::core)\n",
+               "int main(void) { return 0; }\n") &&
+           artifact_parity_build_consumer_project(consumer_source_dir, consumer_binary_dir, home_dir);
+}
+
+static bool artifact_parity_verify_export_targets_case(const Artifact_Parity_Case *case_def) {
+    (void)case_def;
+    return artifact_parity_verify_export_include_consumer("cmake_build/exports/CoreTargets.cmake",
+                                                          "consumer_export_targets_cmake",
+                                                          "consumer_export_targets_cmake_build",
+                                                          NULL) &&
+           artifact_parity_verify_export_include_consumer("nob_build/exports/CoreTargets.cmake",
+                                                          "consumer_export_targets_nob",
+                                                          "consumer_export_targets_nob_build",
+                                                          NULL);
+}
+
+static bool artifact_parity_verify_export_export_set_case(const Artifact_Parity_Case *case_def) {
+    (void)case_def;
+    return artifact_parity_verify_export_include_consumer("cmake_build/exports/DemoTargets.cmake",
+                                                          "consumer_export_set_cmake",
+                                                          "consumer_export_set_cmake_build",
+                                                          NULL) &&
+           artifact_parity_verify_export_include_consumer("nob_build/exports/DemoTargets.cmake",
+                                                          "consumer_export_set_nob",
+                                                          "consumer_export_set_nob_build",
+                                                          NULL);
+}
+
+static bool artifact_parity_verify_export_package_case(const Artifact_Parity_Case *case_def) {
+    return artifact_parity_verify_package_registry_consumer("consumer_export_pkg_cmake",
+                                                            "consumer_export_pkg_cmake_build",
+                                                            artifact_parity_case_cmake_home_dir(case_def)) &&
+           artifact_parity_verify_package_registry_consumer("consumer_export_pkg_nob",
+                                                            "consumer_export_pkg_nob_build",
+                                                            artifact_parity_case_nob_home_dir(case_def));
 }
 
 static bool artifact_parity_run_nob_command(const Artifact_Parity_Case *case_def,
@@ -186,6 +309,10 @@ static bool artifact_parity_run_nob_command(const Artifact_Parity_Case *case_def
         case ARTIFACT_PARITY_NOB_COMMAND_PACKAGE:
             argv[argc++] = "package";
             return artifact_parity_run_binary_in_dir_argv(run_dir, "./nob_gen", argv, argc);
+
+        case ARTIFACT_PARITY_NOB_COMMAND_EXPORT:
+            argv[argc++] = "export";
+            return artifact_parity_run_binary_in_dir_argv(run_dir, "./nob_gen", argv, argc);
     }
 
     return false;
@@ -206,6 +333,12 @@ static bool artifact_parity_run_case(const Artifact_Parity_Case *case_def) {
     const char *generated_nob_path = NULL;
     const char *generated_nob_bin_path = NULL;
     const char *cmake_install_prefix = NULL;
+    const char *cmake_home_dir = NULL;
+    const char *nob_home_dir = NULL;
+    Test_Host_Env_Guard cmake_home_guard = {0};
+    Test_Host_Env_Guard nob_home_guard = {0};
+    bool cmake_home_guard_active = false;
+    bool nob_home_guard_active = false;
 
     if (!case_def) return false;
     if (!cwd) return false;
@@ -215,6 +348,8 @@ static bool artifact_parity_run_case(const Artifact_Parity_Case *case_def) {
     generated_nob_path = artifact_parity_case_generated_nob_path(case_def);
     generated_nob_bin_path = artifact_parity_case_generated_nob_bin_path(case_def);
     cmake_install_prefix = artifact_parity_case_cmake_install_prefix(case_def);
+    cmake_home_dir = artifact_parity_case_cmake_home_dir(case_def);
+    nob_home_dir = artifact_parity_case_nob_home_dir(case_def);
     if (s_artifact_parity_nobify_bin[0] == '\0') {
         nob_log(NOB_ERROR,
                 "artifact parity suite: missing nobify tool: %s",
@@ -236,13 +371,23 @@ static bool artifact_parity_run_case(const Artifact_Parity_Case *case_def) {
     if (!artifact_parity_materialize_files(source_root, case_def->files, case_def->file_count)) return false;
     if (case_def->prepare && !case_def->prepare(case_def)) return false;
 
+    if (cmake_home_dir && cmake_home_dir[0] != '\0') {
+        if (!nob_mkdir_if_not_exists(cmake_home_dir) ||
+            !test_host_env_guard_begin(&cmake_home_guard, "HOME", cmake_home_dir)) {
+            return false;
+        }
+        cmake_home_guard_active = true;
+    }
+
     if ((case_def->phases & ARTIFACT_PARITY_PHASE_CONFIGURE) ||
         (case_def->phases & ARTIFACT_PARITY_PHASE_BUILD) ||
-        (case_def->phases & ARTIFACT_PARITY_PHASE_INSTALL)) {
+        (case_def->phases & ARTIFACT_PARITY_PHASE_INSTALL) ||
+        (case_def->phases & ARTIFACT_PARITY_PHASE_EXPORT)) {
         if (!artifact_parity_run_cmake_configure(&s_artifact_parity_cmake,
                                                  source_root,
                                                  cmake_binary_dir,
                                                  case_def->cmake_build_type)) {
+            if (cmake_home_guard_active) test_host_env_guard_cleanup(&cmake_home_guard);
             return false;
         }
     }
@@ -250,6 +395,7 @@ static bool artifact_parity_run_case(const Artifact_Parity_Case *case_def) {
         if (!artifact_parity_run_cmake_build(&s_artifact_parity_cmake,
                                              cmake_binary_dir,
                                              case_def->cmake_build_target)) {
+            if (cmake_home_guard_active) test_host_env_guard_cleanup(&cmake_home_guard);
             return false;
         }
     }
@@ -258,21 +404,33 @@ static bool artifact_parity_run_case(const Artifact_Parity_Case *case_def) {
                                                cmake_binary_dir,
                                                cmake_install_prefix,
                                                artifact_parity_case_cmake_install_component(case_def))) {
+            if (cmake_home_guard_active) test_host_env_guard_cleanup(&cmake_home_guard);
             return false;
         }
     }
     if (case_def->phases & ARTIFACT_PARITY_PHASE_PACKAGE) {
         Artifact_Parity_Cmake_Config package_config = {0};
         char package_skip_reason[256] = {0};
-        if (!artifact_parity_resolve_cmake(&package_config, true, package_skip_reason)) return false;
+        if (!artifact_parity_resolve_cmake(&package_config, true, package_skip_reason)) {
+            if (cmake_home_guard_active) test_host_env_guard_cleanup(&cmake_home_guard);
+            return false;
+        }
         if (!package_config.cpack_available) {
             nob_log(NOB_INFO,
                     "artifact parity case %s skipped package phase: %s",
                     case_def->name,
                     package_skip_reason[0] ? package_skip_reason : "cpack is unavailable");
+            if (cmake_home_guard_active) test_host_env_guard_cleanup(&cmake_home_guard);
             return true;
         }
-        if (!artifact_parity_run_cmake_package(&package_config, cmake_binary_dir)) return false;
+        if (!artifact_parity_run_cmake_package(&package_config, cmake_binary_dir)) {
+            if (cmake_home_guard_active) test_host_env_guard_cleanup(&cmake_home_guard);
+            return false;
+        }
+    }
+    if (cmake_home_guard_active) {
+        test_host_env_guard_cleanup(&cmake_home_guard);
+        cmake_home_guard_active = false;
     }
 
     if (snprintf(input_abs, sizeof(input_abs), "%s/%s/CMakeLists.txt", cwd, source_root) >= (int)sizeof(input_abs) ||
@@ -291,8 +449,27 @@ static bool artifact_parity_run_case(const Artifact_Parity_Case *case_def) {
     }
     if (!artifact_parity_compile_generated_nob(generated_nob_path, generated_nob_bin_path)) return false;
 
+    if (nob_home_dir && nob_home_dir[0] != '\0') {
+        if (!nob_mkdir_if_not_exists(nob_home_dir) ||
+            !test_host_env_guard_begin(&nob_home_guard, "HOME", nob_home_dir)) {
+            return false;
+        }
+        nob_home_guard_active = true;
+    }
+
     for (size_t i = 0; i < case_def->nob_command_count; ++i) {
-        if (!artifact_parity_run_nob_command(case_def, &case_def->nob_commands[i])) return false;
+        if (!artifact_parity_run_nob_command(case_def, &case_def->nob_commands[i])) {
+            if (nob_home_guard_active) test_host_env_guard_cleanup(&nob_home_guard);
+            return false;
+        }
+    }
+    if (nob_home_guard_active) {
+        test_host_env_guard_cleanup(&nob_home_guard);
+        nob_home_guard_active = false;
+    }
+
+    if (case_def->verify && !case_def->verify(case_def)) {
+        return false;
     }
 
     arena = arena_create(4 * 1024 * 1024);
@@ -617,6 +794,143 @@ static const Artifact_Parity_Case s_empty_export_package_case = {
     .nob_base_dir = "source",
     .clean_absence_relpath = NULL,
     .subject = "empty_export_package_domains",
+};
+
+static const Artifact_Parity_Manifest_Request s_export_targets_manifest_requests[] = {
+    {ARTIFACT_PARITY_DOMAIN_EXPORT_FILES, ARTIFACT_PARITY_CAPTURE_TREE, "export_tree", "exports"},
+    {ARTIFACT_PARITY_DOMAIN_EXPORT_FILES, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "core_targets_text", "exports/CoreTargets.cmake"},
+    {ARTIFACT_PARITY_DOMAIN_EXPORT_FILES, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "core_targets_noconfig_text", "exports/CoreTargets-noconfig.cmake"},
+};
+
+static const Artifact_Parity_File s_export_targets_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityExportTargets LANGUAGES C)\n"
+        "add_library(core STATIC core.c)\n"
+        "set_target_properties(core PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/lib)\n"
+        "export(TARGETS core FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/CoreTargets.cmake NAMESPACE Demo::)\n",
+    },
+    {
+        "core.c",
+        "int core_value(void) { return 71; }\n",
+    },
+};
+
+static const Artifact_Parity_Nob_Command s_export_targets_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, NULL, "core"},
+    {ARTIFACT_PARITY_NOB_COMMAND_EXPORT, NULL, NULL},
+};
+
+static const Artifact_Parity_Case s_export_targets_case = {
+    .name = "export_targets_build_tree",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE | ARTIFACT_PARITY_PHASE_BUILD | ARTIFACT_PARITY_PHASE_EXPORT,
+    .files = s_export_targets_files,
+    .file_count = NOB_ARRAY_LEN(s_export_targets_files),
+    .nob_commands = s_export_targets_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_export_targets_commands),
+    .manifest_requests = s_export_targets_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_export_targets_manifest_requests),
+    .source_root = "export_targets_source",
+    .cmake_binary_dir = "cmake_build",
+    .nob_binary_dir = "nob_build",
+    .generated_nob_path = "export_targets_source/nob.c",
+    .nob_run_dir = "export_targets_source",
+    .cmake_build_target = "core",
+    .cmake_base_dir = "cmake_build",
+    .nob_base_dir = "nob_build",
+    .subject = "export_targets_build_tree",
+    .verify = artifact_parity_verify_export_targets_case,
+};
+
+static const Artifact_Parity_Manifest_Request s_export_set_manifest_requests[] = {
+    {ARTIFACT_PARITY_DOMAIN_EXPORT_FILES, ARTIFACT_PARITY_CAPTURE_TREE, "export_tree", "exports"},
+    {ARTIFACT_PARITY_DOMAIN_EXPORT_FILES, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "demo_targets_text", "exports/DemoTargets.cmake"},
+    {ARTIFACT_PARITY_DOMAIN_EXPORT_FILES, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "demo_targets_noconfig_text", "exports/DemoTargets-noconfig.cmake"},
+};
+
+static const Artifact_Parity_File s_export_set_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityExportSet LANGUAGES C)\n"
+        "add_library(core STATIC core.c)\n"
+        "set_target_properties(core PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/lib)\n"
+        "install(TARGETS core EXPORT DemoTargets DESTINATION lib)\n"
+        "export(EXPORT DemoTargets FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/DemoTargets.cmake NAMESPACE Demo::)\n",
+    },
+    {
+        "core.c",
+        "int core_value(void) { return 73; }\n",
+    },
+};
+
+static const Artifact_Parity_Nob_Command s_export_set_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, NULL, "core"},
+    {ARTIFACT_PARITY_NOB_COMMAND_EXPORT, NULL, NULL},
+};
+
+static const Artifact_Parity_Case s_export_set_case = {
+    .name = "export_export_set_build_tree",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE | ARTIFACT_PARITY_PHASE_BUILD | ARTIFACT_PARITY_PHASE_EXPORT,
+    .files = s_export_set_files,
+    .file_count = NOB_ARRAY_LEN(s_export_set_files),
+    .nob_commands = s_export_set_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_export_set_commands),
+    .manifest_requests = s_export_set_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_export_set_manifest_requests),
+    .source_root = "export_set_source",
+    .cmake_binary_dir = "cmake_build",
+    .nob_binary_dir = "nob_build",
+    .generated_nob_path = "export_set_source/nob.c",
+    .nob_run_dir = "export_set_source",
+    .cmake_build_target = "core",
+    .cmake_base_dir = "cmake_build",
+    .nob_base_dir = "nob_build",
+    .subject = "export_export_set_build_tree",
+    .verify = artifact_parity_verify_export_export_set_case,
+};
+
+static const Artifact_Parity_Manifest_Request s_export_package_manifest_requests[] = {
+    {ARTIFACT_PARITY_DOMAIN_EXPORT_FILES, ARTIFACT_PARITY_CAPTURE_TREE, "registry_tree", ".cmake/packages/DemoPkg"},
+};
+
+static const Artifact_Parity_File s_export_package_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityExportPackage LANGUAGES C)\n"
+        "file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/DemoPkgConfig.cmake [=[add_library(DemoPkg::core INTERFACE IMPORTED)\n]=])\n"
+        "cmake_policy(SET CMP0090 NEW)\n"
+        "set(CMAKE_EXPORT_PACKAGE_REGISTRY ON)\n"
+        "export(PACKAGE DemoPkg)\n",
+    },
+};
+
+static const Artifact_Parity_Nob_Command s_export_package_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_EXPORT, NULL, NULL},
+};
+
+static const Artifact_Parity_Case s_export_package_case = {
+    .name = "export_package_registry",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE | ARTIFACT_PARITY_PHASE_EXPORT,
+    .files = s_export_package_files,
+    .file_count = NOB_ARRAY_LEN(s_export_package_files),
+    .nob_commands = s_export_package_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_export_package_commands),
+    .manifest_requests = s_export_package_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_export_package_manifest_requests),
+    .source_root = "export_package_source",
+    .cmake_binary_dir = "export_package_build",
+    .nob_binary_dir = "export_package_build",
+    .generated_nob_path = "export_package_source/nob.c",
+    .nob_run_dir = "export_package_source",
+    .cmake_home_dir = "export_pkg_cmake_home",
+    .nob_home_dir = "export_pkg_nob_home",
+    .cmake_base_dir = "export_pkg_cmake_home",
+    .nob_base_dir = "export_pkg_nob_home",
+    .subject = "export_package_registry",
+    .verify = artifact_parity_verify_export_package_case,
 };
 
 static const Artifact_Parity_Manifest_Request s_out_of_source_top_level_manifest_requests[] = {
@@ -1203,6 +1517,39 @@ TEST(artifact_parity_emits_empty_export_and_package_manifest_sections) {
     TEST_PASS();
 }
 
+TEST(artifact_parity_export_targets_build_tree_matches_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_export_targets_case));
+    TEST_PASS();
+}
+
+TEST(artifact_parity_export_export_set_matches_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_export_set_case));
+    TEST_PASS();
+}
+
+TEST(artifact_parity_export_package_registry_matches_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_export_package_case));
+    TEST_PASS();
+}
+
 TEST(artifact_parity_out_of_source_top_level_build_outputs_match_cmake) {
     if (!s_artifact_parity_cmake.available) {
         TEST_SKIP(s_artifact_parity_skip_reason[0]
@@ -1481,6 +1828,9 @@ void run_artifact_parity_v2_tests(int *passed, int *failed, int *skipped) {
         test_artifact_parity_install_component_development_matches_cmake(passed, failed, skipped);
         test_artifact_parity_install_component_default_matches_cmake(passed, failed, skipped);
         test_artifact_parity_emits_empty_export_and_package_manifest_sections(passed, failed, skipped);
+        test_artifact_parity_export_targets_build_tree_matches_cmake(passed, failed, skipped);
+        test_artifact_parity_export_export_set_matches_cmake(passed, failed, skipped);
+        test_artifact_parity_export_package_registry_matches_cmake(passed, failed, skipped);
         test_artifact_parity_out_of_source_top_level_build_outputs_match_cmake(passed, failed, skipped);
         test_artifact_parity_out_of_source_subdirectory_build_outputs_match_cmake(passed, failed, skipped);
         test_artifact_parity_generated_source_consumer_matches_cmake(passed, failed, skipped);

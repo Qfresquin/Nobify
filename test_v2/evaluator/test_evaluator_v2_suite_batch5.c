@@ -834,23 +834,134 @@ TEST(evaluator_find_package_uses_export_package_registry_and_respects_cmp0090_ga
     bool saw_on_registry_location = false;
     bool saw_off_not_found = false;
     bool saw_blocked_not_found = false;
+    bool saw_off_registry_event = false;
+    bool saw_on_registry_event = false;
+    bool saw_blocked_registry_event = false;
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
-        if (ev->h.kind != EV_FIND_PACKAGE) continue;
-        if (nob_sv_eq(ev->as.package_find_result.package_name, nob_sv_from_cstr("NobifyPkgRegOff"))) {
-            saw_off_not_found = !ev->as.package_find_result.found;
-        } else if (nob_sv_eq(ev->as.package_find_result.package_name, nob_sv_from_cstr("NobifyPkgRegOn"))) {
-            saw_on_registry_location =
-                ev->as.package_find_result.found &&
-                sv_contains_sv(ev->as.package_find_result.location, nob_sv_from_cstr("NobifyPkgRegOnConfig.cmake"));
-        } else if (nob_sv_eq(ev->as.package_find_result.package_name, nob_sv_from_cstr("NobifyPkgRegBlocked"))) {
-            saw_blocked_not_found = !ev->as.package_find_result.found;
+        if (ev->h.kind == EV_FIND_PACKAGE) {
+            if (nob_sv_eq(ev->as.package_find_result.package_name, nob_sv_from_cstr("NobifyPkgRegOff"))) {
+                saw_off_not_found = !ev->as.package_find_result.found;
+            } else if (nob_sv_eq(ev->as.package_find_result.package_name, nob_sv_from_cstr("NobifyPkgRegOn"))) {
+                saw_on_registry_location =
+                    ev->as.package_find_result.found &&
+                    sv_contains_sv(ev->as.package_find_result.location, nob_sv_from_cstr("NobifyPkgRegOnConfig.cmake"));
+            } else if (nob_sv_eq(ev->as.package_find_result.package_name, nob_sv_from_cstr("NobifyPkgRegBlocked"))) {
+                saw_blocked_not_found = !ev->as.package_find_result.found;
+            }
+        } else if (ev->h.kind == EVENT_EXPORT_PACKAGE_REGISTRY) {
+            if (nob_sv_eq(ev->as.export_package_registry.package_name, nob_sv_from_cstr("NobifyPkgRegOff"))) {
+                saw_off_registry_event = !ev->as.export_package_registry.enabled;
+            } else if (nob_sv_eq(ev->as.export_package_registry.package_name, nob_sv_from_cstr("NobifyPkgRegOn"))) {
+                saw_on_registry_event = ev->as.export_package_registry.enabled;
+            } else if (nob_sv_eq(ev->as.export_package_registry.package_name, nob_sv_from_cstr("NobifyPkgRegBlocked"))) {
+                saw_blocked_registry_event = !ev->as.export_package_registry.enabled;
+            }
         }
     }
 
     ASSERT(saw_off_not_found);
     ASSERT(saw_on_registry_location);
     ASSERT(saw_blocked_not_found);
+    ASSERT(saw_off_registry_event);
+    ASSERT(saw_on_registry_event);
+    ASSERT(saw_blocked_registry_event);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_export_commands_emit_build_semantics_without_host_effects_when_disabled) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    Cmake_Event_Stream *stream = NULL;
+    Eval_Test_Init init = {0};
+    Eval_Test_Runtime *ctx = NULL;
+    Ast_Root root = {0};
+    const Eval_Run_Report *report = NULL;
+    Test_Host_Env_Guard *home_guard = NULL;
+    bool saw_targets_export = false;
+    bool saw_export_set = false;
+    bool saw_targets_member = false;
+    bool saw_export_set_member = false;
+    bool saw_package_registry = false;
+    String_View targets_key = {0};
+    String_View export_set_key = {0};
+
+    ASSERT(temp_arena && event_arena);
+    stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+    ASSERT(nob_mkdir_if_not_exists("export_host_effects_home"));
+    ASSERT(test_host_env_guard_begin_heap(&home_guard, "HOME", "export_host_effects_home"));
+    TEST_DEFER(test_host_env_guard_cleanup, home_guard);
+
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.disable_export_host_effects = true;
+
+    ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    root = parse_cmake(
+        temp_arena,
+        "project(Test C)\n"
+        "add_library(core INTERFACE)\n"
+        "install(TARGETS core EXPORT DemoExport DESTINATION lib)\n"
+        "export(TARGETS core FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/CoreTargets.cmake NAMESPACE Demo::)\n"
+        "export(EXPORT DemoExport FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/DemoExport.cmake NAMESPACE Demo::)\n"
+        "cmake_policy(SET CMP0090 NEW)\n"
+        "set(CMAKE_EXPORT_PACKAGE_REGISTRY ON)\n"
+        "export(PACKAGE DemoPkg)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    for (size_t i = 0; i < stream->count; ++i) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind == EVENT_EXPORT_BUILD_DECLARE &&
+            nob_sv_eq(ev->as.export_build_declare.logical_name, nob_sv_from_cstr("CoreTargets")) &&
+            ev->as.export_build_declare.source_kind == EVENT_EXPORT_SOURCE_TARGETS) {
+            saw_targets_export = true;
+            targets_key = ev->as.export_build_declare.export_key;
+        } else if (ev->h.kind == EVENT_EXPORT_BUILD_DECLARE &&
+                   nob_sv_eq(ev->as.export_build_declare.logical_name, nob_sv_from_cstr("DemoExport")) &&
+                   ev->as.export_build_declare.source_kind == EVENT_EXPORT_SOURCE_EXPORT_SET) {
+            saw_export_set = true;
+            export_set_key = ev->as.export_build_declare.export_key;
+        } else if (ev->h.kind == EVENT_EXPORT_BUILD_ADD_TARGET &&
+                   nob_sv_eq(ev->as.export_build_add_target.target_name, nob_sv_from_cstr("core"))) {
+            if (targets_key.count > 0 &&
+                nob_sv_eq(ev->as.export_build_add_target.export_key, targets_key)) {
+                saw_targets_member = true;
+            } else if (export_set_key.count > 0 &&
+                       nob_sv_eq(ev->as.export_build_add_target.export_key, export_set_key)) {
+                saw_export_set_member = true;
+            }
+        } else if (ev->h.kind == EVENT_EXPORT_PACKAGE_REGISTRY &&
+                   nob_sv_eq(ev->as.export_package_registry.package_name, nob_sv_from_cstr("DemoPkg")) &&
+                   ev->as.export_package_registry.enabled) {
+            saw_package_registry = true;
+        }
+    }
+
+    ASSERT(saw_targets_export);
+    ASSERT(saw_export_set);
+    ASSERT(saw_targets_member);
+    ASSERT(saw_export_set_member);
+    ASSERT(saw_package_registry);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_EXPORT_LAST_MODE")),
+                     nob_sv_from_cstr("PACKAGE")));
+    ASSERT(!nob_file_exists("exports/CoreTargets.cmake"));
+    ASSERT(!nob_file_exists("exports/DemoExport.cmake"));
+    ASSERT(!nob_file_exists("export_host_effects_home/.cmake/packages/DemoPkg"));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -3071,6 +3182,7 @@ void run_evaluator_v2_batch5(int *passed, int *failed, int *skipped) {
     test_evaluator_find_package_auto_prefers_config_when_requested(passed, failed, skipped);
     test_evaluator_find_package_cmp0074_old_ignores_root_and_new_uses_root(passed, failed, skipped);
     test_evaluator_find_package_uses_export_package_registry_and_respects_cmp0090_gates(passed, failed, skipped);
+    test_evaluator_export_commands_emit_build_semantics_without_host_effects_when_disabled(passed, failed, skipped);
     test_evaluator_project_full_signature_and_variable_surface(passed, failed, skipped);
     test_evaluator_project_cmp0048_new_clears_and_old_preserves_version_vars_without_version_arg(passed, failed, skipped);
     test_evaluator_project_rejects_invalid_signature_forms(passed, failed, skipped);

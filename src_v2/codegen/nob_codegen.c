@@ -2211,6 +2211,7 @@ static bool cg_emit_clean_function(CG_Context *ctx, Nob_String_Builder *out) {
 }
 
 #include "nob_codegen_install.c"
+#include "nob_codegen_export.c"
 #include "nob_codegen_package.c"
 
 static bool cg_emit_main(CG_Context *ctx, Nob_String_Builder *out) {
@@ -2269,6 +2270,13 @@ static bool cg_emit_main(CG_Context *ctx, Nob_String_Builder *out) {
         "            return 1;\n"
         "        }\n"
         "        return install_all(install_prefix, install_component) ? 0 : 1;\n"
+        "    }\n"
+        "    if (argi < argc && strcmp(argv[argi], \"export\") == 0) {\n"
+        "        if (argi + 1 != argc) {\n"
+        "            nob_log(NOB_ERROR, \"export: unexpected argument '%s'\", argv[argi + 1]);\n"
+        "            return 1;\n"
+        "        }\n"
+        "        return export_all() ? 0 : 1;\n"
         "    }\n"
         "    if (argi < argc && strcmp(argv[argi], \"package\") == 0) {\n"
         "        return package_all() ? 0 : 1;\n"
@@ -2375,6 +2383,7 @@ bool nob_codegen_render(const Build_Model *model,
         "#include \"nob.h\"\n"
         "\n"
         "#include <ctype.h>\n"
+        "#include <stdint.h>\n"
         "#include <stdlib.h>\n"
         "#include <string.h>\n"
         "\n");
@@ -2396,6 +2405,7 @@ bool nob_codegen_render(const Build_Model *model,
     if (!cg_emit_build_request(&ctx, out) ||
         !cg_emit_clean_function(&ctx, out) ||
         !cg_emit_install_function(&ctx, out) ||
+        !cg_emit_export_function(&ctx, out) ||
         !cg_emit_package_function(&ctx, out) ||
         !cg_emit_main(&ctx, out)) {
         return false;

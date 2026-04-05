@@ -26,6 +26,10 @@ As of April 5, 2026:
   `build-model`, and `codegen` coverage, while `artifact-parity` and the
   pinned real-project corpus remain explicit-only for real-CMake install
   comparison
+- standalone export parity proof is now split between aggregate-safe
+  `evaluator`, `build-model`, `pipeline`, and `codegen` coverage, while
+  `artifact-parity` remains explicit-only for real-CMake export parity plus
+  downstream consumer proof
 
 This file is the canonical baseline for test architecture, ownership, and suite
 taxonomy. The multi-wave change roadmap lives in
@@ -116,7 +120,12 @@ code.
   Linux/POSIX install smoke for custom prefixes, component-selective installs,
   `PROGRAMS` executability preservation, `DIRECTORY` trailing-slash semantics,
   `PUBLIC_HEADER`, installed export emission, and verification that `clean`
-  does not delete custom install prefixes.
+  does not delete custom install prefixes. `P6` extends it again with
+  standalone export smoke for explicit generated-Nob `export` execution,
+  build-tree export file emission from `export(TARGETS ...)` and
+  `export(EXPORT ...)`, Linux/POSIX package-registry writes from
+  `export(PACKAGE ...)`, and explicit rejection of unsupported
+  `APPEND` / `CXX_MODULES_DIRECTORY` export forms.
   Current aggregate status: included.
 
 - `artifact-parity`
@@ -147,7 +156,10 @@ code.
   day-to-day repo layout. `P5` extends the install harness again with explicit
   per-case `--prefix` / `--component` control for CMake and generated Nob, and
   the real-project corpus now runs generated-Nob installs through explicit
-  custom prefixes before the consumer-against-installed-prefix checks.
+  custom prefixes before the consumer-against-installed-prefix checks. `P6`
+  extends the explicit harness again with an explicit `export` phase and
+  downstream-consumer proof for `export(TARGETS ...)`, `export(EXPORT ...)`,
+  and isolated-home `export(PACKAGE ...)`.
   Current aggregate status: excluded from the default aggregate path.
 
 - `evaluator-integration`

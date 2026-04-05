@@ -75,6 +75,20 @@ The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`
   `test_v2/artifact_parity/real_projects/` stays explicit-only and now runs
   full-install parity plus consumer-against-installed-prefix checks with
   explicit generated-Nob install prefixes for the pinned corpus projects
+- `P6` proof split:
+  `test_v2/evaluator/` locks standalone export lowering and the
+  `enable_export_host_effects` gate
+  `test_v2/build_model/` locks generalized export-domain queries for
+  build-tree and package-registry exports
+  `test_v2/pipeline/` snapshots standalone export events and resolved export
+  membership in the evaluator-to-build-model path
+  `test_v2/codegen/` owns aggregate-safe smoke for explicit generated-Nob
+  `export` execution, including build-tree export files, package-registry
+  writes, and rejection of unsupported `APPEND` /
+  `CXX_MODULES_DIRECTORY` forms
+  `test_v2/artifact_parity/` stays explicit-only and owns real-CMake parity
+  plus downstream-consumer proof for `export(TARGETS ...)`,
+  `export(EXPORT ...)`, and `export(PACKAGE ...)`
 - required external tools:
   real `cmake 3.28.x`
   sibling `cpack` only for package-phase cases
@@ -86,6 +100,8 @@ The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`
   generated Nob install execution is now explicit through
   `install [--prefix <path>] [--component <name>]`; omitting `--component`
   means full install
+  generated Nob standalone export execution is now explicit through `export`,
+  which honors the same global `--config <cfg>` selection used by `build`
   generated Nob config selection is explicit through `--config <cfg>`; the
   empty config remains the default when the flag is omitted
   generation-time platform/backend selection is explicit through

@@ -541,6 +541,7 @@ typedef struct {
     SV_List generated_deferred_ids;
     size_t next_deferred_call_id;
     size_t next_build_step_id;
+    size_t next_export_id;
 } Eval_File_State;
 
 typedef struct {
@@ -819,6 +820,7 @@ struct EvalSession {
     Arena *persistent_arena;
     String_View source_root;
     String_View binary_root;
+    bool enable_export_host_effects;
     bool owns_registry;
     Eval_Run_Report last_run_report;
 };
@@ -1195,6 +1197,18 @@ static inline String_View eval_alloc_build_step_key(EvalExecContext *ctx) {
     return nob_sv_from_cstr(buf);
 }
 
+static inline String_View eval_alloc_export_key(EvalExecContext *ctx) {
+    if (!ctx) return nob_sv_from_cstr("");
+    char *tmp = nob_temp_sprintf("export_%zu", ctx->file_state.next_export_id++);
+    char *buf = tmp ? arena_strndup(eval_event_arena(ctx), tmp, strlen(tmp)) : NULL;
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    return nob_sv_from_cstr(buf);
+}
+
+static inline bool eval_enable_export_host_effects(const EvalExecContext *ctx) {
+    return ctx && ctx->session ? ctx->session->enable_export_host_effects : true;
+}
+
 static inline bool eval_emit_source_mark_generated(EvalExecContext *ctx,
                                                    Event_Origin origin,
                                                    String_View path,
@@ -1556,6 +1570,51 @@ static inline bool eval_emit_export_install(EvalExecContext *ctx,
     ev.as.export_install.export_namespace = sv_copy_to_event_arena(ctx, export_namespace);
     ev.as.export_install.file_name = sv_copy_to_event_arena(ctx, file_name);
     ev.as.export_install.component = sv_copy_to_event_arena(ctx, component);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_export_build_declare(EvalExecContext *ctx,
+                                                  Event_Origin origin,
+                                                  String_View export_key,
+                                                  Event_Export_Source_Kind source_kind,
+                                                  String_View logical_name,
+                                                  String_View file_path,
+                                                  String_View export_namespace,
+                                                  bool append,
+                                                  String_View cxx_modules_directory) {
+    Event ev = {0};
+    ev.h.kind = EVENT_EXPORT_BUILD_DECLARE;
+    ev.h.origin = origin;
+    ev.as.export_build_declare.export_key = sv_copy_to_event_arena(ctx, export_key);
+    ev.as.export_build_declare.source_kind = source_kind;
+    ev.as.export_build_declare.logical_name = sv_copy_to_event_arena(ctx, logical_name);
+    ev.as.export_build_declare.file_path = sv_copy_to_event_arena(ctx, file_path);
+    ev.as.export_build_declare.export_namespace = sv_copy_to_event_arena(ctx, export_namespace);
+    ev.as.export_build_declare.append = append;
+    ev.as.export_build_declare.cxx_modules_directory = sv_copy_to_event_arena(ctx, cxx_modules_directory);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_export_build_add_target(EvalExecContext *ctx,
+                                                     Event_Origin origin,
+                                                     String_View export_key,
+                                                     String_View target_name) {
+    Event ev = {0};
+    ev.h.kind = EVENT_EXPORT_BUILD_ADD_TARGET;
+    ev.h.origin = origin;
+    ev.as.export_build_add_target.export_key = sv_copy_to_event_arena(ctx, export_key);
+    ev.as.export_build_add_target.target_name = sv_copy_to_event_arena(ctx, target_name);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_export_package_registry(EvalExecContext *ctx,
+                                                     Event_Origin origin,
+                                                     String_View package_name,
+                                                     String_View prefix,
+                                                     bool enabled) {
+    Event ev = {0};
+    ev.h.kind = EVENT_EXPORT_PACKAGE_REGISTRY;
+    ev.h.origin = origin;
+    ev.as.export_package_registry.package_name = sv_copy_to_event_arena(ctx, package_name);
+    ev.as.export_package_registry.prefix = sv_copy_to_event_arena(ctx, prefix);
+    ev.as.export_package_registry.enabled = enabled;
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_cpack_add_install_type(EvalExecContext *ctx,

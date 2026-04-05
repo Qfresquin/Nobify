@@ -562,6 +562,7 @@ int main(int argc, char **argv) {
     session_cfg.persistent_arena = event_arena;
     session_cfg.source_root = sv_from_cstr(source_root);
     session_cfg.binary_root = sv_from_cstr(binary_root);
+    session_cfg.enable_export_host_effects = false;
 
     EvalSession *session = eval_session_create(&session_cfg);
     if (!session) {

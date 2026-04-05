@@ -33,6 +33,54 @@ static bool cg_validate_install_rule(CG_Context *ctx, BM_Install_Rule_Id id) {
     return true;
 }
 
+static bool cg_validate_export_record(CG_Context *ctx, BM_Export_Id export_id) {
+    BM_Export_Kind kind = BM_EXPORT_INSTALL;
+    BM_Target_Id_Span targets = {0};
+    String_View name = {0};
+    if (!ctx) return false;
+
+    kind = bm_query_export_kind(ctx->model, export_id);
+    name = bm_query_export_name(ctx->model, export_id);
+    targets = bm_query_export_targets(ctx->model, export_id);
+
+    switch (kind) {
+        case BM_EXPORT_INSTALL:
+            if (targets.count == 0) {
+                nob_log(NOB_ERROR,
+                        "codegen: install export '%.*s' has no associated targets",
+                        (int)name.count,
+                        name.data ? name.data : "");
+                return false;
+            }
+            return true;
+
+        case BM_EXPORT_BUILD_TREE:
+            if (targets.count == 0) {
+                nob_log(NOB_ERROR,
+                        "codegen: standalone export '%.*s' has no associated targets",
+                        (int)name.count,
+                        name.data ? name.data : "");
+                return false;
+            }
+            if (bm_query_export_append(ctx->model, export_id)) {
+                nob_log(NOB_ERROR,
+                        "codegen: export(APPEND ...) is not supported in the standalone export backend yet");
+                return false;
+            }
+            if (bm_query_export_cxx_modules_directory(ctx->model, export_id).count > 0) {
+                nob_log(NOB_ERROR,
+                        "codegen: export(... CXX_MODULES_DIRECTORY ...) is not supported in the standalone export backend yet");
+                return false;
+            }
+            return true;
+
+        case BM_EXPORT_PACKAGE_REGISTRY:
+            return true;
+    }
+
+    return true;
+}
+
 bool cg_validate_model_for_backend(CG_Context *ctx) {
     if (!ctx) return false;
 
@@ -85,15 +133,7 @@ bool cg_validate_model_for_backend(CG_Context *ctx) {
     }
 
     for (size_t export_index = 0; export_index < bm_query_export_count(ctx->model); ++export_index) {
-        BM_Export_Id export_id = (BM_Export_Id)export_index;
-        BM_Target_Id_Span targets = bm_query_export_targets(ctx->model, export_id);
-        if (targets.count == 0) {
-            nob_log(NOB_ERROR,
-                    "codegen: install export '%.*s' has no associated targets",
-                    (int)bm_query_export_name(ctx->model, export_id).count,
-                    bm_query_export_name(ctx->model, export_id).data ? bm_query_export_name(ctx->model, export_id).data : "");
-            return false;
-        }
+        if (!cg_validate_export_record(ctx, (BM_Export_Id)export_index)) return false;
     }
 
     return true;

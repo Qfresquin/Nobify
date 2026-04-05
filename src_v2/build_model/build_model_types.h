@@ -116,6 +116,19 @@ typedef enum {
 } BM_Install_Rule_Kind;
 
 typedef enum {
+    BM_EXPORT_INSTALL = 0,
+    BM_EXPORT_BUILD_TREE,
+    BM_EXPORT_PACKAGE_REGISTRY,
+} BM_Export_Kind;
+
+typedef enum {
+    BM_EXPORT_SOURCE_INSTALL_EXPORT = 0,
+    BM_EXPORT_SOURCE_TARGETS,
+    BM_EXPORT_SOURCE_EXPORT_SET,
+    BM_EXPORT_SOURCE_PACKAGE,
+} BM_Export_Source_Kind;
+
+typedef enum {
     BM_ITEM_FLAG_NONE = 0,
     BM_ITEM_FLAG_BEFORE = 1u << 0,
     BM_ITEM_FLAG_SYSTEM = 1u << 1,

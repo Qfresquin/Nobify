@@ -73,6 +73,9 @@ static bool bm_is_supported_build_event(Event_Kind kind) {
         case EVENT_TEST_ADD:
         case EVENT_INSTALL_RULE_ADD:
         case EVENT_EXPORT_INSTALL:
+        case EVENT_EXPORT_BUILD_DECLARE:
+        case EVENT_EXPORT_BUILD_ADD_TARGET:
+        case EVENT_EXPORT_PACKAGE_REGISTRY:
         case EVENT_CPACK_ADD_INSTALL_TYPE:
         case EVENT_CPACK_ADD_COMPONENT_GROUP:
         case EVENT_CPACK_ADD_COMPONENT:
@@ -590,6 +593,9 @@ bool bm_builder_apply_event(BM_Builder *builder, const Event *ev) {
             return bm_builder_handle_install_event(builder, ev);
 
         case EVENT_EXPORT_INSTALL:
+        case EVENT_EXPORT_BUILD_DECLARE:
+        case EVENT_EXPORT_BUILD_ADD_TARGET:
+        case EVENT_EXPORT_PACKAGE_REGISTRY:
             return bm_builder_handle_export_event(builder, ev);
 
         case EVENT_PACKAGE_FIND_RESULT:

@@ -213,9 +213,27 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
                                   had_error,
                                   "export id mismatch",
                                   "export ids must be contiguous");
-        if (bm_string_view_is_empty(record->name) || bm_string_view_is_empty(record->destination)) {
-            *had_error = true;
-            bm_diag_error(sink, record->provenance, "build_model_validate", "structural", "install export is missing required fields", "exports require a name and destination");
+        switch (record->kind) {
+            case BM_EXPORT_INSTALL:
+                if (bm_string_view_is_empty(record->name) || bm_string_view_is_empty(record->destination)) {
+                    *had_error = true;
+                    bm_diag_error(sink, record->provenance, "build_model_validate", "structural", "install export is missing required fields", "install exports require a name and destination");
+                }
+                break;
+
+            case BM_EXPORT_BUILD_TREE:
+                if (bm_string_view_is_empty(record->output_file_path)) {
+                    *had_error = true;
+                    bm_diag_error(sink, record->provenance, "build_model_validate", "structural", "build-tree export is missing FILE", "standalone build-tree exports require an output file path");
+                }
+                break;
+
+            case BM_EXPORT_PACKAGE_REGISTRY:
+                if (bm_string_view_is_empty(record->name) || bm_string_view_is_empty(record->registry_prefix)) {
+                    *had_error = true;
+                    bm_diag_error(sink, record->provenance, "build_model_validate", "structural", "package registry export is missing required fields", "package registry exports require package name and prefix");
+                }
+                break;
         }
         bm_validate_owner_directory(draft, record->owner_directory_id, record->provenance, "export", sink, had_error);
     }
@@ -329,17 +347,34 @@ static bool bm_validate_resolution_pass(const Build_Model_Draft *draft, Diag_Sin
 
     for (size_t i = 0; i < arena_arr_len(draft->exports); ++i) {
         const BM_Export_Record *record = &draft->exports[i];
-        bool found_target = false;
-        for (size_t rule_index = 0; rule_index < arena_arr_len(draft->install_rules); ++rule_index) {
-            const BM_Install_Rule_Record *rule = &draft->install_rules[rule_index];
-            if (rule->kind != BM_INSTALL_RULE_TARGET) continue;
-            if (!nob_sv_eq(rule->export_name, record->name)) continue;
-            found_target = true;
-            break;
+        if (record->kind == BM_EXPORT_INSTALL) {
+            bool found_target = false;
+            for (size_t rule_index = 0; rule_index < arena_arr_len(draft->install_rules); ++rule_index) {
+                const BM_Install_Rule_Record *rule = &draft->install_rules[rule_index];
+                if (rule->kind != BM_INSTALL_RULE_TARGET) continue;
+                if (!nob_sv_eq(rule->export_name, record->name)) continue;
+                found_target = true;
+                break;
+            }
+            if (!found_target) {
+                *had_error = true;
+                bm_diag_error(sink, record->provenance, "build_model_validate", "resolution", "install export has no associated install(TARGETS ... EXPORT ...) rules", "associate at least one install target rule with the export name");
+            }
+            continue;
         }
-        if (!found_target) {
-            *had_error = true;
-            bm_diag_error(sink, record->provenance, "build_model_validate", "resolution", "install export has no associated install(TARGETS ... EXPORT ...) rules", "associate at least one install target rule with the export name");
+
+        if (record->kind == BM_EXPORT_BUILD_TREE) {
+            for (size_t target_index = 0; target_index < arena_arr_len(record->target_names); ++target_index) {
+                if (bm_draft_find_target_id(draft, record->target_names[target_index]) == BM_TARGET_ID_INVALID) {
+                    *had_error = true;
+                    bm_diag_error(sink,
+                                  record->provenance,
+                                  "build_model_validate",
+                                  "resolution",
+                                  "build-tree export references an unknown target",
+                                  "declare standalone export targets before exporting them");
+                }
+            }
         }
     }
 

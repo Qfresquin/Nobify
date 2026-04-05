@@ -1481,6 +1481,71 @@ TEST(build_model_install_queries_materialize_effective_default_components) {
     TEST_PASS();
 }
 
+TEST(build_model_standalone_export_queries_cover_build_tree_and_package_registry) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_Target_Id core_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id_Span export_targets = {0};
+
+    ASSERT(build_model_write_text_file("standalone_export_src/core.c", "int core_value(void) { return 41; }\n"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "standalone_export_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("standalone_export_src");
+    config.binary_dir = nob_sv_from_cstr("standalone_export_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "add_library(core STATIC core.c)\n"
+        "install(TARGETS core EXPORT DemoTargets DESTINATION lib)\n"
+        "export(TARGETS core FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/StandaloneTargets.cmake NAMESPACE Demo::)\n"
+        "export(EXPORT DemoTargets FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/InstallSetTargets.cmake NAMESPACE Demo::)\n"
+        "cmake_policy(SET CMP0090 NEW)\n"
+        "set(CMAKE_EXPORT_PACKAGE_REGISTRY ON)\n"
+        "export(PACKAGE DemoPkg)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    core_id = bm_query_target_by_name(model, nob_sv_from_cstr("core"));
+    ASSERT(core_id != BM_TARGET_ID_INVALID);
+
+    ASSERT(bm_query_export_count(model) == 3);
+
+    ASSERT(bm_query_export_kind(model, (BM_Export_Id)0) == BM_EXPORT_BUILD_TREE);
+    ASSERT(bm_query_export_source_kind(model, (BM_Export_Id)0) == BM_EXPORT_SOURCE_TARGETS);
+    ASSERT(nob_sv_eq(bm_query_export_name(model, (BM_Export_Id)0), nob_sv_from_cstr("StandaloneTargets")));
+    ASSERT(nob_sv_eq(bm_query_export_namespace(model, (BM_Export_Id)0), nob_sv_from_cstr("Demo::")));
+    ASSERT(build_model_sv_contains(bm_query_export_output_file_path(model, (BM_Export_Id)0, fixture.scratch_arena),
+                                   nob_sv_from_cstr("exports/StandaloneTargets.cmake")));
+    export_targets = bm_query_export_targets(model, (BM_Export_Id)0);
+    ASSERT(export_targets.count == 1);
+    ASSERT(export_targets.items[0] == core_id);
+
+    ASSERT(bm_query_export_kind(model, (BM_Export_Id)1) == BM_EXPORT_BUILD_TREE);
+    ASSERT(bm_query_export_source_kind(model, (BM_Export_Id)1) == BM_EXPORT_SOURCE_EXPORT_SET);
+    ASSERT(nob_sv_eq(bm_query_export_name(model, (BM_Export_Id)1), nob_sv_from_cstr("DemoTargets")));
+    ASSERT(build_model_sv_contains(bm_query_export_output_file_path(model, (BM_Export_Id)1, fixture.scratch_arena),
+                                   nob_sv_from_cstr("exports/InstallSetTargets.cmake")));
+    export_targets = bm_query_export_targets(model, (BM_Export_Id)1);
+    ASSERT(export_targets.count == 1);
+    ASSERT(export_targets.items[0] == core_id);
+
+    ASSERT(bm_query_export_kind(model, (BM_Export_Id)2) == BM_EXPORT_PACKAGE_REGISTRY);
+    ASSERT(bm_query_export_source_kind(model, (BM_Export_Id)2) == BM_EXPORT_SOURCE_PACKAGE);
+    ASSERT(bm_query_export_enabled(model, (BM_Export_Id)2));
+    ASSERT(nob_sv_eq(bm_query_export_package_name(model, (BM_Export_Id)2), nob_sv_from_cstr("DemoPkg")));
+    ASSERT(build_model_sv_contains(bm_query_export_registry_prefix(model, (BM_Export_Id)2),
+                                   nob_sv_from_cstr("standalone_export_build")));
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -1518,6 +1583,7 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_effective_queries_dedup_and_preserve_first_occurrence(passed, failed, skipped);
     test_build_model_install_and_export_queries_surface_typed_metadata(passed, failed, skipped);
     test_build_model_install_queries_materialize_effective_default_components(passed, failed, skipped);
+    test_build_model_standalone_export_queries_cover_build_tree_and_package_registry(passed, failed, skipped);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

@@ -13,6 +13,7 @@ typedef enum {
     ARTIFACT_PARITY_PHASE_BUILD = 1u << 1,
     ARTIFACT_PARITY_PHASE_INSTALL = 1u << 2,
     ARTIFACT_PARITY_PHASE_PACKAGE = 1u << 3,
+    ARTIFACT_PARITY_PHASE_EXPORT = 1u << 4,
 } Artifact_Parity_Phase;
 
 typedef enum {
@@ -36,6 +37,7 @@ typedef enum {
     ARTIFACT_PARITY_NOB_COMMAND_CLEAN,
     ARTIFACT_PARITY_NOB_COMMAND_INSTALL,
     ARTIFACT_PARITY_NOB_COMMAND_PACKAGE,
+    ARTIFACT_PARITY_NOB_COMMAND_EXPORT,
 } Artifact_Parity_Nob_Command_Kind;
 
 typedef struct {
@@ -58,6 +60,7 @@ typedef struct {
 
 struct Artifact_Parity_Case;
 typedef bool (*Artifact_Parity_Prepare_Fn)(const struct Artifact_Parity_Case *case_def);
+typedef bool (*Artifact_Parity_Verify_Fn)(const struct Artifact_Parity_Case *case_def);
 
 typedef struct Artifact_Parity_Case {
     const char *name;
@@ -79,11 +82,14 @@ typedef struct Artifact_Parity_Case {
     const char *cmake_install_component;
     const char *nob_install_prefix;
     const char *nob_install_component;
+    const char *cmake_home_dir;
+    const char *nob_home_dir;
     const char *cmake_base_dir;
     const char *nob_base_dir;
     const char *clean_absence_relpath;
     const char *subject;
     Artifact_Parity_Prepare_Fn prepare;
+    Artifact_Parity_Verify_Fn verify;
 } Artifact_Parity_Case;
 
 typedef struct {

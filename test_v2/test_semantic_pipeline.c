@@ -159,6 +159,7 @@ bool test_semantic_pipeline_fixture_from_script(Test_Semantic_Pipeline_Fixture *
     eval_cfg.persistent_arena = out->event_arena;
     eval_cfg.source_root = out->source_dir;
     eval_cfg.binary_root = out->binary_dir;
+    eval_cfg.enable_export_host_effects = true;
 
     eval_request.scratch_arena = out->scratch_arena;
     eval_request.source_dir = out->source_dir;
