@@ -34,6 +34,7 @@ Every first-class entity uses a distinct typed ID:
 typedef uint32_t BM_Directory_Id;
 typedef uint32_t BM_Target_Id;
 typedef uint32_t BM_Test_Id;
+typedef uint32_t BM_Replay_Action_Id;
 typedef uint32_t BM_Install_Rule_Id;
 typedef uint32_t BM_Package_Id;
 typedef uint32_t BM_CPack_Install_Type_Id;
@@ -82,6 +83,7 @@ typedef struct {
 - directories
 - targets
 - tests
+- replay actions
 - install rules
 - packages
 - CPack entities
@@ -120,6 +122,25 @@ typedef enum {
     BM_INSTALL_RULE_PROGRAM,
     BM_INSTALL_RULE_DIRECTORY,
 } BM_Install_Rule_Kind;
+
+typedef enum {
+    BM_REPLAY_PHASE_CONFIGURE = 0,
+    BM_REPLAY_PHASE_BUILD,
+    BM_REPLAY_PHASE_TEST,
+    BM_REPLAY_PHASE_INSTALL,
+    BM_REPLAY_PHASE_EXPORT,
+    BM_REPLAY_PHASE_PACKAGE,
+    BM_REPLAY_PHASE_HOST_ONLY,
+} BM_Replay_Phase;
+
+typedef enum {
+    BM_REPLAY_ACTION_FILESYSTEM = 0,
+    BM_REPLAY_ACTION_PROCESS,
+    BM_REPLAY_ACTION_PROBE,
+    BM_REPLAY_ACTION_DEPENDENCY_MATERIALIZATION,
+    BM_REPLAY_ACTION_TEST_DRIVER,
+    BM_REPLAY_ACTION_HOST_EFFECT,
+} BM_Replay_Action_Kind;
 ```
 
 Imported and alias state are target flags, not separate target kinds.
@@ -241,6 +262,23 @@ Every test record contains:
 - `command`
 - `working_dir`
 - `command_expand_lists`
+
+### Replay Action
+
+Every replay action record contains:
+- `id`
+- `kind`
+- `phase`
+- `owner_directory_id`
+- `provenance`
+- `working_directory`
+- declared environment items
+- declared input paths
+- declared output paths
+- command argv or equivalent action payload
+
+Replay actions are ordered append-only and preserve the committed downstream
+execution order expected by later generated-backend phases.
 
 ### Install Rule
 

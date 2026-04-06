@@ -102,6 +102,17 @@ The target runtime distinguishes persistent and scratch lifetimes.
 `Event_Stream` remains caller-owned. The evaluator deep-copies event payloads at
 the stream boundary and never assumes ownership of the stream object itself.
 
+The request model also owns execution gates that decide whether a committed
+host effect:
+
+- executes immediately through evaluator services
+- is projected as a downstream-consumable replay action
+- or does both where the documented compatibility mode requires immediate host
+  behavior plus downstream visibility
+
+These gates are request-level runtime configuration. They must not be inferred
+later from arbitrary variables or from codegen-specific heuristics.
+
 ## 6. Transaction Ownership
 
 Every command executes inside a transaction owned by the active execution
@@ -133,6 +144,16 @@ All external effects flow through `EvalServices`, including:
 - toolchain and generator capability queries.
 
 Service access is session-scoped and visible to all child execution contexts.
+
+When a family participates in the closure program, the runtime must support an
+explicit request-level gate between:
+
+- executing the effect on the host during evaluator execution
+- projecting the effect as downstream replay input
+
+This follows the same architectural pattern already used for gated export host
+effects: the evaluator owns the immediate-service boundary, while downstream
+replay ownership begins only after projection through canonical contracts.
 
 ## 8. Multi-Run Semantics
 

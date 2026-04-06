@@ -73,14 +73,25 @@ The implementation-level contracts for v2 live in focused docs under `docs/`.
 - `docs/project_priorities.md`: canonical project direction and priority order.
 - `docs/cmake_artifact_parity_roadmap.md`: root roadmap for reaching CMake
   3.28 artifact parity across build, install, export, and packaging flows.
+- `docs/evaluator_codegen_closure_roadmap.md`: canonical post-`P8` multi-wave
+  closure roadmap that coordinates the remaining
+  `evaluator -> Event IR -> build_model -> codegen` gap.
 - `docs/evaluator/`: active evaluator documentation rewrite.
 - `docs/Evaluator/`: archived evaluator documentation baseline kept during the rewrite.
-- `docs/build_model/`: canonical build-model rewrite docs plus historical v2 notes kept during migration.
+- `docs/build_model/`: canonical build-model rewrite docs plus historical v2
+  notes kept during migration, now including the replay-domain contract used by
+  codegen.
+- `docs/codegen/`: canonical generated-backend runtime contract and CLI
+  documentation.
 - `docs/diagnostics/`: shared diagnostic logging, counters, and telemetry contract.
 - `docs/lexer/`: lexer tokenization and source-position contract.
 - `docs/parser/`: parser AST, grammar, and recovery contract.
 - `docs/arena/`: arena allocator and `arena_dyn.h` memory helper contract.
 - `docs/tests/`: test architecture baseline, suite taxonomy, and structural refactor roadmap for the v2 test stack.
+  This area now also owns the explicit `evaluator -> codegen` diff harness
+  contract under `docs/tests/evaluator_codegen_diff.md`, while the build-model
+  and codegen directories own the normative downstream and runtime contracts
+  that the harness proves.
 
 ---
 

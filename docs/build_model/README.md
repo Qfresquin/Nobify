@@ -58,6 +58,12 @@ The build-model pipeline is:
 - `Freeze`: produces an immutable `Build_Model`.
 - `Query`: the only read surface consumed by codegen and tooling.
 
+The canonical downstream domain set now also includes a replay domain for
+phase-owned replayable actions that are not fully captured by the existing
+target/build-step/install/export/package records. That domain remains part of
+the same frozen/query-facing build-model contract; it does not authorize direct
+codegen consumption of raw `Event_Stream`.
+
 ## Canonical Documents
 
 - [Architecture](./build_model_architecture.md)
@@ -66,6 +72,7 @@ The build-model pipeline is:
 - [Validate](./build_model_validate.md)
 - [Freeze](./build_model_freeze.md)
 - [Query](./build_model_query.md)
+- [Replay domain](./build_model_replay.md)
 - [Migration](./build_model_migration.md)
 
 ## Historical Documents

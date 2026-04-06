@@ -69,6 +69,11 @@ The release-1 supported build-semantic set is:
 - `EVENT_CPACK_ADD_COMPONENT`
 - `EVENT_PACKAGE_FIND_RESULT`
 
+The closure program extends that baseline with a replay-domain ingest path for
+events that remain configure/build/test/install/export/package-relevant after
+evaluation. Those events are still consumed only through the canonical Event IR
+schema and only when the Event IR contract marks them as downstream-consumable.
+
 ## 4. Builder State
 
 `BM_Builder` owns:
@@ -139,6 +144,17 @@ not flatten visibility or transitive effects during ingest.
 - `EVENT_TEST_ENABLE` updates the draft testing-enabled flag.
 - `EVENT_TEST_ADD` creates a test record owned by the current directory frame.
 
+### Replay Domain
+
+- downstream-replayable events create replay-action draft records owned by the
+  current directory frame
+- replay actions store explicit phase, working-directory, argv, env, inputs,
+  outputs, and provenance metadata
+- the builder preserves committed event order and does not infer replay order
+  later during freeze or query
+- replay actions complement the existing build/install/export/package domains;
+  they do not duplicate records that are already canonical elsewhere
+
 ### Install
 
 - `EVENT_INSTALL_RULE_ADD` creates an install-rule record owned by the current
@@ -185,6 +201,7 @@ The implementation must keep domain handlers split:
 - `build_model_builder_project.c`
 - `build_model_builder_target.c`
 - `build_model_builder_test.c`
+- `build_model_builder_replay.c`
 - `build_model_builder_install.c`
 - `build_model_builder_package.c`
 

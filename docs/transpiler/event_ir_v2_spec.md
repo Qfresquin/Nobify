@@ -33,7 +33,8 @@ Core properties:
 - per-kind static metadata
 - semantic separation by `Event_Role`, not by multiple streams
 - deep-copy ownership at `event_stream_push(...)`
-- frozen G0.1 base taxonomy: 19 canonical families, 86 canonical kinds
+- append-only canonical family/kind taxonomy defined in
+  `src_v2/transpiler/event_ir.h`
 
 The existence of one canonical `Event_Stream` does not imply that the evaluator
 must always be called with an event sink. Event projection is optional per run;
@@ -65,12 +66,19 @@ The current role taxonomy is:
 
 Consumers must filter by role, not by assumptions about evaluator internals.
 
+For the closure program, no new Event IR role is introduced. When a runtime
+effect becomes downstream-consumable, the canonical approach is to use a dual
+role mask on the same event kind, typically
+`EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC`, instead of creating a
+second parallel event family or a new replay-only role.
+
 ## 3. Families and Key Kinds
 
 Current families:
 - `TRACE`
 - `DIAG`
 - `DIRECTORY`
+- `BUILD_GRAPH`
 - `FLOW`
 - `SCOPE`
 - `POLICY`
@@ -87,6 +95,7 @@ Current families:
 - `INSTALL`
 - `CPACK`
 - `PACKAGE`
+- `EXPORT`
 
 Base-contract freeze rules:
 - canonical `Event_Family` and `Event_Kind` values are append-only
@@ -119,6 +128,13 @@ Important target/build-semantic kinds remain typed:
 - `EVENT_TARGET_INCLUDE_DIRECTORIES`
 - `EVENT_TARGET_COMPILE_DEFINITIONS`
 - `EVENT_TARGET_COMPILE_OPTIONS`
+
+Important closure-program rule:
+- some `FS`, `PROC`, `TEST`, `PACKAGE`, and related effect-bearing kinds may
+  eventually become downstream-consumable when the product chooses backend
+  support
+- that transition is expressed by role metadata and downstream contracts, not
+  by bypassing the build model
 
 ## 4. Event Header
 
@@ -251,3 +267,12 @@ Consumers should:
 Future builder guidance:
 - consume only `EVENT_ROLE_BUILD_SEMANTIC`
 - ignore trace/diagnostic events unless explicitly needed for tooling
+
+Closure-program note:
+- an event that remains purely evaluator-local may keep only its runtime-effect
+  role
+- an event that feeds downstream replay must also carry
+  `EVENT_ROLE_BUILD_SEMANTIC`
+- codegen still reads the frozen/query-facing build model only; it never reads
+  the Event Stream directly just because a runtime-effect event also carries a
+  build-semantic role

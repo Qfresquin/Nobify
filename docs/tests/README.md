@@ -139,12 +139,52 @@ The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`
   inside the isolated `Temp_tests` workspace during execution, so third-party
   source trees do not stay exploded in the main repo layout
 
+## Evaluator To Codegen Diff Harness
+
+The explicit evaluator-corpus-backed diff harness lives under
+`test_v2/evaluator_codegen_diff/`.
+
+- ownership:
+  runner-owned module registration in `src_v2/build/nob_test.c`
+  suite-owned inventory, classification, and replay policy in
+  `test_v2/evaluator_codegen_diff/`
+  shared structural diff capture in `test_v2/test_manifest_support.*`
+- purpose:
+  act as the operational closure harness for the remaining
+  `evaluator -> Event IR -> build_model -> codegen` gap
+  classify every implemented evaluator command/subcommand into explicit
+  downstream/backend states and use that classification as the visible
+  closure-program metric
+- canonical inputs:
+  `test_v2/evaluator/golden/evaluator_default.cmake`
+  `test_v2/evaluator/golden/evaluator_all.cmake`
+  `test_v2/evaluator/golden/evaluator_integration.cmake`
+  `test_v2/evaluator_diff/cases/*.cmake`
+  plus focused local seeds under `test_v2/evaluator_codegen_diff/cases/`
+  when a backend-owned surface has no suitable existing case-pack
+- required inventory checks:
+  every `FULL` command in `docs/evaluator/evaluator_coverage_matrix.md`
+  must have at least one classified entry
+  curated implemented subcommands in `file`, `string`, `list`, `math`,
+  `cmake_language`, `cmake_path`, and `ctest_*` must not have inventory gaps
+- execution policy:
+  explicit-only via `./build/nob_test test-evaluator-codegen-diff`
+  not part of the default `./build/nob_test test-v2` aggregate
+  host-tool skips remain explicit as `skip-by-tool`, while backend-owned
+  unsupported surfaces must fail as stable `backend-reject` cases unless an
+  explicit variant-level `explicit-non-goal` classification is documented
+
 ## Canonical Documents
 
 - [Tests architecture](./tests_architecture.md)
+- [Evaluator to codegen diff](./evaluator_codegen_diff.md)
 - [Tests structural refactor plan](./tests_structural_refactor_plan.md)
 
 - `tests_architecture.md` is the canonical baseline for ownership boundaries,
   suite taxonomy, aggregate/CI policy, and preserved runner behavior.
+- `evaluator_codegen_diff.md` is the canonical contract for the explicit
+  evaluator-corpus-backed closure harness that classifies implemented evaluator
+  surfaces into explicit downstream/backend states and ties status changes to
+  multi-wave closure proof.
 - `tests_structural_refactor_plan.md` is the active roadmap for changing that
   architecture in waves without reopening product-level semantic contracts.

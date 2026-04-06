@@ -180,11 +180,40 @@ down to `value` only.
 
 Release-1 must also include query helpers for:
 - directory metadata and parent traversal
+- replay actions
 - raw promoted directory/global property access
 - tests
 - install rules
 - packages
 - CPack install types, groups, and components
+
+### Replay Domain
+
+The canonical replay query surface is:
+
+```c
+size_t bm_query_replay_action_count(const Build_Model *model);
+BM_Replay_Action_Kind bm_query_replay_action_kind(const Build_Model *model,
+                                                  BM_Replay_Action_Id id);
+BM_Replay_Phase bm_query_replay_action_phase(const Build_Model *model,
+                                             BM_Replay_Action_Id id);
+BM_Directory_Id bm_query_replay_action_owner_directory(const Build_Model *model,
+                                                       BM_Replay_Action_Id id);
+String_View bm_query_replay_action_working_directory(const Build_Model *model,
+                                                     BM_Replay_Action_Id id);
+BM_String_Span bm_query_replay_action_inputs(const Build_Model *model,
+                                             BM_Replay_Action_Id id);
+BM_String_Span bm_query_replay_action_outputs(const Build_Model *model,
+                                              BM_Replay_Action_Id id);
+BM_String_Span bm_query_replay_action_argv(const Build_Model *model,
+                                           BM_Replay_Action_Id id);
+BM_String_Span bm_query_replay_action_environment(const Build_Model *model,
+                                                  BM_Replay_Action_Id id);
+```
+
+This is the minimum stable replay-domain surface. Future query helpers may add
+kind-specific payload accessors, but codegen must be implementable through the
+generic surface above plus existing domain queries.
 
 ## 4. Raw vs Effective Query Rules
 

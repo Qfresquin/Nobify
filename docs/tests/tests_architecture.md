@@ -5,13 +5,15 @@
 This document defines the current baseline architecture and suite taxonomy for
 the v2 test stack.
 
-As of April 5, 2026:
+As of April 6, 2026:
 - the official test entrypoint is `./build/nob_test`
 - the runner owns module selection, build profiles, incremental compilation,
   workspace roots, captured logs, and aggregate execution
 - the generic framework under `test_v2/` owns per-suite and per-case lifecycle
 - generic snapshot/case-pack and semantic pipeline support are now centralized
   under shared helpers in `test_v2/`
+- generic structural manifest capture/diff support is now centralized under
+  shared helpers in `test_v2/`
 - generic host-fixture support for env/symlink/git/tar helpers is now
   centralized under shared helpers in `test_v2/`
 - `build-model` is now a first-class runner module and aggregate participant
@@ -33,6 +35,9 @@ As of April 5, 2026:
 - package parity proof is now split between aggregate-safe `evaluator`,
   `build-model`, `pipeline`, and `codegen` coverage, while `artifact-parity`
   remains explicit-only for real-CMake archive-package parity
+- an explicit-only `evaluator-codegen-diff` module now uses the evaluator
+  corpus and the coverage matrix as the canonical closure harness for
+  `evaluator -> Event IR -> build_model -> codegen` status classification
 
 This file is the canonical baseline for test architecture, ownership, and suite
 taxonomy. The multi-wave change roadmap lives in
@@ -174,6 +179,21 @@ code.
   stay out of scope in this wave.
   Current aggregate status: excluded from the default aggregate path.
 
+- `evaluator-codegen-diff`
+  Focus: evaluator-corpus-backed classification of implemented command and
+  subcommand surfaces into explicit closure-program states, with phase-aware
+  proof for backend-owned replay surfaces and explicit visibility for
+  evaluator-only or non-goal variants. The suite uses
+  `docs/evaluator/evaluator_coverage_matrix.md`, the evaluator command
+  registry, the canonical evaluator case-packs, and focused local seed cases
+  to ensure that every `FULL` evaluator command is inventoried and that
+  curated subcommand families such as `file()`, `string()`, `list()`,
+  `math()`, `cmake_language()`, `cmake_path()`, and `ctest_*` do not silently
+  drift out of downstream/backend ownership. This suite is explicit-only on
+  purpose: it is a heavier host-sensitive closure harness, not a default smoke
+  signal.
+  Current aggregate status: excluded from the default aggregate path.
+
 - `evaluator-integration`
   Focus: heavier evaluator scenarios that depend on host process, environment,
   filesystem, or tool interactions.
@@ -224,6 +244,7 @@ Non-responsibilities:
 Current owners:
 - `test_v2/test_case_pack.h`
 - `test_v2/test_fs.h`
+- `test_v2/test_manifest_support.*`
 - `test_v2/test_snapshot_support.*`
 - `test_v2/test_semantic_pipeline.*`
 - `test_v2/test_host_fixture_support.*`
@@ -257,6 +278,7 @@ Owners:
 - `test_v2/pipeline/`
 - `test_v2/codegen/`
 - `test_v2/artifact_parity/`
+- `test_v2/evaluator_codegen_diff/`
 
 Responsibilities:
 - semantic assertions
@@ -280,6 +302,7 @@ The target first-class test module set is:
 - `pipeline`
 - `codegen`
 - `artifact-parity`
+- `evaluator-codegen-diff`
 
 Current gap:
 - none in the planned first-class module set
@@ -333,6 +356,12 @@ Current default aggregate membership and intent:
   and is intentionally kept as an explicit proof harness outside the default
   smoke tier while P0 parity coverage is still narrow.
 
+- `evaluator-codegen-diff`
+  Excluded from `test-v2` because it is a heavier explicit-only inventory and
+  replay harness that depends on host tools for `parity-pass` cases and is
+  intended to act as the operational closure harness for the remaining
+  evaluator-to-codegen gap, not to act as the default smoke tier.
+
 - `evaluator-integration`
   Excluded from `test-v2` because it is heavier and more host-sensitive than the
   default smoke tier. It remains a first-class module with explicit commands,
@@ -362,6 +391,7 @@ The intended execution tiers are:
 
 - explicit heavier module path:
   `./build/nob_test test-evaluator-integration`
+  `./build/nob_test test-evaluator-codegen-diff`
   plus the same profile suffix variants when a targeted host-sensitive run is
   needed
 

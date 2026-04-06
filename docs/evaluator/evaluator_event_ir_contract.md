@@ -67,6 +67,17 @@ The evaluator may project several categories of events, including:
 The build model consumes only the relevant semantic subset. The evaluator still
 owns the full projection rules for the stream it emits.
 
+Closure-program rule:
+- some effects that historically existed only as evaluator-local runtime
+  behavior may become downstream-consumable
+- when that happens, the evaluator still projects them from committed state or
+  committed effect records
+- the transition is expressed by the Event IR contract and downstream
+  build-model ingestion rules, not by exposing evaluator-private state to
+  codegen
+- downstream replayability does not change the command-trace contract or the
+  requirement that failed commands not leave success-shaped semantic events
+
 ## 6. Ownership
 
 The caller owns `Event_Stream`.
@@ -111,3 +122,9 @@ They must not depend on:
 - `Evaluator_Init`,
 - hidden evaluator variable state,
 - legacy create/run API details.
+
+For the closure program this also means:
+- configure-time and host-effect families may become backend-owned through
+  canonical Event IR plus build-model contracts
+- no downstream consumer may read raw evaluator service state or hidden command
+  transactions to recover that behavior

@@ -74,6 +74,10 @@ The roadmap starts from the current repository reality:
   `test_v2/artifact_parity/`; it is currently Linux/POSIX-only for execution
   parity, and the fixture corpus is still intentionally narrow and does not
   yet prove later-wave export or packaging parity
+- the repo now also has an explicit-only `evaluator-codegen-diff` harness
+  under `test_v2/evaluator_codegen_diff/` that uses the evaluator corpus plus
+  the coverage matrix as a canonical inventory for `parity-pass`,
+  `backend-reject`, and `evaluator-only` backend status
 
 ## 5. Frozen Definition Of Artifact Equivalence
 
@@ -677,7 +681,32 @@ Exit criteria:
 - release gating is informed by corpus evidence, not only by synthetic success
 - remaining unsupported cases are explicit roadmap items, not hidden drift
 
-## 9. Public Contract Impact
+## 9. Handoff To The Closure Program
+
+This roadmap remains the historical and delivered `P0` through `P8` path to the
+current parity baseline.
+
+It is no longer the canonical home for detailed planning of:
+
+- generated-backend `configure` execution
+- `execute_process`
+- `try_compile`
+- `try_run`
+- `FetchContent_*`
+- `ctest_*`
+- the broader closure of evaluator-implemented surfaces into explicit
+  downstream/backend status
+
+That future work is now coordinated by:
+
+- [`evaluator_codegen_closure_roadmap.md`](./evaluator_codegen_closure_roadmap.md)
+
+The project goal does not change. Future work remains subordinate to the same
+CMake 3.28 artifact-parity objective. What changes is ownership: closure of the
+remaining evaluator-to-codegen gap is now treated as its own multi-wave program
+instead of being folded into the already-delivered artifact-parity wave list.
+
+## 10. Public Contract Impact
 
 This roadmap is expected to change public or documented contracts in these
 areas:
@@ -693,12 +722,14 @@ areas:
   artifact-diff harness and the policy for when parity suites become part of
   default smoke coverage
 
-## 10. Evidence Expectations
+## 11. Evidence Expectations
 
 The minimum evidence vocabulary for this roadmap is:
 
 - subsystem tests for new evaluator/Event IR/build-model/query behavior
 - `test-v2` smoke coverage for the supported path
+- explicit evaluator-corpus-backed inventory coverage that keeps backend-owned
+  unsupported surfaces classified instead of implicit
 - artifact manifest diffs between CMake and generated Nob builds
 - install tree diffs
 - export file/content diffs
@@ -707,7 +738,7 @@ The minimum evidence vocabulary for this roadmap is:
 
 No wave is complete with "it seems to work" evidence alone.
 
-## 11. Relationship To Other Docs
+## 12. Relationship To Other Docs
 
 - [`project_priorities.md`](./project_priorities.md)
   Canonical priority order: CMake 3.28 parity first, backend optimization
@@ -724,6 +755,14 @@ No wave is complete with "it seems to work" evidence alone.
 
 - [`tests/tests_architecture.md`](./tests/tests_architecture.md)
   Current test-stack baseline and aggregate ownership rules.
+
+- [`tests/evaluator_codegen_diff.md`](./tests/evaluator_codegen_diff.md)
+  Canonical contract for the explicit closure harness that classifies
+  implemented evaluator surfaces into explicit downstream/backend states.
+
+- [`evaluator_codegen_closure_roadmap.md`](./evaluator_codegen_closure_roadmap.md)
+  Canonical post-`P8` multi-wave closure program for the remaining
+  evaluator-to-codegen gap.
 
 - [`tests/tests_structural_refactor_plan.md`](./tests/tests_structural_refactor_plan.md)
   Active test-architecture roadmap that should absorb parity harness ownership
