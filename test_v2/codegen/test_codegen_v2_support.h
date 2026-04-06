@@ -21,6 +21,7 @@ typedef struct {
     const char *output_path;
     const char *source_dir;
     const char *binary_dir;
+    bool disable_export_host_effects;
     Nob_Codegen_Platform platform;
     Nob_Codegen_Backend backend;
 } Codegen_Test_Config;
@@ -41,6 +42,8 @@ bool codegen_write_script_with_config(const char *script,
 bool codegen_load_text_file_to_arena(Arena *arena, const char *path, String_View *out);
 bool codegen_sv_contains(String_View sv, const char *needle);
 bool codegen_host_cmake_available(void);
+bool codegen_resolve_host_cmake_bin(char out_path[_TINYDIR_PATH_MAX]);
+bool codegen_resolve_host_cpack_bin(char out_path[_TINYDIR_PATH_MAX]);
 bool codegen_compile_generated_nob(const char *generated_path, const char *output_path);
 bool codegen_compile_generated_nob_strict(const char *generated_path, const char *output_path);
 bool codegen_write_text_file(const char *path, const char *text);

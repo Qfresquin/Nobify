@@ -12,6 +12,17 @@
 
 static bool codegen_mkdirs(const char *path);
 
+typedef enum {
+    CODEGEN_TREE_ENTRY_DIR = 0,
+    CODEGEN_TREE_ENTRY_FILE,
+    CODEGEN_TREE_ENTRY_LINK,
+} Codegen_Tree_Entry_Kind;
+
+typedef struct {
+    Codegen_Tree_Entry_Kind kind;
+    String_View relpath;
+} Codegen_Tree_Entry;
+
 static size_t codegen_count_substr(String_View sv, const char *needle) {
     size_t needle_len = needle ? strlen(needle) : 0;
     size_t count = 0;
@@ -39,6 +50,160 @@ static bool codegen_mkdirs(const char *path) {
     }
 
     return nob_mkdir_if_not_exists(buf);
+}
+
+static const char *codegen_tree_entry_kind_name(Codegen_Tree_Entry_Kind kind) {
+    switch (kind) {
+        case CODEGEN_TREE_ENTRY_DIR: return "DIR";
+        case CODEGEN_TREE_ENTRY_FILE: return "FILE";
+        case CODEGEN_TREE_ENTRY_LINK: return "LINK";
+    }
+    return "UNKNOWN";
+}
+
+static int codegen_tree_entry_compare(const void *lhs, const void *rhs) {
+    const Codegen_Tree_Entry *a = (const Codegen_Tree_Entry*)lhs;
+    const Codegen_Tree_Entry *b = (const Codegen_Tree_Entry*)rhs;
+    size_t min_len = 0;
+    int cmp = 0;
+    if (!a || !b) return 0;
+    min_len = a->relpath.count < b->relpath.count ? a->relpath.count : b->relpath.count;
+    if (min_len > 0) {
+        cmp = memcmp(a->relpath.data, b->relpath.data, min_len);
+        if (cmp != 0) return cmp;
+    }
+    if (a->relpath.count < b->relpath.count) return -1;
+    if (a->relpath.count > b->relpath.count) return 1;
+    if (a->kind < b->kind) return -1;
+    if (a->kind > b->kind) return 1;
+    return 0;
+}
+
+static bool codegen_collect_tree_entries(Arena *arena,
+                                         const char *abs_path,
+                                         const char *relpath,
+                                         Codegen_Tree_Entry **out_entries) {
+    Test_Fs_Path_Info info = {0};
+    if (!arena || !abs_path || !out_entries) return false;
+    if (!test_fs_get_path_info(abs_path, &info) || !info.exists) return false;
+
+    if (relpath && relpath[0] != '\0') {
+        char *copy = arena_strndup(arena, relpath, strlen(relpath));
+        Codegen_Tree_Entry entry = {0};
+        if (!copy) return false;
+        entry.kind = info.is_link_like
+            ? CODEGEN_TREE_ENTRY_LINK
+            : (info.is_dir ? CODEGEN_TREE_ENTRY_DIR : CODEGEN_TREE_ENTRY_FILE);
+        entry.relpath = nob_sv_from_cstr(copy);
+        if (!arena_arr_push(arena, *out_entries, entry)) return false;
+    }
+
+    if (!info.is_dir || info.is_link_like) return true;
+
+    {
+        Nob_Dir_Entry dir = {0};
+        bool ok = true;
+        if (!nob_dir_entry_open(abs_path, &dir)) return false;
+
+        while (nob_dir_entry_next(&dir)) {
+            char child_abs[_TINYDIR_PATH_MAX] = {0};
+            char child_rel[_TINYDIR_PATH_MAX] = {0};
+            if (test_fs_is_dot_or_dotdot(dir.name)) continue;
+            if (!test_fs_join_path(abs_path, dir.name, child_abs)) {
+                ok = false;
+                break;
+            }
+            if (relpath && relpath[0] != '\0') {
+                if (!test_fs_join_path(relpath, dir.name, child_rel)) {
+                    ok = false;
+                    break;
+                }
+            } else if (snprintf(child_rel, sizeof(child_rel), "%s", dir.name) >= (int)sizeof(child_rel)) {
+                ok = false;
+                break;
+            }
+            if (!codegen_collect_tree_entries(arena, child_abs, child_rel, out_entries)) {
+                ok = false;
+                break;
+            }
+        }
+
+        if (dir.error) ok = false;
+        nob_dir_entry_close(dir);
+        return ok;
+    }
+}
+
+static bool codegen_capture_tree_manifest(Arena *arena,
+                                          const char *abs_path,
+                                          String_View *out) {
+    Test_Fs_Path_Info info = {0};
+    Nob_String_Builder sb = {0};
+    Codegen_Tree_Entry *entries = NULL;
+    char *copy = NULL;
+    if (!arena || !abs_path || !out) return false;
+    *out = nob_sv_from_cstr("");
+    if (!test_fs_get_path_info(abs_path, &info)) return false;
+
+    if (!info.exists) {
+        copy = arena_strdup(arena, "STATUS MISSING\n");
+        if (!copy) return false;
+        *out = nob_sv_from_cstr(copy);
+        return true;
+    }
+
+    nob_sb_append_cstr(&sb, "STATUS PRESENT root_kind=");
+    nob_sb_append_cstr(&sb, info.is_link_like ? "LINK" : (info.is_dir ? "DIR" : "FILE"));
+    nob_sb_append_cstr(&sb, "\n");
+
+    if (!codegen_collect_tree_entries(arena, abs_path, "", &entries)) {
+        nob_sb_free(sb);
+        return false;
+    }
+    if (arena_arr_len(entries) > 1) {
+        qsort(entries, arena_arr_len(entries), sizeof(entries[0]), codegen_tree_entry_compare);
+    }
+
+    for (size_t i = 0; i < arena_arr_len(entries); ++i) {
+        nob_sb_append_cstr(&sb, codegen_tree_entry_kind_name(entries[i].kind));
+        nob_sb_append_cstr(&sb, " ");
+        nob_sb_append_buf(&sb,
+                          entries[i].relpath.data ? entries[i].relpath.data : "",
+                          entries[i].relpath.count);
+        nob_sb_append_cstr(&sb, "\n");
+    }
+
+    copy = arena_strndup(arena, sb.items ? sb.items : "", sb.count);
+    nob_sb_free(sb);
+    if (!copy) return false;
+    *out = nob_sv_from_cstr(copy);
+    return true;
+}
+
+static bool codegen_assert_equal_tree_manifests(const char *subject,
+                                                String_View expected,
+                                                String_View actual) {
+    if (nob_sv_eq(expected, actual)) return true;
+    nob_log(NOB_ERROR,
+            "codegen diff mismatch for %s\n--- cmake ---\n%.*s\n--- nob ---\n%.*s",
+            subject ? subject : "tree manifest",
+            (int)expected.count,
+            expected.data ? expected.data : "",
+            (int)actual.count,
+            actual.data ? actual.data : "");
+    return false;
+}
+
+static bool codegen_compare_tree_paths(Arena *arena,
+                                       const char *subject,
+                                       const char *expected_path,
+                                       const char *actual_path) {
+    String_View expected = {0};
+    String_View actual = {0};
+    if (!arena || !expected_path || !actual_path) return false;
+    return codegen_capture_tree_manifest(arena, expected_path, &expected) &&
+           codegen_capture_tree_manifest(arena, actual_path, &actual) &&
+           codegen_assert_equal_tree_manifests(subject, expected, actual);
 }
 
 static bool codegen_run_argv_in_dir(const char *dir,
@@ -382,6 +547,259 @@ TEST(codegen_default_out_of_source_top_level_targets_build_in_binary_root) {
     ASSERT(!test_ws_host_path_exists("default_src/libcore.a"));
     ASSERT(!test_ws_host_path_exists("default_src/libshared.so"));
     ASSERT(!test_ws_host_path_exists("default_src/libplugin.so"));
+    TEST_PASS();
+}
+
+TEST(codegen_diff_matches_cmake_build_artifact_tree_for_controlled_output_subtree) {
+    Arena *arena = arena_create(1024 * 1024);
+    String_View cmake_manifest = {0};
+    String_View nob_manifest = {0};
+    char cmake_bin[_TINYDIR_PATH_MAX] = {0};
+    const char *cmake_script =
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(CodegenDiff C)\n"
+        "add_library(core STATIC src/core.c)\n"
+        "set_target_properties(core PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/artifacts/lib)\n"
+        "add_library(shared SHARED src/shared.c)\n"
+        "set_target_properties(shared PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/artifacts/lib)\n"
+        "add_library(plugin MODULE src/plugin.c)\n"
+        "set_target_properties(plugin PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/artifacts/modules)\n"
+        "add_executable(app src/main.c)\n"
+        "target_link_libraries(app PRIVATE core)\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/artifacts/bin)\n";
+    const char *configure_argv[] = {"", "-S", "codegen_diff_src", "-B", "codegen_diff_cmake_build"};
+    const char *build_argv[] = {"", "--build", "codegen_diff_cmake_build"};
+    Codegen_Test_Config config = {
+        .input_path = "codegen_diff_src/CMakeLists.txt",
+        .output_path = "codegen_diff_src/generated/diff_nob.c",
+        .source_dir = "codegen_diff_src",
+        .binary_dir = "codegen_diff_nob_build",
+    };
+
+    ASSERT(arena != NULL);
+    if (!codegen_resolve_host_cmake_bin(cmake_bin)) {
+        arena_destroy(arena);
+        TEST_SKIP("requires local cmake for codegen-vs-cmake artifact diff");
+    }
+
+    configure_argv[0] = cmake_bin;
+    build_argv[0] = cmake_bin;
+
+    ASSERT(codegen_write_text_file("codegen_diff_src/src/core.c", "int core_value(void) { return 11; }\n"));
+    ASSERT(codegen_write_text_file("codegen_diff_src/src/shared.c", "int shared_value(void) { return 13; }\n"));
+    ASSERT(codegen_write_text_file("codegen_diff_src/src/plugin.c", "int plugin_value(void) { return 17; }\n"));
+    ASSERT(codegen_write_text_file(
+        "codegen_diff_src/src/main.c",
+        "int core_value(void);\n"
+        "int main(void) { return core_value() == 11 ? 0 : 1; }\n"));
+    ASSERT(codegen_write_script_with_config(cmake_script, &config));
+
+    ASSERT(codegen_run_argv_in_dir(".", configure_argv, NOB_ARRAY_LEN(configure_argv)));
+    ASSERT(codegen_run_argv_in_dir(".", build_argv, NOB_ARRAY_LEN(build_argv)));
+
+    ASSERT(codegen_compile_generated_nob("codegen_diff_src/generated/diff_nob.c",
+                                         "codegen_diff_src/generated/diff_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir("codegen_diff_src/generated", "./diff_nob_gen", NULL, NULL));
+
+    ASSERT(codegen_capture_tree_manifest(arena, "codegen_diff_cmake_build/artifacts", &cmake_manifest));
+    ASSERT(codegen_capture_tree_manifest(arena, "codegen_diff_nob_build/artifacts", &nob_manifest));
+    ASSERT(codegen_assert_equal_tree_manifests("controlled build artifact subtree", cmake_manifest, nob_manifest));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(codegen_diff_matches_cmake_for_all_supported_generated_nob_commands) {
+    Arena *arena = arena_create(2 * 1024 * 1024);
+    char cmake_bin[_TINYDIR_PATH_MAX] = {0};
+    char cpack_bin[_TINYDIR_PATH_MAX] = {0};
+    char cmake_pkg_archive[_TINYDIR_PATH_MAX] = {0};
+    char nob_pkg_archive[_TINYDIR_PATH_MAX] = {0};
+    const char *script =
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(CodegenCommandDiff C)\n"
+        "add_library(core STATIC src/core.c)\n"
+        "set_target_properties(core PROPERTIES\n"
+        "  ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/artifacts/lib\n"
+        "  PUBLIC_HEADER include/core.h)\n"
+        "add_executable(app src/main.c)\n"
+        "target_link_libraries(app PRIVATE core)\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/artifacts/bin)\n"
+        "install(TARGETS app core EXPORT DemoTargets\n"
+        "  RUNTIME DESTINATION bin\n"
+        "  ARCHIVE DESTINATION lib\n"
+        "  PUBLIC_HEADER DESTINATION include/demo)\n"
+        "install(FILES README.txt DESTINATION share/demo)\n"
+        "install(EXPORT DemoTargets DESTINATION lib/cmake/Demo FILE DemoTargets.cmake NAMESPACE Demo::)\n"
+        "export(TARGETS core FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/CoreTargets.cmake NAMESPACE Demo::)\n"
+        "set(CPACK_GENERATOR \"ZIP\")\n"
+        "set(CPACK_PACKAGE_NAME \"DemoPkg\")\n"
+        "set(CPACK_PACKAGE_VERSION \"1.2.3\")\n"
+        "set(CPACK_PACKAGE_FILE_NAME \"demo-pkg-zip\")\n"
+        "set(CPACK_PACKAGE_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}/packages\")\n"
+        "set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)\n"
+        "include(CPack)\n";
+    const char *cmake_configure_argv[] = {
+        "",
+        "-S", "codegen_cmd_diff_src",
+        "-B", "codegen_cmd_diff_cmake_build",
+    };
+    const char *cmake_build_target_argv[] = {
+        "",
+        "--build", "codegen_cmd_diff_cmake_build",
+        "--target", "app",
+    };
+    const char *cmake_clean_argv[] = {
+        "",
+        "--build", "codegen_cmd_diff_cmake_build",
+        "--target", "clean",
+    };
+    const char *cmake_build_all_argv[] = {
+        "",
+        "--build", "codegen_cmd_diff_cmake_build",
+    };
+    const char *cmake_install_argv[] = {
+        "",
+        "--install", "codegen_cmd_diff_cmake_build",
+        "--prefix", "codegen_cmd_diff_cmake_install",
+    };
+    const char *cmake_package_argv[] = {
+        "",
+        "-G", "ZIP",
+    };
+    const char *nob_build_target_argv[] = {"app"};
+    const char *nob_clean_argv[] = {"clean"};
+    const char *nob_build_all_argv[] = {NULL};
+    const char *nob_install_argv[] = {"install", "--prefix", "codegen_cmd_diff_nob_install"};
+    const char *nob_export_argv[] = {"export"};
+    const char *nob_package_argv[] = {"package", "--generator", "ZIP"};
+    Codegen_Test_Config config = {
+        .input_path = "codegen_cmd_diff_src/CMakeLists.txt",
+        .output_path = "codegen_cmd_diff_src/generated/diff_all_nob.c",
+        .source_dir = "codegen_cmd_diff_src",
+        .binary_dir = "codegen_cmd_diff_nob_build",
+    };
+
+    ASSERT(arena != NULL);
+    if (!codegen_resolve_host_cmake_bin(cmake_bin)) {
+        arena_destroy(arena);
+        TEST_SKIP("requires local cmake for command diff coverage");
+    }
+    if (!codegen_resolve_host_cpack_bin(cpack_bin)) {
+        arena_destroy(arena);
+        TEST_SKIP("requires sibling cpack for package command diff coverage");
+    }
+    if (!codegen_host_program_available("python3") &&
+        !codegen_host_program_available("python")) {
+        arena_destroy(arena);
+        TEST_SKIP("requires python zipfile support for package diff extraction");
+    }
+
+    cmake_configure_argv[0] = cmake_bin;
+    cmake_build_target_argv[0] = cmake_bin;
+    cmake_clean_argv[0] = cmake_bin;
+    cmake_build_all_argv[0] = cmake_bin;
+    cmake_install_argv[0] = cmake_bin;
+    cmake_package_argv[0] = cpack_bin;
+
+    ASSERT(codegen_write_text_file("codegen_cmd_diff_src/src/core.c", "int core_value(void) { return 19; }\n"));
+    ASSERT(codegen_write_text_file(
+        "codegen_cmd_diff_src/src/main.c",
+        "int core_value(void);\n"
+        "int main(void) { return core_value() == 19 ? 0 : 1; }\n"));
+    ASSERT(codegen_write_text_file("codegen_cmd_diff_src/include/core.h", "#define CORE_VALUE 19\n"));
+    ASSERT(codegen_write_text_file("codegen_cmd_diff_src/README.txt", "command diff readme\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+
+    ASSERT(codegen_run_argv_in_dir(".", cmake_configure_argv, NOB_ARRAY_LEN(cmake_configure_argv)));
+    ASSERT(codegen_compile_generated_nob("codegen_cmd_diff_src/generated/diff_all_nob.c",
+                                         "codegen_cmd_diff_src/generated/diff_all_nob_gen"));
+
+    ASSERT(codegen_run_argv_in_dir(".", cmake_build_target_argv, NOB_ARRAY_LEN(cmake_build_target_argv)));
+    ASSERT(codegen_run_binary_in_dir_argv("codegen_cmd_diff_src/generated",
+                                          "./diff_all_nob_gen",
+                                          nob_build_target_argv,
+                                          NOB_ARRAY_LEN(nob_build_target_argv)));
+    ASSERT(codegen_compare_tree_paths(arena,
+                                      "build target command artifacts",
+                                      "codegen_cmd_diff_cmake_build/artifacts",
+                                      "codegen_cmd_diff_nob_build/artifacts"));
+
+    ASSERT(codegen_run_argv_in_dir(".", cmake_clean_argv, NOB_ARRAY_LEN(cmake_clean_argv)));
+    ASSERT(codegen_run_binary_in_dir_argv("codegen_cmd_diff_src/generated",
+                                          "./diff_all_nob_gen",
+                                          nob_clean_argv,
+                                          NOB_ARRAY_LEN(nob_clean_argv)));
+    ASSERT(codegen_compare_tree_paths(arena,
+                                      "clean command artifacts",
+                                      "codegen_cmd_diff_cmake_build/artifacts",
+                                      "codegen_cmd_diff_nob_build/artifacts"));
+
+    ASSERT(codegen_run_argv_in_dir(".", cmake_build_all_argv, NOB_ARRAY_LEN(cmake_build_all_argv)));
+    ASSERT(codegen_run_binary_in_dir_argv("codegen_cmd_diff_src/generated",
+                                          "./diff_all_nob_gen",
+                                          nob_build_all_argv,
+                                          0));
+    ASSERT(codegen_compare_tree_paths(arena,
+                                      "default build command artifacts",
+                                      "codegen_cmd_diff_cmake_build/artifacts",
+                                      "codegen_cmd_diff_nob_build/artifacts"));
+
+    ASSERT(codegen_run_argv_in_dir(".", cmake_install_argv, NOB_ARRAY_LEN(cmake_install_argv)));
+    ASSERT(codegen_run_binary_in_dir_argv("codegen_cmd_diff_src/generated",
+                                          "./diff_all_nob_gen",
+                                          nob_install_argv,
+                                          NOB_ARRAY_LEN(nob_install_argv)));
+    ASSERT(codegen_compare_tree_paths(arena,
+                                      "install command tree",
+                                      "codegen_cmd_diff_cmake_install",
+                                      "codegen_cmd_diff_nob_install"));
+
+    ASSERT(codegen_run_binary_in_dir_argv("codegen_cmd_diff_src/generated",
+                                          "./diff_all_nob_gen",
+                                          nob_export_argv,
+                                          NOB_ARRAY_LEN(nob_export_argv)));
+    ASSERT(codegen_compare_tree_paths(arena,
+                                      "export command files",
+                                      "codegen_cmd_diff_cmake_build/exports",
+                                      "codegen_cmd_diff_nob_build/exports"));
+
+    ASSERT(codegen_run_argv_in_dir("codegen_cmd_diff_cmake_build",
+                                   cmake_package_argv,
+                                   NOB_ARRAY_LEN(cmake_package_argv)));
+    ASSERT(codegen_run_binary_in_dir_argv("codegen_cmd_diff_src/generated",
+                                          "./diff_all_nob_gen",
+                                          nob_package_argv,
+                                          NOB_ARRAY_LEN(nob_package_argv)));
+    ASSERT(codegen_compare_tree_paths(arena,
+                                      "package command output tree",
+                                      "codegen_cmd_diff_cmake_build/packages",
+                                      "codegen_cmd_diff_nob_build/packages"));
+
+    ASSERT(snprintf(cmake_pkg_archive,
+                    sizeof(cmake_pkg_archive),
+                    "%s",
+                    "codegen_cmd_diff_cmake_build/packages/demo-pkg-zip.zip") < (int)sizeof(cmake_pkg_archive));
+    ASSERT(snprintf(nob_pkg_archive,
+                    sizeof(nob_pkg_archive),
+                    "%s",
+                    "codegen_cmd_diff_nob_build/packages/demo-pkg-zip.zip") < (int)sizeof(nob_pkg_archive));
+    ASSERT(test_ws_host_path_exists(cmake_pkg_archive));
+    ASSERT(test_ws_host_path_exists(nob_pkg_archive));
+    if (test_ws_host_path_exists("codegen_cmd_diff_cmake_pkg_extract")) {
+        ASSERT(test_fs_remove_tree("codegen_cmd_diff_cmake_pkg_extract"));
+    }
+    if (test_ws_host_path_exists("codegen_cmd_diff_nob_pkg_extract")) {
+        ASSERT(test_fs_remove_tree("codegen_cmd_diff_nob_pkg_extract"));
+    }
+    ASSERT(codegen_extract_archive_to_dir(cmake_pkg_archive, "ZIP", "codegen_cmd_diff_cmake_pkg_extract"));
+    ASSERT(codegen_extract_archive_to_dir(nob_pkg_archive, "ZIP", "codegen_cmd_diff_nob_pkg_extract"));
+    ASSERT(codegen_compare_tree_paths(arena,
+                                      "package command extracted payload",
+                                      "codegen_cmd_diff_cmake_pkg_extract",
+                                      "codegen_cmd_diff_nob_pkg_extract"));
+
+    arena_destroy(arena);
     TEST_PASS();
 }
 
@@ -1403,6 +1821,8 @@ TEST(codegen_package_include_toplevel_off_places_payload_at_archive_root) {
 void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_write_file_rebases_source_and_binary_roots_for_out_of_source_nob(passed, failed, skipped);
     test_codegen_default_out_of_source_top_level_targets_build_in_binary_root(passed, failed, skipped);
+    test_codegen_diff_matches_cmake_build_artifact_tree_for_controlled_output_subtree(passed, failed, skipped);
+    test_codegen_diff_matches_cmake_for_all_supported_generated_nob_commands(passed, failed, skipped);
     test_codegen_default_out_of_source_subdirectory_uses_owner_binary_dirs(passed, failed, skipped);
     test_codegen_explicit_output_directories_shape_out_of_source_artifacts(passed, failed, skipped);
     test_codegen_cxx_static_dependency_uses_cxx_driver_for_link_out_of_source(passed, failed, skipped);

@@ -15,6 +15,8 @@ typedef struct {
     const char *current_file;
     String_View source_dir;
     String_View binary_dir;
+    bool enable_export_host_effects;
+    bool override_enable_export_host_effects;
     size_t parse_arena_size;
     size_t scratch_arena_size;
     size_t event_arena_size;

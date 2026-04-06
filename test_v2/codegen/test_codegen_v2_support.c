@@ -155,6 +155,36 @@ bool codegen_host_cmake_available(void) {
     return ok;
 }
 
+bool codegen_resolve_host_cmake_bin(char out_path[_TINYDIR_PATH_MAX]) {
+    Arena *arena = arena_create(4096);
+    Nob_Codegen_Options opts = {0};
+    bool ok = false;
+    if (!out_path) return false;
+    out_path[0] = '\0';
+    if (!arena) return false;
+    ok = codegen_fill_host_tool_paths(arena, &opts) &&
+         opts.embedded_cmake_bin.count > 0 &&
+         opts.embedded_cmake_bin.data &&
+         codegen_copy_string(opts.embedded_cmake_bin.data, out_path);
+    arena_destroy(arena);
+    return ok;
+}
+
+bool codegen_resolve_host_cpack_bin(char out_path[_TINYDIR_PATH_MAX]) {
+    Arena *arena = arena_create(4096);
+    Nob_Codegen_Options opts = {0};
+    bool ok = false;
+    if (!out_path) return false;
+    out_path[0] = '\0';
+    if (!arena) return false;
+    ok = codegen_fill_host_tool_paths(arena, &opts) &&
+         opts.embedded_cpack_bin.count > 0 &&
+         opts.embedded_cpack_bin.data &&
+         codegen_copy_string(opts.embedded_cpack_bin.data, out_path);
+    arena_destroy(arena);
+    return ok;
+}
+
 static bool codegen_mkdirs(const char *path) {
     char buf[_TINYDIR_PATH_MAX] = {0};
     size_t len = 0;
@@ -212,6 +242,10 @@ static bool codegen_render_or_write_script(const char *script,
     pipeline_config.current_file = effective_input_path;
     pipeline_config.source_dir = nob_sv_from_cstr(effective_source_dir);
     pipeline_config.binary_dir = nob_sv_from_cstr(effective_binary_dir);
+    if (config && config->disable_export_host_effects) {
+        pipeline_config.override_enable_export_host_effects = true;
+        pipeline_config.enable_export_host_effects = false;
+    }
 
     ok = test_semantic_pipeline_fixture_from_script(&fixture, script, &pipeline_config);
     if (!ok || !fixture.build.freeze_ok || !fixture.build.model || diag_has_errors()) {

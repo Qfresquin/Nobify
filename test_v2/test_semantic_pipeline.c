@@ -30,6 +30,10 @@ static Test_Semantic_Pipeline_Config test_semantic_pipeline_normalize_config(
     if (config->current_file) effective.current_file = config->current_file;
     if (config->source_dir.data || config->source_dir.count > 0) effective.source_dir = config->source_dir;
     if (config->binary_dir.data || config->binary_dir.count > 0) effective.binary_dir = config->binary_dir;
+    if (config->override_enable_export_host_effects) {
+        effective.enable_export_host_effects = config->enable_export_host_effects;
+        effective.override_enable_export_host_effects = true;
+    }
     if (config->parse_arena_size) effective.parse_arena_size = config->parse_arena_size;
     if (config->scratch_arena_size) effective.scratch_arena_size = config->scratch_arena_size;
     if (config->event_arena_size) effective.event_arena_size = config->event_arena_size;
@@ -45,6 +49,8 @@ void test_semantic_pipeline_config_init(Test_Semantic_Pipeline_Config *config) {
         .current_file = "CMakeLists.txt",
         .source_dir = { .data = ".", .count = 1 },
         .binary_dir = { .data = ".", .count = 1 },
+        .enable_export_host_effects = true,
+        .override_enable_export_host_effects = false,
         .parse_arena_size = 2 * 1024 * 1024,
         .scratch_arena_size = 8 * 1024 * 1024,
         .event_arena_size = 8 * 1024 * 1024,
@@ -159,7 +165,7 @@ bool test_semantic_pipeline_fixture_from_script(Test_Semantic_Pipeline_Fixture *
     eval_cfg.persistent_arena = out->event_arena;
     eval_cfg.source_root = out->source_dir;
     eval_cfg.binary_root = out->binary_dir;
-    eval_cfg.enable_export_host_effects = true;
+    eval_cfg.enable_export_host_effects = effective.enable_export_host_effects;
 
     eval_request.scratch_arena = out->scratch_arena;
     eval_request.source_dir = out->source_dir;

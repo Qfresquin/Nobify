@@ -1,6 +1,7 @@
 #include "test_artifact_parity_v2_support.h"
 
 #include "test_fs.h"
+#include "test_manifest_support.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -1100,22 +1101,10 @@ bool artifact_parity_assert_equal_manifests(Arena *arena,
                                             const char *subject,
                                             String_View expected,
                                             String_View actual) {
-    String_View expected_norm = {0};
-    String_View actual_norm = {0};
-    if (!arena || !subject) return false;
-
-    expected_norm = test_snapshot_normalize_newlines_to_arena(arena, expected);
-    actual_norm = test_snapshot_normalize_newlines_to_arena(arena, actual);
-    if (nob_sv_eq(expected_norm, actual_norm)) return true;
-
-    nob_log(NOB_ERROR, "artifact parity mismatch for %s", subject);
-    nob_log(NOB_ERROR,
-            "--- cmake manifest ---\n%.*s",
-            (int)expected_norm.count,
-            expected_norm.data ? expected_norm.data : "");
-    nob_log(NOB_ERROR,
-            "--- nob manifest ---\n%.*s",
-            (int)actual_norm.count,
-            actual_norm.data ? actual_norm.data : "");
-    return false;
+    return test_manifest_assert_equal(arena,
+                                      subject,
+                                      "cmake manifest",
+                                      "nob manifest",
+                                      expected,
+                                      actual);
 }
