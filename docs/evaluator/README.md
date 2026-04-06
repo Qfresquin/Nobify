@@ -2,34 +2,26 @@
 
 ## Status
 
-This directory contains the canonical target documentation for the evaluator
-refactor.
+This directory is the canonical evaluator documentation map.
 
-As of March 19, 2026:
-- `evaluator_v2_spec.md` is the top-level evaluator contract
-- `evaluator_architecture_target.md` is the canonical architecture companion
-- the public evaluator boundary is the session/request model documented in the
-  v2 specs
-- `Evaluator_Context` is no longer part of the public API surface
-- `EvalNativeCommandDef` is the only public native-command definition type
-- `eval_session_run(...)` now executes each run inside a fresh
-  `EvalExecContext` linked back to a persistent `EvalSession`
-- `EvalSession` owns canonical persistent session state directly; session
-  creation no longer bootstraps that state through a temporary execution stream
-- downstream contracts may depend on `Event_Stream`, but any evaluator API
-  references must use the target `EvalSession` / `EvalExec_Request` /
-  `EvalRunResult` boundary
-
-The canonical evaluator boundary is:
+Evaluator boundary:
 
 `Ast_Root + EvalSession + EvalExec_Request -> eval_session_run(...) -> EvalRunResult + optional Event_Stream`
 
-## Canonical Target Docs
+The evaluator owns semantic execution and Event IR projection. It does not own
+build-model reconstruction or generated runtime execution.
 
-- [Top-level spec](./evaluator_v2_spec.md)
-- [Architecture target](./evaluator_architecture_target.md)
-- [Runtime model](./evaluator_runtime_model.md)
-- [Execution model](./evaluator_execution_model.md)
+## Overview
+
+Read in this order when onboarding:
+
+1. [Top-level spec](./evaluator_v2_spec.md)
+2. [Architecture target](./evaluator_architecture_target.md)
+3. [Runtime model](./evaluator_runtime_model.md)
+4. [Execution model](./evaluator_execution_model.md)
+
+## Normative Contracts
+
 - [Dispatch](./evaluator_dispatch.md)
 - [Variables and scope](./evaluator_variables_and_scope.md)
 - [Compatibility model](./evaluator_compatibility_model.md)
@@ -37,26 +29,23 @@ The canonical evaluator boundary is:
 - [Diagnostics](./evaluator_diagnostics.md)
 - [Command capabilities](./evaluator_command_capabilities.md)
 
-These documents define the active evaluator contract for new work. Remaining
-implementation gaps are semantic-coverage gaps, not public-boundary drift back
-toward the legacy create/run API.
+Normative documents define target behavior and public boundary expectations.
 
-## Implementation Audits
+## Audits
 
-- [Structural refactor plan](./Refator%C3%A7%C3%A3o%20Estrutural.md)
-- [Audit notes](./evaluator_audit_notes.md)
 - [Coverage matrix](./evaluator_coverage_matrix.md)
+- [Audit notes](./evaluator_audit_notes.md)
 - [Expressions audit](./evaluator_expressions.md)
 - [src_v2 code standardization](./evaluator_src_v2_code_standardization.md)
 
-These documents may describe the current `src_v2/evaluator` implementation, but
-they do not redefine the target public API or runtime ownership model.
+Audit documents describe implementation state and follow-up risks. They do not
+override the normative contracts.
 
-## Downstream Contracts
+## History
 
-- [Event IR spec](../transpiler/event_ir_v2_spec.md)
+- [Structural refactor closure record](../archive/evaluator/evaluator_structural_refactor_closure.md)
+
+## Downstream Dependencies
+
+- [Event IR docs](../transpiler/README.md)
 - [Build model docs](../build_model/README.md)
-
-Those downstream documents should treat `Event_Stream` as the stable
-evaluator-output contract and should depend only on the session/request/runtime
-surface, not evaluator internals.

@@ -32,6 +32,13 @@ The preserved boundary is:
 
 `AST -> evaluator -> Event IR -> build_model -> codegen -> generated Nob runtime`
 
+## 2.1 Data Flow
+
+`build_model query -> helper and phase emission -> generated nob.c execution`
+
+The generated runtime executes model-owned phase behavior; it does not
+reconstruct evaluator semantics from raw execution traces.
+
 ## 3. CLI Surface
 
 The canonical generated CLI is:
@@ -175,3 +182,26 @@ Codegen does not consume:
 
 This keeps the frozen build model as the sole semantic representation read by
 the generated backend.
+
+## 11. Public Contract
+
+The stable public contract of this document is:
+
+- generated CLI command surface
+- phase semantics and auto-configure rule
+- helper vocabulary and tool-resolution precedence
+- explicit rejection requirements and legibility expectations
+
+## 12. Non-goals
+
+- turning generated `nob.c` into a general evaluator replay engine
+- consuming evaluator-private state or raw Event IR in codegen/runtime
+- hiding unsupported behavior through silent runtime skips
+
+## 13. Evidence
+
+Expected evidence includes:
+
+- codegen suite coverage for generated runtime command behavior
+- closure-harness classification updates when support status changes
+- explicit parity evidence for supported artifact-producing flows

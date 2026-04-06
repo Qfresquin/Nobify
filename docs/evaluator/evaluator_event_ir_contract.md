@@ -32,6 +32,15 @@ Target API consequence:
 
 The evaluator does not require `stream != NULL` in order to execute.
 
+## 2.1 Data Flow
+
+Canonical projection flow:
+
+`Ast_Root -> execution transaction -> committed semantic state -> Event IR projection`
+
+This flow is commit-driven. Event IR is derived from committed mutations and
+committed effect records.
+
 ## 3. Projection Timing
 
 Event IR is projected from committed semantic mutations.
@@ -128,3 +137,27 @@ For the closure program this also means:
   canonical Event IR plus build-model contracts
 - no downstream consumer may read raw evaluator service state or hidden command
   transactions to recover that behavior
+
+## 9. Public Contract
+
+The stable public contract of this document is:
+
+- when Event IR projection is enabled (`EvalExec_Request.stream`)
+- how ordering and commit timing behave
+- how downstream consumers must interpret projected events without evaluator
+  internals
+
+## 10. Non-goals
+
+- defining the full Event IR schema (owned by
+  `../transpiler/event_ir_v2_spec.md`)
+- defining build-model ingest behavior (owned by `../build_model/*`)
+- replacing evaluator runtime-model ownership rules
+
+## 11. Evidence
+
+Contract evidence is expected from:
+
+- evaluator tests covering projection timing and command trace boundaries
+- pipeline/build-model tests that consume projected build-semantic events
+- closure-harness classification when runtime effects become downstream-owned

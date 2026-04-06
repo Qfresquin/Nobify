@@ -14,7 +14,7 @@ This project is, at its core, a **Recreational Programming** endeavor.
 
 I started Nobify with a simple frustration: to compile a medium-to-large C/C++ project today, you practically have to learn two programming languages—C++ and CMake. CMake is powerful and standardized, but it is also bloated. It introduces a massive structural dependency (the CMake runtime, version policies, generators) just to invoke a compiler.
 
-I am building this to prove a point to myself: **We can do better.**
+I am building this to prove a point to myself: **I can do better.**
 
 The scope of replicating CMake is immense for a single person. I know that. But I am having fun.
 
@@ -23,7 +23,7 @@ The scope of replicating CMake is immense for a single person. I know that. But 
 ### Version 1 (Legacy)
 The initial version of Nobify works. It has successfully compiled complex projects like **libcurl** and handles small header-only libraries well. The Lexer and Parser are solid.
 
-However, the Transpiler and Build Model in v1 were built with a lot of "AI assistance" and trial-and-error. While it works, the code behaves like magic—I don't fully understand or own the logic behind it. It is a complex workaround rather than a system.
+However, the Transpiler and Build Model in v1 were built with a lot of "IA slop" and trial-and-error. While it works, the code behaves like magic—I don't fully understand or own the logic behind it. It is a complex workaround rather than a system.
 
 ### Version 2 (In Progress)
 I am currently rewriting the core **Transpiler** and **Build Model** from scratch (v2).
@@ -71,18 +71,18 @@ Nobify treats CMake as an input DSL and Nob (C) as the execution backend.
 The implementation-level contracts for v2 live in focused docs under `docs/`.
 
 - `docs/project_priorities.md`: canonical project direction and priority order.
-- `docs/cmake_artifact_parity_roadmap.md`: root roadmap for reaching CMake
-  3.28 artifact parity across build, install, export, and packaging flows.
+- `docs/cmake_artifact_parity_roadmap.md`: historical parity summary plus
+  handoff to the active closure program.
 - `docs/evaluator_codegen_closure_roadmap.md`: canonical post-`P8` multi-wave
   closure roadmap that coordinates the remaining
   `evaluator -> Event IR -> build_model -> codegen` gap.
 - `docs/evaluator/`: active evaluator documentation rewrite.
-- `docs/Evaluator/`: archived evaluator documentation baseline kept during the rewrite.
-- `docs/build_model/`: canonical build-model rewrite docs plus historical v2
-  notes kept during migration, now including the replay-domain contract used by
-  codegen.
+- `docs/build_model/`: canonical build-model docs, including the replay-domain
+  contract used by codegen.
 - `docs/codegen/`: canonical generated-backend runtime contract and CLI
   documentation.
+- `docs/transpiler/`: Event IR boundary documentation between evaluator and
+  build model.
 - `docs/diagnostics/`: shared diagnostic logging, counters, and telemetry contract.
 - `docs/lexer/`: lexer tokenization and source-position contract.
 - `docs/parser/`: parser AST, grammar, and recovery contract.
@@ -92,6 +92,7 @@ The implementation-level contracts for v2 live in focused docs under `docs/`.
   contract under `docs/tests/evaluator_codegen_diff.md`, while the build-model
   and codegen directories own the normative downstream and runtime contracts
   that the harness proves.
+- `docs/archive/`: historical migration records and delivered detailed wave logs.
 
 ---
 

@@ -2,69 +2,22 @@
 
 ## Status
 
-This directory contains the canonical documentation for the next build-model
-implementation.
+This directory is the canonical build-model documentation map.
 
-As of March 14, 2026:
-- the canonical upstream contract is `src_v2/transpiler/event_ir.h`
-- the evaluator producer contract behind that stream is the target
-  `EvalSession` / `EvalExec_Request` / `EvalRunResult` architecture documented
-  in [`../evaluator/evaluator_v2_spec.md`](../evaluator/evaluator_v2_spec.md)
-  and
-  [`../evaluator/evaluator_architecture_target.md`](../evaluator/evaluator_architecture_target.md)
-- the canonical implementation target is `src_v2/build_model/`
-- the operational build-model pipeline is now wired through `src_v2/build_model/`
-- `src_obsolete/build_model/` remains archival reference only
-- the `*_v2_spec.md` files in this directory are retained only as historical
-  migration context
-
-## Goals
-
-- Preserve the reconstructed semantics needed for **CMake 3.28 parity**.
-- Provide a stable semantic model that downstream Nob optimization can trust.
-- Rebuild the build model from scratch around the canonical `Event_Stream`.
-- Preserve the good boundaries from the legacy implementation:
-  `builder -> validate -> freeze -> query`.
-- Replace monolithic mutable structs with a strict split between
-  `Build_Model_Draft` and frozen `Build_Model`.
-- Make the frozen model the only codegen-facing semantic representation.
-
-## Non-Goals
-
-- Achieving full parity with every legacy field in
-  `src_obsolete/build_model/build_model_types.h`.
-- Recreating evaluator-private compatibility state inside the build model.
-- Inferring target dependency edges from textual `link_libraries(...)` payload.
-- Adding a new "v3" naming layer. This documentation is the canonical baseline.
-
-Project-level priority order is documented in
-[`../project_priorities.md`](../project_priorities.md): CMake 3.28 parity
-first, historical behavior second, Nob optimization third.
-
-## Canonical Pipeline
-
-The build-model pipeline is:
+Pipeline boundary:
 
 `Event_Stream -> Builder -> Validate -> Freeze -> Query`
 
-- `Event_Stream`: emitted by the evaluator and owned by the transpiler layer.
-- the canonical evaluator producer entry is
-  `eval_session_run(EvalSession *, const EvalExec_Request *, Ast_Root)`, with
-  `EvalExec_Request.stream` as the optional event sink.
-- the build model must depend on the stream contract, not on evaluator public
-  API details such as legacy create/run entry points.
-- `Builder`: consumes build-semantic events and writes `Build_Model_Draft`.
-- `Validate`: read-only semantic checks over the draft.
-- `Freeze`: produces an immutable `Build_Model`.
-- `Query`: the only read surface consumed by codegen and tooling.
+Codegen consumes only query-facing `Build_Model` semantics. It does not consume
+raw Event IR directly.
 
-The canonical downstream domain set now also includes a replay domain for
-phase-owned replayable actions that are not fully captured by the existing
-target/build-step/install/export/package records. That domain remains part of
-the same frozen/query-facing build-model contract; it does not authorize direct
-codegen consumption of raw `Event_Stream`.
+## Overview
 
-## Canonical Documents
+The build model is the downstream semantic representation between evaluator
+projection and generated backend execution. It owns reconstruction stability,
+typed IDs, validation, freeze-time integrity, and query APIs.
+
+## Normative Contracts
 
 - [Architecture](./build_model_architecture.md)
 - [Types](./build_model_types.md)
@@ -73,25 +26,24 @@ codegen consumption of raw `Event_Stream`.
 - [Freeze](./build_model_freeze.md)
 - [Query](./build_model_query.md)
 - [Replay domain](./build_model_replay.md)
-- [Migration](./build_model_migration.md)
 
-## Historical Documents
+These contracts define active implementation behavior for `src_v2/build_model`.
 
-These files are no longer the active contract:
+## History
 
-- [Historical architecture notes](./build_model_architecture_v2.md)
-- [Historical builder spec](./build_model_builder_v2_spec.md)
-- [Historical validation spec](./build_model_validate_v2_spec.md)
-- [Historical freeze spec](./build_model_freeze_v2_spec.md)
-- [Historical query spec](./build_model_query_v2_spec.md)
-- [Historical benchmark notes](./build_model_v2_benchmark_notes.md)
+Historical migration and superseded v2 specs are preserved in archive:
 
-## Glossary
+- [Migration record](../archive/build_model/build_model_migration.md)
+- [Historical architecture notes](../archive/build_model/build_model_architecture_v2.md)
+- [Historical builder spec](../archive/build_model/build_model_builder_v2_spec.md)
+- [Historical validation spec](../archive/build_model/build_model_validate_v2_spec.md)
+- [Historical freeze spec](../archive/build_model/build_model_freeze_v2_spec.md)
+- [Historical query spec](../archive/build_model/build_model_query_v2_spec.md)
+- [Historical benchmark notes](../archive/build_model/build_model_v2_benchmark_notes.md)
 
-- `Build_Model_Draft`: mutable builder-owned semantic reconstruction state.
-- `Build_Model`: immutable frozen model consumed by query/codegen.
-- `BM_Builder`: the only writer of `Build_Model_Draft`.
-- `Raw state`: exactly what the builder reconstructed from supported semantic
-  events, plus opaque future-facing property bags where needed.
-- `Effective state`: inherited or transitive views computed by query helpers
-  over the frozen model.
+## Dependencies
+
+- Upstream: [Evaluator docs](../evaluator/README.md),
+  [Event IR spec](../transpiler/event_ir_v2_spec.md)
+- Downstream: [Codegen docs](../codegen/README.md)
+- Shared terms: [Glossary](../glossary.md)

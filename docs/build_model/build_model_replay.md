@@ -13,6 +13,16 @@ Its purpose is to preserve the architecture boundary:
 Codegen must consume replay actions through query helpers over `Build_Model`.
 It must not consume raw `Event_Stream` items directly.
 
+## 1.1 Boundary
+
+Replay actions are downstream build-model entities. They do not authorize
+direct runtime replay from evaluator internals or direct codegen reads of raw
+Event IR.
+
+## 1.2 Data Flow
+
+`downstream-consumable Event IR -> replay ingest -> replay freeze -> replay query -> codegen phase execution`
+
 ## 2. Scope
 
 The replay domain covers actions that are:
@@ -191,3 +201,25 @@ Required consequences:
 
 This keeps the frozen model as the sole semantic representation consumed by the
 generated backend.
+
+## 10. Public Contract
+
+The stable public contract of this document is:
+
+- replay IDs, kinds, and phases
+- ordering/provenance requirements
+- minimum replay query surface consumed by codegen
+
+## 11. Non-goals
+
+- replacing canonical target/build-step/install/export/package records
+- defining evaluator projection rules (owned by evaluator/Event IR contracts)
+- making codegen a direct Event IR consumer
+
+## 12. Evidence
+
+Expected evidence includes:
+
+- build-model tests for replay ingest/freeze/query behavior
+- pipeline tests showing replay-domain propagation from Event IR
+- codegen/closure-harness tests proving phase-aware replay behavior

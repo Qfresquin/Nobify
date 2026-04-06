@@ -2,189 +2,48 @@
 
 ## Status
 
-This directory contains the canonical baseline and active structural roadmap for
-the v2 test stack.
+This directory is the canonical map for test architecture and suite ownership.
 
-The current test architecture boundary is:
+Architecture boundary:
 
 `nob_test runner -> test framework -> shared support -> suites`
 
-This documentation is about **test architecture** only. It does not redefine
-lexer, parser, evaluator, build-model, pipeline, or codegen product semantics.
+## Overview
 
-## Preserved Strengths
+The test stack separates:
 
-The current stack already provides important operational behavior that future
-refactors must preserve:
+- aggregate-safe suites (`test-v2`) used as the default smoke baseline
+- explicit-only host-sensitive suites used for heavy parity/closure proof
 
-- the official `./build/nob_test` runner as the command entrypoint
-- isolated suite and per-case workspaces
-- sanitizer, coverage, and `clang-tidy` profiles owned by the runner
-- incremental test builds and captured stdout/stderr logs
-- preserved failed workspaces for debugging
+This documentation defines test ownership and execution policy. It does not
+redefine evaluator, Event IR, build-model, or codegen product contracts.
 
-## Artifact Parity Harness
-
-The explicit `P0` artifact-parity harness lives under `test_v2/artifact_parity/`.
-
-- ownership:
-  runner-owned tool/env setup in `src_v2/build/nob_test.c`
-  suite-owned parity fixtures and manifest assertions in `test_v2/artifact_parity/`
-- `P1` proof split:
-  `test_v2/codegen/` owns aggregate-safe out-of-source smoke coverage
-  `test_v2/artifact_parity/` stays explicit-only and owns real-CMake
-  end-to-end parity checks
-- `P2` proof split:
-  `test_v2/pipeline/` snapshots build-graph golden coverage
-  `test_v2/build_model/` locks frozen build-step/query semantics
-  `test_v2/codegen/` owns aggregate-safe generated-file and hook scheduling
-  smoke
-  `test_v2/artifact_parity/` stays explicit-only and owns real-CMake
-  parity checks for generated sources, custom-target dependencies, and
-  post-build sidecar outputs
-- `P3` proof split:
-  `test_v2/build_model/` locks context-aware query evaluation, imported-target
-  resolution, and shared compile-feature floors
-  `test_v2/codegen/` owns aggregate-safe smoke for mixed-language usage
-  propagation, imported prebuilt libraries, config-sensitive link selection,
-  and `TARGET_FILE*` build-step argv expansion
-  `test_v2/artifact_parity/` stays explicit-only and owns real-CMake parity
-  checks for imported prebuilt libraries, `--config`-driven link selection,
-  and usage propagation through `BUILD_INTERFACE`, `LINK_ONLY`, and
-  `TARGET_PROPERTY`
-- `P4` proof split:
-  `test_v2/build_model/` locks platform-aware query context behavior,
-  including `$<PLATFORM_ID:...>` and typed `WIN32_EXECUTABLE` /
-  `MACOSX_BUNDLE` accessors
-  `test_v2/codegen/` owns aggregate-safe Linux/POSIX execution plus
-  render-only policy coverage for explicit generation targets
-  `linux + posix`, `darwin + posix`, and `windows + win32-msvc`
-  `test_v2/artifact_parity/` stays explicit-only and remains Linux/POSIX-only
-  for execution parity, now invoking `nobify` explicitly with
-  `--platform linux --backend posix`
-- `P5` proof split:
-  `test_v2/build_model/` locks effective install/export components and typed
-  install metadata for artifact-specific destinations, export association, and
-  default-component fallback
-  `test_v2/codegen/` owns aggregate-safe Linux/POSIX install smoke for custom
-  prefixes, component-selective installs, `PROGRAMS` executability,
-  `DIRECTORY` slash semantics, `PUBLIC_HEADER`, installed export emission, and
-  `clean` preserving custom install prefixes
-  `test_v2/artifact_parity/` stays explicit-only and owns real-CMake install
-  parity with per-case CMake/Nob `--prefix` and `--component` control
-  `test_v2/artifact_parity/real_projects/` stays explicit-only and now runs
-  full-install parity plus consumer-against-installed-prefix checks with
-  explicit generated-Nob install prefixes for the pinned corpus projects
-- `P6` proof split:
-  `test_v2/evaluator/` locks standalone export lowering and the
-  `enable_export_host_effects` gate
-  `test_v2/build_model/` locks generalized export-domain queries for
-  build-tree and package-registry exports
-  `test_v2/pipeline/` snapshots standalone export events and resolved export
-  membership in the evaluator-to-build-model path
-  `test_v2/codegen/` owns aggregate-safe smoke for explicit generated-Nob
-  `export` execution, including build-tree export files, package-registry
-  writes, and rejection of unsupported `APPEND` /
-  `CXX_MODULES_DIRECTORY` forms
-  `test_v2/artifact_parity/` stays explicit-only and owns real-CMake parity
-  plus downstream-consumer proof for `export(TARGETS ...)`,
-  `export(EXPORT ...)`, and `export(PACKAGE ...)`
-- `P7` proof split:
-  `test_v2/evaluator/` locks canonical CPack package-plan lowering, including
-  the rule that `include(CPack)` materializes package records while
-  `include(CPackComponent)` alone does not
-  `test_v2/build_model/` locks typed package-planning queries for generators,
-  effective output directories, file names, include-top-level behavior, and
-  preserved component metadata
-  `test_v2/pipeline/` snapshots package-plan events and frozen package
-  configuration in the evaluator-to-build-model path
-  `test_v2/codegen/` owns aggregate-safe Linux/POSIX smoke for generated-Nob
-  package execution with `TGZ`, `TXZ`, and `ZIP`, custom `--output-dir`,
-  include-top-level on/off behavior, and explicit rejection of unsupported
-  component packaging
-  `test_v2/artifact_parity/` stays explicit-only and owns real-CMake package
-  parity for `TGZ`, `TXZ`, and `ZIP` through structural package metadata plus
-  normalized extracted-tree diffs
-- required external tools:
-  real `cmake 3.28.x`
-  sibling `cpack` only for package-phase cases
-  runner-provided `CMK2NOB_TEST_NOBIFY_BIN` so the suite uses a freshly built
-  `nobify` from the current workspace sources
-  generated Nob runtime tool precedence is
-  `NOB_CMAKE_BIN` / `NOB_CPACK_BIN` -> embedded absolute path from `nobify` ->
-  bare `cmake` / `cpack`
-  generated Nob package compressor precedence is
-  `NOB_GZIP_BIN` / `NOB_XZ_BIN` -> embedded absolute path from `nobify` ->
-  bare `gzip` / `xz`
-  generated Nob install execution is now explicit through
-  `install [--prefix <path>] [--component <name>]`; omitting `--component`
-  means full install
-  generated Nob standalone export execution is now explicit through `export`,
-  which honors the same global `--config <cfg>` selection used by `build`
-  generated Nob package execution is now explicit through
-  `package [--generator <name>] [--output-dir <path>]`; the positive baseline
-  is Linux/POSIX-only and full-package-only for `TGZ`, `TXZ`, and `ZIP`
-  generated Nob config selection is explicit through `--config <cfg>`; the
-  empty config remains the default when the flag is omitted
-  generation-time platform/backend selection is explicit through
-  `nobify --platform ... --backend ...`; support tiers are:
-  `linux + posix` supported
-  `darwin + posix` render-only
-  `windows + win32-msvc` render-only
-- execution policy:
-  explicit-only via `./build/nob_test test-artifact-parity`
-  not part of the default `./build/nob_test test-v2` smoke aggregate
-  the real-project corpus stores pinned upstream inputs as local archives under
-  `test_v2/artifact_parity/real_projects/archives/` and extracts them only
-  inside the isolated `Temp_tests` workspace during execution, so third-party
-  source trees do not stay exploded in the main repo layout
-
-## Evaluator To Codegen Diff Harness
-
-The explicit evaluator-corpus-backed diff harness lives under
-`test_v2/evaluator_codegen_diff/`.
-
-- ownership:
-  runner-owned module registration in `src_v2/build/nob_test.c`
-  suite-owned inventory, classification, and replay policy in
-  `test_v2/evaluator_codegen_diff/`
-  shared structural diff capture in `test_v2/test_manifest_support.*`
-- purpose:
-  act as the operational closure harness for the remaining
-  `evaluator -> Event IR -> build_model -> codegen` gap
-  classify every implemented evaluator command/subcommand into explicit
-  downstream/backend states and use that classification as the visible
-  closure-program metric
-- canonical inputs:
-  `test_v2/evaluator/golden/evaluator_default.cmake`
-  `test_v2/evaluator/golden/evaluator_all.cmake`
-  `test_v2/evaluator/golden/evaluator_integration.cmake`
-  `test_v2/evaluator_diff/cases/*.cmake`
-  plus focused local seeds under `test_v2/evaluator_codegen_diff/cases/`
-  when a backend-owned surface has no suitable existing case-pack
-- required inventory checks:
-  every `FULL` command in `docs/evaluator/evaluator_coverage_matrix.md`
-  must have at least one classified entry
-  curated implemented subcommands in `file`, `string`, `list`, `math`,
-  `cmake_language`, `cmake_path`, and `ctest_*` must not have inventory gaps
-- execution policy:
-  explicit-only via `./build/nob_test test-evaluator-codegen-diff`
-  not part of the default `./build/nob_test test-v2` aggregate
-  host-tool skips remain explicit as `skip-by-tool`, while backend-owned
-  unsupported surfaces must fail as stable `backend-reject` cases unless an
-  explicit variant-level `explicit-non-goal` classification is documented
-
-## Canonical Documents
+## Normative Test Contracts
 
 - [Tests architecture](./tests_architecture.md)
-- [Evaluator to codegen diff](./evaluator_codegen_diff.md)
+- [Evaluator to codegen diff contract](./evaluator_codegen_diff.md)
+
+## Active Test Roadmap
+
 - [Tests structural refactor plan](./tests_structural_refactor_plan.md)
 
-- `tests_architecture.md` is the canonical baseline for ownership boundaries,
-  suite taxonomy, aggregate/CI policy, and preserved runner behavior.
-- `evaluator_codegen_diff.md` is the canonical contract for the explicit
-  evaluator-corpus-backed closure harness that classifies implemented evaluator
-  surfaces into explicit downstream/backend states and ties status changes to
-  multi-wave closure proof.
-- `tests_structural_refactor_plan.md` is the active roadmap for changing that
-  architecture in waves without reopening product-level semantic contracts.
+## Execution Policy Summary
+
+- default smoke aggregate:
+  `./build/nob_test test-v2`
+- explicit artifact parity suite:
+  `./build/nob_test test-artifact-parity`
+- explicit closure harness suite:
+  `./build/nob_test test-evaluator-codegen-diff`
+
+`artifact-parity` and `evaluator-codegen-diff` remain outside default smoke
+while they stay heavier and host-sensitive.
+
+## Relationship To Product Contracts
+
+- Closure roadmap:
+  [`../evaluator_codegen_closure_roadmap.md`](../evaluator_codegen_closure_roadmap.md)
+- Generated runtime contract:
+  [`../codegen/codegen_runtime_contract.md`](../codegen/codegen_runtime_contract.md)
+- Build-model replay contract:
+  [`../build_model/build_model_replay.md`](../build_model/build_model_replay.md)

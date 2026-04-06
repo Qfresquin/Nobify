@@ -2,8 +2,8 @@
 
 Status: Landed. This document now serves as the closure record for the
 repository migration onto the target architecture documented in
-[evaluator_v2_spec.md](./evaluator_v2_spec.md) and
-[evaluator_architecture_target.md](./evaluator_architecture_target.md).
+[evaluator_v2_spec.md](../../evaluator/evaluator_v2_spec.md) and
+[evaluator_architecture_target.md](../../evaluator/evaluator_architecture_target.md).
 
 ## 1. Goal
 
@@ -176,8 +176,8 @@ Textual closure checks for this wave:
 ## 7. Post-Landed CTest Completion Waves
 
 These waves do not reopen the landed architecture documented in
-[evaluator_v2_spec.md](./evaluator_v2_spec.md) and
-[evaluator_architecture_target.md](./evaluator_architecture_target.md).
+[evaluator_v2_spec.md](../../evaluator/evaluator_v2_spec.md) and
+[evaluator_architecture_target.md](../../evaluator/evaluator_architecture_target.md).
 
 Guardrails for all waves below:
 - no public API changes beyond the landed `EvalSession` /

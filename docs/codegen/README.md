@@ -2,30 +2,27 @@
 
 ## Status
 
-This directory contains the canonical generated-backend documentation for
-Nobify.
+This directory is the canonical documentation map for the generated backend.
 
-As of April 6, 2026:
+Codegen boundary:
 
-- `build_model` remains the only downstream semantic representation consumed by
-  codegen
-- generated `nob.c` behavior is no longer treated as an implementation detail
-  once it becomes part of the product closure program
-- the runtime CLI, phase rules, helper vocabulary, and rejection policy need a
-  dedicated canonical home instead of being inferred from tests and roadmap
-  notes
+`Build_Model (query only) -> generated nob.c runtime`
 
-## Canonical Docs
+The code generator does not consume evaluator internals and does not consume
+raw Event IR directly.
+
+## Overview
+
+Codegen owns generated runtime shape, phase command behavior, helper emission,
+tool-resolution policy, and explicit rejection behavior for unsupported
+variants.
+
+## Normative Contract
 
 - [Runtime contract](./codegen_runtime_contract.md)
 
-## Relationship To Other Docs
+## Dependencies
 
-- [`../build_model/README.md`](../build_model/README.md)
-  Canonical build-model query and replay-domain contracts consumed by codegen.
-
-- [`../evaluator_codegen_closure_roadmap.md`](../evaluator_codegen_closure_roadmap.md)
-  Canonical multi-wave closure roadmap for the evaluator-to-codegen gap.
-
-- [`../tests/evaluator_codegen_diff.md`](../tests/evaluator_codegen_diff.md)
-  Canonical closure-harness contract that proves generated-backend status.
+- [Build model contracts](../build_model/README.md)
+- [Closure roadmap](../evaluator_codegen_closure_roadmap.md)
+- [Closure harness contract](../tests/evaluator_codegen_diff.md)

@@ -262,8 +262,8 @@ required.
 - `evaluator_variables_and_scope.md`
   Variable projection and scope overlay rules.
 
-- `Refatorção Estrutural.md`
-  Migration plan from the current implementation to this target architecture.
+- `../archive/evaluator/evaluator_structural_refactor_closure.md`
+  Landed migration closure record for the structural refactor.
 
 - `../transpiler/event_ir_v2_spec.md`
   Normative downstream Event IR contract emitted from this architecture.
