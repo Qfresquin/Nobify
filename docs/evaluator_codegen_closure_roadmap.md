@@ -69,6 +69,9 @@ advance together but do not land at the same rate:
 - backend runtime:
   the generated Nob program needs explicit configure/test/runtime phase
   semantics and additional helpers
+- repeated downstream queries:
+  closure-scale codegen and diff workloads need a canonical memoized query
+  surface so performance and cache ownership do not fragment across consumers
 - proof hardening:
   each new supported family needs evaluator, pipeline, build-model, codegen,
   and explicit closure-harness evidence
@@ -94,6 +97,8 @@ The following decisions are frozen for this roadmap:
   explicit variant and justification
 - the generated `nob.c` must stay legible:
   helpers and phase functions are product surface, not incidental test output
+- effective-query memoization is legal only as a query-time derived cache; it
+  must not persist inferred semantics back into `Build_Model`
 
 ## 5. Closure Definition
 
@@ -135,21 +140,29 @@ The program is split into the following workstreams:
 - freeze phase-aware configure/build/test/install/export/package ownership
 - expose typed query APIs so codegen never consumes raw Event IR directly
 
-### 6.3 Generated Backend Runtime
+### 6.3 Query Memoization And Consumer Convergence
+
+- add a canonical memoized derived-query surface for repeated effective-query
+  and target-resolution access
+- keep memoization query-time only; do not mutate frozen semantic ownership
+- converge duplicated codegen-local caches onto the canonical query layer as
+  memoized coverage lands
+
+### 6.4 Generated Backend Runtime
 
 - add explicit `configure` and `test` commands to the generated `nob.c`
 - define phase semantics, auto-configure rules, runtime helper vocabulary, and
   rejection policy
 - keep generated code understandable and auditable
 
-### 6.4 High-Surface Family Completion
+### 6.5 High-Surface Family Completion
 
 - move deterministic configure-time and host-effect families from implicit
   evaluator execution into downstream replay where appropriate
 - prioritize simple deterministic effects before process/probe/test families
 - keep unsupported variants explicit and measurable
 
-### 6.5 Corpus Hardening
+### 6.6 Corpus Hardening
 
 - use real-project evidence to validate that the closure subset is meaningful
 - turn recurring failures into new proof cases or explicit support boundaries
@@ -220,6 +233,41 @@ Evidence:
 Dependencies:
 - `C0` contracts and inventory model
 
+### C1M Query Memoization And Consumer Convergence
+
+Goal:
+- make repeated effective-query and target-resolution access cheap enough for
+  closure-scale codegen and diff workloads without changing semantic ownership
+  boundaries
+
+Deliverables:
+- canonical `build_model` query-session or equivalent memoized derived-query
+  surface for effective queries
+- memoization keys that cover all required caller context such as target,
+  query family, usage mode, configuration, and compile language
+- migration plan to collapse duplicated codegen-local caches onto the
+  canonical memoized query layer
+- focused workload counters or benchmarks for repeated-query closure runs
+
+Non-goals:
+- no semantic change to raw or effective query meaning
+- no persistence of inferred values back into `Build_Model`
+- no requirement for daemon-grade global incrementality or cross-process cache
+
+Exit criteria:
+- repeated effective queries are served through canonical memoized paths
+- duplicate first-line caches for the same derived families are no longer the
+  default ownership pattern in codegen
+- memoization remains context-correct and invisible to public semantics
+
+Evidence:
+- `test-build-model`
+- `test-codegen`
+- targeted repeated-query workload measurements or closure-harness runs
+
+Dependencies:
+- `C1` replay/query baseline
+
 ### C2 Configure Backend And Deterministic Effects
 
 Goal:
@@ -252,6 +300,7 @@ Evidence:
 
 Dependencies:
 - `C1` replay domain and query surface
+- `C1M` memoized derived-query foundation
 
 ### C3 Process, Probes, Dependency Materialization, And Test Execution
 
@@ -315,6 +364,7 @@ Evidence:
 
 Dependencies:
 - `C0` through `C3`
+- `C1M`
 
 ## 8. Evidence Gates
 
@@ -345,6 +395,10 @@ The suite and the documentation must change with it.
 
 - [`build_model/build_model_replay.md`](./build_model/build_model_replay.md)
   Canonical downstream replay-domain contract.
+
+- [`build_model/build_model_query.md`](./build_model/build_model_query.md)
+  Canonical query surface and query-time derivation rules that memoization must
+  preserve.
 
 - [`codegen/codegen_runtime_contract.md`](./codegen/codegen_runtime_contract.md)
   Canonical generated-backend CLI and runtime contract.

@@ -39,6 +39,9 @@ Product rules:
   justification
 - codegen proof still flows through `build_model`; the suite does not authorize
   direct codegen consumption of raw Event IR
+- query memoization proof is legal only as query-time derived-cache evidence;
+  it does not create a new semantic state and does not authorize persistence of
+  inferred semantics back into `Build_Model`
 
 ## State Model
 
@@ -146,6 +149,8 @@ drive the proof path, including:
 - diff mode per observed output
 - expected result kind
 - downstream domain ownership
+- repeated-query workload tag when the case also participates in memoization
+  proof
 - backlog or explicit non-goal key when applicable
 
 When existing evaluator case-packs are not enough, the suite adds local seeds
@@ -220,6 +225,29 @@ Canonical diff primitives are:
 
 Logs are not a primary diff surface for `parity-pass` cases. They are a
 diagnostic surface for rejects and for preserving actionable failure context.
+
+## Derived Query Performance Evidence
+
+The closure harness remains correctness-first, but it may also carry explicit
+supporting evidence for the query-memoization workstream.
+
+Legal memoization evidence includes:
+
+- targeted repeated-query workloads over closure-harness cases that stress
+  effective-query and target-resolution access
+- before/after measurements tied to the same case set and tool availability
+- proof that canonical memoized query paths replace duplicated first-line
+  consumer caches without changing case classification or observable outputs
+
+Memoization evidence does not replace the normal closure gate:
+
+- correctness classification stays primary
+- `parity-pass` and `backend-reject` decisions still come from observable
+  behavior and stable diagnostics
+- performance data is supporting wave evidence, not a new product state
+
+Unless the roadmap later freezes a numeric gate, memoization measurements are
+comparative and diagnostic rather than release-blocking by absolute threshold.
 
 ## Relationship To Other Suites
 
