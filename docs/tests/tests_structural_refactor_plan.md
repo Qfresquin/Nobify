@@ -8,7 +8,9 @@ architecture under `src_v2/build/nob_test.c` and `test_v2/`.
 
 As of April 8, 2026, the new daemon rewrite and command-surface changes are
 owned by [`test_daemon_roadmap.md`](./test_daemon_roadmap.md). That program
-explicitly supersedes this document's old preserved-entrypoint assumptions.
+explicitly supersedes this document's old preserved-entrypoint assumptions and
+now freezes a Linux-first reactor/client architecture for the future test
+surface.
 
 It does not redefine lexer, parser, evaluator, build-model, pipeline, or
 codegen product contracts. It only defines how the test stack should evolve so

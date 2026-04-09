@@ -11,7 +11,7 @@ Current baseline architecture boundary:
 
 Active daemon-program target boundary:
 
-`nob front door -> daemon client -> runner core -> suites`
+`nob front door -> daemon client/supervisor -> reactor daemon -> runner core -> suites`
 
 ## Overview
 
@@ -51,6 +51,10 @@ The active daemon roadmap treats those commands as transitional and targets:
 - `./build/nob test evaluator-codegen-diff`
 - `./build/nob test watch <module>`
 - `./build/nob test daemon start|stop|status`
+
+That daemon target is intentionally Linux-first and now freezes watch routing,
+cancellation, and fast local feedback as part of the same program, not as
+separate later add-ons.
 
 `artifact-parity` and `evaluator-codegen-diff` remain outside default smoke
 while they stay heavier and host-sensitive.

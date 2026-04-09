@@ -42,6 +42,8 @@ As of April 8, 2026:
   [`test_daemon_roadmap.md`](./test_daemon_roadmap.md) and explicitly
   authorizes replacing `./build/nob_test` with `./build/nob test ...`
   as the long-term front door
+- that daemon target is now frozen as a Linux-first local reactor with explicit
+  watch/routing/cancellation ownership rather than a generic remote runner
 - test infrastructure portability is now explicitly out of scope for the
   daemon program; only `nobify` product portability matters
 
@@ -59,7 +61,7 @@ The current baseline architectural boundary is:
 
 The active daemon-program target boundary is:
 
-`nob front door -> daemon client -> runner core -> suites`
+`nob front door -> daemon client/supervisor -> reactor daemon -> runner core -> suites`
 
 The current implementation already has the runner and framework boundaries in
 place. The shared-support boundary exists only partially and remains the main

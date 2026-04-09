@@ -29,7 +29,7 @@ As of April 8, 2026:
 
 The target end state of this roadmap is:
 
-`./build/nob` front door -> daemon client/supervisor -> `nob_testd` -> shared runner core -> suites
+`./build/nob` front door -> daemon client/supervisor -> reactor `nob_testd` -> shared runner core -> suites
 
 ## 2. Goal
 
@@ -71,12 +71,26 @@ The following decisions are frozen for this roadmap:
 - `src_v2/build/nob_test.c` may remain temporarily, but only as a wrapper or
   compatibility shim once runner-core extraction begins
 - the new daemon binary is `build/nob_testd`
-- the transport is a UNIX domain socket under `Temp_tests/daemon/`
-- the first protocol is framed `argc + argv[]` payloads over the socket, not
-  JSON
+- the transport is a pathname `AF_UNIX` socket under `Temp_tests/daemon/`
+- the socket type is `SOCK_SEQPACKET`, not `SOCK_STREAM`
+- the first protocol is a versioned binary envelope with opcode + status fields
+  plus argv-like string payloads; it is not JSON
+- the client validates the daemon peer via `SO_PEERCRED`
+- the daemon runtime is a single-process, single-threaded Linux reactor
+- the first reactor implementation may use raw `epoll`/`inotify`/`timerfd`/
+  `signalfd`/`pidfd_open` primitives directly, or `sd-event` if that shortens
+  time-to-daemon
 - daemon requests are serialized by default in early waves
 - watch mode belongs to the daemon program, not to a separate parallel
   architecture
+- watch mode and impact routing are one program, not two separate later
+  integrations
+- watch reruns use debounce, coalescing, and last-write-wins cancellation
+- inotify overflow or cache inconsistency triggers explicit root rescan and
+  reroute instead of silent stale state
+- the daemon MVP already owns fast local feedback primitives: fast profile,
+  cached tool discovery, cached profile validation, and cached/skippable local
+  preflight
 - external helper tools are allowed only as temporary accelerators in early
   waves and are not the final architecture
 - the long-term implementation center is shared runner-core code under
@@ -116,29 +130,37 @@ as a contract that must survive intact.
 - eliminate stale `nob` / `nob_test` bootstrap behavior
 - treat self-rebuild as part of the normal workflow
 
-### 5.2 Runner-Core Extraction
+### 5.2 Runner-Core And Typed Control Plane
 
 - extract module registry, profiles, incremental compilation, workspaces,
   logs, and preflight into reusable runner-core code
+- add typed request/result and module/profile identifiers instead of keeping the
+  future daemon path stringly-typed
+- add per-module watch-root and routing metadata in the registry itself
 - reduce `nob_test.c` to a thin wrapper while it still exists
 
 ### 5.3 Daemon Runtime
 
 - add `build/nob_testd`
-- add client/daemon transport, lifecycle, and failure recovery
-- keep early daemon execution serialized and simple
+- add client/daemon transport, lifecycle, cache, and failure recovery
+- make the daemon a Linux reactor, not a generic remote-runner shim
+- keep early daemon execution serialized and simple, but supervise children
+  explicitly
 
 ### 5.4 Watch And Impact Routing
 
 - add first-class watch mode
-- add path-prefix-based module routing
+- add routing from explicit module-owned watch roots
+- combine routing, debounce, cancellation, and overflow recovery in the same
+  implementation wave
 - keep routing explicit and cheap before attempting smarter graphs
 
 ### 5.5 Fast Local Feedback
 
-- add dedicated fast local profile
-- cache or skip repeated local preflight work where safe
-- integrate compiler cache and parallel object compilation
+- bring fast local profile and fixed-cost caching into the daemon early
+- extend with compiler cache and parallel object compilation after the daemon is
+  usable
+- keep heavy profiles and CI-style strict runs intact
 
 ### 5.6 Legacy Surface Removal
 
@@ -199,6 +221,13 @@ Deliverables:
 - shared runner-core files under `src_v2/build/`
 - module registry, profile logic, incremental compilation, workspaces, logs,
   and preflight moved into runner-core
+- typed control-plane structures such as request/result objects and stable
+  module/profile identifiers replace daemon-facing string parsing
+- the module registry grows explicit metadata for:
+  - watch roots
+  - default local profile
+  - explicit heavy/aggregate policy
+  - watch-auto eligibility
 - `nob_test.c` reduced to a thin wrapper over runner-core
 - `nob.c` becomes the owner of user-facing test CLI parsing
 
@@ -208,9 +237,11 @@ Non-goals:
 
 Exit criteria:
 - daemon code can call runner-core APIs directly
+- daemon/watch work no longer depends on reusing the old CLI string parser as an
+  internal API
 - `nob_test.c` is no longer an architectural owner
 
-### T3 Daemon MVP
+### T3 Daemon MVP And Fast-Loop Baseline
 
 Goal:
 - land a real persistent daemon as fast as possible
@@ -218,23 +249,33 @@ Goal:
 Deliverables:
 - new `build/nob_testd`
 - one daemon process per workspace/session root
-- UNIX socket listener under `Temp_tests/daemon/`
-- simple request protocol carrying `argc + argv[]`
-- simple response protocol carrying exit status, summary text, and artifact
-  paths
+- pathname `AF_UNIX` `SOCK_SEQPACKET` listener under `Temp_tests/daemon/`
+- versioned binary request/response envelope carrying operation id, status, and
+  argv-like string payloads
+- peer validation via `SO_PEERCRED`
+- single-threaded reactor runtime implemented either with raw Linux file
+  descriptors or `sd-event`
+- child supervision primitives wired from day one, including process tracking,
+  timeout-aware termination escalation, and stale socket cleanup
+- daemon-side cache for:
+  - discovered tool paths
+  - profile compatibility validation
+  - local preflight stamps and invalidation keys
+- dedicated fast local profile available on the daemon path from the MVP wave
 - `./build/nob test daemon start|stop|status`
 - `./build/nob test <module>` talks to the daemon and auto-starts it if absent
 
 Non-goals:
 - no watch mode yet
-- no queue sophistication yet
+- no parallel scheduler yet
 - no portability layer
 
 Exit criteria:
 - a client can run at least one real module through the daemon
+- repeated local daemon runs reuse cached fixed-cost validation/tooling work
 - the common test path no longer depends on direct use of `./build/nob_test`
 
-### T4 Watch Mode
+### T4 Watch Mode, Impact Routing, And Cancellation
 
 Goal:
 - make the daemon useful for daily development
@@ -242,72 +283,52 @@ Goal:
 Deliverables:
 - `./build/nob test watch <module>`
 - `./build/nob test watch auto`
-- Linux-first watcher implementation using native facilities, with polling
-  fallback only if needed for robustness
-- debounce and rerun coalescing
+- explicit module watch roots stored in the registry and consumed by `watch auto`
+- Linux-first watcher implementation using `inotify`
+- debounce via timer-based scheduling rather than ad hoc sleeps
+- rerun coalescing plus last-write-wins cancellation for save storms
+- overflow/inconsistency recovery by rescanning roots and recomputing routes
+- dynamic watch registration for newly created subdirectories under watched
+  roots
 - clear watch output for changed files, selected modules, build phase, run
   phase, last result, and preserved failure workspace
 
 Non-goals:
 - no perfect dependency graph
 - no parallel job scheduler yet
+- no requirement for a cross-platform watcher fallback
 
 Exit criteria:
 - file saves can rerun a chosen module or auto-routed modules through the
   daemon
+- route selection is predictable and recoverable even after rename storms or
+  inotify overflow
 - external watch tools are no longer required for the normal loop
 
-### T5 Impact Router
+### T5 Throughput And Ergonomics Acceleration
 
 Goal:
-- stop rerunning the wrong suites
+- materially improve daemon-era throughput and watch readability once the
+  control loop exists
 
 Deliverables:
-- path-prefix-to-module routing metadata stored with the module registry
-- initial routing for:
-  - `src_v2/evaluator`
-  - `src_v2/build_model`
-  - `src_v2/codegen`
-  - `src_v2/build`
-  - `test_v2/evaluator_diff`
-  - `test_v2/evaluator_codegen_diff`
-  - `test_v2/artifact_parity`
-  - shared helpers under `test_v2/`
-- explicit fallback policy when a path is unknown
-- route reporting in watch output
+- compiler-cache integration using `ccache` or `sccache` when available
+- parallel object compilation in runner-core
+- streamed or failure-first logging tuned for watch usability
+- better invalidation/reporting for fast-profile cache hits versus misses
+- explicit fallback routing policy remains visible in watch output when a path
+  is unknown or too broad
 
 Non-goals:
 - no full include-graph intelligence
 - no attempt at minimal perfect test selection
 
 Exit criteria:
-- `watch auto` picks predictable modules for representative file changes
-- implementers do not need to guess routing behavior later
-
-### T6 Fast Loop Performance
-
-Goal:
-- make daemon-driven local feedback materially faster than the current runner
-  path
-
-Deliverables:
-- dedicated fast local profile
-- cached or skippable preflight for daemon local runs
-- compiler-cache integration using `ccache` or `sccache` when available
-- parallel object compilation in runner-core
-- daemon-side caching of tool discovery and profile validation
-- failure-first logging behavior for watch mode
-
-Non-goals:
-- no weakening of CI-oriented strict profiles
-- no requirement that every profile be equally fast
-
-Exit criteria:
-- watch mode defaults to the fast profile
-- repeated local runs avoid fixed-cost preflight and rediscovery work
+- watch mode remains readable under frequent reruns
 - compile time drops materially for broad changes
+- fast local feedback is measurably cheaper than the pre-daemon runner path
 
-### T7 Legacy Surface Removal
+### T6 Legacy Surface Removal
 
 Goal:
 - remove transitional clutter once the daemon path is stable
@@ -315,8 +336,8 @@ Goal:
 Deliverables:
 - `build/nob_test` removed or replaced by a tiny documented compatibility shim
 - docs stop presenting `./build/nob_test` as primary
-- architecture docs describe `nob` as client/supervisor and `nob_testd` as
-  execution owner
+- architecture docs describe `nob` as client/supervisor and `nob_testd` as the
+  reactor execution owner
 - any temporary external watch bridge is removed from the main path
 
 Non-goals:
@@ -336,10 +357,19 @@ The implementation target for later waves is:
 - `nob_testd` owns persistent execution state
 - runner-core exposes build/run operations as callable APIs instead of
   embedding them in CLI-only flow
+- daemon-facing control flow uses typed request/result structures and stable
+  ids, even if the CLI remains text-oriented
+- the daemon is a single-threaded Linux reactor that owns:
+  - local socket accept/read/write
+  - child-process supervision
+  - timer-based debounce and timeout handling
+  - watch event intake and overflow recovery
 - logs, preserved failure workspaces, and `Temp_tests` layout remain
   conceptually intact unless a later wave explicitly replaces them
 - old preflight checks stay logically owned by runner-core, but local daemon
   runs may cache or skip them under the fast profile
+- module registry entries carry the watch roots and routing metadata needed by
+  `watch auto`
 - sanitizer, coverage, and explicit heavy suites remain supported, but the
   fast loop is optimized around normal local development rather than around
   those profiles
@@ -354,8 +384,12 @@ The daemon program is only complete when it has explicit proof for:
 - daemon auto-start on first client request
 - `daemon start|stop|status`
 - stale socket and stale PID recovery
+- client/daemon compatibility for the versioned local protocol
+- peer validation on the local UNIX socket
 - watch rerun on save
 - `watch auto` routing for representative file changes
+- last-write-wins cancellation under save storms
+- watch recovery after rename churn or inotify overflow
 - fast profile behavior not regressing strict or sanitizer profiles
 - preserved failure workspaces and captured logs still working through daemon
   execution
