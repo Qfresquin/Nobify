@@ -159,6 +159,7 @@ static bool daemon_spawn_worker(Test_Daemon_Server *server,
                                 uint64_t request_id);
 static bool daemon_finish_active_run(Test_Daemon_Server *server);
 static void daemon_handle_client_disconnect(Test_Daemon_Server *server);
+static bool daemon_watch_send_infof(Test_Daemon_Server *server, const char *fmt, ...);
 static void daemon_watch_reset_session(Test_Daemon_Server *server);
 static bool daemon_begin_worker_cancel(Test_Daemon_Server *server,
                                        bool mark_watch_cancel,
@@ -252,6 +253,10 @@ static bool daemon_flush_buffered_worker_output(Test_Daemon_Server *server) {
     bool ok = true;
 
     if (!server) return false;
+    if (server->watch.active && server->current_client_fd < 0) {
+        daemon_clear_buffered_worker_output(server);
+        return true;
+    }
     if (server->buffered_stderr.count > 0) {
         ok = test_daemon_send_message(server->current_client_fd,
                                       TEST_DAEMON_MESSAGE_STDERR,
@@ -551,16 +556,42 @@ static void daemon_remove_state_files(Test_Daemon_Server *server, bool record_ex
     }
 }
 
+static bool daemon_watch_has_attached_client(const Test_Daemon_Server *server) {
+    return server && server->watch.active && server->current_client_fd >= 0;
+}
+
+static const char *daemon_watch_status_summary(const Test_Daemon_Server *server) {
+    if (!server) return "watching";
+    return daemon_watch_has_attached_client(server) ? "watching (attached)" : "watching (detached)";
+}
+
+static void daemon_watch_detach_client(Test_Daemon_Server *server, const char *reason) {
+    if (!server || !server->watch.active) return;
+    server->watch.client_source = sd_event_source_unref(server->watch.client_source);
+    daemon_close_fd(&server->current_client_fd);
+    if (reason && reason[0] != '\0') {
+        daemon_set_status_detail(server, "%s", reason);
+    } else {
+        daemon_set_status_detail(server, "watch session detached from its originating client");
+    }
+}
+
 static bool daemon_watch_send_text(Test_Daemon_Server *server, Test_Daemon_Message_Type type, const char *text) {
     uint64_t request_id = 0;
 
-    if (!server || server->current_client_fd < 0 || !text) return false;
+    if (!server || !text) return false;
+    if (server->watch.active && server->current_client_fd < 0) return true;
+    if (server->current_client_fd < 0) return false;
     request_id = server->watch.active ? server->watch.request_id : server->current_request_id;
     if (!test_daemon_send_message(server->current_client_fd,
                                   type,
                                   request_id,
                                   text,
                                   (uint32_t)strlen(text))) {
+        if (server->watch.active) {
+            daemon_watch_detach_client(server, "watch session detached after client connection closed");
+            return true;
+        }
         daemon_handle_client_disconnect(server);
         return false;
     }
@@ -569,14 +600,29 @@ static bool daemon_watch_send_text(Test_Daemon_Server *server, Test_Daemon_Messa
 
 static void daemon_handle_client_disconnect(Test_Daemon_Server *server) {
     if (!server) return;
-    daemon_close_fd(&server->current_client_fd);
     if (server->watch.active) {
-        if (server->worker_pid > 0) {
-            (void)daemon_begin_worker_cancel(server, true, true);
-        } else {
-            daemon_watch_reset_session(server);
-        }
+        daemon_watch_detach_client(server, "watch session detached after client disconnect");
+        return;
     }
+    daemon_close_fd(&server->current_client_fd);
+    if (server->worker_pid > 0) {
+        daemon_set_status_detail(server, "foreground client disconnected while a run was active");
+    }
+}
+
+static bool daemon_watch_report_issue(Test_Daemon_Server *server, const char *fmt, ...) {
+    char buffer[TEST_RUNNER_SUMMARY_CAPACITY * 2] = {0};
+    va_list args;
+    int n = 0;
+
+    if (!server || !fmt) return false;
+    va_start(args, fmt);
+    n = vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    if (n < 0 || (size_t)n >= sizeof(buffer)) return false;
+    daemon_set_status_detail(server, "%s", buffer);
+    nob_log(NOB_ERROR, "[watch] %s", buffer);
+    return daemon_watch_send_infof(server, "[watch] %s\n", buffer);
 }
 
 static bool daemon_watch_send_infof(Test_Daemon_Server *server, const char *fmt, ...) {
@@ -1352,12 +1398,14 @@ static bool daemon_watch_start_next_module(Test_Daemon_Server *server) {
 
     daemon_reset_request_telemetry(server);
     if (!daemon_ensure_preflight(server, request.profile_id)) {
-        return daemon_send_structured_error(server,
-                                            server->current_client_fd,
-                                            server->watch.request_id,
-                                            TEST_DAEMON_ERROR_PREFLIGHT_FAILED,
-                                            "daemon preflight failed");
+        daemon_watch_clear_batch(server);
+        return daemon_watch_report_issue(server, "daemon preflight failed; watch session remains active");
     }
+    daemon_set_status_detail(server,
+                             "%s running %s (%s)",
+                             daemon_watch_has_attached_client(server) ? "watch session" : "detached watch session",
+                             module->name,
+                             profile->name);
     if (!daemon_watch_send_infof(server,
                                  "[watch] running %s (%s)\n",
                                  module->name,
@@ -1365,11 +1413,8 @@ static bool daemon_watch_start_next_module(Test_Daemon_Server *server) {
         return false;
     }
     if (!daemon_spawn_worker(server, &request, server->watch.request_id)) {
-        return daemon_send_structured_error(server,
-                                            server->current_client_fd,
-                                            server->watch.request_id,
-                                            TEST_DAEMON_ERROR_WORKER_START_FAILED,
-                                            "watch failed to start worker");
+        daemon_watch_clear_batch(server);
+        return daemon_watch_report_issue(server, "watch failed to start worker; session remains active");
     }
     return true;
 }
@@ -1385,12 +1430,7 @@ static int daemon_on_watch_client(sd_event_source *source,
     if (!(revents & (EPOLLHUP | EPOLLERR | EPOLLRDHUP))) return 0;
     if (!server || !server->watch.active) return 0;
 
-    if (server->worker_pid > 0) {
-        (void)daemon_begin_worker_cancel(server, true, true);
-    } else {
-        daemon_watch_reset_session(server);
-        if (server->shutting_down) (void)sd_event_exit(server->event, 0);
-    }
+    daemon_watch_detach_client(server, "watch session detached after client connection closed");
     return 0;
 }
 
@@ -1408,6 +1448,9 @@ static int daemon_on_watch_debounce(sd_event_source *source,
 
     if (server->worker_pid > 0) {
         server->watch.rerun_pending = true;
+        daemon_set_status_detail(server,
+                                 "%s queued rerun after newer changes",
+                                 daemon_watch_has_attached_client(server) ? "watch session" : "detached watch session");
         if (!server->watch.cancel_requested) {
             (void)daemon_watch_send_infof(server, "[watch] canceling stale run after newer changes\n");
         }
@@ -1530,6 +1573,7 @@ static bool daemon_watch_start_session(Test_Daemon_Server *server,
     server->current_worker_request_valid = false;
     server->current_policy = TEST_DAEMON_POLICY_WATCH_REPLACE_RUNNING;
     server->state = TEST_DAEMON_STATE_WATCHING;
+    daemon_set_status_detail(server, "watch session starting");
 
     if (!daemon_watch_register_roots(server)) goto defer;
     if (sd_event_add_io(server->event,
@@ -1539,17 +1583,31 @@ static bool daemon_watch_start_session(Test_Daemon_Server *server,
                         daemon_on_watch_client,
                         server) < 0) {
         nob_log(NOB_ERROR, "daemon failed to watch active client connection");
-        goto defer;
+        daemon_watch_detach_client(server, "watch session detached because client monitoring could not be installed");
     }
 
-    if (!test_daemon_send_message(fd, TEST_DAEMON_MESSAGE_ACK, message->header.request_id, NULL, 0)) goto defer;
+    if (server->current_client_fd >= 0 &&
+        !test_daemon_send_message(server->current_client_fd,
+                                  TEST_DAEMON_MESSAGE_ACK,
+                                  message->header.request_id,
+                                  NULL,
+                                  0)) {
+        daemon_watch_detach_client(server, "watch session detached before the startup ACK completed");
+    }
     if (request.mode == TEST_RUNNER_WATCH_MODE_AUTO) {
+        daemon_set_status_detail(server,
+                                 "watch session started for auto routing (%s)",
+                                 daemon_watch_has_attached_client(server) ? "attached" : "detached");
         if (!daemon_watch_send_infof(server, "[watch] auto session started (%zu roots)\n", server->watch.roots.count)) {
             goto defer;
         }
     } else {
         const Test_Runner_Module_Def *module = test_runner_get_module_def(request.module_id);
         if (!module) goto defer;
+        daemon_set_status_detail(server,
+                                 "watch session started for %s (%s)",
+                                 module->name,
+                                 daemon_watch_has_attached_client(server) ? "attached" : "detached");
         if (!daemon_watch_send_infof(server,
                                      "[watch] module session started for %s (%zu roots)\n",
                                      module->name,
@@ -1648,10 +1706,12 @@ static bool daemon_finish_active_run(Test_Daemon_Server *server) {
     bool ok = false;
     bool watch_active = false;
     bool close_client_fd = false;
+    bool have_attached_client = false;
 
-    if (!server || server->current_client_fd < 0) return false;
+    if (!server) return false;
     if (!server->worker_exited || !server->stdout_closed || !server->stderr_closed) return true;
     watch_active = server->watch.active;
+    have_attached_client = server->current_client_fd >= 0;
 
     if (watch_active && server->watch.cancel_requested) {
         if (!daemon_watch_send_infof(server, "[watch] stale run aborted after newer changes\n")) {
@@ -1659,6 +1719,9 @@ static bool daemon_finish_active_run(Test_Daemon_Server *server) {
             return false;
         }
         if (server->worker_result_path[0] != '\0') (void)unlink(server->worker_result_path);
+        daemon_set_status_detail(server,
+                                 "%s canceled a stale run after newer changes",
+                                 daemon_watch_has_attached_client(server) ? "watch session" : "detached watch session");
         server->watch.cancel_requested = false;
         close_client_fd = server->watch.closing;
         daemon_reset_worker_state(server, close_client_fd);
@@ -1702,6 +1765,17 @@ static bool daemon_finish_active_run(Test_Daemon_Server *server) {
     server->last_result = runner_result;
     server->last_result_valid = true;
     server->last_telemetry = server->current_telemetry;
+    if (watch_active) {
+        daemon_set_status_detail(server,
+                                 "%s last result: %s",
+                                 daemon_watch_has_attached_client(server) ? "watch session" : "detached watch session",
+                                 runner_result.summary[0] != '\0' ? runner_result.summary : (runner_result.ok ? "PASS" : "FAIL"));
+    } else if (!have_attached_client) {
+        daemon_set_status_detail(server,
+                                 "foreground run completed after client disconnect: %s",
+                                 runner_result.summary[0] != '\0' ? runner_result.summary
+                                                                   : (runner_result.ok ? "PASS" : "FAIL"));
+    }
 
     if (!test_daemon_result_from_runner(daemon_effective_state(server),
                                         getpid(),
@@ -1714,7 +1788,14 @@ static bool daemon_finish_active_run(Test_Daemon_Server *server) {
         payload.cache_launcher_reason = (uint32_t)server->current_telemetry.launcher_cache_reason;
         payload.cache_preflight_reason = (uint32_t)server->current_telemetry.preflight_reason;
         (void)daemon_copy_string(payload.detail, sizeof(payload.detail), server->status_detail);
-        ok = test_daemon_send_result(server->current_client_fd, server->current_request_id, &payload);
+        if (!have_attached_client) {
+            ok = true;
+        } else if (!test_daemon_send_result(server->current_client_fd, server->current_request_id, &payload)) {
+            daemon_handle_client_disconnect(server);
+            ok = true;
+        } else {
+            ok = true;
+        }
     }
 
     if (server->worker_result_path[0] != '\0') (void)unlink(server->worker_result_path);
@@ -2017,7 +2098,8 @@ static bool daemon_handle_control(Test_Daemon_Server *server,
             return daemon_send_status_result(fd,
                                              request_id,
                                              server,
-                                             test_daemon_state_name(state));
+                                             server->watch.active ? daemon_watch_status_summary(server)
+                                                                  : test_daemon_state_name(state));
 
         case TEST_DAEMON_CONTROL_STOP:
             if (server->shutting_down) {
