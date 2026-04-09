@@ -1,5 +1,7 @@
 #include "test_evaluator_codegen_diff_v2_common.h"
 
+#include "../artifact_parity/test_artifact_parity_corpus_manifest.h"
+
 #include "arena_dyn.h"
 
 #include <stdlib.h>
@@ -139,8 +141,49 @@ typedef struct {
     int skipped_by_tool;
 } EGD_Case_Summary;
 
+typedef enum {
+    EGD_CORPUS_PROJECT_SUPPORTED = 0,
+    EGD_CORPUS_PROJECT_KNOWN_BOUNDARY,
+    EGD_CORPUS_PROJECT_BACKEND_GAP,
+} EGD_Corpus_Project_Disposition;
+
+typedef enum {
+    EGD_CORPUS_SEVERITY_RELEASE_BLOCKER = 0,
+    EGD_CORPUS_SEVERITY_MAJOR,
+    EGD_CORPUS_SEVERITY_MINOR,
+} EGD_Corpus_Finding_Severity;
+
+typedef enum {
+    EGD_CORPUS_FREQUENCY_COMMON = 0,
+    EGD_CORPUS_FREQUENCY_PROJECT_LOCAL,
+} EGD_Corpus_Finding_Frequency;
+
+typedef enum {
+    EGD_CORPUS_DISPOSITION_FOCUSED_PROOF_CASE = 0,
+    EGD_CORPUS_DISPOSITION_BACKEND_REJECT,
+    EGD_CORPUS_DISPOSITION_EXPLICIT_BOUNDARY,
+} EGD_Corpus_Finding_Disposition;
+
+typedef struct {
+    const char *project_name;
+    EGD_Corpus_Project_Disposition disposition;
+    const char *reason;
+    const char *tracking_or_boundary_key;
+} EGD_Corpus_Project_Inventory;
+
+typedef struct {
+    const char *key;
+    EGD_Corpus_Finding_Severity severity;
+    EGD_Corpus_Finding_Frequency frequency;
+    EGD_Corpus_Finding_Disposition disposition;
+    const char *reason;
+    const char *const *affected_projects;
+    size_t affected_project_count;
+} EGD_Corpus_Finding_Inventory;
+
 #define EGD_EXPECTED_FULL_COMMANDS 124u
-#define EGD_COMMAND_INVENTORY_VERSION "2026-04-09-c3"
+#define EGD_COMMAND_INVENTORY_VERSION "2026-04-09-c4"
+#define EGD_SUPPORTED_SUBSET_DOC "docs/codegen/generated_backend_supported_subset.md"
 
 #define EGD_PACK_EVAL_DEFAULT "test_v2/evaluator/golden/evaluator_default.cmake"
 #define EGD_PACK_EVAL_ALL "test_v2/evaluator/golden/evaluator_all.cmake"
@@ -257,6 +300,16 @@ static const EGD_Command_Inventory s_egd_command_inventory[] = {
 #include "test_evaluator_codegen_diff_inventory.inc"
 };
 
+static const EGD_Corpus_Project_Inventory s_egd_corpus_project_inventory[] = {
+    {"fmt", EGD_CORPUS_PROJECT_SUPPORTED, "Pinned fmt corpus project passes build/install/consumer parity and downstream consumer proof.", NULL},
+    {"pugixml", EGD_CORPUS_PROJECT_SUPPORTED, "Pinned pugixml corpus project passes build/install/consumer parity and downstream consumer proof.", NULL},
+    {"nlohmann_json", EGD_CORPUS_PROJECT_SUPPORTED, "Pinned nlohmann_json corpus project passes build/install/consumer parity and downstream consumer proof.", NULL},
+    {"cjson", EGD_CORPUS_PROJECT_SUPPORTED, "Pinned cjson corpus project passes build/install/consumer parity and downstream consumer proof.", NULL},
+};
+
+static const EGD_Corpus_Finding_Inventory *s_egd_corpus_finding_inventory = NULL;
+static const size_t s_egd_corpus_finding_inventory_count = 0;
+
 static const EGD_Subcommand_Inventory s_egd_subcommand_inventory[] = {
     {"file", "DOWNLOAD", EGD_PACK_SEEDS, "backend_configure_host_effect_supported_surface", EGD_CLASS_PARITY_PASS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, "build-model.replay.configure", "local deterministic file(DOWNLOAD) now replays through configure-phase host-effect actions", NULL, "workload.codegen.configure-host-effects"},
     {"file", "ARCHIVE_CREATE|ARCHIVE_EXTRACT", EGD_PACK_SEEDS, "backend_configure_host_effect_supported_surface", EGD_CLASS_PARITY_PASS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, "build-model.replay.configure", "local pax archive create/extract now replays through configure-phase host-effect actions", NULL, "workload.codegen.configure-host-effects"},
@@ -353,6 +406,110 @@ static const char *egd_classification_name(EGD_Case_Classification classificatio
         case EGD_CLASS_EXPLICIT_NON_GOAL: return "explicit-non-goal";
     }
     return "unknown";
+}
+
+static const char *egd_corpus_project_disposition_name(EGD_Corpus_Project_Disposition disposition) {
+    switch (disposition) {
+        case EGD_CORPUS_PROJECT_SUPPORTED: return "supported";
+        case EGD_CORPUS_PROJECT_KNOWN_BOUNDARY: return "known-boundary";
+        case EGD_CORPUS_PROJECT_BACKEND_GAP: return "backend-gap";
+    }
+    return "unknown";
+}
+
+static const char *egd_corpus_finding_severity_name(EGD_Corpus_Finding_Severity severity) {
+    switch (severity) {
+        case EGD_CORPUS_SEVERITY_RELEASE_BLOCKER: return "release-blocker";
+        case EGD_CORPUS_SEVERITY_MAJOR: return "major";
+        case EGD_CORPUS_SEVERITY_MINOR: return "minor";
+    }
+    return "unknown";
+}
+
+static const char *egd_corpus_finding_frequency_name(EGD_Corpus_Finding_Frequency frequency) {
+    switch (frequency) {
+        case EGD_CORPUS_FREQUENCY_COMMON: return "common";
+        case EGD_CORPUS_FREQUENCY_PROJECT_LOCAL: return "project-local";
+    }
+    return "unknown";
+}
+
+static const char *egd_corpus_finding_disposition_name(EGD_Corpus_Finding_Disposition disposition) {
+    switch (disposition) {
+        case EGD_CORPUS_DISPOSITION_FOCUSED_PROOF_CASE: return "focused-proof-case";
+        case EGD_CORPUS_DISPOSITION_BACKEND_REJECT: return "backend-reject";
+        case EGD_CORPUS_DISPOSITION_EXPLICIT_BOUNDARY: return "explicit-boundary";
+    }
+    return "unknown";
+}
+
+static bool egd_join_abs_from_repo(const char *repo_relpath,
+                                   char out_path[_TINYDIR_PATH_MAX]) {
+    const char *repo_root = getenv(CMK2NOB_TEST_REPO_ROOT_ENV);
+    if (!repo_root || repo_root[0] == '\0' || !repo_relpath || !out_path) return false;
+    return snprintf(out_path, _TINYDIR_PATH_MAX, "%s/%s", repo_root, repo_relpath) < _TINYDIR_PATH_MAX;
+}
+
+static EGD_Corpus_Project_Disposition egd_manifest_support_tier_to_disposition(
+    const char *support_tier) {
+    if (!support_tier) return (EGD_Corpus_Project_Disposition)-1;
+    if (strcmp(support_tier, "supported") == 0) return EGD_CORPUS_PROJECT_SUPPORTED;
+    if (strcmp(support_tier, "known-boundary") == 0) return EGD_CORPUS_PROJECT_KNOWN_BOUNDARY;
+    if (strcmp(support_tier, "backend-gap") == 0) return EGD_CORPUS_PROJECT_BACKEND_GAP;
+    return (EGD_Corpus_Project_Disposition)-1;
+}
+
+static const EGD_Corpus_Project_Inventory *egd_lookup_corpus_project_inventory(
+    const char *project_name) {
+    if (!project_name) return NULL;
+    for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_corpus_project_inventory); ++i) {
+        if (strcmp(s_egd_corpus_project_inventory[i].project_name, project_name) == 0) {
+            return &s_egd_corpus_project_inventory[i];
+        }
+    }
+    return NULL;
+}
+
+static const EGD_Corpus_Finding_Inventory *egd_lookup_corpus_finding_inventory(const char *key) {
+    if (!key || key[0] == '\0') return NULL;
+    for (size_t i = 0; i < s_egd_corpus_finding_inventory_count; ++i) {
+        if (strcmp(s_egd_corpus_finding_inventory[i].key, key) == 0) {
+            return &s_egd_corpus_finding_inventory[i];
+        }
+    }
+    return NULL;
+}
+
+static bool egd_corpus_project_inventory_is_valid(const EGD_Corpus_Project_Inventory *item) {
+    if (!item ||
+        !item->project_name || item->project_name[0] == '\0' ||
+        !item->reason || item->reason[0] == '\0' ||
+        strcmp(egd_corpus_project_disposition_name(item->disposition), "unknown") == 0) {
+        return false;
+    }
+    if (item->disposition != EGD_CORPUS_PROJECT_SUPPORTED &&
+        (!item->tracking_or_boundary_key || item->tracking_or_boundary_key[0] == '\0')) {
+        return false;
+    }
+    if (item->tracking_or_boundary_key && item->tracking_or_boundary_key[0] == '\0') return false;
+    return true;
+}
+
+static bool egd_corpus_finding_inventory_is_valid(const EGD_Corpus_Finding_Inventory *item) {
+    if (!item ||
+        !item->key || item->key[0] == '\0' ||
+        !item->reason || item->reason[0] == '\0' ||
+        item->affected_project_count == 0 ||
+        !item->affected_projects ||
+        strcmp(egd_corpus_finding_severity_name(item->severity), "unknown") == 0 ||
+        strcmp(egd_corpus_finding_frequency_name(item->frequency), "unknown") == 0 ||
+        strcmp(egd_corpus_finding_disposition_name(item->disposition), "unknown") == 0) {
+        return false;
+    }
+    for (size_t i = 0; i < item->affected_project_count; ++i) {
+        if (!item->affected_projects[i] || item->affected_projects[i][0] == '\0') return false;
+    }
+    return true;
 }
 
 static void egd_inventory_state_counts_add(EGD_Inventory_State_Counts *counts,
@@ -644,6 +801,16 @@ static bool egd_body_contains(String_View body, const char *needle) {
         if (memcmp(body.data + i, needle, needle_len) == 0) return true;
     }
     return false;
+}
+
+static bool egd_load_repo_text_file(Arena *arena,
+                                    const char *repo_relpath,
+                                    String_View *out_text) {
+    char abs_path[_TINYDIR_PATH_MAX] = {0};
+    if (out_text) *out_text = nob_sv_from_cstr("");
+    if (!arena || !repo_relpath || !out_text) return false;
+    if (!egd_join_abs_from_repo(repo_relpath, abs_path)) return false;
+    return test_snapshot_load_text_file_to_arena(arena, abs_path, out_text);
 }
 
 static bool egd_ensure_dir_chain(const char *path) {
@@ -1251,6 +1418,90 @@ TEST(evaluator_codegen_diff_tool_capability_resolution_is_host_independent) {
     TEST_PASS();
 }
 
+TEST(evaluator_codegen_diff_c4_corpus_inventory_and_docs_are_complete) {
+    Arena *arena = arena_create(2 * 1024 * 1024);
+    Artifact_Parity_Corpus_Project_List projects = {0};
+    String_View supported_subset_doc = {0};
+    String_View tests_readme = {0};
+    String_View tests_architecture = {0};
+    char manifest_path[_TINYDIR_PATH_MAX] = {0};
+    const char *const release_gate_commands[] = {
+        "./build/nob test evaluator-codegen-diff",
+        "./build/nob test artifact-parity",
+        "./build/nob test artifact-parity-corpus",
+    };
+
+    ASSERT(arena != NULL);
+    ASSERT(egd_join_abs_from_repo(ARTIFACT_PARITY_CORPUS_MANIFEST_PATH, manifest_path));
+    ASSERT(artifact_parity_corpus_manifest_load_path(manifest_path, &projects));
+    ASSERT(egd_load_repo_text_file(arena, EGD_SUPPORTED_SUBSET_DOC, &supported_subset_doc));
+    ASSERT(egd_load_repo_text_file(arena, "docs/tests/README.md", &tests_readme));
+    ASSERT(egd_load_repo_text_file(arena, "docs/tests/tests_architecture.md", &tests_architecture));
+
+    ASSERT(NOB_ARRAY_LEN(s_egd_corpus_project_inventory) == projects.count);
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_corpus_project_inventory); ++i) {
+        const EGD_Corpus_Project_Inventory *item = &s_egd_corpus_project_inventory[i];
+        ASSERT(egd_corpus_project_inventory_is_valid(item));
+        for (size_t j = i + 1; j < NOB_ARRAY_LEN(s_egd_corpus_project_inventory); ++j) {
+            ASSERT(strcmp(item->project_name, s_egd_corpus_project_inventory[j].project_name) != 0);
+        }
+    }
+
+    for (size_t i = 0; i < s_egd_corpus_finding_inventory_count; ++i) {
+        const EGD_Corpus_Finding_Inventory *item = &s_egd_corpus_finding_inventory[i];
+        ASSERT(egd_corpus_finding_inventory_is_valid(item));
+        for (size_t j = i + 1; j < s_egd_corpus_finding_inventory_count; ++j) {
+            ASSERT(strcmp(item->key, s_egd_corpus_finding_inventory[j].key) != 0);
+        }
+    }
+
+    for (size_t i = 0; i < projects.count; ++i) {
+        const Artifact_Parity_Corpus_Project *project = &projects.items[i];
+        const EGD_Corpus_Project_Inventory *inventory =
+            egd_lookup_corpus_project_inventory(project->name);
+        EGD_Corpus_Project_Disposition manifest_disposition =
+            egd_manifest_support_tier_to_disposition(project->support_tier);
+
+        ASSERT(inventory != NULL);
+        ASSERT(manifest_disposition != (EGD_Corpus_Project_Disposition)-1);
+        ASSERT(inventory->disposition == manifest_disposition);
+
+        if (inventory->disposition != EGD_CORPUS_PROJECT_SUPPORTED) {
+            const EGD_Corpus_Finding_Inventory *finding =
+                egd_lookup_corpus_finding_inventory(inventory->tracking_or_boundary_key);
+            bool project_found = false;
+
+            ASSERT(finding != NULL);
+            for (size_t j = 0; j < finding->affected_project_count; ++j) {
+                if (strcmp(finding->affected_projects[j], project->name) == 0) {
+                    project_found = true;
+                    break;
+                }
+            }
+            ASSERT(project_found);
+        }
+
+        if (artifact_parity_corpus_project_has_support_tier(project, "supported")) {
+            ASSERT(egd_body_contains(supported_subset_doc, project->name));
+            for (size_t j = 0; j < project->expected_imported_targets.count; ++j) {
+                ASSERT(egd_body_contains(supported_subset_doc,
+                                         project->expected_imported_targets.items[j]));
+            }
+        }
+    }
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(release_gate_commands); ++i) {
+        ASSERT(egd_body_contains(supported_subset_doc, release_gate_commands[i]));
+        ASSERT(egd_body_contains(tests_readme, release_gate_commands[i]));
+        ASSERT(egd_body_contains(tests_architecture, release_gate_commands[i]));
+    }
+
+    artifact_parity_corpus_manifest_free(&projects);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_codegen_diff_executes_classified_cases) {
     EGD_Inventory_State_Counts declared = {0};
     EGD_Case_Summary summary = {0};
@@ -1316,6 +1567,8 @@ void run_evaluator_codegen_diff_v2_tests(int *passed, int *failed, int *skipped)
     test_evaluator_codegen_diff_inventory_covers_full_commands_and_curated_subcommands(
         passed, failed, skipped);
     test_evaluator_codegen_diff_tool_capability_resolution_is_host_independent(
+        passed, failed, skipped);
+    test_evaluator_codegen_diff_c4_corpus_inventory_and_docs_are_complete(
         passed, failed, skipped);
     test_evaluator_codegen_diff_executes_classified_cases(passed, failed, skipped);
 

@@ -75,6 +75,20 @@ static void format_duration_usec(uint64_t duration_usec, char *buffer, size_t bu
     }
 }
 
+static void log_multiline_status_block(const char *label, const char *text) {
+    char buffer[TEST_RUNNER_FAILURE_SUMMARY_CAPACITY + 1] = {0};
+    char *line = NULL;
+    char *state = NULL;
+
+    if (!label || !text || text[0] == '\0') return;
+    if (snprintf(buffer, sizeof(buffer), "%s", text) >= (int)sizeof(buffer)) return;
+
+    nob_log(NOB_INFO, "%s", label);
+    for (line = strtok_r(buffer, "\n", &state); line; line = strtok_r(NULL, "\n", &state)) {
+        nob_log(NOB_INFO, "  %s", line);
+    }
+}
+
 static void log_test_daemon_status_details(const Test_Daemon_Status *status) {
     char duration[64] = {0};
     const Test_Daemon_Request_Metadata *active = NULL;
@@ -100,11 +114,12 @@ static void log_test_daemon_status_details(const Test_Daemon_Status *status) {
     if (active->kind != TEST_DAEMON_REQUEST_NONE) {
         format_duration_usec(active->active_duration_usec, duration, sizeof(duration));
         nob_log(NOB_INFO,
-                "active request: kind=%s policy=%s module=%s profile=%s duration=%s client=%s",
+                "active request: kind=%s policy=%s module=%s profile=%s case=%s duration=%s client=%s",
                 test_daemon_request_kind_name((Test_Daemon_Request_Kind)active->kind),
                 test_daemon_admission_policy_name((Test_Daemon_Admission_Policy)active->admission_policy),
                 active->module_name[0] != '\0' ? active->module_name : "<none>",
                 active->profile_name[0] != '\0' ? active->profile_name : "<none>",
+                active->case_name[0] != '\0' ? active->case_name : "<all>",
                 duration[0] != '\0' ? duration : "0ms",
                 active->client_attached ? "attached" : "detached");
         nob_log(NOB_INFO,
@@ -132,6 +147,9 @@ static void log_test_daemon_status_details(const Test_Daemon_Status *status) {
     }
     if (status->stderr_log_path[0] != '\0') {
         nob_log(NOB_INFO, "last stderr log: %s", status->stderr_log_path);
+    }
+    if (status->failure_summary[0] != '\0') {
+        log_multiline_status_block("last failure summary:", status->failure_summary);
     }
 }
 
@@ -549,7 +567,11 @@ static bool build_snapshot_tool(void) {
 
     nob_cc(&cmd);
     nob_cmd_append(&cmd, "-Wall", "-Wextra", "-std=c11", "-O2", "-ggdb", "-Ivendor");
-    nob_cmd_append(&cmd, "-o", SNAPSHOT_TOOL_BIN, SNAPSHOT_TOOL_SRC);
+    nob_cmd_append(&cmd,
+                   "-o",
+                   SNAPSHOT_TOOL_BIN,
+                   SNAPSHOT_TOOL_SRC,
+                   "test_v2/artifact_parity/test_artifact_parity_corpus_manifest.c");
     ok = nob_cmd_run(&cmd);
     nob_cmd_free(cmd);
     return ok;

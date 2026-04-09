@@ -151,6 +151,9 @@ The canonical corpus is:
 - `test_v2/evaluator_diff/cases/*.cmake`
 - focused seed case-packs under `test_v2/evaluator_codegen_diff/cases/` when a
   backend-owned surface has no suitable existing case
+- the real-project corpus catalog under
+  `test_v2/artifact_parity/real_projects/manifest.json` for `C4` project
+  disposition and supported-subset cross-checks
 
 The closure harness adopts the full case-pack DSL from `evaluator_diff` rather
 than a suite-local subset. Each closure case declares the metadata required to
@@ -170,6 +173,14 @@ drive the proof path, including:
 When existing evaluator case-packs are not enough, the suite adds local seeds
 under `test_v2/evaluator_codegen_diff/cases/` instead of synthesizing ad hoc C
 tests.
+
+For `C4`, the suite also carries explicit real-project metadata outside the
+case-pack DSL:
+
+- one explicit corpus disposition per manifest project
+- severity/frequency/disposition metadata for any remaining corpus-driven gap
+- supported-subset document cross-checks for the projects and release-gate
+  commands claimed by the product docs
 
 ## Promotion Rules
 
@@ -208,6 +219,12 @@ Reasons:
 
 It therefore does not participate in the current baseline
 `./build/nob test` / `./build/nob test smoke` smoke aggregate.
+
+The docs-only release gate for the generated-backend claim is the trio:
+
+- `./build/nob test evaluator-codegen-diff`
+- `./build/nob test artifact-parity`
+- `./build/nob test artifact-parity-corpus`
 
 `./build/nob test evaluator-codegen-diff`
 

@@ -50,12 +50,18 @@ static bool test_daemon_client_copy_status(Test_Daemon_Status *out_status,
            test_daemon_client_copy_cstr(out_status->stderr_log_path,
                                         sizeof(out_status->stderr_log_path),
                                         payload->stderr_log_path) &&
+           test_daemon_client_copy_cstr(out_status->case_name,
+                                        sizeof(out_status->case_name),
+                                        payload->case_name) &&
            test_daemon_client_copy_cstr(out_status->detail,
                                         sizeof(out_status->detail),
                                         payload->detail) &&
            test_daemon_client_copy_cstr(out_status->summary,
                                         sizeof(out_status->summary),
-                                        payload->summary);
+                                        payload->summary) &&
+           test_daemon_client_copy_cstr(out_status->failure_summary,
+                                        sizeof(out_status->failure_summary),
+                                        payload->failure_summary);
 }
 
 static bool test_daemon_client_copy_result(Test_Runner_Result *out_result,
@@ -64,7 +70,10 @@ static bool test_daemon_client_copy_result(Test_Runner_Result *out_result,
     *out_result = (Test_Runner_Result){0};
     out_result->ok = payload->runner_ok != 0;
     out_result->exit_code = payload->exit_code;
-    return test_daemon_client_copy_cstr(out_result->preserved_workspace_path,
+    return test_daemon_client_copy_cstr(out_result->case_name,
+                                        sizeof(out_result->case_name),
+                                        payload->case_name) &&
+           test_daemon_client_copy_cstr(out_result->preserved_workspace_path,
                                         sizeof(out_result->preserved_workspace_path),
                                         payload->preserved_workspace_path) &&
            test_daemon_client_copy_cstr(out_result->stdout_log_path,
@@ -75,7 +84,10 @@ static bool test_daemon_client_copy_result(Test_Runner_Result *out_result,
                                         payload->stderr_log_path) &&
            test_daemon_client_copy_cstr(out_result->summary,
                                         sizeof(out_result->summary),
-                                        payload->summary);
+                                        payload->summary) &&
+           test_daemon_client_copy_cstr(out_result->failure_summary,
+                                        sizeof(out_result->failure_summary),
+                                        payload->failure_summary);
 }
 
 static int test_daemon_client_connect(void) {
@@ -199,12 +211,13 @@ static void test_daemon_client_log_error_payload(const Test_Daemon_Error_Payload
     if ((Test_Daemon_Request_Kind)active->kind == TEST_DAEMON_REQUEST_NONE) return;
 
     nob_log(NOB_ERROR,
-            "daemon state=%s active=%s policy=%s module=%s profile=%s duration=%lluus",
+            "daemon state=%s active=%s policy=%s module=%s profile=%s case=%s duration=%lluus",
             test_daemon_state_name((Test_Daemon_State)payload->daemon_state),
             test_daemon_request_kind_name((Test_Daemon_Request_Kind)active->kind),
             test_daemon_admission_policy_name((Test_Daemon_Admission_Policy)active->admission_policy),
             active->module_name[0] != '\0' ? active->module_name : "<none>",
             active->profile_name[0] != '\0' ? active->profile_name : "<none>",
+            active->case_name[0] != '\0' ? active->case_name : "<all>",
             (unsigned long long)active->active_duration_usec);
 }
 
@@ -291,7 +304,7 @@ bool test_daemon_client_cleanup_stale_artifacts(void) {
 
 static bool test_daemon_client_build_run_argv(const Test_Runner_Request *request,
                                               int *out_argc,
-                                              const char *argv_buf[3]) {
+                                              const char *argv_buf[5]) {
     const Test_Runner_Module_Def *module = NULL;
     const Test_Runner_Profile_Def *profile = NULL;
     int argc = 0;
@@ -316,6 +329,11 @@ static bool test_daemon_client_build_run_argv(const Test_Runner_Request *request
             return false;
         }
         argv_buf[argc++] = profile->front_door_flag;
+    }
+
+    if (request->case_name[0] != '\0') {
+        argv_buf[argc++] = "--case";
+        argv_buf[argc++] = request->case_name;
     }
 
     *out_argc = argc;
@@ -372,6 +390,12 @@ static void test_daemon_client_log_watch_result(const Test_Daemon_Result_Payload
     if (payload->stderr_log_path[0] != '\0') {
         fprintf(stderr, "[watch] stderr log: %s\n", payload->stderr_log_path);
     }
+    if (payload->failure_summary[0] != '\0') {
+        fprintf(stderr, "%s", payload->failure_summary);
+        if (payload->failure_summary[strlen(payload->failure_summary) - 1] != '\n') {
+            fputc('\n', stderr);
+        }
+    }
     fflush(stderr);
 }
 
@@ -379,7 +403,7 @@ bool test_daemon_client_run_request(const Test_Runner_Request *request,
                                     Test_Runner_Result *out_result) {
     Test_Daemon_Message message = {0};
     Test_Daemon_Result_Payload payload = {0};
-    const char *argv_buf[3] = {0};
+    const char *argv_buf[5] = {0};
     int argc = 0;
     int fd = -1;
     bool ok = false;
@@ -437,6 +461,13 @@ bool test_daemon_client_run_request(const Test_Runner_Request *request,
                 }
                 memcpy(&payload, message.payload, sizeof(payload));
                 if (out_result && !test_daemon_client_copy_result(out_result, &payload)) goto defer;
+                if (payload.runner_ok == 0 && payload.failure_summary[0] != '\0') {
+                    fprintf(stderr, "%s", payload.failure_summary);
+                    if (payload.failure_summary[strlen(payload.failure_summary) - 1] != '\n') {
+                        fputc('\n', stderr);
+                    }
+                    fflush(stderr);
+                }
                 ok = payload.runner_ok != 0;
                 goto defer;
 

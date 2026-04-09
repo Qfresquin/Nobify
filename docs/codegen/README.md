@@ -20,6 +20,7 @@ variants.
 ## Normative Contract
 
 - [Runtime contract](./codegen_runtime_contract.md)
+- [Supported subset](./generated_backend_supported_subset.md)
 
 ## Dependencies
 

@@ -2,7 +2,6 @@
 #define _GNU_SOURCE
 #endif
 
-#include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +11,8 @@
 #define NOB_IMPLEMENTATION
 #define NOB_NO_ECHO
 #include "nob.h"
+
+#include "../test_artifact_parity_corpus_manifest.h"
 
 #if defined(_WIN32)
 #include <process.h>
@@ -25,381 +26,10 @@
 #define PATH_MAX 4096
 #endif
 
-#define SNAPSHOT_MANIFEST_PATH "test_v2/artifact_parity/real_projects/manifest.json"
-#define SNAPSHOT_ARCHIVE_ROOT "test_v2/artifact_parity/real_projects/archives"
 #define SNAPSHOT_PATH_MAX PATH_MAX
 
-typedef struct {
-    char **items;
-    size_t count;
-    size_t capacity;
-} Snapshot_String_List;
-
-typedef struct {
-    char *name;
-    char *upstream_url;
-    char *archive_url;
-    char *pinned_ref;
-    char *archive_prefix;
-    Snapshot_String_List retain_paths;
-} Snapshot_Project;
-
-typedef struct {
-    Snapshot_Project *items;
-    size_t count;
-    size_t capacity;
-} Snapshot_Project_List;
-
-static char *snapshot_strdup(const char *text) {
-    size_t size = 0;
-    char *copy = NULL;
-    if (!text) return NULL;
-    size = strlen(text) + 1;
-    copy = (char*)malloc(size);
-    if (!copy) {
-        nob_log(NOB_ERROR, "out of memory while duplicating string");
-        return NULL;
-    }
-    memcpy(copy, text, size);
-    return copy;
-}
-
-static void snapshot_string_list_free(Snapshot_String_List *list) {
-    if (!list) return;
-    for (size_t i = 0; i < list->count; ++i) {
-        free(list->items[i]);
-    }
-    nob_da_free(*list);
-    list->count = 0;
-    list->capacity = 0;
-}
-
-static void snapshot_project_free(Snapshot_Project *project) {
-    if (!project) return;
-    free(project->name);
-    free(project->upstream_url);
-    free(project->archive_url);
-    free(project->pinned_ref);
-    free(project->archive_prefix);
-    snapshot_string_list_free(&project->retain_paths);
-    memset(project, 0, sizeof(*project));
-}
-
-static void snapshot_project_list_free(Snapshot_Project_List *projects) {
-    if (!projects) return;
-    for (size_t i = 0; i < projects->count; ++i) {
-        snapshot_project_free(&projects->items[i]);
-    }
-    nob_da_free(*projects);
-    projects->count = 0;
-    projects->capacity = 0;
-}
-
-static void snapshot_skip_ws(Nob_String_View *sv) {
-    while (sv && sv->count > 0 && isspace((unsigned char)sv->data[0])) {
-        nob_sv_chop_left(sv, 1);
-    }
-}
-
-static bool snapshot_consume_char(Nob_String_View *sv, char expected) {
-    snapshot_skip_ws(sv);
-    if (!sv || sv->count == 0 || sv->data[0] != expected) {
-        nob_log(NOB_ERROR, "json parse error: expected '%c'", expected);
-        return false;
-    }
-    nob_sv_chop_left(sv, 1);
-    return true;
-}
-
-static bool snapshot_parse_json_string(Nob_String_View *sv, char **out) {
-    Nob_String_Builder sb = {0};
-    bool result = false;
-
-    if (out) *out = NULL;
-    snapshot_skip_ws(sv);
-    if (!sv || !out || sv->count == 0 || sv->data[0] != '"') {
-        nob_log(NOB_ERROR, "json parse error: expected string");
-        return false;
-    }
-
-    nob_sv_chop_left(sv, 1);
-    while (sv->count > 0) {
-        char ch = sv->data[0];
-        nob_sv_chop_left(sv, 1);
-        if (ch == '"') {
-            nob_da_append(&sb, '\0');
-            *out = snapshot_strdup(sb.items ? sb.items : "");
-            result = *out != NULL;
-            goto defer;
-        }
-        if (ch == '\\') {
-            char esc = 0;
-            if (sv->count == 0) {
-                nob_log(NOB_ERROR, "json parse error: truncated escape sequence");
-                goto defer;
-            }
-            esc = sv->data[0];
-            nob_sv_chop_left(sv, 1);
-            switch (esc) {
-            case '"': ch = '"'; break;
-            case '\\': ch = '\\'; break;
-            case '/': ch = '/'; break;
-            case 'b': ch = '\b'; break;
-            case 'f': ch = '\f'; break;
-            case 'n': ch = '\n'; break;
-            case 'r': ch = '\r'; break;
-            case 't': ch = '\t'; break;
-            default:
-                nob_log(NOB_ERROR, "json parse error: unsupported escape \\%c", esc);
-                goto defer;
-            }
-        }
-        nob_da_append(&sb, ch);
-    }
-
-    nob_log(NOB_ERROR, "json parse error: unterminated string");
-
-defer:
-    nob_da_free(sb);
-    return result;
-}
-
-static bool snapshot_skip_json_value(Nob_String_View *sv);
-
-static bool snapshot_skip_json_array(Nob_String_View *sv) {
-    if (!snapshot_consume_char(sv, '[')) return false;
-    snapshot_skip_ws(sv);
-    if (sv->count > 0 && sv->data[0] == ']') {
-        nob_sv_chop_left(sv, 1);
-        return true;
-    }
-    for (;;) {
-        if (!snapshot_skip_json_value(sv)) return false;
-        snapshot_skip_ws(sv);
-        if (sv->count > 0 && sv->data[0] == ']') {
-            nob_sv_chop_left(sv, 1);
-            return true;
-        }
-        if (!snapshot_consume_char(sv, ',')) return false;
-    }
-}
-
-static bool snapshot_skip_json_object(Nob_String_View *sv) {
-    char *key = NULL;
-    if (!snapshot_consume_char(sv, '{')) return false;
-    snapshot_skip_ws(sv);
-    if (sv->count > 0 && sv->data[0] == '}') {
-        nob_sv_chop_left(sv, 1);
-        return true;
-    }
-    for (;;) {
-        free(key);
-        key = NULL;
-        if (!snapshot_parse_json_string(sv, &key)) goto fail;
-        if (!snapshot_consume_char(sv, ':')) goto fail;
-        if (!snapshot_skip_json_value(sv)) goto fail;
-        snapshot_skip_ws(sv);
-        if (sv->count > 0 && sv->data[0] == '}') {
-            nob_sv_chop_left(sv, 1);
-            free(key);
-            return true;
-        }
-        if (!snapshot_consume_char(sv, ',')) goto fail;
-    }
-
-fail:
-    free(key);
-    return false;
-}
-
-static bool snapshot_skip_json_atom(Nob_String_View *sv) {
-    size_t count = 0;
-    snapshot_skip_ws(sv);
-    while (count < sv->count) {
-        char ch = sv->data[count];
-        if (isspace((unsigned char)ch) || ch == ',' || ch == ']' || ch == '}') break;
-        count += 1;
-    }
-    if (count == 0) {
-        nob_log(NOB_ERROR, "json parse error: expected atom");
-        return false;
-    }
-    nob_sv_chop_left(sv, count);
-    return true;
-}
-
-static bool snapshot_skip_json_value(Nob_String_View *sv) {
-    snapshot_skip_ws(sv);
-    if (!sv || sv->count == 0) {
-        nob_log(NOB_ERROR, "json parse error: unexpected end of input");
-        return false;
-    }
-    switch (sv->data[0]) {
-    case '"': {
-        char *tmp = NULL;
-        bool ok = snapshot_parse_json_string(sv, &tmp);
-        free(tmp);
-        return ok;
-    }
-    case '{': return snapshot_skip_json_object(sv);
-    case '[': return snapshot_skip_json_array(sv);
-    default: return snapshot_skip_json_atom(sv);
-    }
-}
-
-static bool snapshot_parse_string_array(Nob_String_View *sv, Snapshot_String_List *out) {
-    char *value = NULL;
-    if (!out) return false;
-    if (!snapshot_consume_char(sv, '[')) return false;
-    snapshot_skip_ws(sv);
-    if (sv->count > 0 && sv->data[0] == ']') {
-        nob_sv_chop_left(sv, 1);
-        return true;
-    }
-    for (;;) {
-        value = NULL;
-        if (!snapshot_parse_json_string(sv, &value)) return false;
-        nob_da_append(out, value);
-        snapshot_skip_ws(sv);
-        if (sv->count > 0 && sv->data[0] == ']') {
-            nob_sv_chop_left(sv, 1);
-            return true;
-        }
-        if (!snapshot_consume_char(sv, ',')) return false;
-    }
-}
-
-static bool snapshot_parse_project(Nob_String_View *sv, Snapshot_Project *project) {
-    char *key = NULL;
-    bool ok = false;
-
-    if (!project) return false;
-    if (!snapshot_consume_char(sv, '{')) return false;
-
-    snapshot_skip_ws(sv);
-    if (sv->count > 0 && sv->data[0] == '}') {
-        nob_sv_chop_left(sv, 1);
-        goto validate;
-    }
-
-    for (;;) {
-        free(key);
-        key = NULL;
-        if (!snapshot_parse_json_string(sv, &key)) goto defer;
-        if (!snapshot_consume_char(sv, ':')) goto defer;
-
-        if (strcmp(key, "name") == 0) {
-            if (!snapshot_parse_json_string(sv, &project->name)) goto defer;
-        } else if (strcmp(key, "upstream_url") == 0) {
-            if (!snapshot_parse_json_string(sv, &project->upstream_url)) goto defer;
-        } else if (strcmp(key, "archive_url") == 0) {
-            if (!snapshot_parse_json_string(sv, &project->archive_url)) goto defer;
-        } else if (strcmp(key, "pinned_ref") == 0) {
-            if (!snapshot_parse_json_string(sv, &project->pinned_ref)) goto defer;
-        } else if (strcmp(key, "archive_prefix") == 0) {
-            if (!snapshot_parse_json_string(sv, &project->archive_prefix)) goto defer;
-        } else if (strcmp(key, "retain_paths") == 0) {
-            if (!snapshot_parse_string_array(sv, &project->retain_paths)) goto defer;
-        } else {
-            if (!snapshot_skip_json_value(sv)) goto defer;
-        }
-
-        snapshot_skip_ws(sv);
-        if (sv->count > 0 && sv->data[0] == '}') {
-            nob_sv_chop_left(sv, 1);
-            break;
-        }
-        if (!snapshot_consume_char(sv, ',')) goto defer;
-    }
-
-validate:
-    if (!project->name || !project->upstream_url || !project->archive_url ||
-        !project->pinned_ref || !project->archive_prefix || project->retain_paths.count == 0) {
-        nob_log(NOB_ERROR, "manifest project is missing required fields");
-        goto defer;
-    }
-    ok = true;
-
-defer:
-    free(key);
-    return ok;
-}
-
-static bool snapshot_parse_projects_array(Nob_String_View *sv, Snapshot_Project_List *projects) {
-    Snapshot_Project project = {0};
-    if (!projects) return false;
-    if (!snapshot_consume_char(sv, '[')) return false;
-    snapshot_skip_ws(sv);
-    if (sv->count > 0 && sv->data[0] == ']') {
-        nob_sv_chop_left(sv, 1);
-        return true;
-    }
-    for (;;) {
-        memset(&project, 0, sizeof(project));
-        if (!snapshot_parse_project(sv, &project)) {
-            snapshot_project_free(&project);
-            return false;
-        }
-        nob_da_append(projects, project);
-        snapshot_skip_ws(sv);
-        if (sv->count > 0 && sv->data[0] == ']') {
-            nob_sv_chop_left(sv, 1);
-            return true;
-        }
-        if (!snapshot_consume_char(sv, ',')) return false;
-    }
-}
-
-static bool snapshot_load_manifest(Snapshot_Project_List *projects) {
-    Nob_String_Builder file = {0};
-    Nob_String_View sv = {0};
-    char *key = NULL;
-    bool ok = false;
-
-    if (!projects) return false;
-    if (!nob_read_entire_file(SNAPSHOT_MANIFEST_PATH, &file)) goto defer;
-    sv = nob_sb_to_sv(file);
-
-    if (!snapshot_consume_char(&sv, '{')) goto defer;
-    snapshot_skip_ws(&sv);
-    if (sv.count > 0 && sv.data[0] == '}') {
-        nob_sv_chop_left(&sv, 1);
-        ok = true;
-        goto defer;
-    }
-
-    for (;;) {
-        free(key);
-        key = NULL;
-        if (!snapshot_parse_json_string(&sv, &key)) goto defer;
-        if (!snapshot_consume_char(&sv, ':')) goto defer;
-        if (strcmp(key, "projects") == 0) {
-            if (!snapshot_parse_projects_array(&sv, projects)) goto defer;
-        } else {
-            if (!snapshot_skip_json_value(&sv)) goto defer;
-        }
-        snapshot_skip_ws(&sv);
-        if (sv.count > 0 && sv.data[0] == '}') {
-            nob_sv_chop_left(&sv, 1);
-            break;
-        }
-        if (!snapshot_consume_char(&sv, ',')) goto defer;
-    }
-
-    snapshot_skip_ws(&sv);
-    if (sv.count != 0) {
-        nob_log(NOB_ERROR, "json parse error: trailing data in manifest");
-        goto defer;
-    }
-
-    ok = true;
-
-defer:
-    free(key);
-    nob_da_free(file);
-    if (!ok) snapshot_project_list_free(projects);
-    return ok;
-}
+typedef Artifact_Parity_Corpus_Project Snapshot_Project;
+typedef Artifact_Parity_Corpus_Project_List Snapshot_Project_List;
 
 static bool snapshot_path_join2(char out[SNAPSHOT_PATH_MAX], const char *a, const char *b) {
     if (!out || !a || !b) return false;
@@ -433,6 +63,7 @@ static bool snapshot_remove_tree_walk(Nob_Walk_Entry entry) {
 
 static bool snapshot_remove_tree_if_exists(const char *path) {
     Nob_File_Type type = NOB_FILE_OTHER;
+
     if (!path || path[0] == '\0') return false;
     if (!nob_file_exists(path)) return true;
     type = nob_get_file_type(path);
@@ -467,7 +98,8 @@ static bool snapshot_copy_allowed_path(const char *tree_root,
         return nob_copy_directory_recursively(src_path, dst_path);
     }
 
-    if (snprintf(dst_parent, sizeof(dst_parent), "%s", nob_temp_dir_name(dst_path)) >= (int)sizeof(dst_parent)) {
+    if (snprintf(dst_parent, sizeof(dst_parent), "%s", nob_temp_dir_name(dst_path)) >=
+        (int)sizeof(dst_parent)) {
         return false;
     }
     if (!snapshot_ensure_dir_recursive(dst_parent)) return false;
@@ -476,6 +108,8 @@ static bool snapshot_copy_allowed_path(const char *tree_root,
 
 static bool snapshot_run_download(const Snapshot_Project *project, const char *download_path) {
     Nob_Cmd cmd = {0};
+
+    if (!project || !download_path) return false;
     nob_cmd_append(&cmd, "curl", "-L", "--fail", "-o", download_path, project->archive_url);
     return nob_cmd_run(&cmd);
 }
@@ -495,6 +129,7 @@ static bool snapshot_run_pack(const char *staging_dir, const char *archive_path)
 static bool snapshot_format_date(char out[32]) {
     time_t now = 0;
     struct tm *tm_info = NULL;
+
     if (!out) return false;
     now = time(NULL);
     tm_info = localtime(&now);
@@ -505,6 +140,7 @@ static bool snapshot_format_date(char out[32]) {
 static bool snapshot_write_metadata(const Snapshot_Project *project, const char *metadata_path) {
     char date_buf[32] = {0};
     const char *json = NULL;
+
     if (!project || !metadata_path) return false;
     if (!snapshot_format_date(date_buf)) {
         nob_log(NOB_ERROR, "failed to format snapshot date");
@@ -525,6 +161,7 @@ static bool snapshot_write_metadata(const Snapshot_Project *project, const char 
 }
 
 static bool snapshot_refresh_project(const Snapshot_Project *project) {
+    char archive_root[SNAPSHOT_PATH_MAX] = {0};
     char archive_path[SNAPSHOT_PATH_MAX] = {0};
     char metadata_path[SNAPSHOT_PATH_MAX] = {0};
     char staging_dir[SNAPSHOT_PATH_MAX] = {0};
@@ -534,12 +171,18 @@ static bool snapshot_refresh_project(const Snapshot_Project *project) {
     bool ok = false;
 
     if (!project) return false;
-    if (!snapshot_ensure_dir_recursive(SNAPSHOT_ARCHIVE_ROOT)) return false;
-    if (!snapshot_path_join2(archive_path, SNAPSHOT_ARCHIVE_ROOT, nob_temp_sprintf("%s.tar.gz", project->name)) ||
-        !snapshot_path_join2(metadata_path, SNAPSHOT_ARCHIVE_ROOT, nob_temp_sprintf("%s.json", project->name)) ||
-        !snapshot_path_join2(staging_dir, SNAPSHOT_ARCHIVE_ROOT, nob_temp_sprintf(".staging_%s", project->name)) ||
+    if (snprintf(archive_root,
+                 sizeof(archive_root),
+                 "%s",
+                 ARTIFACT_PARITY_CORPUS_ARCHIVE_ROOT) >= (int)sizeof(archive_root)) {
+        return false;
+    }
+    if (!snapshot_ensure_dir_recursive(archive_root)) return false;
+    if (!snapshot_path_join2(archive_path, archive_root, nob_temp_sprintf("%s.tar.gz", project->name)) ||
+        !snapshot_path_join2(metadata_path, archive_root, nob_temp_sprintf("%s.json", project->name)) ||
+        !snapshot_path_join2(staging_dir, archive_root, nob_temp_sprintf(".staging_%s", project->name)) ||
         !snapshot_path_join2(temp_root,
-                             SNAPSHOT_ARCHIVE_ROOT,
+                             archive_root,
                              nob_temp_sprintf(".tmp_%s_%lld_%d",
                                               project->name,
                                               (long long)time(NULL),
@@ -587,16 +230,18 @@ static void snapshot_print_usage(FILE *stream, const char *program) {
             "Usage: %s [--list] [project ...]\n"
             "\n"
             "Refreshes pinned real-project corpus archives from\n"
-            "`test_v2/artifact_parity/real_projects/manifest.json`.\n"
+            "`%s`.\n"
             "\n"
             "Options:\n"
             "  --list    List known projects without downloading anything.\n"
             "  --help    Show this message.\n",
-            program);
+            program,
+            ARTIFACT_PARITY_CORPUS_MANIFEST_PATH);
 }
 
 static bool snapshot_name_selected(const char *name, int argc, char **argv, bool *matched) {
     bool any_names = false;
+
     if (!name) return false;
     for (int i = 1; i < argc; ++i) {
         if (argv[i][0] == '-') continue;
@@ -630,7 +275,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (!snapshot_load_manifest(&projects)) return 1;
+    if (!artifact_parity_corpus_manifest_load(&projects)) return 1;
 
     if (list_only) {
         for (size_t i = 0; i < projects.count; ++i) {
@@ -664,6 +309,6 @@ int main(int argc, char **argv) {
     result = 0;
 
 defer:
-    snapshot_project_list_free(&projects);
+    artifact_parity_corpus_manifest_free(&projects);
     return result;
 }

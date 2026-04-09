@@ -6,7 +6,9 @@
 #include <stdint.h>
 
 #define TEST_RUNNER_PATH_CAPACITY 4096
+#define TEST_RUNNER_CASE_NAME_CAPACITY 256
 #define TEST_RUNNER_SUMMARY_CAPACITY 512
+#define TEST_RUNNER_FAILURE_SUMMARY_CAPACITY 2048
 
 typedef enum {
     TEST_RUNNER_ACTION_RUN_MODULE = 0,
@@ -29,6 +31,9 @@ typedef enum {
     TEST_RUNNER_MODULE_CODEGEN,
     TEST_RUNNER_MODULE_ARTIFACT_PARITY,
     TEST_RUNNER_MODULE_ARTIFACT_PARITY_CORPUS,
+    TEST_RUNNER_MODULE_CODEGEN_RENDER,
+    TEST_RUNNER_MODULE_CODEGEN_BUILD,
+    TEST_RUNNER_MODULE_CODEGEN_REJECT,
     TEST_RUNNER_MODULE_COUNT,
 } Test_Runner_Module_Id;
 
@@ -55,6 +60,7 @@ typedef struct {
     const char *name;
     bool include_in_aggregate;
     bool explicit_heavy;
+    bool case_filter_supported;
     Test_Runner_Profile_Id default_local_profile;
     bool watch_auto_eligible;
     const char *const *watch_roots;
@@ -77,6 +83,7 @@ typedef struct {
     Test_Runner_Action action;
     Test_Runner_Module_Id module_id;
     Test_Runner_Profile_Id profile_id;
+    char case_name[TEST_RUNNER_CASE_NAME_CAPACITY];
     bool verbose;
     bool force;
     bool skip_preflight;
@@ -102,10 +109,12 @@ typedef struct {
 typedef struct {
     bool ok;
     int exit_code;
+    char case_name[TEST_RUNNER_CASE_NAME_CAPACITY];
     char preserved_workspace_path[TEST_RUNNER_PATH_CAPACITY];
     char stdout_log_path[TEST_RUNNER_PATH_CAPACITY];
     char stderr_log_path[TEST_RUNNER_PATH_CAPACITY];
     char summary[TEST_RUNNER_SUMMARY_CAPACITY];
+    char failure_summary[TEST_RUNNER_FAILURE_SUMMARY_CAPACITY];
     Test_Runner_Build_Stats build_stats;
 } Test_Runner_Result;
 

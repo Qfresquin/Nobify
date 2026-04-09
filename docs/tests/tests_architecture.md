@@ -191,6 +191,18 @@ The active daemon roadmap now owns the full human-facing test command surface.
   stay out of scope in this wave.
   Current aggregate status: excluded from the default aggregate path.
 
+- `artifact-parity-corpus`
+  Focus: manifest-driven real-project hardening for the pinned corpus under
+  `test_v2/artifact_parity/real_projects/manifest.json`. This suite is the
+  execution owner for the product-facing corpus claim: it runs the pinned
+  projects through build/install/consumer parity, keeps project names as the
+  stable `--case` surface, and emits actionable project+stage failures when a
+  real-project run regresses. The current docs-only release gate explicitly
+  includes `./build/nob test artifact-parity-corpus` alongside
+  `./build/nob test artifact-parity` and
+  `./build/nob test evaluator-codegen-diff`.
+  Current aggregate status: excluded from the default aggregate path.
+
 - `evaluator-codegen-diff`
   Focus: evaluator-corpus-backed classification of implemented command and
   subcommand surfaces into explicit closure-program states, with phase-aware
@@ -201,9 +213,12 @@ The active daemon roadmap now owns the full human-facing test command surface.
   to ensure that every `FULL` evaluator command is inventoried and that
   curated subcommand families such as `file()`, `string()`, `list()`,
   `math()`, `cmake_language()`, `cmake_path()`, and `ctest_*` do not silently
-  drift out of downstream/backend ownership. This suite is explicit-only on
-  purpose: it is a heavier host-sensitive closure harness, not a default smoke
-  signal.
+  drift out of downstream/backend ownership. In `C4` it also cross-checks the
+  real-project corpus catalog, corpus dispositions, and the generated-backend
+  supported-subset docs without rerunning the corpus itself. This suite is
+  explicit-only on purpose: it is a heavier host-sensitive closure harness,
+  not a default smoke signal, and it participates in the docs-only release
+  gate through `./build/nob test evaluator-codegen-diff`.
   Current aggregate status: excluded from the default aggregate path.
 
 - `evaluator-integration`

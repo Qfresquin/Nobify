@@ -47,8 +47,16 @@ Current supported human-facing baseline commands now run through `./build/nob te
   `./build/nob test daemon status`
 - explicit artifact parity suite:
   `./build/nob test artifact-parity`
+- explicit real-project corpus suite:
+  `./build/nob test artifact-parity-corpus`
 - explicit closure harness suite:
   `./build/nob test evaluator-codegen-diff`
+
+The current docs-only release gate for the generated-backend claim is:
+
+- `./build/nob test evaluator-codegen-diff`
+- `./build/nob test artifact-parity`
+- `./build/nob test artifact-parity-corpus`
 
 The active daemon roadmap now lands its T6 surface on:
 
@@ -61,6 +69,7 @@ The active daemon roadmap now lands its T6 surface on:
 - `./build/nob test watch auto`
 - `./build/nob test daemon start|stop|status`
 - `./build/nob test artifact-parity`
+- `./build/nob test artifact-parity-corpus`
 - `./build/nob test evaluator-codegen-diff`
 - daemon front-door profile flags:
   `--verbose`, `--asan`, `--ubsan`, `--msan`, `--san`, `--cov`
@@ -75,8 +84,8 @@ Current T6 limitation:
 - default watch mode is compact and failure-first; use `--verbose` to print
   roots, full routed path/module sets, and per-rerun fast-path detail.
 
-`artifact-parity` and `evaluator-codegen-diff` remain outside default smoke
-while they stay heavier and host-sensitive.
+`artifact-parity`, `artifact-parity-corpus`, and `evaluator-codegen-diff`
+remain outside default smoke while they stay heavier and host-sensitive.
 
 ## Relationship To Product Contracts
 
@@ -86,5 +95,7 @@ while they stay heavier and host-sensitive.
   [`./test_daemon_roadmap.md`](./test_daemon_roadmap.md)
 - Generated runtime contract:
   [`../codegen/codegen_runtime_contract.md`](../codegen/codegen_runtime_contract.md)
+- Generated backend supported subset:
+  [`../codegen/generated_backend_supported_subset.md`](../codegen/generated_backend_supported_subset.md)
 - Build-model replay contract:
   [`../build_model/build_model_replay.md`](../build_model/build_model_replay.md)

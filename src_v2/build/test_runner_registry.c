@@ -268,6 +268,7 @@ static void append_v2_evaluator_codegen_diff_test_sources(Nob_Cmd *cmd) {
                    "test_v2/test_v2_assert.c",
                    "test_v2/test_snapshot_support.c",
                    "test_v2/test_workspace.c",
+                   "test_v2/artifact_parity/test_artifact_parity_corpus_manifest.c",
                    "test_v2/evaluator/test_evaluator_v2_support.c",
                    "test_v2/codegen/test_codegen_v2_support.c",
                    "test_v2/evaluator_codegen_diff/test_evaluator_codegen_diff_v2_main.c",
@@ -317,6 +318,45 @@ static void append_v2_codegen_test_sources(Nob_Cmd *cmd) {
                    "test_v2/codegen/test_codegen_v2_suite_reject.c");
 }
 
+static void append_v2_codegen_render_test_sources(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+                   "test_v2/test_host_fixture_support.c",
+                   "test_v2/test_manifest_support.c",
+                   "test_v2/test_semantic_pipeline.c",
+                   "test_v2/test_snapshot_support.c",
+                   "test_v2/test_v2_assert.c",
+                   "test_v2/test_workspace.c",
+                   "test_v2/codegen/test_codegen_v2_support.c",
+                   "test_v2/codegen/test_codegen_v2_render_main.c",
+                   "test_v2/codegen/test_codegen_v2_suite_render.c");
+}
+
+static void append_v2_codegen_build_test_sources(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+                   "test_v2/test_host_fixture_support.c",
+                   "test_v2/test_manifest_support.c",
+                   "test_v2/test_semantic_pipeline.c",
+                   "test_v2/test_snapshot_support.c",
+                   "test_v2/test_v2_assert.c",
+                   "test_v2/test_workspace.c",
+                   "test_v2/codegen/test_codegen_v2_support.c",
+                   "test_v2/codegen/test_codegen_v2_build_main.c",
+                   "test_v2/codegen/test_codegen_v2_suite_build.c");
+}
+
+static void append_v2_codegen_reject_test_sources(Nob_Cmd *cmd) {
+    nob_cmd_append(cmd,
+                   "test_v2/test_host_fixture_support.c",
+                   "test_v2/test_manifest_support.c",
+                   "test_v2/test_semantic_pipeline.c",
+                   "test_v2/test_snapshot_support.c",
+                   "test_v2/test_v2_assert.c",
+                   "test_v2/test_workspace.c",
+                   "test_v2/codegen/test_codegen_v2_support.c",
+                   "test_v2/codegen/test_codegen_v2_reject_main.c",
+                   "test_v2/codegen/test_codegen_v2_suite_reject.c");
+}
+
 static void append_v2_artifact_parity_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
                    "test_v2/test_host_fixture_support.c",
@@ -325,6 +365,7 @@ static void append_v2_artifact_parity_test_sources(Nob_Cmd *cmd) {
                    "test_v2/test_v2_assert.c",
                    "test_v2/test_snapshot_support.c",
                    "test_v2/test_workspace.c",
+                   "test_v2/artifact_parity/test_artifact_parity_corpus_manifest.c",
                    "test_v2/artifact_parity/test_artifact_parity_v2_support.c",
                    "test_v2/artifact_parity/test_artifact_parity_v2_main.c",
                    "test_v2/artifact_parity/test_artifact_parity_v2_suite.c");
@@ -337,6 +378,7 @@ static void append_v2_artifact_parity_corpus_test_sources(Nob_Cmd *cmd) {
                    "test_v2/test_v2_assert.c",
                    "test_v2/test_snapshot_support.c",
                    "test_v2/test_workspace.c",
+                   "test_v2/artifact_parity/test_artifact_parity_corpus_manifest.c",
                    "test_v2/artifact_parity/test_artifact_parity_v2_support.c",
                    "test_v2/artifact_parity/test_artifact_parity_corpus_v2_main.c",
                    "test_v2/artifact_parity/test_artifact_parity_corpus_v2_suite.c");
@@ -399,6 +441,30 @@ static void append_test_pipeline_all_sources(Nob_Cmd *cmd) {
 
 static void append_test_codegen_all_sources(Nob_Cmd *cmd) {
     append_v2_codegen_test_sources(cmd);
+    append_v2_evaluator_runtime_sources(cmd);
+    append_v2_build_model_runtime_sources(cmd);
+    append_v2_codegen_runtime_sources(cmd);
+    append_v2_pcre_sources(cmd);
+}
+
+static void append_test_codegen_render_all_sources(Nob_Cmd *cmd) {
+    append_v2_codegen_render_test_sources(cmd);
+    append_v2_evaluator_runtime_sources(cmd);
+    append_v2_build_model_runtime_sources(cmd);
+    append_v2_codegen_runtime_sources(cmd);
+    append_v2_pcre_sources(cmd);
+}
+
+static void append_test_codegen_build_all_sources(Nob_Cmd *cmd) {
+    append_v2_codegen_build_test_sources(cmd);
+    append_v2_evaluator_runtime_sources(cmd);
+    append_v2_build_model_runtime_sources(cmd);
+    append_v2_codegen_runtime_sources(cmd);
+    append_v2_pcre_sources(cmd);
+}
+
+static void append_test_codegen_reject_all_sources(Nob_Cmd *cmd) {
+    append_v2_codegen_reject_test_sources(cmd);
     append_v2_evaluator_runtime_sources(cmd);
     append_v2_build_model_runtime_sources(cmd);
     append_v2_codegen_runtime_sources(cmd);
@@ -735,6 +801,7 @@ static const Test_Runner_Module_Internal TEST_RUNNER_MODULES[] = {
             .name = "arena",
             .include_in_aggregate = true,
             .explicit_heavy = false,
+            .case_filter_supported = true,
             .default_local_profile = TEST_RUNNER_PROFILE_FAST,
             .watch_auto_eligible = true,
             .watch_roots = TEST_RUNNER_ARENA_WATCH_ROOTS,
@@ -748,6 +815,7 @@ static const Test_Runner_Module_Internal TEST_RUNNER_MODULES[] = {
             .name = "lexer",
             .include_in_aggregate = true,
             .explicit_heavy = false,
+            .case_filter_supported = true,
             .default_local_profile = TEST_RUNNER_PROFILE_FAST,
             .watch_auto_eligible = true,
             .watch_roots = TEST_RUNNER_LEXER_WATCH_ROOTS,
@@ -761,6 +829,7 @@ static const Test_Runner_Module_Internal TEST_RUNNER_MODULES[] = {
             .name = "parser",
             .include_in_aggregate = true,
             .explicit_heavy = false,
+            .case_filter_supported = true,
             .default_local_profile = TEST_RUNNER_PROFILE_FAST,
             .watch_auto_eligible = true,
             .watch_roots = TEST_RUNNER_PARSER_WATCH_ROOTS,
@@ -774,6 +843,7 @@ static const Test_Runner_Module_Internal TEST_RUNNER_MODULES[] = {
             .name = "build-model",
             .include_in_aggregate = true,
             .explicit_heavy = false,
+            .case_filter_supported = true,
             .default_local_profile = TEST_RUNNER_PROFILE_FAST,
             .watch_auto_eligible = true,
             .watch_roots = TEST_RUNNER_BUILD_MODEL_WATCH_ROOTS,
@@ -787,6 +857,7 @@ static const Test_Runner_Module_Internal TEST_RUNNER_MODULES[] = {
             .name = "evaluator",
             .include_in_aggregate = true,
             .explicit_heavy = false,
+            .case_filter_supported = true,
             .default_local_profile = TEST_RUNNER_PROFILE_FAST,
             .watch_auto_eligible = true,
             .watch_roots = TEST_RUNNER_EVALUATOR_WATCH_ROOTS,
@@ -800,6 +871,7 @@ static const Test_Runner_Module_Internal TEST_RUNNER_MODULES[] = {
             .name = "evaluator-diff",
             .include_in_aggregate = false,
             .explicit_heavy = true,
+            .case_filter_supported = false,
             .default_local_profile = TEST_RUNNER_PROFILE_FAST,
             .watch_auto_eligible = true,
             .watch_roots = TEST_RUNNER_EVALUATOR_DIFF_WATCH_ROOTS,
@@ -813,6 +885,7 @@ static const Test_Runner_Module_Internal TEST_RUNNER_MODULES[] = {
             .name = "evaluator-codegen-diff",
             .include_in_aggregate = false,
             .explicit_heavy = true,
+            .case_filter_supported = true,
             .default_local_profile = TEST_RUNNER_PROFILE_FAST,
             .watch_auto_eligible = true,
             .watch_roots = TEST_RUNNER_EVALUATOR_CODEGEN_DIFF_WATCH_ROOTS,
@@ -826,6 +899,7 @@ static const Test_Runner_Module_Internal TEST_RUNNER_MODULES[] = {
             .name = "evaluator-integration",
             .include_in_aggregate = false,
             .explicit_heavy = true,
+            .case_filter_supported = true,
             .default_local_profile = TEST_RUNNER_PROFILE_FAST,
             .watch_auto_eligible = true,
             .watch_roots = TEST_RUNNER_EVALUATOR_INTEGRATION_WATCH_ROOTS,
@@ -839,6 +913,7 @@ static const Test_Runner_Module_Internal TEST_RUNNER_MODULES[] = {
             .name = "pipeline",
             .include_in_aggregate = true,
             .explicit_heavy = false,
+            .case_filter_supported = true,
             .default_local_profile = TEST_RUNNER_PROFILE_FAST,
             .watch_auto_eligible = true,
             .watch_roots = TEST_RUNNER_PIPELINE_WATCH_ROOTS,
@@ -852,6 +927,7 @@ static const Test_Runner_Module_Internal TEST_RUNNER_MODULES[] = {
             .name = "codegen",
             .include_in_aggregate = true,
             .explicit_heavy = false,
+            .case_filter_supported = true,
             .default_local_profile = TEST_RUNNER_PROFILE_FAST,
             .watch_auto_eligible = true,
             .watch_roots = TEST_RUNNER_CODEGEN_WATCH_ROOTS,
@@ -865,6 +941,7 @@ static const Test_Runner_Module_Internal TEST_RUNNER_MODULES[] = {
             .name = "artifact-parity",
             .include_in_aggregate = false,
             .explicit_heavy = true,
+            .case_filter_supported = true,
             .default_local_profile = TEST_RUNNER_PROFILE_FAST,
             .watch_auto_eligible = true,
             .watch_roots = TEST_RUNNER_ARTIFACT_PARITY_WATCH_ROOTS,
@@ -878,12 +955,52 @@ static const Test_Runner_Module_Internal TEST_RUNNER_MODULES[] = {
             .name = "artifact-parity-corpus",
             .include_in_aggregate = false,
             .explicit_heavy = true,
+            .case_filter_supported = true,
             .default_local_profile = TEST_RUNNER_PROFILE_FAST,
             .watch_auto_eligible = true,
             .watch_roots = TEST_RUNNER_ARTIFACT_PARITY_CORPUS_WATCH_ROOTS,
             .watch_root_count = NOB_ARRAY_LEN(TEST_RUNNER_ARTIFACT_PARITY_CORPUS_WATCH_ROOTS),
         },
         .append_sources = append_test_artifact_parity_corpus_all_sources,
+    },
+    {
+        .def = {
+            .id = TEST_RUNNER_MODULE_CODEGEN_RENDER,
+            .name = "codegen-render",
+            .include_in_aggregate = false,
+            .explicit_heavy = false,
+            .default_local_profile = TEST_RUNNER_PROFILE_FAST,
+            .watch_auto_eligible = false,
+            .watch_roots = TEST_RUNNER_CODEGEN_WATCH_ROOTS,
+            .watch_root_count = NOB_ARRAY_LEN(TEST_RUNNER_CODEGEN_WATCH_ROOTS),
+        },
+        .append_sources = append_test_codegen_render_all_sources,
+    },
+    {
+        .def = {
+            .id = TEST_RUNNER_MODULE_CODEGEN_BUILD,
+            .name = "codegen-build",
+            .include_in_aggregate = false,
+            .explicit_heavy = false,
+            .default_local_profile = TEST_RUNNER_PROFILE_FAST,
+            .watch_auto_eligible = false,
+            .watch_roots = TEST_RUNNER_CODEGEN_WATCH_ROOTS,
+            .watch_root_count = NOB_ARRAY_LEN(TEST_RUNNER_CODEGEN_WATCH_ROOTS),
+        },
+        .append_sources = append_test_codegen_build_all_sources,
+    },
+    {
+        .def = {
+            .id = TEST_RUNNER_MODULE_CODEGEN_REJECT,
+            .name = "codegen-reject",
+            .include_in_aggregate = false,
+            .explicit_heavy = false,
+            .default_local_profile = TEST_RUNNER_PROFILE_FAST,
+            .watch_auto_eligible = false,
+            .watch_roots = TEST_RUNNER_CODEGEN_WATCH_ROOTS,
+            .watch_root_count = NOB_ARRAY_LEN(TEST_RUNNER_CODEGEN_WATCH_ROOTS),
+        },
+        .append_sources = append_test_codegen_reject_all_sources,
     },
 };
 

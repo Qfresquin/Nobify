@@ -307,6 +307,11 @@ static void daemon_fill_request_names(const Test_Daemon_Server *server,
         }
         profile = test_runner_get_profile_def(server->current_worker_request.profile_id);
         if (profile) (void)daemon_copy_string(out_metadata->profile_name, sizeof(out_metadata->profile_name), profile->name);
+        if (server->current_worker_request.case_name[0] != '\0') {
+            (void)daemon_copy_string(out_metadata->case_name,
+                                     sizeof(out_metadata->case_name),
+                                     server->current_worker_request.case_name);
+        }
         out_metadata->module_id = module ? (uint32_t)module->id : UINT32_MAX;
         out_metadata->profile_id = profile ? (uint32_t)profile->id : UINT32_MAX;
         return;
@@ -789,7 +794,13 @@ static bool daemon_fill_status_payload(const Test_Daemon_Server *server,
                                 server->last_result.stdout_log_path) ||
             !daemon_copy_string(out_payload->stderr_log_path,
                                 sizeof(out_payload->stderr_log_path),
-                                server->last_result.stderr_log_path)) {
+                                server->last_result.stderr_log_path) ||
+            !daemon_copy_string(out_payload->case_name,
+                                sizeof(out_payload->case_name),
+                                server->last_result.case_name) ||
+            !daemon_copy_string(out_payload->failure_summary,
+                                sizeof(out_payload->failure_summary),
+                                server->last_result.failure_summary)) {
             return false;
         }
     }

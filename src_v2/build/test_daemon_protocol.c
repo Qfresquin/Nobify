@@ -329,10 +329,20 @@ bool test_daemon_result_from_runner(Test_Daemon_State daemon_state,
                                  runner_result->stderr_log_path)) {
         return false;
     }
+    if (!test_daemon_copy_string(out_payload->case_name,
+                                 sizeof(out_payload->case_name),
+                                 runner_result->case_name)) {
+        return false;
+    }
     out_payload->detail[0] = '\0';
     if (!test_daemon_copy_string(out_payload->summary,
                                  sizeof(out_payload->summary),
                                  runner_result->summary)) {
+        return false;
+    }
+    if (!test_daemon_copy_string(out_payload->failure_summary,
+                                 sizeof(out_payload->failure_summary),
+                                 runner_result->failure_summary)) {
         return false;
     }
     return true;

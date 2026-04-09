@@ -23,15 +23,14 @@ typedef struct {
 
 extern Test_V2_Cleanup_Stack g_test_v2_cleanup_stack;
 
-static inline void test_v2_emit_failure_message(const char *func, int line, const char *message) {
-    if (!func || !message) return;
-    if (line > 0) {
-        fprintf(stderr, "FAILED: %s:%d: %s\n", func, line, message);
-    } else {
-        fprintf(stderr, "FAILED: %s: %s\n", func, message);
-    }
-    fflush(stderr);
-}
+const char *test_v2_case_filter(void);
+bool test_v2_case_matches(const char *case_name);
+void test_v2_case_begin(const char *case_name);
+void test_v2_case_end(void);
+void test_v2_emit_failure_message(const char *func,
+                                  const char *file,
+                                  int line,
+                                  const char *message);
 
 static inline void test_v2_cleanup_stack_reset(void) {
     free(g_test_v2_cleanup_stack.items);
@@ -83,27 +82,35 @@ static inline void test_v2_cleanup_run_all(void) {
     static void test_##name(int *passed, int *failed, int *skipped) { \
         Test_Case_Workspace _test_ws_case = {0}; \
         Test_V2_Cleanup_Stack _test_v2_prev_cleanup_stack = test_v2_cleanup_scope_enter(); \
+        if (!test_v2_case_matches(#name)) { \
+            (*skipped)++; \
+            test_v2_cleanup_scope_leave(_test_v2_prev_cleanup_stack); \
+            return; \
+        } \
+        test_v2_case_begin(#name); \
         if (!test_ws_case_enter(&_test_ws_case, #name)) { \
-            test_v2_emit_failure_message(__func__, 0, "could not enter isolated test workspace"); \
+            test_v2_emit_failure_message(__func__, __FILE__, 0, "could not enter isolated test workspace"); \
             nob_log(NOB_ERROR, "FAILED: %s: could not enter isolated test workspace", __func__); \
             (*failed)++; \
+            test_v2_case_end(); \
             test_v2_cleanup_scope_leave(_test_v2_prev_cleanup_stack); \
             return; \
         } \
         test_impl_##name(passed, failed, skipped); \
         test_v2_cleanup_run_all(); \
         if (!test_ws_case_leave(&_test_ws_case)) { \
-            test_v2_emit_failure_message(__func__, 0, "could not cleanup isolated test workspace"); \
+            test_v2_emit_failure_message(__func__, __FILE__, 0, "could not cleanup isolated test workspace"); \
             nob_log(NOB_ERROR, "FAILED: %s: could not cleanup isolated test workspace", __func__); \
             (*failed)++; \
         } \
+        test_v2_case_end(); \
         test_v2_cleanup_scope_leave(_test_v2_prev_cleanup_stack); \
     } \
     static void test_impl_##name(int *passed, int *failed, int *skipped)
 
 #define ASSERT(cond) do { \
     if (!(cond)) { \
-        test_v2_emit_failure_message(__func__, __LINE__, #cond); \
+        test_v2_emit_failure_message(__func__, __FILE__, __LINE__, #cond); \
         nob_log(NOB_ERROR, "FAILED: %s:%d: %s", __func__, __LINE__, #cond); \
         (*failed)++; \
         return; \
@@ -112,7 +119,7 @@ static inline void test_v2_cleanup_run_all(void) {
 
 #define TEST_DEFER(cleanup_fn, cleanup_ctx) do { \
     if (!test_v2_cleanup_push((cleanup_fn), (cleanup_ctx))) { \
-        test_v2_emit_failure_message(__func__, __LINE__, "could not register deferred cleanup"); \
+        test_v2_emit_failure_message(__func__, __FILE__, __LINE__, "could not register deferred cleanup"); \
         nob_log(NOB_ERROR, "FAILED: %s:%d: could not register deferred cleanup", __func__, __LINE__); \
         (*failed)++; \
         return; \

@@ -79,6 +79,7 @@ typedef struct {
 typedef struct {
     bool verbose;
     Test_Runner_Coverage_Context coverage;
+    const Test_Runner_Request *request;
     Test_Runner_Result *out_result;
 } Test_Runner_Context;
 

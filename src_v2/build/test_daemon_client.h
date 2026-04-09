@@ -23,8 +23,10 @@ typedef struct {
     char preserved_workspace_path[TEST_RUNNER_PATH_CAPACITY];
     char stdout_log_path[TEST_RUNNER_PATH_CAPACITY];
     char stderr_log_path[TEST_RUNNER_PATH_CAPACITY];
+    char case_name[TEST_RUNNER_CASE_NAME_CAPACITY];
     char detail[TEST_RUNNER_SUMMARY_CAPACITY];
     char summary[TEST_RUNNER_SUMMARY_CAPACITY];
+    char failure_summary[TEST_RUNNER_FAILURE_SUMMARY_CAPACITY];
 } Test_Daemon_Status;
 
 bool test_daemon_client_run_request(const Test_Runner_Request *request,

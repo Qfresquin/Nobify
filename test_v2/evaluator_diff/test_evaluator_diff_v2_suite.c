@@ -2685,7 +2685,10 @@ static void run_diff_case(const Diff_Cmake_Config *config,
 
     if (!diff_build_qualified_case_name(case_pack->family_label, diff_case->name, qualified_case_name) ||
         !test_ws_case_enter(&ws, qualified_case_name)) {
-        test_v2_emit_failure_message(__func__, 0, "could not enter isolated differential test workspace");
+        test_v2_emit_failure_message(__func__,
+                                     __FILE__,
+                                     0,
+                                     "could not enter isolated differential test workspace");
         nob_log(NOB_ERROR, "FAILED: %s: could not enter isolated differential test workspace", qualified_case_name);
         (*failed)++;
         return;

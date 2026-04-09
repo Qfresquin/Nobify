@@ -3123,7 +3123,7 @@ static void evaluator_internal_cleanup_stack_failure_helper_run(int *passed, int
     Test_Case_Workspace test_ws_case = {0};
     Test_V2_Cleanup_Stack prev_cleanup_stack = test_v2_cleanup_scope_enter();
     if (!test_ws_case_enter(&test_ws_case, "evaluator_internal_cleanup_stack_failure_helper")) {
-        test_v2_emit_failure_message(__func__, 0, "could not enter isolated test workspace");
+        test_v2_emit_failure_message(__func__, __FILE__, 0, "could not enter isolated test workspace");
         nob_log(NOB_ERROR, "FAILED: %s: could not enter isolated test workspace", __func__);
         (*failed)++;
         test_v2_cleanup_scope_leave(prev_cleanup_stack);
@@ -3133,7 +3133,7 @@ static void evaluator_internal_cleanup_stack_failure_helper_run(int *passed, int
     evaluator_internal_cleanup_stack_failure_helper_impl(passed, failed, skipped);
     test_v2_cleanup_run_all();
     if (!test_ws_case_leave(&test_ws_case)) {
-        test_v2_emit_failure_message(__func__, 0, "could not cleanup isolated test workspace");
+        test_v2_emit_failure_message(__func__, __FILE__, 0, "could not cleanup isolated test workspace");
         nob_log(NOB_ERROR, "FAILED: %s: could not cleanup isolated test workspace", __func__);
         (*failed)++;
     }

@@ -1,6 +1,6 @@
 static void log_test_front_door_usage(const char *argv0) {
     nob_log(NOB_INFO,
-            "Usage: %s test [smoke|<module>] [--verbose] [--asan|--ubsan|--msan|--san|--cov]",
+            "Usage: %s test [smoke|<module>] [--case <case-name>] [--verbose] [--asan|--ubsan|--msan|--san|--cov]",
             argv0);
     nob_log(NOB_INFO,
             "Usage: %s test clean [--force]",
@@ -13,8 +13,8 @@ static void log_test_front_door_usage(const char *argv0) {
             argv0);
     nob_log(NOB_INFO,
             "Supported modules: arena|lexer|parser|build-model|evaluator|evaluator-diff|"
-            "evaluator-codegen-diff|evaluator-integration|pipeline|codegen|artifact-parity|"
-            "artifact-parity-corpus");
+            "evaluator-codegen-diff|evaluator-integration|pipeline|codegen|codegen-render|"
+            "codegen-build|codegen-reject|artifact-parity|artifact-parity-corpus");
     nob_log(NOB_INFO,
             "T6 fronts all human-facing test commands through `./build/nob test ...`. "
             "Default aggregate naming is `smoke`, watch output is compact/failure-first by default, "
@@ -44,6 +44,7 @@ bool test_runner_parse_front_door(const char *argv0,
     Test_Runner_Action action = TEST_RUNNER_ACTION_RUN_AGGREGATE;
     bool verbose = false;
     bool force = false;
+    const char *case_name = NULL;
     bool selector_seen = false;
     bool tidy_mode = false;
     bool tidy_target_seen = false;
@@ -58,6 +59,26 @@ bool test_runner_parse_front_door(const char *argv0,
 
         if (cstr_equals(arg, "--verbose")) {
             verbose = true;
+            continue;
+        }
+
+        if (cstr_equals(arg, "--case")) {
+            if (case_name) {
+                nob_log(NOB_ERROR, "duplicate test flag: %s", arg);
+                log_test_front_door_usage(argv0);
+                return false;
+            }
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "`--case` requires a case name");
+                log_test_front_door_usage(argv0);
+                return false;
+            }
+            case_name = argv[++i];
+            if (!case_name || case_name[0] == '\0') {
+                nob_log(NOB_ERROR, "`--case` requires a non-empty case name");
+                log_test_front_door_usage(argv0);
+                return false;
+            }
             continue;
         }
 
@@ -197,8 +218,8 @@ bool test_runner_parse_front_door(const char *argv0,
     }
 
     if (action == TEST_RUNNER_ACTION_CLEAN) {
-        if (verbose || profile_flag) {
-            nob_log(NOB_ERROR, "`./build/nob test clean` does not accept `--verbose` or profile flags");
+        if (verbose || profile_flag || case_name) {
+            nob_log(NOB_ERROR, "`./build/nob test clean` does not accept `--verbose`, `--case`, or profile flags");
             log_test_front_door_usage(argv0);
             return false;
         }
@@ -209,8 +230,8 @@ bool test_runner_parse_front_door(const char *argv0,
 
     if (action == TEST_RUNNER_ACTION_RUN_TIDY_AGGREGATE ||
         action == TEST_RUNNER_ACTION_RUN_TIDY_MODULE) {
-        if (force) {
-            nob_log(NOB_ERROR, "`./build/nob test tidy ...` does not accept `--force`");
+        if (force || case_name) {
+            nob_log(NOB_ERROR, "`./build/nob test tidy ...` does not accept `--force` or `--case`");
             log_test_front_door_usage(argv0);
             return false;
         }
@@ -230,6 +251,27 @@ bool test_runner_parse_front_door(const char *argv0,
         nob_log(NOB_ERROR, "`./build/nob test [smoke|<module>]` does not accept `--force`");
         log_test_front_door_usage(argv0);
         return false;
+    }
+
+    if (case_name) {
+        if (action != TEST_RUNNER_ACTION_RUN_MODULE || !module) {
+            nob_log(NOB_ERROR, "`--case` requires an explicit module selector");
+            log_test_front_door_usage(argv0);
+            return false;
+        }
+        if (!module->case_filter_supported) {
+            nob_log(NOB_ERROR,
+                    "module `%s` does not expose official case-level filtering on the test front door",
+                    module->name);
+            log_test_front_door_usage(argv0);
+            return false;
+        }
+        if (!test_runner_copy_string(out_request->case_name,
+                                     sizeof(out_request->case_name),
+                                     case_name)) {
+            nob_log(NOB_ERROR, "case name is too long: %s", case_name);
+            return false;
+        }
     }
 
     if (!profile_flag) {

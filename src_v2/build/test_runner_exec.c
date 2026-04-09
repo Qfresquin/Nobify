@@ -826,6 +826,107 @@ static void report_captured_test_output(const Test_Runner_Module_Def *module,
     }
 }
 
+static void test_runner_result_set_case_name(Test_Runner_Result *result, const char *case_name) {
+    if (!result) return;
+    (void)test_runner_copy_string(result->case_name, sizeof(result->case_name), case_name);
+}
+
+static void test_runner_result_clear_failure_summary(Test_Runner_Result *result) {
+    if (!result) return;
+    result->failure_summary[0] = '\0';
+}
+
+static bool test_runner_result_set_failure_summary(Test_Runner_Result *result,
+                                                   const Nob_String_Builder *summary) {
+    if (!result || !summary || summary->count == 0) return false;
+    return test_runner_copy_string(result->failure_summary,
+                                   sizeof(result->failure_summary),
+                                   summary->items);
+}
+
+static bool test_runner_compose_unmatched_case_summary(Test_Runner_Result *result,
+                                                       const char *case_name) {
+    Nob_String_Builder summary = {0};
+    bool ok = false;
+
+    if (!result || !case_name || case_name[0] == '\0') return false;
+    nob_sb_append_cstr(&summary, "failure summary:\n");
+    nob_sb_appendf(&summary, "case=%s status=not-found\n", case_name);
+    nob_sb_append_null(&summary);
+    ok = test_runner_result_set_failure_summary(result, &summary);
+    nob_sb_free(summary);
+    return ok;
+}
+
+static bool test_runner_compose_failure_summary_from_file(Test_Runner_Result *result,
+                                                          const char *summary_path,
+                                                          const char *workspace_path) {
+    Nob_String_Builder raw = {0};
+    Nob_String_Builder summary = {0};
+    char *line = NULL;
+    char *line_state = NULL;
+    bool ok = false;
+    bool have_entries = false;
+    size_t shown = 0;
+    size_t hidden = 0;
+    const size_t limit = 8;
+
+    if (!result || !summary_path) return false;
+    if (!nob_file_exists(summary_path)) return false;
+    if (!nob_read_entire_file(summary_path, &raw) || raw.count == 0) goto defer;
+    nob_sb_append_null(&raw);
+
+    nob_sb_append_cstr(&summary, "failure summary:\n");
+    if (workspace_path && workspace_path[0] != '\0') {
+        nob_sb_appendf(&summary, "workspace=%s\n", workspace_path);
+    }
+
+    for (line = strtok_r(raw.items, "\n", &line_state);
+         line;
+         line = strtok_r(NULL, "\n", &line_state)) {
+        char *field = NULL;
+        char *field_state = NULL;
+        char *case_name = NULL;
+        char *file_name = NULL;
+        char *line_value = NULL;
+        long line_number = 0;
+
+        for (field = strtok_r(line, "\t", &field_state);
+             field;
+             field = strtok_r(NULL, "\t", &field_state)) {
+            if (starts_with(field, "case=")) case_name = field + strlen("case=");
+            else if (starts_with(field, "file=")) file_name = field + strlen("file=");
+            else if (starts_with(field, "line=")) line_value = field + strlen("line=");
+        }
+
+        if (!case_name || case_name[0] == '\0') continue;
+        have_entries = true;
+        if (line_value && line_value[0] != '\0') line_number = strtol(line_value, NULL, 10);
+
+        if (shown < limit) {
+            nob_sb_appendf(&summary, "case=%s", case_name);
+            if (file_name && file_name[0] != '\0') {
+                if (line_number > 0) nob_sb_appendf(&summary, " file=%s:%ld", file_name, line_number);
+                else nob_sb_appendf(&summary, " file=%s", file_name);
+            }
+            nob_sb_append_cstr(&summary, "\n");
+            shown++;
+        } else {
+            hidden++;
+        }
+    }
+
+    if (!have_entries) goto defer;
+    if (hidden > 0) nob_sb_appendf(&summary, "more=%zu\n", hidden);
+    nob_sb_append_null(&summary);
+    ok = test_runner_result_set_failure_summary(result, &summary);
+
+defer:
+    nob_sb_free(summary);
+    nob_sb_free(raw);
+    return ok;
+}
+
 static bool coverage_context_begin(Test_Runner_Context *ctx, const char *label) {
     const char *cwd = nob_get_current_dir_temp();
     char rel_dir[_TINYDIR_PATH_MAX] = {0};
@@ -990,11 +1091,16 @@ static bool run_binary_in_workspace(Test_Runner_Context *ctx,
     char binary_abs[_TINYDIR_PATH_MAX] = {0};
     char stdout_log_abs[_TINYDIR_PATH_MAX] = {0};
     char stderr_log_abs[_TINYDIR_PATH_MAX] = {0};
+    char case_match_abs[_TINYDIR_PATH_MAX] = {0};
+    char failure_summary_abs[_TINYDIR_PATH_MAX] = {0};
     char nobify_tool_abs[_TINYDIR_PATH_MAX] = {0};
     char *prev_runner = NULL;
     char *prev_reuse_cwd = NULL;
     char *prev_repo_root = NULL;
     char *prev_nobify_bin = NULL;
+    char *prev_case_filter = NULL;
+    char *prev_case_match_path = NULL;
+    char *prev_failure_summary_path = NULL;
     char *prev_asan_options = NULL;
     char *prev_ubsan_options = NULL;
     char *prev_msan_options = NULL;
@@ -1003,6 +1109,9 @@ static bool run_binary_in_workspace(Test_Runner_Context *ctx,
     bool had_prev_reuse_cwd = false;
     bool had_prev_repo_root = false;
     bool had_prev_nobify_bin = false;
+    bool had_prev_case_filter = false;
+    bool had_prev_case_match_path = false;
+    bool had_prev_failure_summary_path = false;
     bool had_prev_asan_options = false;
     bool had_prev_ubsan_options = false;
     bool had_prev_msan_options = false;
@@ -1010,6 +1119,7 @@ static bool run_binary_in_workspace(Test_Runner_Context *ctx,
     Test_Run_Workspace workspace = {0};
     Nob_Cmd cmd = {0};
     bool ok = false;
+    bool case_matched = true;
     bool cleanup_ok = true;
     bool workspace_preserved = false;
 
@@ -1018,11 +1128,26 @@ static bool run_binary_in_workspace(Test_Runner_Context *ctx,
     if (!prepare_test_run_workspace(&workspace, module, profile)) goto defer;
     if (!test_fs_join_path(workspace.root, "test.stdout.log", stdout_log_abs)) goto defer;
     if (!test_fs_join_path(workspace.root, "test.stderr.log", stderr_log_abs)) goto defer;
+    if (!test_fs_join_path(workspace.root, "case_filter.match", case_match_abs)) goto defer;
+    if (!test_fs_join_path(workspace.root, "failure_summary.txt", failure_summary_abs)) goto defer;
+    if (nob_file_exists(case_match_abs) && !nob_delete_file(case_match_abs)) goto defer;
+    if (nob_file_exists(failure_summary_abs) && !nob_delete_file(failure_summary_abs)) goto defer;
 
     if (!preserve_env_for_restore(CMK2NOB_TEST_RUNNER_ENV, &prev_runner, &had_prev_runner)) goto defer;
     if (!preserve_env_for_restore(CMK2NOB_TEST_WS_REUSE_CWD_ENV, &prev_reuse_cwd, &had_prev_reuse_cwd)) goto defer;
     if (!preserve_env_for_restore(CMK2NOB_TEST_REPO_ROOT_ENV, &prev_repo_root, &had_prev_repo_root)) goto defer;
     if (!preserve_env_for_restore(CMK2NOB_TEST_NOBIFY_BIN_ENV, &prev_nobify_bin, &had_prev_nobify_bin)) goto defer;
+    if (!preserve_env_for_restore(CMK2NOB_TEST_CASE_FILTER_ENV, &prev_case_filter, &had_prev_case_filter)) goto defer;
+    if (!preserve_env_for_restore(CMK2NOB_TEST_CASE_MATCH_PATH_ENV,
+                                  &prev_case_match_path,
+                                  &had_prev_case_match_path)) {
+        goto defer;
+    }
+    if (!preserve_env_for_restore(CMK2NOB_TEST_FAILURE_SUMMARY_ENV,
+                                  &prev_failure_summary_path,
+                                  &had_prev_failure_summary_path)) {
+        goto defer;
+    }
     if (!preserve_env_for_restore("ASAN_OPTIONS", &prev_asan_options, &had_prev_asan_options)) goto defer;
     if (!preserve_env_for_restore("UBSAN_OPTIONS", &prev_ubsan_options, &had_prev_ubsan_options)) goto defer;
     if (!preserve_env_for_restore("MSAN_OPTIONS", &prev_msan_options, &had_prev_msan_options)) goto defer;
@@ -1051,6 +1176,12 @@ static bool run_binary_in_workspace(Test_Runner_Context *ctx,
     set_env_or_unset(CMK2NOB_TEST_REPO_ROOT_ENV, cwd);
     set_env_or_unset(CMK2NOB_TEST_NOBIFY_BIN_ENV,
                      nobify_tool_abs[0] != '\0' ? nobify_tool_abs : NULL);
+    set_env_or_unset(CMK2NOB_TEST_CASE_FILTER_ENV,
+                     ctx && ctx->request && ctx->request->case_name[0] != '\0'
+                         ? ctx->request->case_name
+                         : NULL);
+    set_env_or_unset(CMK2NOB_TEST_CASE_MATCH_PATH_ENV, case_match_abs);
+    set_env_or_unset(CMK2NOB_TEST_FAILURE_SUMMARY_ENV, failure_summary_abs);
     if (!had_prev_asan_options && profile->asan_options_default) {
         set_env_or_unset("ASAN_OPTIONS", profile->asan_options_default);
     }
@@ -1077,6 +1208,32 @@ static bool run_binary_in_workspace(Test_Runner_Context *ctx,
     if (!nob_set_current_dir(cwd)) {
         nob_log(NOB_ERROR, "failed to restore current directory to %s", cwd);
         ok = false;
+    }
+
+    if (ctx && ctx->request && ctx->request->case_name[0] != '\0') {
+        case_matched = nob_file_exists(case_match_abs);
+        if (!case_matched) {
+            nob_log(NOB_ERROR,
+                    "[v2] case filter `%s` matched no cases in module %s",
+                    ctx->request->case_name,
+                    module->def.name);
+            ok = false;
+            if (ctx->out_result) {
+                (void)test_runner_copy_string(ctx->out_result->summary,
+                                              sizeof(ctx->out_result->summary),
+                                              nob_temp_sprintf("module %s --case %s: FAIL",
+                                                               module->def.name,
+                                                               ctx->request->case_name));
+                (void)test_runner_compose_unmatched_case_summary(ctx->out_result,
+                                                                 ctx->request->case_name);
+            }
+        }
+    }
+
+    if (!ok && ctx && ctx->out_result && ctx->out_result->failure_summary[0] == '\0') {
+        (void)test_runner_compose_failure_summary_from_file(ctx->out_result,
+                                                            failure_summary_abs,
+                                                            workspace.root);
     }
 
     if (!ok) {
@@ -1111,6 +1268,11 @@ defer:
     set_env_or_unset(CMK2NOB_TEST_WS_REUSE_CWD_ENV, prev_reuse_cwd);
     set_env_or_unset(CMK2NOB_TEST_REPO_ROOT_ENV, prev_repo_root);
     set_env_or_unset(CMK2NOB_TEST_NOBIFY_BIN_ENV, had_prev_nobify_bin ? prev_nobify_bin : NULL);
+    set_env_or_unset(CMK2NOB_TEST_CASE_FILTER_ENV, had_prev_case_filter ? prev_case_filter : NULL);
+    set_env_or_unset(CMK2NOB_TEST_CASE_MATCH_PATH_ENV,
+                     had_prev_case_match_path ? prev_case_match_path : NULL);
+    set_env_or_unset(CMK2NOB_TEST_FAILURE_SUMMARY_ENV,
+                     had_prev_failure_summary_path ? prev_failure_summary_path : NULL);
     if (profile->asan_options_default) {
         set_env_or_unset("ASAN_OPTIONS", had_prev_asan_options ? prev_asan_options : NULL);
     }
@@ -1127,6 +1289,9 @@ defer:
     free(prev_reuse_cwd);
     free(prev_repo_root);
     free(prev_nobify_bin);
+    free(prev_case_filter);
+    free(prev_case_match_path);
+    free(prev_failure_summary_path);
     free(prev_asan_options);
     free(prev_ubsan_options);
     free(prev_msan_options);
@@ -1292,6 +1457,25 @@ defer:
     return ok;
 }
 
+static void test_runner_result_set_module_status_summary(Test_Runner_Context *ctx,
+                                                         const Test_Runner_Module_Internal *module,
+                                                         const Test_Runner_Request *request,
+                                                         bool ok) {
+    const char *module_name = module ? module->def.name : "unknown";
+
+    if (!ctx || !request) return;
+    if (request->case_name[0] != '\0') {
+        test_runner_result_set_summary(ctx,
+                                       "module %s --case %s: %s",
+                                       module_name,
+                                       request->case_name,
+                                       ok ? "PASS" : "FAIL");
+        return;
+    }
+
+    test_runner_result_set_summary(ctx, "module %s: %s", module_name, ok ? "PASS" : "FAIL");
+}
+
 bool test_runner_execute(const Test_Runner_Request *request,
                          Test_Runner_Result *out_result) {
     const Test_Runner_Module_Internal *module = NULL;
@@ -1321,7 +1505,12 @@ bool test_runner_execute(const Test_Runner_Request *request,
     }
 
     ctx.verbose = request->verbose;
+    ctx.request = request;
     ctx.out_result = out_result;
+    if (out_result) {
+        test_runner_result_set_case_name(out_result, request->case_name);
+        test_runner_result_clear_failure_summary(out_result);
+    }
     g_active_runner_ctx = &ctx;
     nob_set_log_handler(runner_log_handler);
 
@@ -1375,10 +1564,7 @@ bool test_runner_execute(const Test_Runner_Request *request,
                         "[v2] module %s: %s",
                         module->def.name,
                         ok ? "PASS" : "FAIL");
-                test_runner_result_set_summary(&ctx,
-                                               "module %s: %s",
-                                               module->def.name,
-                                               ok ? "PASS" : "FAIL");
+                test_runner_result_set_module_status_summary(&ctx, module, request, ok);
                 if (coverage_started && ok) {
                     ok = generate_coverage_report(&ctx, module, false);
                 }
@@ -1395,10 +1581,7 @@ bool test_runner_execute(const Test_Runner_Request *request,
                     test_runner_result_set_summary(&ctx, "aggregate: %s", ok ? "PASS" : "FAIL");
                     break;
                 case TEST_RUNNER_ACTION_RUN_MODULE:
-                    test_runner_result_set_summary(&ctx,
-                                                   "module %s: %s",
-                                                   module ? module->def.name : "unknown",
-                                                   ok ? "PASS" : "FAIL");
+                    test_runner_result_set_module_status_summary(&ctx, module, request, ok);
                     break;
                 default:
                     test_runner_result_set_summary(&ctx, "runner action %d: %s", (int)request->action, ok ? "PASS" : "FAIL");
