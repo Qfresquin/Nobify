@@ -5,9 +5,10 @@
 This document defines the current baseline architecture and suite taxonomy for
 the v2 test stack.
 
-As of April 8, 2026:
-- the current baseline test entrypoint is `./build/nob_test`
-- the runner owns module selection, build profiles, incremental compilation,
+As of April 9, 2026:
+- the current baseline human-facing test entrypoint is `./build/nob test ...`
+- shared runner-core under `src_v2/build/test_runner_*` owns module selection,
+  build profiles, incremental compilation,
   workspace roots, captured logs, and aggregate execution
 - the generic framework under `test_v2/` owns per-suite and per-case lifecycle
 - generic snapshot/case-pack and semantic pipeline support are now centralized
@@ -40,8 +41,8 @@ As of April 8, 2026:
   `evaluator -> Event IR -> build_model -> codegen` status classification
 - the active daemon program now lives under
   [`test_daemon_roadmap.md`](./test_daemon_roadmap.md) and explicitly
-  authorizes replacing `./build/nob_test` with `./build/nob test ...`
-  as the long-term front door
+  owns the only supported human-facing front door at
+  `./build/nob test ...`
 - that daemon target is now frozen as a Linux-first local reactor with explicit
   watch/routing/cancellation ownership rather than a generic remote runner
 - test infrastructure portability is now explicitly out of scope for the
@@ -57,16 +58,11 @@ taxonomy. The active change roadmaps now live in:
 
 The current baseline architectural boundary is:
 
-`nob_test runner -> test framework -> shared support -> suites`
-
-The active daemon-program target boundary is:
-
 `nob front door -> daemon client/supervisor -> reactor daemon -> runner core -> suites`
 
-The current implementation already has the runner and framework boundaries in
-place. The shared-support boundary exists only partially and remains the main
-area of follow-up covered by the structural refactor plan, while the daemon
-program now owns the future command surface and execution-owner rewrite.
+The shared-support boundary exists only partially and remains the main area of
+follow-up covered by the structural refactor plan. The execution-owner rewrite
+has now landed in the daemon program.
 
 This documentation is about test architecture only. It does not redefine lexer,
 parser, evaluator, build-model, pipeline, or codegen product semantics.
@@ -78,7 +74,7 @@ The runner-owned behavior preserved by the current baseline is:
 - module registry and aggregate selection
 - incremental object and binary rebuild behavior
 - build locking under `Temp_tests/locks`
-- sanitizer, coverage, and `clang-tidy` profiles
+- sanitizer, coverage, tidy, and clean behavior
 - top-level run workspaces under `Temp_tests/runs`
 - captured stdout/stderr logs and preserved failed workspaces
 - preflight ownership for result-type convention checks and runner validation
@@ -86,9 +82,7 @@ The runner-owned behavior preserved by the current baseline is:
 These behaviors belong to the runner layer and must not drift into suite-local
 code.
 
-The active daemon roadmap explicitly overrides only one preserved-baseline
-assumption: `./build/nob_test` no longer needs to remain the long-term public
-entrypoint for future waves in that program.
+The active daemon roadmap now owns the full human-facing test command surface.
 
 ## Current Module Taxonomy
 
@@ -222,7 +216,9 @@ entrypoint for future waves in that program.
 ### Runner Layer
 
 Owner:
-- `src_v2/build/nob_test.c`
+- `src_v2/build/nob.c`
+- `src_v2/build/nob_testd.c`
+- `src_v2/build/test_runner_*`
 
 Responsibilities:
 - module registry
@@ -332,14 +328,12 @@ Target direction:
 
 ## Default Aggregate Policy
 
-The current baseline aggregate command is `./build/nob_test test-v2`.
+The current baseline aggregate command is `./build/nob test` or
+`./build/nob test smoke`.
 
-The active daemon-program target command is `./build/nob test test-v2`.
-
-The runner also defaults to `test-v2` when no command is provided. Aggregate
-membership is owned by `src_v2/build/nob_test.c` through each module's
-`include_in_aggregate` flag, and the same membership is reused by
-`clang-tidy-v2`.
+Aggregate membership is owned by `src_v2/build/test_runner_registry.c` through
+each module's `include_in_aggregate` flag, and the same membership is reused by
+`./build/nob test tidy all`.
 
 Current default aggregate membership and intent:
 
@@ -372,24 +366,27 @@ Current default aggregate membership and intent:
   the default end-to-end confidence story.
 
 - `artifact-parity`
-  Excluded from `test-v2` because it depends on a real `cmake 3.28.x` binary
+  Excluded from the default smoke aggregate because it depends on a real
+  `cmake 3.28.x` binary
   and is intentionally kept as an explicit proof harness outside the default
   smoke tier while P0 parity coverage is still narrow.
 
 - `evaluator-codegen-diff`
-  Excluded from `test-v2` because it is a heavier explicit-only inventory and
+  Excluded from the default smoke aggregate because it is a heavier
+  explicit-only inventory and
   replay harness that depends on host tools for `parity-pass` cases and is
   intended to act as the operational closure harness for the remaining
   evaluator-to-codegen gap, not to act as the default smoke tier.
 
 - `evaluator-integration`
-  Excluded from `test-v2` because it is heavier and more host-sensitive than the
+  Excluded from the default smoke aggregate because it is heavier and more
+  host-sensitive than the
   default smoke tier. It remains a first-class module with explicit commands,
   but it is not part of the default aggregate path.
 
 Guardrails:
 
-- important architectural suites are not silently dropped from `test-v2`
+- important architectural suites are not silently dropped from smoke
 - explicit-only status requires a concrete host-sensitivity or runtime-cost
   reason
 - aggregate membership is runner-owned, not suite-owned
@@ -399,26 +396,39 @@ Guardrails:
 The current baseline execution tiers are:
 
 - default smoke:
-  `./build/nob_test`
-  `./build/nob_test test-v2`
+  `./build/nob test`
+  `./build/nob test smoke`
 
-- aggregate profile variants:
-  `./build/nob_test test-v2-san`
-  `./build/nob_test test-v2-asan`
-  `./build/nob_test test-v2-ubsan`
-  `./build/nob_test test-v2-msan`
-  `./build/nob_test test-v2-cov`
+- front-doored utility path:
+  `./build/nob test clean`
+  `./build/nob test tidy all`
+  `./build/nob test tidy <module>`
 
-- explicit heavier module path:
-  `./build/nob_test test-evaluator-integration`
-  `./build/nob_test test-evaluator-codegen-diff`
-  plus the same profile suffix variants when a targeted host-sensitive run is
-  needed
+- current daemon front-door profile variants:
+  `./build/nob test smoke --san`
+  `./build/nob test smoke --asan`
+  `./build/nob test smoke --ubsan`
+  `./build/nob test smoke --msan`
+  `./build/nob test smoke --cov`
+
+- current explicit module path:
+  `./build/nob test evaluator-integration`
+  `./build/nob test evaluator-codegen-diff`
+  plus the same profile flags when a targeted host-sensitive run is needed
+
+- daemon lifecycle path:
+  `./build/nob test daemon start`
+  `./build/nob test daemon stop`
+  `./build/nob test daemon status`
+
+- daemon watch path:
+  `./build/nob test watch <module>`
+  `./build/nob test watch auto`
 
 Current versioned CI baseline:
 
 - `.github/workflows/evaluator-file-parity.yml` runs result-type-convention
-  preflight plus `test-v2` on Linux and Windows
+  preflight plus smoke on Linux and Windows
 - that workflow therefore validates the default aggregate smoke contract, not
   every explicit-only suite
 
@@ -429,12 +439,16 @@ Runner-owned ergonomics that apply equally to aggregate and explicit commands:
 - captured stdout/stderr logs
 - preserved failed workspaces for debugging
 - profile-specific coverage and sanitizer handling
+- daemon-era fast-path telemetry for launcher selection, preflight cache state,
+  compile jobs, rebuild/reuse counts, and link/no-link decisions
+- compact failure-first watch output by default, with `--verbose` reserved for
+  roots, full reroute detail, and per-rerun diagnostics
 
-This is the canonical T5 baseline: `test-v2` is the required smoke tier,
+This is the canonical current baseline: smoke is the required tier,
 explicit-only suites remain first-class but opt-in, and workflow expectations
 match that split.
 
-The daemon program is intentionally allowed to replace this command surface
-with `./build/nob test ...` and `./build/nob test watch ...` once its waves
-land. Until then, this file continues to describe the current baseline rather
-than pretending the daemon target is already implemented.
+The daemon program is intentionally allowed to keep replacing this command
+surface over time. As of T6, `./build/nob test ...`, `./build/nob test watch ...`,
+`./build/nob test clean`, and `./build/nob test tidy ...` are the only
+supported human-facing paths.

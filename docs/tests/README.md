@@ -5,19 +5,13 @@
 This directory is the canonical map for test architecture, suite ownership,
 and active test-infrastructure roadmaps.
 
-Current baseline architecture boundary:
-
-`nob_test runner -> test framework -> shared support -> suites`
-
-Active daemon-program target boundary:
-
 `nob front door -> daemon client/supervisor -> reactor daemon -> runner core -> suites`
 
 ## Overview
 
 The test stack separates:
 
-- aggregate-safe suites (`test-v2`) used as the default smoke baseline
+- aggregate-safe suites used as the default smoke baseline
 - explicit-only host-sensitive suites used for heavy parity/closure proof
 
 This documentation defines test ownership and execution policy. It does not
@@ -35,26 +29,51 @@ redefine evaluator, Event IR, build-model, or codegen product contracts.
 
 ## Execution Policy Summary
 
-Current baseline commands still run through `./build/nob_test` today:
+Current supported human-facing baseline commands now run through `./build/nob test`:
 
 - default smoke aggregate:
-  `./build/nob_test test-v2`
+  `./build/nob test`
+  `./build/nob test smoke`
+- front-doored utility commands:
+  `./build/nob test clean`
+  `./build/nob test tidy all`
+  `./build/nob test tidy <module>`
+- watch mode:
+  `./build/nob test watch <module>`
+  `./build/nob test watch auto`
+- daemon lifecycle:
+  `./build/nob test daemon start`
+  `./build/nob test daemon stop`
+  `./build/nob test daemon status`
 - explicit artifact parity suite:
-  `./build/nob_test test-artifact-parity`
+  `./build/nob test artifact-parity`
 - explicit closure harness suite:
-  `./build/nob_test test-evaluator-codegen-diff`
+  `./build/nob test evaluator-codegen-diff`
 
-The active daemon roadmap treats those commands as transitional and targets:
+The active daemon roadmap now lands its T6 surface on:
 
-- `./build/nob test test-v2`
+- `./build/nob test`
+- `./build/nob test smoke`
+- `./build/nob test clean`
+- `./build/nob test tidy all`
+- `./build/nob test tidy <module>`
+- `./build/nob test watch <module>`
+- `./build/nob test watch auto`
+- `./build/nob test daemon start|stop|status`
 - `./build/nob test artifact-parity`
 - `./build/nob test evaluator-codegen-diff`
-- `./build/nob test watch <module>`
-- `./build/nob test daemon start|stop|status`
+- daemon front-door profile flags:
+  `--verbose`, `--asan`, `--ubsan`, `--msan`, `--san`, `--cov`
 
 That daemon target is intentionally Linux-first and now freezes watch routing,
-cancellation, and fast local feedback as part of the same program, not as
-separate later add-ons.
+cancellation, fast local feedback, and compact failure-first watch ergonomics
+as part of the same program, not as separate later add-ons.
+
+Current T6 limitation:
+- watch sessions are foreground and attached to the active client; there is no
+  persistent detached watch session surface yet.
+- default watch mode is compact and failure-first; use `--verbose` to print
+  roots, full routed path/module sets, and per-rerun fast-path detail.
 
 `artifact-parity` and `evaluator-codegen-diff` remain outside default smoke
 while they stay heavier and host-sensitive.

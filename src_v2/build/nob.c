@@ -1,14 +1,195 @@
+#include "test_runner_bootstrap.h"
+
+#define NOB_REBUILD_URSELF(binary_path, source_path) \
+    TEST_RUNNER_NOB_BOOTSTRAP_REBUILD(binary_path, source_path)
 #define NOB_IMPLEMENTATION
 #include "nob.h"
 
+#include "test_daemon_client.h"
+#include "test_runner_core.h"
+
+#include <errno.h>
 #include <string.h>
 #include <stdlib.h>
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 // Caminhos relativos à raiz do projeto
 static const char *APP_SRC = "src_v2/app/nobify.c";
 static const char *APP_BIN = "build/nobify";
+static const char *TEST_DAEMON_SRC = "src_v2/build/nob_testd.c";
+static const char *TEST_DAEMON_BIN = "build/nob_testd";
 static const char *SNAPSHOT_TOOL_SRC = "test_v2/artifact_parity/tools/update_snapshot.c";
 static const char *SNAPSHOT_TOOL_BIN = "build/update_artifact_parity_snapshots";
+
+static bool build_test_daemon_binary(void) {
+    Nob_Cmd cmd = {0};
+    bool ok = false;
+
+    if (!nob_mkdir_if_not_exists("build")) return false;
+
+    nob_cmd_append(&cmd, TEST_RUNNER_DAEMON_BOOTSTRAP_BUILD(TEST_DAEMON_BIN, TEST_DAEMON_SRC));
+    ok = nob_cmd_run(&cmd);
+    nob_cmd_free(cmd);
+    return ok;
+}
+
+static bool ensure_test_daemon_binary_exists(void) {
+    const char *inputs[] = {
+        TEST_DAEMON_SRC,
+        TEST_DAEMON_PROTOCOL_SOURCE,
+        TEST_DAEMON_RUNTIME_SOURCE,
+        TEST_RUNNER_DAEMON_BUILD_DEPS,
+    };
+    int rebuild = nob_needs_rebuild(TEST_DAEMON_BIN, inputs, NOB_ARRAY_LEN(inputs));
+    if (rebuild < 0) return false;
+    if (!rebuild) return true;
+    nob_log(NOB_INFO, "bootstrapping %s", TEST_DAEMON_BIN);
+    return build_test_daemon_binary();
+}
+
+static bool wait_for_test_daemon_ready(void) {
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        if (test_daemon_client_ping()) return true;
+        usleep(100 * 1000);
+    }
+    return false;
+}
+
+static bool start_test_daemon(void) {
+    pid_t pid = -1;
+    int log_fd = -1;
+    int null_fd = -1;
+
+    if (test_daemon_client_ping()) {
+        nob_log(NOB_INFO, "test daemon already running");
+        return true;
+    }
+
+    (void)test_daemon_client_cleanup_stale_artifacts();
+    if (!ensure_test_daemon_binary_exists()) return false;
+    if (!nob_mkdir_if_not_exists("Temp_tests")) return false;
+    if (!nob_mkdir_if_not_exists(TEST_DAEMON_ROOT)) return false;
+
+    pid = fork();
+    if (pid < 0) {
+        nob_log(NOB_ERROR, "failed to fork daemon bootstrap: %s", strerror(errno));
+        return false;
+    }
+    if (pid == 0) {
+        if (setsid() < 0) _exit(127);
+
+        log_fd = open(TEST_DAEMON_LOG_PATH, O_CREAT | O_WRONLY | O_APPEND, 0666);
+        if (log_fd < 0) _exit(127);
+        null_fd = open("/dev/null", O_RDONLY);
+        if (null_fd < 0) _exit(127);
+
+        if (dup2(null_fd, STDIN_FILENO) < 0 ||
+            dup2(log_fd, STDOUT_FILENO) < 0 ||
+            dup2(log_fd, STDERR_FILENO) < 0) {
+            _exit(127);
+        }
+
+        close(null_fd);
+        close(log_fd);
+        execl(TEST_DAEMON_BIN, TEST_DAEMON_BIN, "serve", (char *)NULL);
+        _exit(127);
+    }
+
+    if (!wait_for_test_daemon_ready()) {
+        nob_log(NOB_ERROR, "timed out waiting for %s to accept connections", TEST_DAEMON_BIN);
+        (void)waitpid(pid, NULL, WNOHANG);
+        return false;
+    }
+    (void)waitpid(pid, NULL, WNOHANG);
+    return true;
+}
+
+static bool ensure_test_daemon_running(void) {
+    if (test_daemon_client_ping()) return true;
+    (void)test_daemon_client_cleanup_stale_artifacts();
+    return start_test_daemon();
+}
+
+static bool show_test_daemon_status(void) {
+    Test_Daemon_Status status = {0};
+
+    if (test_daemon_client_query_status(&status)) {
+        nob_log(NOB_INFO,
+                "test daemon status: %s (pid=%ld socket=%s)",
+                test_daemon_state_name(status.state),
+                (long)status.pid,
+                status.socket_path);
+        return true;
+    }
+
+    (void)test_daemon_client_cleanup_stale_artifacts();
+    nob_log(NOB_INFO, "test daemon status: stopped");
+    return true;
+}
+
+static bool stop_test_daemon(void) {
+    Test_Daemon_Status status = {0};
+
+    if (!test_daemon_client_query_status(&status)) {
+        (void)test_daemon_client_cleanup_stale_artifacts();
+        nob_log(NOB_INFO, "test daemon already stopped");
+        return true;
+    }
+    if (!test_daemon_client_stop(&status)) return false;
+    (void)test_daemon_client_cleanup_stale_artifacts();
+    nob_log(NOB_INFO, "test daemon stopped");
+    return true;
+}
+
+static bool handle_test_daemon_command(int argc, char **argv) {
+    const char *subcmd = argc > 3 ? argv[3] : "status";
+
+    if (argc > 4) {
+        nob_log(NOB_ERROR, "unexpected extra daemon arguments");
+        return false;
+    }
+
+    if (strcmp(subcmd, "start") == 0) return start_test_daemon();
+    if (strcmp(subcmd, "stop") == 0) return stop_test_daemon();
+    if (strcmp(subcmd, "status") == 0) return show_test_daemon_status();
+
+    nob_log(NOB_ERROR, "unknown daemon subcommand: %s", subcmd);
+    return false;
+}
+
+static bool run_test_front_door(int argc, char **argv) {
+    Test_Runner_Request request = {0};
+    Test_Runner_Watch_Request watch_request = {0};
+    Test_Runner_Result result = {0};
+
+    if (argc > 2 && strcmp(argv[2], "daemon") == 0) {
+        return handle_test_daemon_command(argc, argv);
+    }
+
+    if (argc > 2 && strcmp(argv[2], "watch") == 0) {
+        if (!test_runner_parse_watch_front_door(argv[0], argc - 3, argv + 3, &watch_request)) return false;
+        if (!ensure_test_daemon_running()) return false;
+        return test_daemon_client_watch(&watch_request);
+    }
+
+    if (!test_runner_parse_front_door(argv[0], argc - 2, argv + 2, &request)) return false;
+    switch (request.action) {
+        case TEST_RUNNER_ACTION_CLEAN:
+        case TEST_RUNNER_ACTION_RUN_TIDY_AGGREGATE:
+        case TEST_RUNNER_ACTION_RUN_TIDY_MODULE:
+            return test_runner_execute(&request, &result);
+
+        case TEST_RUNNER_ACTION_RUN_AGGREGATE:
+        case TEST_RUNNER_ACTION_RUN_MODULE:
+            if (!ensure_test_daemon_running()) return false;
+            return test_daemon_client_run_request(&request, &result);
+    }
+
+    nob_log(NOB_ERROR, "unsupported test action: %d", (int)request.action);
+    return false;
+}
 
 static void append_common_flags(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
@@ -235,19 +416,26 @@ static bool run_valgrind(int argc, char **argv) {
 }
 
 static bool clean_all(void) {
+    bool ok = true;
     if (nob_file_exists(SNAPSHOT_TOOL_BIN)) {
-        if (!nob_delete_file(SNAPSHOT_TOOL_BIN)) return false;
+        ok = nob_delete_file(SNAPSHOT_TOOL_BIN) && ok;
+    }
+    if (nob_file_exists(TEST_DAEMON_BIN)) {
+        ok = nob_delete_file(TEST_DAEMON_BIN) && ok;
     }
     if (nob_file_exists(APP_BIN)) {
-        return nob_delete_file(APP_BIN);
+        ok = nob_delete_file(APP_BIN) && ok;
     }
-    return true;
+    return ok;
 }
 
 int main(int argc, char **argv) {
     const char *cmd = (argc > 1) ? argv[1] : "build";
 
+    NOB_GO_REBUILD_URSELF_PLUS(argc, argv, TEST_RUNNER_NOB_REBUILD_DEPS);
+
     if (strcmp(cmd, "build") == 0) return build_app() ? 0 : 1;
+    if (strcmp(cmd, "test") == 0) return run_test_front_door(argc, argv) ? 0 : 1;
     if (strcmp(cmd, "build-update-artifact-parity-snapshots") == 0) return build_snapshot_tool() ? 0 : 1;
     if (strcmp(cmd, "update-artifact-parity-snapshots") == 0) return run_snapshot_tool(argc, argv) ? 0 : 1;
     if (strcmp(cmd, "clean") == 0) return clean_all() ? 0 : 1;
@@ -256,7 +444,20 @@ int main(int argc, char **argv) {
     if (strcmp(cmd, "valgrind") == 0) return run_valgrind(argc, argv) ? 0 : 1;
 
     nob_log(NOB_INFO,
-            "Usage: %s [build|build-update-artifact-parity-snapshots|update-artifact-parity-snapshots|clean|valgrind]",
+            "Usage: %s [build|test|build-update-artifact-parity-snapshots|update-artifact-parity-snapshots|clean|valgrind]",
+            argv[0]);
+    nob_log(NOB_INFO,
+            "Test front door: %s test [smoke|<module>] [--verbose] [--asan|--ubsan|--msan|--san|--cov]",
+            argv[0]);
+    nob_log(NOB_INFO,
+            "Test utility commands: %s test clean | %s test tidy <all|module> [--verbose]",
+            argv[0],
+            argv[0]);
+    nob_log(NOB_INFO,
+            "Watch mode: %s test watch <module|auto> [--verbose] [--asan|--ubsan|--msan|--san|--cov]",
+            argv[0]);
+    nob_log(NOB_INFO,
+            "Daemon lifecycle: %s test daemon [start|stop|status]",
             argv[0]);
     return 1;
 }

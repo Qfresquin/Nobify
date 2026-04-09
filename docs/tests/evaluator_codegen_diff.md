@@ -6,7 +6,7 @@ As of April 6, 2026, `test-evaluator-codegen-diff` is the canonical
 explicit-only closure harness for the remaining
 `evaluator -> Event IR -> build_model -> codegen` gap.
 
-It is intentionally heavier than `test-v2`, remains outside the default smoke
+It is intentionally heavier than the default smoke aggregate, remains outside the default smoke
 aggregate, and is organized around explicit multi-wave closure work rather than
 one undifferentiated backend backlog.
 
@@ -200,18 +200,12 @@ Reasons:
   not the default smoke tier
 
 It therefore does not participate in the current baseline
-`./build/nob_test test-v2` smoke aggregate.
-
-Today the suite is exposed through:
-
-`./build/nob_test test-evaluator-codegen-diff`
-
-The active daemon roadmap treats that command as transitional and targets:
+`./build/nob test` / `./build/nob test smoke` smoke aggregate.
 
 `./build/nob test evaluator-codegen-diff`
 
 Like the other explicit-only host suites, it inherits runner-owned workspace,
-locking, logging, and tool-resolution behavior from `src_v2/build/nob_test.c`.
+locking, logging, and tool-resolution behavior from `src_v2/build/test_runner_*`.
 
 ## Reporting
 

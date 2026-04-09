@@ -36,7 +36,7 @@ divergences.
 
 ## Differential Program
 
-- Runner: `./build/nob_test test-evaluator-diff`
+- Runner: `./build/nob test evaluator-diff`
 - CMake resolution: `CMK2NOB_TEST_CMAKE_BIN`, then `PATH`
 - Version gate: only `cmake 3.28.x` participates; otherwise the suite skips
 - Optional report output: `NOB_DIFF_STATUS_OUT=/abs/path/report.md`
@@ -58,7 +58,7 @@ divergences.
 - Harness details, DSL, snapshot format, and failure artifacts live in
   [test_v2/evaluator_diff/README.md](../../test_v2/evaluator_diff/README.md)
 - Dedicated CI coverage lives in `.github/workflows/evaluator-diff.yml` and
-  stays separate from the default `test-v2` smoke aggregate
+  stays separate from the default smoke aggregate
 
 ## Audit Matrix
 

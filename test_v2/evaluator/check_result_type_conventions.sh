@@ -74,9 +74,9 @@ fi
 
 preflight_invocation_matches=$(grep -RIn --include='*.c' --include='*.h' -E 'check_result_type_conventions\.sh' src_v2 test_v2 || true)
 if [[ -n "$preflight_invocation_matches" ]]; then
-    unauthorized=$(printf '%s\n' "$preflight_invocation_matches" | grep -v '^src_v2/build/nob_test.c:' || true)
+    unauthorized=$(printf '%s\n' "$preflight_invocation_matches" | grep -v '^src_v2/build/test_runner_preflight.c:' || true)
     if [[ -n "$unauthorized" ]]; then
-        echo "[FAIL] result type conventions preflight must be owned by src_v2/build/nob_test.c"
+        echo "[FAIL] result type conventions preflight must be owned by src_v2/build/test_runner_preflight.c"
         echo "$unauthorized"
         exit 1
     fi
@@ -84,7 +84,7 @@ fi
 
 for main_file in test_v2/*/test_*_main.c; do
     if ! grep -q 'test_v2_require_official_runner()' "$main_file"; then
-        echo "[FAIL] test entrypoint bypasses the official nob_test runner"
+        echo "[FAIL] test entrypoint bypasses the official test runner"
         echo "$main_file"
         exit 1
     fi

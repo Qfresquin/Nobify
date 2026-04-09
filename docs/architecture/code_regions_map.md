@@ -55,7 +55,9 @@ Region responsibilities map to the same product boundary:
 - `src_v2/transpiler/`
 - `src_v2/build_model/`
 - `src_v2/codegen/`
-- `src_v2/build/nob_test.c`
+- `src_v2/build/nob.c`
+- `src_v2/build/nob_testd.c`
+- `src_v2/build/test_runner_*`
 - `test_v2/`
 
 ## Failure Ownership

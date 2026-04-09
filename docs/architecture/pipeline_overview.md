@@ -58,7 +58,10 @@ No layer may bypass the next contract boundary for feature delivery.
 - `src_v2/transpiler/event_ir.*`
 - `src_v2/build_model/*`
 - `src_v2/codegen/*`
-- `test_v2/*` and `src_v2/build/nob_test.c`
+- `src_v2/build/nob.c`
+- `src_v2/build/nob_testd.c`
+- `src_v2/build/test_runner_*`
+- `test_v2/*`
 
 ## Failure Ownership
 

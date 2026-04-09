@@ -5,7 +5,7 @@ binary.
 
 ## How to Run
 
-- Default command: `./build/nob_test test-evaluator-diff`
+- Default command: `./build/nob test evaluator-diff`
 - Optional override: set `CMK2NOB_TEST_CMAKE_BIN=/abs/path/to/cmake`
 - Optional report: set `NOB_DIFF_STATUS_OUT=/abs/path/report.md`
 - Resolution order:
@@ -69,7 +69,7 @@ The harness now supports both `project-mode` and `script-mode`:
 - success cases compare full normalized snapshots
 - error cases compare normalized outcome plus any opt-in post-run observations
 
-The suite is explicit-only and does not participate in the default `test-v2`
+The suite is explicit-only and does not participate in the default smoke
 aggregate.
 
 ## Lane Families
@@ -108,7 +108,7 @@ classification. This README only summarizes the current lane families:
   `NOB_DIFF_STATUS_OUT`
 - the CI job uploads that report as an artifact and copies it into the GitHub
   step summary
-- this differential workflow stays separate from the default `test-v2` smoke
+- this differential workflow stays separate from the default smoke
   aggregate
 
 ## Case-Pack DSL

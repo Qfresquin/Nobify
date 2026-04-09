@@ -24,7 +24,7 @@ void run_artifact_parity_corpus_v2_tests(int *passed, int *failed, int *skipped)
 static inline int test_v2_require_official_runner(void) {
     const char *runner = getenv(CMK2NOB_TEST_RUNNER_ENV);
     if (!runner || strcmp(runner, "1") != 0) {
-        nob_log(NOB_ERROR, "test suites must be launched via ./build/nob_test");
+        nob_log(NOB_ERROR, "test suites must be launched via the official test runner");
         return 0;
     }
     return 1;

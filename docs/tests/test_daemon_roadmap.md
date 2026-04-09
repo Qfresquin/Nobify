@@ -5,27 +5,35 @@ rewrite whose sole goal is to reach a fast persistent test daemon as quickly
 as possible.
 
 This document supersedes the old preserved-entrypoint constraint around
-`./build/nob_test` for this program. The current baseline runner still exists
-today, but this roadmap explicitly authorizes replacing it with a new
-`./build/nob`-owned client/daemon architecture even if that breaks the old
-test command surface between waves.
+`./build/nob_test` for this program. The legacy shim is now gone; this roadmap
+explicitly authorized replacing it with a new `./build/nob`-owned
+client/daemon architecture even when that broke the old test command surface
+between waves.
 
 This roadmap does not redefine evaluator, Event IR, build-model, codegen, or
 `nobify` product contracts. It only defines how local and CI-facing test
 infrastructure should evolve to maximize development speed.
 
+Historical wave descriptions are preserved below for implementation history.
+Any remaining mentions of `./build/nob_test` or `src_v2/build/nob_test.c`
+inside those earlier-wave sections are historical only, not current guidance.
+
 ## 1. Status
 
-As of April 8, 2026:
+As of April 9, 2026:
 
-- the current baseline test entrypoint is still `./build/nob_test`
-- `src_v2/build/nob.c` does not yet own test dispatch
-- `src_v2/build/nob_test.c` still owns module selection, profiles, incremental
-  compilation, workspaces, logs, and preflight behavior
-- the project now wants a faster path to a persistent daemon than the old
-  compatibility-first test architecture allowed
+- `./build/nob test ...` is the official human-facing test entrypoint
+- `build/nob_testd` already owns the daemon-backed run path
+- watch mode and impact routing already exist behind `./build/nob test watch ...`
+- fast profile, daemon-side preflight caching, launcher detection, and parallel
+  object compilation have already landed
+- T5 throughput observability and compact watch ergonomics have already landed
+- T6 legacy surface removal has already landed:
+  - `build/nob_test` has been removed
+  - `clean` and `tidy` are fronted through `./build/nob test ...`
+  - `smoke` is the only supported public aggregate label
 - only the `nobify` product needs portability; test infrastructure does not
-- inter-wave breakage is acceptable if it shortens the path to the daemon
+- inter-wave breakage remains acceptable if it shortens time-to-daemon
 
 The target end state of this roadmap is:
 
@@ -64,12 +72,13 @@ The following decisions are frozen for this roadmap:
 
 - only `nobify` product portability matters
 - test infrastructure may stay Linux/POSIX-only indefinitely
-- `./build/nob_test` is transitional and may be removed later
+- `./build/nob_test` has been removed; any remaining mentions below are
+  historical wave context only
 - `./build/nob` becomes the official human entrypoint for tests
 - `src_v2/build/nob.c` adopts `NOB_GO_REBUILD_URSELF_PLUS(...)` and owns test
   dispatch
-- `src_v2/build/nob_test.c` may remain temporarily, but only as a wrapper or
-  compatibility shim once runner-core extraction begins
+- `src_v2/build/nob_test.c` has been deleted; earlier wave text may still
+  mention it as historical context
 - the new daemon binary is `build/nob_testd`
 - the transport is a pathname `AF_UNIX` socket under `Temp_tests/daemon/`
 - the socket type is `SOCK_SEQPACKET`, not `SOCK_STREAM`
@@ -168,6 +177,10 @@ as a contract that must survive intact.
 - align docs and scripts around the new mental model
 
 ## 6. Wave Plan
+
+The wave descriptions below intentionally preserve the state and assumptions
+that were true when each wave was defined. T6 completion supersedes any older
+wave text that still refers to `./build/nob_test` as if it were current.
 
 ### T0 Contract Reset And Program Start
 
@@ -318,6 +331,8 @@ Deliverables:
 - better invalidation/reporting for fast-profile cache hits versus misses
 - explicit fallback routing policy remains visible in watch output when a path
   is unknown or too broad
+- default watch output becomes compact/failure-first, with `--verbose` as the
+  inspection path for roots, routed sets, and per-rerun detail
 
 Non-goals:
 - no full include-graph intelligence
@@ -334,7 +349,7 @@ Goal:
 - remove transitional clutter once the daemon path is stable
 
 Deliverables:
-- `build/nob_test` removed or replaced by a tiny documented compatibility shim
+- `build/nob_test` removed
 - docs stop presenting `./build/nob_test` as primary
 - architecture docs describe `nob` as client/supervisor and `nob_testd` as the
   reactor execution owner
