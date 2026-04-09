@@ -199,11 +199,16 @@ Reasons:
 - it is intended to be the operational closure harness for backend completion,
   not the default smoke tier
 
-It therefore does not participate in `./build/nob_test test-v2`.
+It therefore does not participate in the current baseline
+`./build/nob_test test-v2` smoke aggregate.
 
-The suite is exposed through:
+Today the suite is exposed through:
 
 `./build/nob_test test-evaluator-codegen-diff`
+
+The active daemon roadmap treats that command as transitional and targets:
+
+`./build/nob test evaluator-codegen-diff`
 
 Like the other explicit-only host suites, it inherits runner-owned workspace,
 locking, logging, and tool-resolution behavior from `src_v2/build/nob_test.c`.

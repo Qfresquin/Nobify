@@ -2,11 +2,16 @@
 
 ## Status
 
-This directory is the canonical map for test architecture and suite ownership.
+This directory is the canonical map for test architecture, suite ownership,
+and active test-infrastructure roadmaps.
 
-Architecture boundary:
+Current baseline architecture boundary:
 
 `nob_test runner -> test framework -> shared support -> suites`
+
+Active daemon-program target boundary:
+
+`nob front door -> daemon client -> runner core -> suites`
 
 ## Overview
 
@@ -26,8 +31,11 @@ redefine evaluator, Event IR, build-model, or codegen product contracts.
 ## Active Test Roadmap
 
 - [Tests structural refactor plan](./tests_structural_refactor_plan.md)
+- [Test daemon fast-track roadmap](./test_daemon_roadmap.md)
 
 ## Execution Policy Summary
+
+Current baseline commands still run through `./build/nob_test` today:
 
 - default smoke aggregate:
   `./build/nob_test test-v2`
@@ -36,6 +44,14 @@ redefine evaluator, Event IR, build-model, or codegen product contracts.
 - explicit closure harness suite:
   `./build/nob_test test-evaluator-codegen-diff`
 
+The active daemon roadmap treats those commands as transitional and targets:
+
+- `./build/nob test test-v2`
+- `./build/nob test artifact-parity`
+- `./build/nob test evaluator-codegen-diff`
+- `./build/nob test watch <module>`
+- `./build/nob test daemon start|stop|status`
+
 `artifact-parity` and `evaluator-codegen-diff` remain outside default smoke
 while they stay heavier and host-sensitive.
 
@@ -43,6 +59,8 @@ while they stay heavier and host-sensitive.
 
 - Closure roadmap:
   [`../evaluator_codegen_closure_roadmap.md`](../evaluator_codegen_closure_roadmap.md)
+- Test daemon roadmap:
+  [`./test_daemon_roadmap.md`](./test_daemon_roadmap.md)
 - Generated runtime contract:
   [`../codegen/codegen_runtime_contract.md`](../codegen/codegen_runtime_contract.md)
 - Build-model replay contract:

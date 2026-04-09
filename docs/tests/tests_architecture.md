@@ -5,8 +5,8 @@
 This document defines the current baseline architecture and suite taxonomy for
 the v2 test stack.
 
-As of April 6, 2026:
-- the official test entrypoint is `./build/nob_test`
+As of April 8, 2026:
+- the current baseline test entrypoint is `./build/nob_test`
 - the runner owns module selection, build profiles, incremental compilation,
   workspace roots, captured logs, and aggregate execution
 - the generic framework under `test_v2/` owns per-suite and per-case lifecycle
@@ -38,29 +38,41 @@ As of April 6, 2026:
 - an explicit-only `evaluator-codegen-diff` module now uses the evaluator
   corpus and the coverage matrix as the canonical closure harness for
   `evaluator -> Event IR -> build_model -> codegen` status classification
+- the active daemon program now lives under
+  [`test_daemon_roadmap.md`](./test_daemon_roadmap.md) and explicitly
+  authorizes replacing `./build/nob_test` with `./build/nob test ...`
+  as the long-term front door
+- test infrastructure portability is now explicitly out of scope for the
+  daemon program; only `nobify` product portability matters
 
 This file is the canonical baseline for test architecture, ownership, and suite
-taxonomy. The multi-wave change roadmap lives in
-[`tests_structural_refactor_plan.md`](./tests_structural_refactor_plan.md).
+taxonomy. The active change roadmaps now live in:
+
+- [`tests_structural_refactor_plan.md`](./tests_structural_refactor_plan.md)
+- [`test_daemon_roadmap.md`](./test_daemon_roadmap.md)
 
 ## Canonical Boundary
 
-The current and target architectural boundary is:
+The current baseline architectural boundary is:
 
 `nob_test runner -> test framework -> shared support -> suites`
 
+The active daemon-program target boundary is:
+
+`nob front door -> daemon client -> runner core -> suites`
+
 The current implementation already has the runner and framework boundaries in
-place. The shared-support boundary exists only partially and is the main area
-of structural follow-up covered by the refactor plan.
+place. The shared-support boundary exists only partially and remains the main
+area of follow-up covered by the structural refactor plan, while the daemon
+program now owns the future command surface and execution-owner rewrite.
 
 This documentation is about test architecture only. It does not redefine lexer,
 parser, evaluator, build-model, pipeline, or codegen product semantics.
 
-## Preserved Runner Behavior
+## Baseline Runner Behavior
 
-The runner-owned behavior that future waves must preserve is:
+The runner-owned behavior preserved by the current baseline is:
 
-- stable `./build/nob_test` command entry for existing commands
 - module registry and aggregate selection
 - incremental object and binary rebuild behavior
 - build locking under `Temp_tests/locks`
@@ -71,6 +83,10 @@ The runner-owned behavior that future waves must preserve is:
 
 These behaviors belong to the runner layer and must not drift into suite-local
 code.
+
+The active daemon roadmap explicitly overrides only one preserved-baseline
+assumption: `./build/nob_test` no longer needs to remain the long-term public
+entrypoint for future waves in that program.
 
 ## Current Module Taxonomy
 
@@ -314,7 +330,9 @@ Target direction:
 
 ## Default Aggregate Policy
 
-The default aggregate command is `./build/nob_test test-v2`.
+The current baseline aggregate command is `./build/nob_test test-v2`.
+
+The active daemon-program target command is `./build/nob test test-v2`.
 
 The runner also defaults to `test-v2` when no command is provided. Aggregate
 membership is owned by `src_v2/build/nob_test.c` through each module's
@@ -376,7 +394,7 @@ Guardrails:
 
 ## Smoke And CI Shape
 
-The intended execution tiers are:
+The current baseline execution tiers are:
 
 - default smoke:
   `./build/nob_test`
@@ -413,3 +431,8 @@ Runner-owned ergonomics that apply equally to aggregate and explicit commands:
 This is the canonical T5 baseline: `test-v2` is the required smoke tier,
 explicit-only suites remain first-class but opt-in, and workflow expectations
 match that split.
+
+The daemon program is intentionally allowed to replace this command surface
+with `./build/nob test ...` and `./build/nob test watch ...` once its waves
+land. Until then, this file continues to describe the current baseline rather
+than pretending the daemon target is already implemented.

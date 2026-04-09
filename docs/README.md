@@ -91,7 +91,8 @@ The implementation-level contracts for v2 live in focused docs under `docs/`.
   This area now also owns the explicit `evaluator -> codegen` diff harness
   contract under `docs/tests/evaluator_codegen_diff.md`, while the build-model
   and codegen directories own the normative downstream and runtime contracts
-  that the harness proves.
+  that the harness proves. The active Linux-only daemon rewrite for test
+  ergonomics also lives here under `docs/tests/test_daemon_roadmap.md`.
 - `docs/archive/`: historical migration records and delivered detailed wave logs.
 
 ---

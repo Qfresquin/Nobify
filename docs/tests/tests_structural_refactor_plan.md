@@ -2,8 +2,13 @@
 
 ## 1. Status
 
-Status: Active plan. This document defines the structural refactor roadmap for
-the v2 test architecture under `src_v2/build/nob_test.c` and `test_v2/`.
+Status: Active plan for the shared-support and baseline-runner refactor only.
+This document defines the structural refactor roadmap for the v2 test
+architecture under `src_v2/build/nob_test.c` and `test_v2/`.
+
+As of April 8, 2026, the new daemon rewrite and command-surface changes are
+owned by [`test_daemon_roadmap.md`](./test_daemon_roadmap.md). That program
+explicitly supersedes this document's old preserved-entrypoint assumptions.
 
 It does not redefine lexer, parser, evaluator, build-model, pipeline, or
 codegen product contracts. It only defines how the test stack should evolve so
@@ -21,9 +26,10 @@ architecture that is:
 - less dependent on white-box implementation details
 - clear about suite taxonomy and aggregate execution policy
 
-The refactor must preserve the current runner ergonomics and observability:
+The refactor must preserve the current baseline runner ergonomics and
+observability unless the daemon roadmap explicitly takes ownership of a change:
 
-- `./build/nob_test` remains the official entrypoint
+- `./build/nob_test` remains the baseline entrypoint for this plan's scope
 - workspace isolation remains mandatory
 - sanitizer, coverage, and `clang-tidy` profiles remain runner-owned
 - captured logs and preserved failed workspaces remain available for debugging
@@ -182,9 +188,11 @@ Non-responsibilities:
 
 ## 5. Guardrails
 
-The following constraints are frozen for all waves in this plan:
+The following constraints are frozen for all waves in this plan unless the
+daemon roadmap explicitly overrides them:
 
-- keep the `./build/nob_test` command surface stable for existing commands
+- keep the baseline `./build/nob_test` command surface stable for existing
+  commands
 - keep sanitizer, coverage, and `clang-tidy` behavior owned by the runner
 - no aggregate-path test may include subsystem `*_internal.h`
 - no suite may own duplicated generic case-pack, golden, text IO, or newline
@@ -197,7 +205,8 @@ The following constraints are frozen for all waves in this plan:
   justified in documentation
 - suite taxonomy must remain explicit in docs and runner policy
 - the refactor may change internal support structure aggressively, but it may
-  not regress the runner ergonomics already relied on by the workspace
+  not regress the baseline runner ergonomics already relied on by the
+  workspace unless the daemon roadmap is the explicit owner of that change
 
 ## 6. Required Waves
 
