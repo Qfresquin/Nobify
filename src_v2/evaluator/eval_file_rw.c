@@ -1,5 +1,6 @@
 #include "eval_file_internal.h"
 #include "arena_dyn.h"
+#include "sv_utils.h"
 
 #include <pcre2posix.h>
 
@@ -18,6 +19,66 @@ typedef enum {
     FILE_STRINGS_ENCODING_UTF32BE,
     FILE_STRINGS_ENCODING_INVALID,
 } File_Strings_Encoding;
+
+static String_View file_replay_join_args_temp(EvalExecContext *ctx, SV_List args, size_t begin) {
+    Nob_String_Builder sb = {0};
+    char *copy = NULL;
+    if (!ctx || begin >= arena_arr_len(args)) return nob_sv_from_cstr("");
+    if (begin + 1 == arena_arr_len(args)) return args[begin];
+    for (size_t i = begin; i < arena_arr_len(args); ++i) {
+        nob_sb_append_buf(&sb, args[i].data ? args[i].data : "", args[i].count);
+    }
+    copy = arena_strndup(eval_temp_arena(ctx), sb.items ? sb.items : "", sb.count);
+    nob_sb_free(sb);
+    EVAL_OOM_RETURN_IF_NULL(ctx, copy, nob_sv_from_cstr(""));
+    return nob_sv_from_parts(copy, strlen(copy));
+}
+
+static bool file_emit_replay_text_action(EvalExecContext *ctx,
+                                         Cmake_Event_Origin origin,
+                                         Event_Replay_Opcode opcode,
+                                         String_View path,
+                                         String_View text,
+                                         String_View mode_octal) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctx) return false;
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_FILESYSTEM,
+                                  opcode,
+                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_current_binary_dir(ctx),
+                                  &action_key) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, path) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, text)) {
+        return false;
+    }
+    if (opcode == EVENT_REPLAY_OPCODE_FS_WRITE_TEXT) {
+        if (!eval_emit_replay_action_add_argv(ctx, origin, action_key, 1, mode_octal)) return false;
+    }
+    return true;
+}
+
+static bool file_emit_replay_mkdir_action(EvalExecContext *ctx,
+                                          Cmake_Event_Origin origin,
+                                          const String_View *paths,
+                                          size_t path_count) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctx) return false;
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_FILESYSTEM,
+                                  EVENT_REPLAY_OPCODE_FS_MKDIR,
+                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_current_binary_dir(ctx),
+                                  &action_key)) {
+        return false;
+    }
+    for (size_t i = 0; i < path_count; ++i) {
+        if (!eval_emit_replay_action_add_output(ctx, origin, action_key, paths[i])) return false;
+    }
+    return true;
+}
 
 static File_Strings_Encoding file_strings_parse_encoding_sv(String_View sv) {
     if (eval_sv_eq_ci_lit(sv, "UTF-8") || eval_sv_eq_ci_lit(sv, "UTF8")) return FILE_STRINGS_ENCODING_UTF8;
@@ -253,10 +314,17 @@ void eval_file_handle_write(EvalExecContext *ctx, const Node *node, SV_List args
     }
     fclose(f);
     (void)eval_emit_fs_write_file(ctx, o, path);
+    (void)file_emit_replay_text_action(ctx,
+                                       o,
+                                       EVENT_REPLAY_OPCODE_FS_WRITE_TEXT,
+                                       path,
+                                       file_replay_join_args_temp(ctx, args, 2),
+                                       nob_sv_from_cstr(""));
 }
 
 void eval_file_handle_make_directory(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    SV_List resolved_paths = NULL;
     if (arena_arr_len(args) < 2) {
         eval_file_diag_error(ctx,
                              node,
@@ -280,8 +348,10 @@ void eval_file_handle_make_directory(EvalExecContext *ctx, const Node *node, SV_
                                  path);
             return;
         }
+        if (!svu_list_push_temp(ctx, &resolved_paths, path)) return;
         (void)eval_emit_fs_mkdir(ctx, o, path);
     }
+    (void)file_emit_replay_mkdir_action(ctx, o, resolved_paths, arena_arr_len(resolved_paths));
 }
 
 void eval_file_handle_read(EvalExecContext *ctx, const Node *node, SV_List args) {

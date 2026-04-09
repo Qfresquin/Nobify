@@ -17,6 +17,40 @@
 #include <limits.h>
 #endif
 
+static String_View file_fsops_join_args_temp(EvalExecContext *ctx, SV_List args, size_t begin) {
+    Nob_String_Builder sb = {0};
+    char *copy = NULL;
+    if (!ctx || begin >= arena_arr_len(args)) return nob_sv_from_cstr("");
+    if (begin + 1 == arena_arr_len(args)) return args[begin];
+    for (size_t i = begin; i < arena_arr_len(args); ++i) {
+        nob_sb_append_buf(&sb, args[i].data ? args[i].data : "", args[i].count);
+    }
+    copy = arena_strndup(eval_temp_arena(ctx), sb.items ? sb.items : "", sb.count);
+    nob_sb_free(sb);
+    EVAL_OOM_RETURN_IF_NULL(ctx, copy, nob_sv_from_cstr(""));
+    return nob_sv_from_parts(copy, strlen(copy));
+}
+
+static bool file_fsops_emit_append_replay(EvalExecContext *ctx,
+                                          Cmake_Event_Origin origin,
+                                          String_View path,
+                                          String_View text) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctx) return false;
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_FILESYSTEM,
+                                  EVENT_REPLAY_OPCODE_FS_APPEND_TEXT,
+                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_current_binary_dir(ctx),
+                                  &action_key) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, path) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, text)) {
+        return false;
+    }
+    return true;
+}
+
 static bool file_parse_permission_token(mode_t *mode, String_View token) {
     if (!mode) return false;
     if (eval_sv_eq_ci_lit(token, "OWNER_READ")) {
@@ -440,6 +474,7 @@ static bool handle_file_append(EvalExecContext *ctx, const Node *node, SV_List a
         fwrite(args[i].data, 1, args[i].count, f);
     }
     fclose(f);
+    (void)file_fsops_emit_append_replay(ctx, o, path, file_fsops_join_args_temp(ctx, args, 2));
     return true;
 }
 

@@ -102,6 +102,26 @@ TEST(codegen_runtime_emits_only_helpers_needed_for_simple_builds) {
     TEST_PASS();
 }
 
+TEST(codegen_render_emits_configure_and_build_cli_for_replay_models) {
+    Nob_String_Builder sb = {0};
+    ASSERT(codegen_render_script(
+        "project(Test C)\n"
+        "file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/configured.txt\" \"cfg\")\n"
+        "add_executable(app main.c)\n",
+        "CMakeLists.txt",
+        "nob.c",
+        &sb));
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items ? sb.items : "");
+    ASSERT(strstr(output, "static bool configure_all(bool force)") != NULL);
+    ASSERT(strstr(output, "static bool ensure_configured(void)") != NULL);
+    ASSERT(strstr(output, "strcmp(argv[argi], \"configure\")") != NULL);
+    ASSERT(strstr(output, "strcmp(argv[argi], \"build\")") != NULL);
+    ASSERT(strstr(output, "strcmp(argv[argi], \"test\")") == NULL);
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
 TEST(codegen_export_only_render_does_not_emit_install_only_helpers) {
     Nob_String_Builder sb = {0};
     ASSERT(codegen_render_script(
@@ -244,6 +264,7 @@ void run_codegen_v2_render_tests(int *passed, int *failed, int *skipped) {
     test_codegen_static_interface_alias_usage_propagates_flags(passed, failed, skipped);
     test_codegen_output_properties_shape_artifact_paths(passed, failed, skipped);
     test_codegen_runtime_emits_only_helpers_needed_for_simple_builds(passed, failed, skipped);
+    test_codegen_render_emits_configure_and_build_cli_for_replay_models(passed, failed, skipped);
     test_codegen_export_only_render_does_not_emit_install_only_helpers(passed, failed, skipped);
     test_codegen_generated_nob_compiles_cleanly_with_werror_for_representative_paths(passed, failed, skipped);
     test_codegen_render_multi_config_mixed_language_and_imported_queries_stay_stable(passed, failed, skipped);

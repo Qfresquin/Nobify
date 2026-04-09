@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 
+typedef struct Write_File_Request Write_File_Request;
+
 static bool legacy_emit_diag(EvalExecContext *ctx,
                              const Node *node,
                              Cmake_Diag_Severity severity,
@@ -71,6 +73,27 @@ static String_View legacy_generated_name_temp(EvalExecContext *ctx,
     memcpy(buf + prefix_len + stem.count, suffix, suffix_len);
     buf[prefix_len + stem.count + suffix_len] = '\0';
     return nob_sv_from_parts(buf, prefix_len + stem.count + suffix_len);
+}
+
+static bool legacy_emit_replay_make_directory(EvalExecContext *ctx,
+                                              const Node *node,
+                                              const SV_List *resolved_dirs) {
+    String_View action_key = nob_sv_from_cstr("");
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    if (!ctx) return false;
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_FILESYSTEM,
+                                  EVENT_REPLAY_OPCODE_FS_MKDIR,
+                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_current_binary_dir(ctx),
+                                  &action_key)) {
+        return false;
+    }
+    for (size_t i = 0; i < arena_arr_len(*resolved_dirs); ++i) {
+        if (!eval_emit_replay_action_add_output(ctx, origin, action_key, (*resolved_dirs)[i])) return false;
+    }
+    return true;
 }
 
 static bool legacy_metadata_only(EvalExecContext *ctx,
@@ -145,11 +168,36 @@ typedef struct {
     SV_List directories;
 } Make_Directory_Request;
 
-typedef struct {
+struct Write_File_Request {
     String_View path;
     String_View contents;
     bool append;
-} Write_File_Request;
+};
+
+static bool legacy_emit_replay_write_file(EvalExecContext *ctx,
+                                          const Node *node,
+                                          const Write_File_Request *req) {
+    String_View action_key = nob_sv_from_cstr("");
+    Event_Replay_Opcode opcode = EVENT_REPLAY_OPCODE_FS_WRITE_TEXT;
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
+    if (!ctx || !req) return false;
+    if (req->append) opcode = EVENT_REPLAY_OPCODE_FS_APPEND_TEXT;
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_FILESYSTEM,
+                                  opcode,
+                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_current_binary_dir(ctx),
+                                  &action_key) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, req->path) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, req->contents)) {
+        return false;
+    }
+    if (opcode == EVENT_REPLAY_OPCODE_FS_WRITE_TEXT) {
+        if (!eval_emit_replay_action_add_argv(ctx, origin, action_key, 1, nob_sv_from_cstr(""))) return false;
+    }
+    return true;
+}
 
 typedef struct {
     String_View variable;
@@ -208,6 +256,7 @@ static bool legacy_parse_make_directory_request(EvalExecContext *ctx,
 static bool legacy_execute_make_directory_request(EvalExecContext *ctx,
                                                   const Node *node,
                                                   const Make_Directory_Request *req) {
+    SV_List resolved_dirs = NULL;
     if (!ctx || !node || !req) return false;
     for (size_t i = 0; i < arena_arr_len(req->directories); i++) {
         String_View path = legacy_resolve_binary_path(ctx, req->directories[i]);
@@ -222,7 +271,9 @@ static bool legacy_execute_make_directory_request(EvalExecContext *ctx,
                                    nob_sv_from_cstr("make_directory() failed to create a directory"),
                                    path);
         }
+        if (!svu_list_push_temp(ctx, &resolved_dirs, path)) return false;
     }
+    (void)legacy_emit_replay_make_directory(ctx, node, &resolved_dirs);
     return true;
 }
 
@@ -275,6 +326,7 @@ static bool legacy_execute_write_file_request(EvalExecContext *ctx,
                                nob_sv_from_cstr("write_file() failed to write the requested file"),
                                req->path);
     }
+    (void)legacy_emit_replay_write_file(ctx, node, req);
     return true;
 }
 

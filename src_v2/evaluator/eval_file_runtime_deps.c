@@ -468,6 +468,17 @@ bool eval_file_handle_runtime_dependencies(EvalExecContext *ctx, const Node *nod
         return true;
     }
 
+    {
+        String_View replay_key = nob_sv_from_cstr("");
+        (void)eval_begin_replay_action(ctx,
+                                       o,
+                                       EVENT_REPLAY_ACTION_PROBE,
+                                       EVENT_REPLAY_OPCODE_NONE,
+                                       EVENT_REPLAY_PHASE_CONFIGURE,
+                                       eval_current_binary_dir(ctx),
+                                       &replay_key);
+    }
+
 #if defined(_WIN32)
     if (rd.resolved_var.count > 0) (void)eval_var_set_current(ctx, rd.resolved_var, nob_sv_from_cstr(""));
     if (rd.unresolved_var.count > 0) (void)eval_var_set_current(ctx, rd.unresolved_var, nob_sv_from_cstr(""));

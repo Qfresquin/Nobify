@@ -34,6 +34,8 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
     bool needs_require_paths = false;
     bool needs_write_stamp = false;
     bool needs_package_archive = false;
+    bool needs_tar_resolver = false;
+    bool needs_replay_sha256 = false;
     if (!ctx) return;
 
     /* clean_all() always owns backend-private paths, so filesystem helpers are always needed */
@@ -93,6 +95,22 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
         if (cg_package_generator_enabled(ctx, "TXZ")) ctx->helper_bits |= CG_HELPER_XZ_RESOLVER;
     }
 
+    for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
+        BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
+        BM_Replay_Opcode opcode = bm_query_replay_action_opcode(ctx->model, id);
+        needs_write_stamp = true;
+        if (opcode == BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR ||
+            opcode == BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR) {
+            needs_tar_resolver = true;
+        }
+        if (opcode == BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL) {
+            BM_String_Span argv = bm_query_replay_action_argv(ctx->model, id);
+            if (argv.count >= 2 && argv.items[0].count > 0 && argv.items[1].count > 0) {
+                needs_replay_sha256 = true;
+            }
+        }
+    }
+
     if (needs_compile_toolchain) ctx->helper_bits |= CG_HELPER_COMPILE_TOOLCHAIN;
     if (needs_archive_tool) ctx->helper_bits |= CG_HELPER_ARCHIVE_TOOL;
     if (needs_link_tool) ctx->helper_bits |= CG_HELPER_LINK_TOOL;
@@ -101,6 +119,8 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
     if (needs_install_copy_file) ctx->helper_bits |= CG_HELPER_INSTALL_COPY_FILE;
     if (needs_install_copy_directory) ctx->helper_bits |= CG_HELPER_INSTALL_COPY_DIRECTORY;
     if (needs_package_archive) ctx->helper_bits |= CG_HELPER_PACKAGE_ARCHIVE;
+    if (needs_tar_resolver) ctx->helper_bits |= CG_HELPER_TAR_RESOLVER;
+    if (needs_replay_sha256) ctx->helper_bits |= CG_HELPER_REPLAY_SHA256;
 }
 
 bool cg_emit_support_helpers(CG_Context *ctx, Nob_String_Builder *out) {
@@ -215,6 +235,14 @@ bool cg_emit_support_helpers(CG_Context *ctx, Nob_String_Builder *out) {
                                              "xz")) {
             return false;
         }
+    }
+    if (ctx->helper_bits & CG_HELPER_TAR_RESOLVER) {
+        nob_sb_append_cstr(out,
+            "static const char *resolve_tar_bin(void) {\n"
+            "    const char *tool = getenv(\"NOB_TAR_BIN\");\n"
+            "    if (tool && tool[0] != '\\0') return tool;\n"
+            "    return \"tar\";\n"
+            "}\n\n");
     }
 
     if (ctx->helper_bits & CG_HELPER_FILESYSTEM) {

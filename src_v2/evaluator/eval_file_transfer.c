@@ -53,6 +53,44 @@ typedef struct {
     size_t http_headers_count;
 } File_Transfer_Options;
 
+static bool file_transfer_emit_replay_marker(EvalExecContext *ctx,
+                                             Cmake_Event_Origin origin,
+                                             Event_Replay_Action_Kind kind) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctx) return false;
+    return eval_begin_replay_action(ctx,
+                                    origin,
+                                    kind,
+                                    EVENT_REPLAY_OPCODE_NONE,
+                                    EVENT_REPLAY_PHASE_CONFIGURE,
+                                    eval_current_binary_dir(ctx),
+                                    &action_key);
+}
+
+static bool file_transfer_emit_replay_local_download(EvalExecContext *ctx,
+                                                     Cmake_Event_Origin origin,
+                                                     String_View src_path,
+                                                     String_View dst_path,
+                                                     String_View hash_algo,
+                                                     String_View hash_digest) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctx) return false;
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_HOST_EFFECT,
+                                  EVENT_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL,
+                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_current_binary_dir(ctx),
+                                  &action_key) ||
+        !eval_emit_replay_action_add_input(ctx, origin, action_key, src_path) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, dst_path) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, hash_algo) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 1, hash_digest)) {
+        return false;
+    }
+    return true;
+}
+
 static bool file_transfer_is_known_option(String_View t) {
     return eval_sv_eq_ci_lit(t, "STATUS") ||
            eval_sv_eq_ci_lit(t, "LOG") ||
@@ -724,6 +762,10 @@ static bool handle_file_download(EvalExecContext *ctx, const Node *node, SV_List
         }
 
         file_transfer_set_success(ctx, &opt, log_trim.count > 0 ? log_trim : nob_sv_from_cstr("remote download completed"));
+        (void)file_transfer_emit_replay_marker(ctx,
+                                               o,
+                                               has_dst ? EVENT_REPLAY_ACTION_HOST_EFFECT
+                                                       : EVENT_REPLAY_ACTION_PROBE);
         return true;
     }
 
@@ -759,6 +801,7 @@ static bool handle_file_download(EvalExecContext *ctx, const Node *node, SV_List
     if (!has_dst) {
         nob_sb_free(sb);
         file_transfer_set_success(ctx, &opt, nob_sv_from_cstr("local download probe completed"));
+        (void)file_transfer_emit_replay_marker(ctx, o, EVENT_REPLAY_ACTION_PROBE);
         return true;
     }
 
@@ -806,6 +849,30 @@ static bool handle_file_download(EvalExecContext *ctx, const Node *node, SV_List
     }
 
     file_transfer_set_success(ctx, &opt, nob_sv_from_cstr("local download completed"));
+    {
+        bool supported = !opt.has_range_start &&
+                         !opt.has_range_end &&
+                         !opt.has_timeout &&
+                         !opt.has_inactivity_timeout &&
+                         !opt.has_tls_verify &&
+                         opt.http_headers_count == 0 &&
+                         opt.userpwd.count == 0 &&
+                         opt.tls_cainfo.count == 0 &&
+                         opt.netrc_file.count == 0 &&
+                         opt.netrc_mode == EVAL_FILE_NETRC_DEFAULT &&
+                         !opt.expected_md5.count;
+        String_View hash_algo = nob_sv_from_cstr("");
+        String_View hash_digest = nob_sv_from_cstr("");
+        if (supported && opt.expected_hash.count > 0) {
+            supported = file_transfer_parse_expected_hash(opt.expected_hash, &hash_algo, &hash_digest) &&
+                        file_transfer_sv_eq_ci(hash_algo, nob_sv_from_cstr("SHA256"));
+        }
+        if (supported) {
+            (void)file_transfer_emit_replay_local_download(ctx, o, src, dst, hash_algo, hash_digest);
+        } else {
+            (void)file_transfer_emit_replay_marker(ctx, o, EVENT_REPLAY_ACTION_HOST_EFFECT);
+        }
+    }
     return true;
 }
 

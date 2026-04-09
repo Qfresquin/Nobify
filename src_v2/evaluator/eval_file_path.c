@@ -38,6 +38,25 @@ static bool is_path_safe(String_View path) {
     return true;
 }
 
+static String_View eval_file_trim_current_dir_prefixes(String_View path) {
+    while (path.count >= 2 &&
+           path.data[0] == '.' &&
+           svu_is_path_sep(path.data[1])) {
+        path.data += 2;
+        path.count -= 2;
+    }
+    return path;
+}
+
+static bool eval_file_path_has_prefix(String_View path, String_View prefix) {
+    path = eval_file_trim_current_dir_prefixes(path);
+    prefix = eval_file_trim_current_dir_prefixes(prefix);
+    if (prefix.count == 0 || path.count < prefix.count) return false;
+    if (!nob_sv_starts_with(path, prefix)) return false;
+    if (path.count == prefix.count) return true;
+    return svu_is_path_sep(path.data[prefix.count]);
+}
+
 static bool scope_char_eq(char a, char b, bool ci) {
     if (a == '\\') a = '/';
     if (b == '\\') b = '/';
@@ -206,9 +225,24 @@ bool eval_file_resolve_path(EvalExecContext *ctx,
         }
     }
 
-    String_View path = input_path;
+    String_View path = eval_file_cmk_path_normalize_temp(ctx, input_path);
+    String_View base = eval_file_cmk_path_normalize_temp(ctx, relative_base);
     if (!eval_sv_is_abs_path(path)) {
-        path = eval_sv_path_join(eval_temp_arena(ctx), relative_base, path);
+        String_View source_root = eval_file_cmk_path_normalize_temp(ctx, ctx->source_dir);
+        String_View binary_root = eval_file_cmk_path_normalize_temp(ctx, ctx->binary_dir);
+        bool already_anchored =
+            ((base.count > 0 &&
+              !(base.count == 1 && base.data[0] == '.') &&
+              eval_file_path_has_prefix(path, base)) ||
+             (source_root.count > 0 &&
+              !(source_root.count == 1 && source_root.data[0] == '.') &&
+              eval_file_path_has_prefix(path, source_root)) ||
+             (binary_root.count > 0 &&
+              !(binary_root.count == 1 && binary_root.data[0] == '.') &&
+              eval_file_path_has_prefix(path, binary_root)));
+        if (!already_anchored) {
+            path = eval_sv_path_join(eval_temp_arena(ctx), base, path);
+        }
     }
     path = eval_file_cmk_path_normalize_temp(ctx, path);
     if (eval_should_stop(ctx) || path.count == 0) return false;

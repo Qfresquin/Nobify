@@ -79,6 +79,21 @@ typedef enum {
 } BM_Replay_Action_Kind;
 ```
 
+```c
+typedef enum {
+    BM_REPLAY_OPCODE_NONE = 0,
+    BM_REPLAY_OPCODE_FS_MKDIR,
+    BM_REPLAY_OPCODE_FS_WRITE_TEXT,
+    BM_REPLAY_OPCODE_FS_APPEND_TEXT,
+    BM_REPLAY_OPCODE_FS_COPY_FILE,
+    BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL,
+    BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR,
+    BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR,
+    BM_REPLAY_OPCODE_HOST_LOCK_ACQUIRE,
+    BM_REPLAY_OPCODE_HOST_LOCK_RELEASE,
+} BM_Replay_Opcode;
+```
+
 The replay domain may grow by appending enum values only.
 
 ## 4. Canonical Replay Entity
@@ -87,6 +102,7 @@ Every replay action is a first-class frozen-model entity with:
 
 - `id`
 - `kind`
+- `opcode`
 - `phase`
 - `owner_directory_id`
 - `provenance`
@@ -145,6 +161,7 @@ Builder requirements:
 - owner directory is captured from the active directory frame at ingest time
 - argv, env, inputs, and outputs are stored as explicit spans
 - environment entries freeze as normalized `KEY=VALUE` strings
+- opcode-specific payload layout is frozen over the generic spans
 - the draft may keep unresolved symbolic references where necessary, but the
   frozen model must expose stable typed accessors only
 
@@ -164,6 +181,7 @@ query additions are:
 
 - `bm_query_replay_action_count`
 - `bm_query_replay_action_kind`
+- `bm_query_replay_action_opcode`
 - `bm_query_replay_action_phase`
 - `bm_query_replay_action_owner_directory`
 - `bm_query_replay_action_working_directory`
@@ -173,7 +191,28 @@ query additions are:
 - `bm_query_replay_action_environment`
 
 Future query helpers may append action-kind-specific accessors, but the generic
-surface above is the minimum stable contract.
+surface above plus the typed opcode is the minimum stable contract.
+
+Current C2 configure replay opcodes freeze payloads as follows:
+
+- `FS_MKDIR`
+  `outputs[] = ordered directories`
+- `FS_WRITE_TEXT`
+  `outputs[0] = destination`, `argv[0] = final text`, `argv[1] = octal mode or ""`
+- `FS_APPEND_TEXT`
+  `outputs[0] = destination`, `argv[0] = appended text`
+- `FS_COPY_FILE`
+  `inputs[0] = source`, `outputs[0] = destination`, `argv[0] = octal mode or ""`
+- `HOST_DOWNLOAD_LOCAL`
+  `inputs[0] = normalized local source`, `outputs[0] = destination`,
+  `argv[0] = hash algorithm or ""`, `argv[1] = digest or ""`
+- `HOST_ARCHIVE_CREATE_PAXR`
+  `inputs[] = ordered source paths`, `outputs[0] = archive path`,
+  `argv[0] = mtime epoch`
+- `HOST_ARCHIVE_EXTRACT_TAR`
+  `inputs[0] = archive`, `outputs[0] = destination`
+- `HOST_LOCK_ACQUIRE` and `HOST_LOCK_RELEASE`
+  `outputs[0] = resolved lock file path`
 
 ## 8. Relationship To Existing Domains
 

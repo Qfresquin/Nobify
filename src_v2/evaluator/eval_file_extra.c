@@ -330,9 +330,9 @@ static String_View configure_file_process_line(EvalExecContext *ctx,
 }
 
 static String_View configure_file_expand_content(EvalExecContext *ctx,
-                                                String_View input,
-                                                bool at_only,
-                                                bool escape_quotes) {
+                                                 String_View input,
+                                                 bool at_only,
+                                                 bool escape_quotes) {
     if (!ctx) return nob_sv_from_cstr("");
 
     Nob_String_Builder sb = {0};
@@ -359,6 +359,44 @@ static String_View configure_file_expand_content(EvalExecContext *ctx,
     String_View out = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items, sb.count - 1));
     nob_sb_free(sb);
     return out;
+}
+
+static bool configure_file_emit_replay(EvalExecContext *ctx,
+                                       Cmake_Event_Origin origin,
+                                       String_View input_path,
+                                       String_View output_path,
+                                       bool copyonly,
+                                       String_View output_text,
+                                       mode_t mode) {
+    String_View action_key = nob_sv_from_cstr("");
+    Event_Replay_Opcode opcode = copyonly
+        ? EVENT_REPLAY_OPCODE_FS_COPY_FILE
+        : EVENT_REPLAY_OPCODE_FS_WRITE_TEXT;
+    String_View mode_octal = eval_replay_mode_octal_temp(ctx, (unsigned int)mode);
+    if (!ctx) return false;
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_FILESYSTEM,
+                                  opcode,
+                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_current_binary_dir(ctx),
+                                  &action_key)) {
+        return false;
+    }
+    if (copyonly) {
+        if (!eval_emit_replay_action_add_input(ctx, origin, action_key, input_path) ||
+            !eval_emit_replay_action_add_output(ctx, origin, action_key, output_path) ||
+            !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, mode_octal)) {
+            return false;
+        }
+        return true;
+    }
+    if (!eval_emit_replay_action_add_output(ctx, origin, action_key, output_path) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, output_text) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 1, mode_octal)) {
+        return false;
+    }
+    return true;
 }
 
 Eval_Result eval_handle_configure_file(EvalExecContext *ctx, const Node *node) {
@@ -503,6 +541,7 @@ Eval_Result eval_handle_configure_file(EvalExecContext *ctx, const Node *node) {
         mode = src_st.st_mode & 0777;
     }
     (void)configure_file_apply_permissions(out_path, mode);
+    (void)configure_file_emit_replay(ctx, o, in_path, out_path, copyonly, out_text, mode);
     return eval_result_from_ctx(ctx);
 }
 

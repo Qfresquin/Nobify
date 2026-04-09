@@ -156,6 +156,7 @@ size_t bm_query_build_step_command_count(const Build_Model *model, BM_Build_Step
 BM_String_Span bm_query_build_step_command_argv(const Build_Model *model, BM_Build_Step_Id id, size_t command_index);
 
 BM_Replay_Action_Kind bm_query_replay_action_kind(const Build_Model *model, BM_Replay_Action_Id id);
+BM_Replay_Opcode bm_query_replay_action_opcode(const Build_Model *model, BM_Replay_Action_Id id);
 BM_Replay_Phase bm_query_replay_action_phase(const Build_Model *model, BM_Replay_Action_Id id);
 BM_Directory_Id bm_query_replay_action_owner_directory(const Build_Model *model, BM_Replay_Action_Id id);
 String_View bm_query_replay_action_working_directory(const Build_Model *model, BM_Replay_Action_Id id);

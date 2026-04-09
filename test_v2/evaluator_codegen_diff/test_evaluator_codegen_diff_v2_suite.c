@@ -140,7 +140,7 @@ typedef struct {
 } EGD_Case_Summary;
 
 #define EGD_EXPECTED_FULL_COMMANDS 124u
-#define EGD_COMMAND_INVENTORY_VERSION "2026-04-09-c1m"
+#define EGD_COMMAND_INVENTORY_VERSION "2026-04-09-c2"
 
 #define EGD_PACK_EVAL_DEFAULT "test_v2/evaluator/golden/evaluator_default.cmake"
 #define EGD_PACK_EVAL_ALL "test_v2/evaluator/golden/evaluator_all.cmake"
@@ -199,6 +199,28 @@ static const EGD_Observed_Output s_egd_build_outputs[] = {
     {"build_tree", "artifacts", EGD_DIFF_TREE},
 };
 
+static const Test_Manifest_Request s_egd_configure_generation_manifests[] = {
+    {TEST_MANIFEST_CAPTURE_TREE, "configure_tree", "generated"},
+    {TEST_MANIFEST_CAPTURE_FILE_TEXT, "configured_text", "generated/configured.txt"},
+    {TEST_MANIFEST_CAPTURE_FILE_TEXT, "write_append_text", "generated/write_append.txt"},
+};
+
+static const EGD_Observed_Output s_egd_configure_generation_outputs[] = {
+    {"configure_tree", "generated", EGD_DIFF_TREE},
+    {"configured_text", "generated/configured.txt", EGD_DIFF_FILE_TEXT},
+    {"write_append_text", "generated/write_append.txt", EGD_DIFF_FILE_TEXT},
+};
+
+static const Test_Manifest_Request s_egd_configure_host_effect_manifests[] = {
+    {TEST_MANIFEST_CAPTURE_TREE, "host_effect_tree", "replay"},
+    {TEST_MANIFEST_CAPTURE_FILE_TEXT, "downloaded_text", "replay/downloaded.txt"},
+};
+
+static const EGD_Observed_Output s_egd_configure_host_effect_outputs[] = {
+    {"host_effect_tree", "replay", EGD_DIFF_TREE},
+    {"downloaded_text", "replay/downloaded.txt", EGD_DIFF_FILE_TEXT},
+};
+
 static const EGD_Observed_Output s_egd_install_outputs[] = {
     {"install_tree", "", EGD_DIFF_TREE},
 };
@@ -224,9 +246,10 @@ static const EGD_Command_Inventory s_egd_command_inventory[] = {
 };
 
 static const EGD_Subcommand_Inventory s_egd_subcommand_inventory[] = {
-    {"file", "DOWNLOAD", EGD_PACK_FILE, "file_host_effect_download_surface", EGD_CLASS_BACKEND_REJECT, EGD_PHASE_CONFIGURE, "replay.backlog.file-host-effects", "replay-domain foundation landed, but this host-effect subcommand still lacks generated-backend replay", "epic-b.file.download", NULL},
-    {"file", "ARCHIVE_CREATE|ARCHIVE_EXTRACT", EGD_PACK_FILE, "file_host_effect_archive_surface", EGD_CLASS_BACKEND_REJECT, EGD_PHASE_CONFIGURE, "replay.backlog.file-host-effects", "replay-domain foundation landed, but archive host effects are still explicit backend rejects", "epic-b.file.archive", NULL},
-    {"file", "GENERATE|LOCK|GET_RUNTIME_DEPENDENCIES", EGD_PACK_FILE, "file_host_effect_generate_lock_and_runtime_deps_surface", EGD_CLASS_BACKEND_REJECT, EGD_PHASE_CONFIGURE, "replay.backlog.file-host-effects", "replay-domain foundation landed, but these file host effects still need explicit replay codegen or reject coverage", "epic-b.file.generate_lock_runtime", NULL},
+    {"file", "DOWNLOAD", EGD_PACK_SEEDS, "backend_configure_host_effect_supported_surface", EGD_CLASS_PARITY_PASS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, "build-model.replay.configure", "local deterministic file(DOWNLOAD) now replays through configure-phase host-effect actions", NULL, "workload.codegen.configure-host-effects"},
+    {"file", "ARCHIVE_CREATE|ARCHIVE_EXTRACT", EGD_PACK_SEEDS, "backend_configure_host_effect_supported_surface", EGD_CLASS_PARITY_PASS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, "build-model.replay.configure", "local pax archive create/extract now replays through configure-phase host-effect actions", NULL, "workload.codegen.configure-host-effects"},
+    {"file", "GENERATE|LOCK", EGD_PACK_SEEDS, "backend_configure_host_effect_supported_surface", EGD_CLASS_PARITY_PASS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, "build-model.replay.configure", "deterministic file(GENERATE) and file(LOCK) variants now replay through configure-phase actions", NULL, "workload.codegen.configure-host-effects"},
+    {"file", "GET_RUNTIME_DEPENDENCIES", EGD_PACK_FILE, "file_host_effect_generate_lock_and_runtime_deps_surface", EGD_CLASS_BACKEND_REJECT, EGD_PHASE_CONFIGURE, "replay.backlog.file-host-effects", "runtime dependency discovery remains an explicit backend reject in C2 because it does not replay as a deterministic configure effect", "epic-b.file.generate_lock_runtime", NULL},
     {"string", "APPEND|JOIN|CONFIGURE|REGEX|HASH", EGD_PACK_STRING, "string_text_regex_and_misc_surface", EGD_CLASS_EVALUATOR_ONLY, EGD_PHASE_CONFIGURE, "evaluator.frozen-semantic.string", "pure evaluator string semantics remain outside backend replay", NULL, NULL},
     {"list", "TRANSFORM|SORT", EGD_PACK_LIST, "list_sort_and_transform_selector_surface_matches_documented_combinations", EGD_CLASS_EVALUATOR_ONLY, EGD_PHASE_CONFIGURE, "evaluator.frozen-semantic.list", "list semantics only matter through frozen downstream state", NULL, NULL},
     {"math", "EXPR", EGD_PACK_MATH, "math_expr_precedence_bitwise_and_hex_output", EGD_CLASS_EVALUATOR_ONLY, EGD_PHASE_CONFIGURE, "evaluator.frozen-semantic.math", "math is evaluator-only and should not be replayed in nob.c", NULL, NULL},
@@ -239,6 +262,8 @@ static const EGD_Case_Def s_egd_cases[] = {
     {"backend_build_controlled_artifacts", EGD_PACK_SEEDS, "add_library", "build subtree parity", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE, "build-model.build-graph", "positive backend-owned build artifact parity", NULL, "workload.codegen.build-tree", s_egd_build_outputs, NOB_ARRAY_LEN(s_egd_build_outputs), s_egd_build_manifests, NOB_ARRAY_LEN(s_egd_build_manifests), NULL},
     {"backend_install_supported_surface", EGD_PACK_SEEDS, "install", "supported install subset", EGD_CLASS_PARITY_PASS, EGD_PARITY_INSTALL_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD | EGD_PHASE_INSTALL, EGD_TOOL_CMAKE, "build-model.install", "positive install parity for supported subset", NULL, "workload.codegen.install-tree", s_egd_install_outputs, NOB_ARRAY_LEN(s_egd_install_outputs), s_egd_install_manifests, NOB_ARRAY_LEN(s_egd_install_manifests), NULL},
     {"export_host_effect_target_and_export_file_surface", EGD_PACK_EXPORT, "export", "standalone export files", EGD_CLASS_PARITY_PASS, EGD_PARITY_EXPORT_FILES, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_EXPORT, EGD_TOOL_CMAKE, "build-model.export", "positive standalone export parity through explicit export command", NULL, "workload.codegen.export-files", s_egd_export_outputs, NOB_ARRAY_LEN(s_egd_export_outputs), s_egd_export_manifests, NOB_ARRAY_LEN(s_egd_export_manifests), NULL},
+    {"backend_configure_generation_supported_surface", EGD_PACK_SEEDS, "write_file|make_directory|file(WRITE|APPEND|MAKE_DIRECTORY)|configure_file", "configure materialization parity", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE, "build-model.replay.configure", "positive configure replay parity for deterministic text and directory materialization", NULL, "workload.codegen.configure-materialization", s_egd_configure_generation_outputs, NOB_ARRAY_LEN(s_egd_configure_generation_outputs), s_egd_configure_generation_manifests, NOB_ARRAY_LEN(s_egd_configure_generation_manifests), NULL},
+    {"backend_configure_host_effect_supported_surface", EGD_PACK_SEEDS, "file(DOWNLOAD|ARCHIVE_CREATE|ARCHIVE_EXTRACT|GENERATE|LOCK)", "configure host-effect parity", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE | EGD_TOOL_TAR, "build-model.replay.configure", "positive configure replay parity for supported deterministic host effects", NULL, "workload.codegen.configure-host-effects", s_egd_configure_host_effect_outputs, NOB_ARRAY_LEN(s_egd_configure_host_effect_outputs), s_egd_configure_host_effect_manifests, NOB_ARRAY_LEN(s_egd_configure_host_effect_manifests), NULL},
     {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package TGZ", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_TAR | EGD_TOOL_GZIP, "build-model.package", "positive full-package parity for TGZ", NULL, "workload.codegen.package-tgz", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "TGZ"},
     {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package TXZ", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_TAR | EGD_TOOL_XZ, "build-model.package", "positive full-package parity for TXZ", NULL, "workload.codegen.package-txz", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "TXZ"},
     {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package ZIP", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_PYTHON, "build-model.package", "positive full-package parity for ZIP", NULL, "workload.codegen.package-zip", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "ZIP"},

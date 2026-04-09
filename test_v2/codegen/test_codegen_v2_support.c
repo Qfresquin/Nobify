@@ -242,10 +242,14 @@ static bool codegen_render_or_write_script(const char *script,
     pipeline_config.current_file = effective_input_path;
     pipeline_config.source_dir = nob_sv_from_cstr(effective_source_dir);
     pipeline_config.binary_dir = nob_sv_from_cstr(effective_binary_dir);
-    if (config && config->disable_export_host_effects) {
-        pipeline_config.override_enable_export_host_effects = true;
-        pipeline_config.enable_export_host_effects = false;
-    }
+    /*
+     * Codegen product flows render generated backends from a model that does not
+     * materialize export host effects up front. Keep the test harness aligned so
+     * build-tree export files are owned by the generated runtime, not by the
+     * evaluator fixture setup.
+     */
+    pipeline_config.override_enable_export_host_effects = true;
+    pipeline_config.enable_export_host_effects = false;
 
     ok = test_semantic_pipeline_fixture_from_script(&fixture, script, &pipeline_config);
     if (!ok || !fixture.build.freeze_ok || !fixture.build.model || diag_has_errors()) {

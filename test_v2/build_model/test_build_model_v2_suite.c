@@ -875,6 +875,7 @@ TEST(build_model_replay_actions_freeze_query_and_preserve_order) {
     build_model_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 3);
     ev.as.replay_action_declare.action_key = nob_sv_from_cstr("nested_fs");
     ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_FILESYSTEM;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_FS_COPY_FILE;
     ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_CONFIGURE;
     ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("work/config");
     ASSERT(event_stream_push(stream, &ev));
@@ -892,45 +893,34 @@ TEST(build_model_replay_actions_freeze_query_and_preserve_order) {
     build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 6);
     ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("nested_fs");
     ev.as.replay_action_add_argv.arg_index = 0;
-    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("cmake");
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("0644");
     ASSERT(event_stream_push(stream, &ev));
 
-    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 7);
-    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("nested_fs");
-    ev.as.replay_action_add_argv.arg_index = 1;
-    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("-E");
-    ASSERT(event_stream_push(stream, &ev));
-
-    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ENV, 8);
-    ev.as.replay_action_add_env.action_key = nob_sv_from_cstr("nested_fs");
-    ev.as.replay_action_add_env.key = nob_sv_from_cstr("MODE");
-    ev.as.replay_action_add_env.value = nob_sv_from_cstr("fast");
-    ASSERT(event_stream_push(stream, &ev));
-
-    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, 9);
+    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, 7);
     ev.as.directory_leave.source_dir = nob_sv_from_cstr("sub");
     ev.as.directory_leave.binary_dir = nob_sv_from_cstr("sub-build");
     ASSERT(event_stream_push(stream, &ev));
 
-    build_model_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 10);
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 8);
     ev.as.replay_action_declare.action_key = nob_sv_from_cstr("root_proc");
     ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_PROCESS;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_NONE;
     ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_BUILD;
     ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("");
     ASSERT(event_stream_push(stream, &ev));
 
-    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 11);
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 9);
     ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("root_proc");
     ev.as.replay_action_add_output.path = nob_sv_from_cstr("artifacts/out.bin");
     ASSERT(event_stream_push(stream, &ev));
 
-    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 12);
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 10);
     ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("root_proc");
     ev.as.replay_action_add_argv.arg_index = 0;
     ev.as.replay_action_add_argv.value = nob_sv_from_cstr("tool");
     ASSERT(event_stream_push(stream, &ev));
 
-    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, 13);
+    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, 11);
     ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
     ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
     ASSERT(event_stream_push(stream, &ev));
@@ -948,6 +938,7 @@ TEST(build_model_replay_actions_freeze_query_and_preserve_order) {
     ASSERT(bm_query_replay_action_count(model) == 2);
 
     ASSERT(bm_query_replay_action_kind(model, nested_id) == BM_REPLAY_ACTION_FILESYSTEM);
+    ASSERT(bm_query_replay_action_opcode(model, nested_id) == BM_REPLAY_OPCODE_FS_COPY_FILE);
     ASSERT(bm_query_replay_action_phase(model, nested_id) == BM_REPLAY_PHASE_CONFIGURE);
     ASSERT(bm_query_replay_action_owner_directory(model, nested_id) == sub_dir);
     ASSERT(nob_sv_eq(bm_query_replay_action_working_directory(model, nested_id), nob_sv_from_cstr("work/config")));
@@ -955,25 +946,126 @@ TEST(build_model_replay_actions_freeze_query_and_preserve_order) {
     ASSERT(build_model_string_equals_at(bm_query_replay_action_outputs(model, nested_id), 0, "outputs/generated.txt"));
     argv = bm_query_replay_action_argv(model, nested_id);
     env = bm_query_replay_action_environment(model, nested_id);
-    ASSERT(argv.count == 2);
-    ASSERT(build_model_string_equals_at(argv, 0, "cmake"));
-    ASSERT(build_model_string_equals_at(argv, 1, "-E"));
-    ASSERT(env.count == 1);
-    ASSERT(build_model_string_equals_at(env, 0, "MODE=fast"));
+    ASSERT(argv.count == 1);
+    ASSERT(build_model_string_equals_at(argv, 0, "0644"));
+    ASSERT(env.count == 0);
 
     ASSERT(bm_query_replay_action_kind(model, root_id) == BM_REPLAY_ACTION_PROCESS);
+    ASSERT(bm_query_replay_action_opcode(model, root_id) == BM_REPLAY_OPCODE_NONE);
     ASSERT(bm_query_replay_action_phase(model, root_id) == BM_REPLAY_PHASE_BUILD);
     ASSERT(bm_query_replay_action_owner_directory(model, root_id) == bm_query_root_directory(model));
     ASSERT(build_model_string_equals_at(bm_query_replay_action_outputs(model, root_id), 0, "artifacts/out.bin"));
     ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, root_id), 0, "tool"));
 
     ASSERT(!bm_replay_action_id_is_valid(BM_REPLAY_ACTION_ID_INVALID));
+    ASSERT(bm_query_replay_action_opcode(model, BM_REPLAY_ACTION_ID_INVALID) == BM_REPLAY_OPCODE_NONE);
     ASSERT(bm_query_replay_action_owner_directory(model, BM_REPLAY_ACTION_ID_INVALID) == BM_DIRECTORY_ID_INVALID);
     ASSERT(bm_query_replay_action_inputs(model, BM_REPLAY_ACTION_ID_INVALID).count == 0);
     ASSERT(bm_query_replay_action_outputs(model, BM_REPLAY_ACTION_ID_INVALID).count == 0);
     ASSERT(bm_query_replay_action_argv(model, BM_REPLAY_ACTION_ID_INVALID).count == 0);
     ASSERT(bm_query_replay_action_environment(model, BM_REPLAY_ACTION_ID_INVALID).count == 0);
     ASSERT(bm_query_replay_action_working_directory(model, BM_REPLAY_ACTION_ID_INVALID).count == 0);
+
+    arena_destroy(arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
+    TEST_PASS();
+}
+
+TEST(build_model_replay_actions_reject_invalid_opcode_payload_shapes) {
+    Arena *arena = arena_create(2 * 1024 * 1024);
+    Arena *validate_arena = arena_create(512 * 1024);
+    Arena *model_arena = arena_create(2 * 1024 * 1024);
+    Test_Semantic_Pipeline_Build_Result build = {0};
+    Event_Stream *stream = NULL;
+    Event ev = {0};
+
+    ASSERT(arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
+
+    stream = event_stream_create(arena);
+    ASSERT(stream != NULL);
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 2);
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("bad_write");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_FILESYSTEM;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_FS_WRITE_TEXT;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_CONFIGURE;
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 3);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("bad_write");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("generated/out.txt");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, 4);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    ASSERT(test_semantic_pipeline_build_model_from_stream(arena, validate_arena, model_arena, stream, &build));
+    ASSERT(build.builder_ok);
+    ASSERT(!build.validate_ok);
+    ASSERT(!build.freeze_ok);
+
+    arena_destroy(arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
+
+    arena = arena_create(2 * 1024 * 1024);
+    validate_arena = arena_create(512 * 1024);
+    model_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
+
+    stream = event_stream_create(arena);
+    ASSERT(stream != NULL);
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 2);
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("bad_extract");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_HOST_EFFECT;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_CONFIGURE;
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_INPUT, 3);
+    ev.as.replay_action_add_input.action_key = nob_sv_from_cstr("bad_extract");
+    ev.as.replay_action_add_input.path = nob_sv_from_cstr("sample.tar");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 4);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("bad_extract");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("out");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 5);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_extract");
+    ev.as.replay_action_add_argv.arg_index = 0;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("unexpected");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, 6);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build = (Test_Semantic_Pipeline_Build_Result){0};
+    ASSERT(test_semantic_pipeline_build_model_from_stream(arena, validate_arena, model_arena, stream, &build));
+    ASSERT(build.builder_ok);
+    ASSERT(!build.validate_ok);
+    ASSERT(!build.freeze_ok);
 
     arena_destroy(arena);
     arena_destroy(validate_arena);
@@ -2262,6 +2354,7 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_marks_generated_sources_without_producer_steps(passed, failed, skipped);
     test_build_model_freeze_rejects_duplicate_effective_producers_and_execution_cycles(passed, failed, skipped);
     test_build_model_replay_actions_freeze_query_and_preserve_order(passed, failed, skipped);
+    test_build_model_replay_actions_reject_invalid_opcode_payload_shapes(passed, failed, skipped);
     test_build_model_replay_actions_reject_malformed_ordering(passed, failed, skipped);
     test_build_model_context_aware_queries_expand_usage_requirements_and_target_property_genex(passed, failed, skipped);
     test_build_model_platform_context_and_typed_platform_properties_are_queryable(passed, failed, skipped);

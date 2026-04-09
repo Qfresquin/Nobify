@@ -514,6 +514,8 @@ String_View eval_path_resolve_for_cmake_arg(EvalExecContext *ctx,
                                             String_View raw_path,
                                             String_View base_dir,
                                             bool preserve_generator_expressions) {
+    String_View normalized_raw = {0};
+    String_View normalized_base = {0};
     if (!ctx) return nob_sv_from_cstr("");
     if (raw_path.count == 0) return nob_sv_from_cstr("");
 
@@ -524,9 +526,24 @@ String_View eval_path_resolve_for_cmake_arg(EvalExecContext *ctx,
         return raw_path;
     }
 
-    String_View resolved = raw_path;
+    normalized_raw = eval_sv_path_normalize_temp(ctx, raw_path);
+    normalized_base = eval_sv_path_normalize_temp(ctx, base_dir);
+
+    String_View resolved = normalized_raw;
     if (!eval_sv_is_abs_path(resolved)) {
-        resolved = eval_sv_path_join(eval_temp_arena(ctx), base_dir, resolved);
+        bool already_anchored = false;
+        if (normalized_base.count > 0 &&
+            !(normalized_base.count == 1 && normalized_base.data[0] == '.') &&
+            resolved.count >= normalized_base.count &&
+            nob_sv_starts_with(resolved, normalized_base) &&
+            (resolved.count == normalized_base.count ||
+             resolved.data[normalized_base.count] == '/' ||
+             resolved.data[normalized_base.count] == '\\')) {
+            already_anchored = true;
+        }
+        if (!already_anchored) {
+            resolved = eval_sv_path_join(eval_temp_arena(ctx), normalized_base, resolved);
+        }
     }
     return eval_sv_path_normalize_temp(ctx, resolved);
 }

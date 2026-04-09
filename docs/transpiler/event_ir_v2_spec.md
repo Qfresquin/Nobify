@@ -108,6 +108,20 @@ These kinds remain inside the canonical family set and use
 `EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC` so downstream replay
 consumers can ingest them without introducing a replay-only family.
 
+`EVENT_REPLAY_ACTION_DECLARE` also freezes a typed replay opcode inside the
+declare payload. Current bridge opcodes are:
+
+- `EVENT_REPLAY_OPCODE_NONE`
+- `EVENT_REPLAY_OPCODE_FS_MKDIR`
+- `EVENT_REPLAY_OPCODE_FS_WRITE_TEXT`
+- `EVENT_REPLAY_OPCODE_FS_APPEND_TEXT`
+- `EVENT_REPLAY_OPCODE_FS_COPY_FILE`
+- `EVENT_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL`
+- `EVENT_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR`
+- `EVENT_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR`
+- `EVENT_REPLAY_OPCODE_HOST_LOCK_ACQUIRE`
+- `EVENT_REPLAY_OPCODE_HOST_LOCK_RELEASE`
+
 Base-contract freeze rules:
 - canonical `Event_Family` and `Event_Kind` values are append-only
 - new canonical entries append at the tail of the enum lists

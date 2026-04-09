@@ -14,6 +14,8 @@ static BM_Query_Eval_Context cg_make_query_ctx(CG_Context *ctx,
                                                BM_Query_Usage_Mode usage_mode,
                                                String_View config,
                                                String_View compile_language);
+static bool cg_replay_output_is_clean_safe(CG_Context *ctx, String_View output, bool *out_clean_safe);
+static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out);
 
 static bool cg_sv_eq_lit(String_View sv, const char *lit) {
     return nob_sv_eq(sv, nob_sv_from_cstr(lit));
@@ -2194,6 +2196,37 @@ static bool cg_emit_clean_function(CG_Context *ctx, Nob_String_Builder *out) {
         }
     }
 
+    for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
+        BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
+        BM_String_Span outputs = {0};
+        if (bm_query_replay_action_phase(ctx->model, id) != BM_REPLAY_PHASE_CONFIGURE) continue;
+        outputs = bm_query_replay_action_outputs(ctx->model, id);
+        for (size_t output_index = 0; output_index < outputs.count; ++output_index) {
+            String_View rebased = {0};
+            bool clean_safe = false;
+            if (!cg_replay_output_is_clean_safe(ctx, outputs.items[output_index], &clean_safe)) return false;
+            if (!clean_safe) continue;
+            if (!cg_rebase_path_from_cwd(ctx, outputs.items[output_index], &rebased) ||
+                !cg_collect_unique_path(ctx->scratch, &paths, rebased)) {
+                return false;
+            }
+        }
+    }
+
+    for (size_t package_index = 0; package_index < bm_query_cpack_package_count(ctx->model); ++package_index) {
+        BM_CPack_Package_Id package_id = (BM_CPack_Package_Id)package_index;
+        String_View output_dir = bm_query_cpack_package_output_directory(ctx->model, package_id, ctx->scratch);
+        bool clean_safe = false;
+        String_View rebased = {0};
+        if (output_dir.count == 0) continue;
+        if (!cg_replay_output_is_clean_safe(ctx, output_dir, &clean_safe)) return false;
+        if (!clean_safe) continue;
+        if (!cg_rebase_path_from_cwd(ctx, output_dir, &rebased) ||
+            !cg_collect_unique_path(ctx->scratch, &paths, rebased)) {
+            return false;
+        }
+    }
+
     nob_sb_append_cstr(out, "static bool clean_all(void) {\n");
     if (arena_arr_len(paths) == 0) {
         nob_sb_append_cstr(out, "    return true;\n");
@@ -2211,6 +2244,7 @@ static bool cg_emit_clean_function(CG_Context *ctx, Nob_String_Builder *out) {
 }
 
 #include "nob_codegen_cmake_writer.c"
+#include "nob_codegen_replay.c"
 #include "nob_codegen_install.c"
 #include "nob_codegen_export.c"
 #include "nob_codegen_package.c"
@@ -2229,8 +2263,34 @@ static bool cg_emit_main(CG_Context *ctx, Nob_String_Builder *out) {
         "        g_build_config = argv[argi + 1];\n"
         "        argi += 2;\n"
         "    }\n"
+        "    if (argi < argc && strcmp(argv[argi], \"configure\") == 0) {\n"
+        "        if (argi + 1 != argc) {\n"
+        "            nob_log(NOB_ERROR, \"configure: unexpected argument '%s'\", argv[argi + 1]);\n"
+        "            return 1;\n"
+        "        }\n"
+        "        return configure_all(true) ? 0 : 1;\n"
+        "    }\n"
         "    if (argi < argc && strcmp(argv[argi], \"clean\") == 0) {\n"
         "        return clean_all() ? 0 : 1;\n"
+        "    }\n"
+        "    if (argi < argc && strcmp(argv[argi], \"build\") == 0) {\n"
+        "        ++argi;\n"
+        "        if (!ensure_configured()) return 1;\n"
+        "        if (argi < argc) {\n"
+        "            for (int i = argi; i < argc; ++i) {\n"
+        "                if (!build_request(argv[i])) return 1;\n"
+        "            }\n"
+        "            return 0;\n"
+        "        }\n");
+    for (size_t i = 0; i < ctx->target_count; ++i) {
+        const CG_Target_Info *info = &ctx->targets[i];
+        if (info->alias || info->imported || info->exclude_from_all || !info->emits_artifact) continue;
+        nob_sb_append_cstr(out, "        if (!build_");
+        nob_sb_append_cstr(out, info->ident);
+        nob_sb_append_cstr(out, "()) return 1;\n");
+    }
+    nob_sb_append_cstr(out,
+        "        return 0;\n"
         "    }\n"
         "    if (argi < argc && strcmp(argv[argi], \"install\") == 0) {\n"
         "        const char *install_prefix = \"install\";\n"
@@ -2270,6 +2330,7 @@ static bool cg_emit_main(CG_Context *ctx, Nob_String_Builder *out) {
         "            nob_log(NOB_ERROR, \"install: unexpected argument '%s'\", argv[argi]);\n"
         "            return 1;\n"
         "        }\n"
+        "        if (!ensure_configured()) return 1;\n"
         "        return install_all(install_prefix, install_component) ? 0 : 1;\n"
         "    }\n"
         "    if (argi < argc && strcmp(argv[argi], \"export\") == 0) {\n"
@@ -2277,6 +2338,7 @@ static bool cg_emit_main(CG_Context *ctx, Nob_String_Builder *out) {
         "            nob_log(NOB_ERROR, \"export: unexpected argument '%s'\", argv[argi + 1]);\n"
         "            return 1;\n"
         "        }\n"
+        "        if (!ensure_configured()) return 1;\n"
         "        return export_all() ? 0 : 1;\n"
         "    }\n"
         "    if (argi < argc && strcmp(argv[argi], \"package\") == 0) {\n"
@@ -2317,14 +2379,17 @@ static bool cg_emit_main(CG_Context *ctx, Nob_String_Builder *out) {
         "            nob_log(NOB_ERROR, \"package: unexpected argument '%s'\", argv[argi]);\n"
         "            return 1;\n"
         "        }\n"
+        "        if (!ensure_configured()) return 1;\n"
         "        return package_all(package_generator, package_output_dir) ? 0 : 1;\n"
         "    }\n"
         "    if (argi < argc) {\n"
+        "        if (!ensure_configured()) return 1;\n"
         "        for (int i = argi; i < argc; ++i) {\n"
             "            if (!build_request(argv[i])) return 1;\n"
         "        }\n"
         "        return 0;\n"
-        "    }\n");
+        "    }\n"
+        "    if (!ensure_configured()) return 1;\n");
 
     for (size_t i = 0; i < ctx->target_count; ++i) {
         const CG_Target_Info *info = &ctx->targets[i];
@@ -2433,9 +2498,17 @@ bool nob_codegen_render(const Build_Model *model,
         "#include \"nob.h\"\n"
         "\n"
         "#include <ctype.h>\n"
+        "#include <errno.h>\n"
+        "#include <stdio.h>\n"
         "#include <stdint.h>\n"
         "#include <stdlib.h>\n"
         "#include <string.h>\n"
+        "#include <sys/stat.h>\n"
+        "#if !defined(_WIN32)\n"
+        "#include <fcntl.h>\n"
+        "#include <sys/file.h>\n"
+        "#include <unistd.h>\n"
+        "#endif\n"
         "\n");
 
     if (!cg_emit_target_forward_decls(&ctx, out) ||
@@ -2452,7 +2525,8 @@ bool nob_codegen_render(const Build_Model *model,
         if (!cg_emit_target_function(&ctx, &ctx.targets[i], out)) return false;
     }
 
-    if (!cg_emit_build_request(&ctx, out) ||
+    if (!cg_emit_configure_functions(&ctx, out) ||
+        !cg_emit_build_request(&ctx, out) ||
         !cg_emit_clean_function(&ctx, out) ||
         !cg_emit_install_function(&ctx, out) ||
         !cg_emit_export_function(&ctx, out) ||

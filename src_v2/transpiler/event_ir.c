@@ -108,6 +108,22 @@ static const char *event_replay_action_kind_name(Event_Replay_Action_Kind kind) 
     return "unknown";
 }
 
+static const char *event_replay_opcode_name(Event_Replay_Opcode opcode) {
+    switch (opcode) {
+        case EVENT_REPLAY_OPCODE_NONE: return "none";
+        case EVENT_REPLAY_OPCODE_FS_MKDIR: return "fs_mkdir";
+        case EVENT_REPLAY_OPCODE_FS_WRITE_TEXT: return "fs_write_text";
+        case EVENT_REPLAY_OPCODE_FS_APPEND_TEXT: return "fs_append_text";
+        case EVENT_REPLAY_OPCODE_FS_COPY_FILE: return "fs_copy_file";
+        case EVENT_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL: return "host_download_local";
+        case EVENT_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR: return "host_archive_create_paxr";
+        case EVENT_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR: return "host_archive_extract_tar";
+        case EVENT_REPLAY_OPCODE_HOST_LOCK_ACQUIRE: return "host_lock_acquire";
+        case EVENT_REPLAY_OPCODE_HOST_LOCK_RELEASE: return "host_lock_release";
+    }
+    return "unknown";
+}
+
 static const char *event_export_source_kind_name(Event_Export_Source_Kind kind) {
     switch (kind) {
         case EVENT_EXPORT_SOURCE_INSTALL_EXPORT: return "install_export";
@@ -863,10 +879,11 @@ static void event_dump_one(const Event *ev) {
                    ev->as.build_step_add_command.argc);
             break;
         case EVENT_REPLAY_ACTION_DECLARE:
-            printf(" action=%.*s kind=%s phase=%s",
+            printf(" action=%.*s kind=%s opcode=%s phase=%s",
                    (int)ev->as.replay_action_declare.action_key.count,
                    ev->as.replay_action_declare.action_key.data ? ev->as.replay_action_declare.action_key.data : "",
                    event_replay_action_kind_name(ev->as.replay_action_declare.action_kind),
+                   event_replay_opcode_name(ev->as.replay_action_declare.opcode),
                    event_replay_phase_name(ev->as.replay_action_declare.phase));
             break;
         case EVENT_REPLAY_ACTION_ADD_INPUT:

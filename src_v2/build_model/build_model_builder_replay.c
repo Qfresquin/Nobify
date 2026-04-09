@@ -60,6 +60,7 @@ bool bm_builder_handle_replay_event(BM_Builder *builder, const Event *ev) {
             action.owner_directory_id = owner_directory_id;
             action.provenance = bm_provenance_from_event(builder->arena, ev);
             action.kind = bm_replay_action_kind_from_event(ev->as.replay_action_declare.action_kind);
+            action.opcode = bm_replay_opcode_from_event(ev->as.replay_action_declare.opcode);
             action.phase = bm_replay_phase_from_event(ev->as.replay_action_declare.phase);
             if (!bm_copy_string(builder->arena, ev->as.replay_action_declare.action_key, &action.action_key) ||
                 !bm_copy_string(builder->arena, ev->as.replay_action_declare.working_directory, &action.working_directory) ||

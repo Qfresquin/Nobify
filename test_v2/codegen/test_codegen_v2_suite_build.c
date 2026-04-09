@@ -306,6 +306,13 @@ static bool codegen_host_program_available(const char *name) {
     return name && test_ws_host_program_in_path(name, path);
 }
 
+static bool codegen_text_file_equals(Arena *arena, const char *path, const char *expected) {
+    String_View actual = {0};
+    if (!arena || !path || !expected) return false;
+    return codegen_load_text_file_to_arena(arena, path, &actual) &&
+           nob_sv_eq(actual, nob_sv_from_cstr(expected));
+}
+
 static const char *codegen_package_extension(const char *generator) {
     if (!generator) return "";
     if (strcmp(generator, "TGZ") == 0) return ".tar.gz";
@@ -966,6 +973,132 @@ TEST(codegen_clean_removes_out_of_source_outputs_but_preserves_binary_root) {
     ASSERT(!test_ws_host_path_exists("clean_build/libcore.a"));
     ASSERT(!test_ws_host_path_exists("clean_build/libshared.so"));
     ASSERT(!test_ws_host_path_exists("clean_build/libplugin.so"));
+    TEST_PASS();
+}
+
+TEST(codegen_configure_replay_supported_effects_and_phase_cli_work) {
+    Arena *arena = arena_create(512 * 1024);
+    const char *build_argv[] = {"build", "app"};
+    const char *script =
+        "project(Test C)\n"
+        "set(VALUE 42)\n"
+        "write_file(\"${CMAKE_CURRENT_BINARY_DIR}/configured/legacy.txt\" legacy-body)\n"
+        "make_directory(\"${CMAKE_CURRENT_BINARY_DIR}/configured/legacy_dir/sub\")\n"
+        "file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/configured/file_write.txt\" \"alpha\")\n"
+        "file(APPEND \"${CMAKE_CURRENT_BINARY_DIR}/configured/file_write.txt\" \"beta\")\n"
+        "file(MAKE_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}/configured/file_dir/sub\")\n"
+        "configure_file(\"${CMAKE_CURRENT_SOURCE_DIR}/template.in\" \"${CMAKE_CURRENT_BINARY_DIR}/configured/configured.txt\" @ONLY)\n"
+        "file(GENERATE OUTPUT \"${CMAKE_CURRENT_BINARY_DIR}/configured/generated.txt\" CONTENT \"GEN\")\n"
+        "file(SHA256 \"${CMAKE_CURRENT_SOURCE_DIR}/download_src.txt\" DL_HASH)\n"
+        "file(DOWNLOAD \"file://${CMAKE_CURRENT_SOURCE_DIR}/download_src.txt\" \"${CMAKE_CURRENT_BINARY_DIR}/configured/downloaded.txt\" EXPECTED_HASH \"SHA256=${DL_HASH}\")\n"
+        "file(ARCHIVE_CREATE OUTPUT \"${CMAKE_CURRENT_BINARY_DIR}/configured/sample.tar\" PATHS \"${CMAKE_CURRENT_SOURCE_DIR}/archive_input\" FORMAT paxr MTIME 0)\n"
+        "file(ARCHIVE_EXTRACT INPUT \"${CMAKE_CURRENT_BINARY_DIR}/configured/sample.tar\" DESTINATION \"${CMAKE_CURRENT_BINARY_DIR}/configured/archive_out\")\n"
+        "file(MAKE_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}/configured/lock_dir\")\n"
+        "file(LOCK \"${CMAKE_CURRENT_BINARY_DIR}/configured/lock_dir\" DIRECTORY)\n"
+        "file(LOCK \"${CMAKE_CURRENT_BINARY_DIR}/configured/lock_dir\" DIRECTORY RELEASE)\n"
+        "add_executable(app main.c)\n";
+    Codegen_Test_Config config = {
+        .input_path = "CMakeLists.txt",
+        .output_path = "cfg_phase_nob.c",
+        .source_dir = "cfg_phase_src",
+        .binary_dir = "cfg_phase_build",
+    };
+
+    ASSERT(arena != NULL);
+    if (!codegen_host_program_available("tar")) {
+        arena_destroy(arena);
+        TEST_SKIP("requires tar for configure replay archive helpers");
+    }
+
+    ASSERT(codegen_write_text_file("cfg_phase_src/main.c", "int main(void) { return 0; }\n"));
+    ASSERT(codegen_write_text_file("cfg_phase_src/template.in", "VALUE=@VALUE@\n"));
+    ASSERT(codegen_write_text_file("cfg_phase_src/download_src.txt", "download-body\n"));
+    ASSERT(codegen_write_text_file("cfg_phase_src/archive_input/root.txt", "root\n"));
+    ASSERT(codegen_write_text_file("cfg_phase_src/archive_input/sub/child.txt", "child\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("cfg_phase_nob.c", "cfg_phase_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir(".", "./cfg_phase_nob_gen", "configure", NULL));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/legacy.txt"));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/legacy_dir/sub"));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/file_dir/sub"));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/sample.tar"));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/archive_out/archive_input/root.txt"));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/archive_out/archive_input/sub/child.txt"));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/lock_dir/cmake.lock"));
+    ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/legacy.txt", "legacy-body"));
+    ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/file_write.txt", "alphabeta"));
+    ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/configured.txt", "VALUE=42\n"));
+    ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/generated.txt", "GEN"));
+    ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/downloaded.txt", "download-body\n"));
+    ASSERT(!test_ws_host_path_exists("cfg_phase_build/app"));
+
+    ASSERT(codegen_run_binary_in_dir(".", "./cfg_phase_nob_gen", "clean", NULL));
+    ASSERT(!test_ws_host_path_exists("cfg_phase_build/configured/legacy.txt"));
+    ASSERT(!test_ws_host_path_exists("cfg_phase_build/configured/sample.tar"));
+    ASSERT(!test_ws_host_path_exists("cfg_phase_build/app"));
+
+    ASSERT(codegen_run_binary_in_dir(".", "./cfg_phase_nob_gen", NULL, NULL));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/configured.txt"));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/app"));
+    ASSERT(codegen_run_binary_in_dir(".", "cfg_phase_build/app", NULL, NULL));
+
+    ASSERT(codegen_run_binary_in_dir(".", "./cfg_phase_nob_gen", "clean", NULL));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./cfg_phase_nob_gen", build_argv, NOB_ARRAY_LEN(build_argv)));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/downloaded.txt"));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/app"));
+    ASSERT(codegen_run_binary_in_dir(".", "cfg_phase_build/app", NULL, NULL));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(codegen_install_export_and_package_auto_configure_from_clean_workspace) {
+    const char *install_argv[] = {"install", "--prefix", "cfg_auto_prefix"};
+    const char *export_argv[] = {"export"};
+    const char *package_argv[] = {"package", "--generator", "ZIP"};
+    const char *script =
+        "project(Test C)\n"
+        "file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/cfg/generated.txt\" \"CFG-AUTO\")\n"
+        "add_library(core INTERFACE)\n"
+        "export(TARGETS core FILE \"${CMAKE_CURRENT_BINARY_DIR}/exports/CoreTargets.cmake\" NAMESPACE Demo::)\n"
+        "install(FILES \"${CMAKE_CURRENT_BINARY_DIR}/cfg/generated.txt\" DESTINATION share/demo)\n"
+        "set(CPACK_GENERATOR \"ZIP\")\n"
+        "set(CPACK_PACKAGE_NAME \"CfgPkg\")\n"
+        "set(CPACK_PACKAGE_VERSION \"1.0.0\")\n"
+        "set(CPACK_PACKAGE_FILE_NAME \"cfg-pkg\")\n"
+        "set(CPACK_PACKAGE_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}/packages\")\n"
+        "set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)\n"
+        "include(CPack)\n";
+    Codegen_Test_Config config = {
+        .input_path = "CMakeLists.txt",
+        .output_path = "cfg_auto_nob.c",
+        .source_dir = "cfg_auto_src",
+        .binary_dir = "cfg_auto_build",
+    };
+
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("cfg_auto_nob.c", "cfg_auto_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./cfg_auto_nob_gen", install_argv, NOB_ARRAY_LEN(install_argv)));
+    ASSERT(test_ws_host_path_exists("cfg_auto_build/cfg/generated.txt"));
+    ASSERT(test_ws_host_path_exists("cfg_auto_prefix/share/demo/generated.txt"));
+
+    ASSERT(codegen_run_binary_in_dir(".", "./cfg_auto_nob_gen", "clean", NULL));
+    ASSERT(!test_ws_host_path_exists("cfg_auto_build/cfg/generated.txt"));
+    ASSERT(!test_ws_host_path_exists("cfg_auto_build/exports/CoreTargets.cmake"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./cfg_auto_nob_gen", export_argv, NOB_ARRAY_LEN(export_argv)));
+    ASSERT(test_ws_host_path_exists("cfg_auto_build/cfg/generated.txt"));
+    ASSERT(test_ws_host_path_exists("cfg_auto_build/exports/CoreTargets.cmake"));
+
+    ASSERT(codegen_run_binary_in_dir(".", "./cfg_auto_nob_gen", "clean", NULL));
+    ASSERT(!test_ws_host_path_exists("cfg_auto_build/cfg/generated.txt"));
+    ASSERT(!test_ws_host_path_exists("cfg_auto_build/packages/cfg-pkg.zip"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./cfg_auto_nob_gen", package_argv, NOB_ARRAY_LEN(package_argv)));
+    ASSERT(test_ws_host_path_exists("cfg_auto_build/cfg/generated.txt"));
+    ASSERT(test_ws_host_path_exists("cfg_auto_build/packages/cfg-pkg.zip"));
     TEST_PASS();
 }
 
@@ -1827,6 +1960,8 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_explicit_output_directories_shape_out_of_source_artifacts(passed, failed, skipped);
     test_codegen_cxx_static_dependency_uses_cxx_driver_for_link_out_of_source(passed, failed, skipped);
     test_codegen_clean_removes_out_of_source_outputs_but_preserves_binary_root(passed, failed, skipped);
+    test_codegen_configure_replay_supported_effects_and_phase_cli_work(passed, failed, skipped);
+    test_codegen_install_export_and_package_auto_configure_from_clean_workspace(passed, failed, skipped);
     test_codegen_install_full_custom_prefix_preserves_program_mode_and_directory_semantics(passed, failed, skipped);
     test_codegen_install_component_selection_and_default_component_fallback_work(passed, failed, skipped);
     test_codegen_ignores_cxx_modules_file_set_metadata_in_compile_inputs(passed, failed, skipped);

@@ -304,6 +304,22 @@ BM_Replay_Action_Kind bm_replay_action_kind_from_event(Event_Replay_Action_Kind 
     return BM_REPLAY_ACTION_FILESYSTEM;
 }
 
+BM_Replay_Opcode bm_replay_opcode_from_event(Event_Replay_Opcode opcode) {
+    switch (opcode) {
+        case EVENT_REPLAY_OPCODE_NONE: return BM_REPLAY_OPCODE_NONE;
+        case EVENT_REPLAY_OPCODE_FS_MKDIR: return BM_REPLAY_OPCODE_FS_MKDIR;
+        case EVENT_REPLAY_OPCODE_FS_WRITE_TEXT: return BM_REPLAY_OPCODE_FS_WRITE_TEXT;
+        case EVENT_REPLAY_OPCODE_FS_APPEND_TEXT: return BM_REPLAY_OPCODE_FS_APPEND_TEXT;
+        case EVENT_REPLAY_OPCODE_FS_COPY_FILE: return BM_REPLAY_OPCODE_FS_COPY_FILE;
+        case EVENT_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL: return BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL;
+        case EVENT_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR: return BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR;
+        case EVENT_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR: return BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR;
+        case EVENT_REPLAY_OPCODE_HOST_LOCK_ACQUIRE: return BM_REPLAY_OPCODE_HOST_LOCK_ACQUIRE;
+        case EVENT_REPLAY_OPCODE_HOST_LOCK_RELEASE: return BM_REPLAY_OPCODE_HOST_LOCK_RELEASE;
+    }
+    return BM_REPLAY_OPCODE_NONE;
+}
+
 BM_Visibility bm_visibility_from_event(Cmake_Visibility visibility) {
     switch (visibility) {
         case EV_VISIBILITY_PUBLIC: return BM_VISIBILITY_PUBLIC;

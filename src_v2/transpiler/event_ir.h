@@ -239,6 +239,19 @@ typedef enum {
 } Event_Replay_Action_Kind;
 
 typedef enum {
+    EVENT_REPLAY_OPCODE_NONE = 0,
+    EVENT_REPLAY_OPCODE_FS_MKDIR,
+    EVENT_REPLAY_OPCODE_FS_WRITE_TEXT,
+    EVENT_REPLAY_OPCODE_FS_APPEND_TEXT,
+    EVENT_REPLAY_OPCODE_FS_COPY_FILE,
+    EVENT_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL,
+    EVENT_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR,
+    EVENT_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR,
+    EVENT_REPLAY_OPCODE_HOST_LOCK_ACQUIRE,
+    EVENT_REPLAY_OPCODE_HOST_LOCK_RELEASE,
+} Event_Replay_Opcode;
+
+typedef enum {
     EVENT_EXPORT_SOURCE_INSTALL_EXPORT = 0,
     EVENT_EXPORT_SOURCE_TARGETS,
     EVENT_EXPORT_SOURCE_EXPORT_SET,
@@ -797,6 +810,7 @@ typedef struct {
 typedef struct {
     String_View action_key;
     Event_Replay_Action_Kind action_kind;
+    Event_Replay_Opcode opcode;
     Event_Replay_Phase phase;
     String_View working_directory;
 } Event_Replay_Action_Declare;

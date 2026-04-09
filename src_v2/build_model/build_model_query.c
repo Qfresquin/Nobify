@@ -106,6 +106,25 @@ static BM_String_Span bm_string_span(const String_View *items) {
     return span;
 }
 
+static String_View bm_query_trim_current_dir_prefixes(String_View path) {
+    while (path.count >= 2 &&
+           path.data[0] == '.' &&
+           (path.data[1] == '/' || path.data[1] == '\\')) {
+        path.data += 2;
+        path.count -= 2;
+    }
+    return path;
+}
+
+static bool bm_query_path_has_prefix(String_View path, String_View prefix) {
+    path = bm_query_trim_current_dir_prefixes(path);
+    prefix = bm_query_trim_current_dir_prefixes(prefix);
+    if (prefix.count == 0 || path.count < prefix.count) return false;
+    if (!nob_sv_starts_with(path, prefix)) return false;
+    if (path.count == prefix.count) return true;
+    return path.data[prefix.count] == '/' || path.data[prefix.count] == '\\';
+}
+
 static BM_Target_Id_Span bm_target_id_span(const BM_Target_Id *items) {
     BM_Target_Id_Span span = {0};
     span.items = items;
@@ -1229,6 +1248,11 @@ BM_Replay_Action_Kind bm_query_replay_action_kind(const Build_Model *model, BM_R
     return action ? action->kind : BM_REPLAY_ACTION_FILESYSTEM;
 }
 
+BM_Replay_Opcode bm_query_replay_action_opcode(const Build_Model *model, BM_Replay_Action_Id id) {
+    const BM_Replay_Action_Record *action = bm_model_replay_action(model, id);
+    return action ? action->opcode : BM_REPLAY_OPCODE_NONE;
+}
+
 BM_Replay_Phase bm_query_replay_action_phase(const Build_Model *model, BM_Replay_Action_Id id) {
     const BM_Replay_Action_Record *action = bm_model_replay_action(model, id);
     return action ? action->phase : BM_REPLAY_PHASE_CONFIGURE;
@@ -1736,6 +1760,10 @@ String_View bm_query_cpack_package_output_directory(const Build_Model *model,
     if (!scratch || bm_sv_is_abs_path_query(record->package_directory)) return record->package_directory;
     owner = bm_model_directory(model, record->owner_directory_id);
     if (!owner) return record->package_directory;
+    if (bm_query_path_has_prefix(record->package_directory, owner->binary_dir) ||
+        bm_query_path_has_prefix(record->package_directory, owner->source_dir)) {
+        return record->package_directory;
+    }
     return bm_join_relative_path_query(scratch, owner->binary_dir, record->package_directory);
 }
 

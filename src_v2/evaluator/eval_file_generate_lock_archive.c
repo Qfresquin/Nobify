@@ -280,6 +280,108 @@ static bool file_path_content_same(EvalExecContext *ctx, String_View path, Strin
     return true;
 }
 
+static bool file_emit_replay_reject_marker(EvalExecContext *ctx,
+                                           Cmake_Event_Origin origin,
+                                           Event_Replay_Action_Kind kind) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctx) return false;
+    return eval_begin_replay_action(ctx,
+                                    origin,
+                                    kind,
+                                    EVENT_REPLAY_OPCODE_NONE,
+                                    EVENT_REPLAY_PHASE_CONFIGURE,
+                                    eval_current_binary_dir(ctx),
+                                    &action_key);
+}
+
+static bool file_emit_replay_write_text(EvalExecContext *ctx,
+                                        Cmake_Event_Origin origin,
+                                        String_View output_path,
+                                        String_View content,
+                                        String_View mode_octal) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctx) return false;
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_FILESYSTEM,
+                                  EVENT_REPLAY_OPCODE_FS_WRITE_TEXT,
+                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_current_binary_dir(ctx),
+                                  &action_key) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, output_path) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, content) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 1, mode_octal)) {
+        return false;
+    }
+    return true;
+}
+
+static bool file_emit_replay_lock(EvalExecContext *ctx,
+                                  Cmake_Event_Origin origin,
+                                  Event_Replay_Opcode opcode,
+                                  String_View lock_path) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctx) return false;
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_HOST_EFFECT,
+                                  opcode,
+                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_current_binary_dir(ctx),
+                                  &action_key) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, lock_path)) {
+        return false;
+    }
+    return true;
+}
+
+static bool file_emit_replay_archive_create(EvalExecContext *ctx,
+                                            Cmake_Event_Origin origin,
+                                            String_View output_path,
+                                            SV_List inputs,
+                                            long long mtime_epoch) {
+    String_View action_key = nob_sv_from_cstr("");
+    String_View mtime = nob_sv_from_cstr(nob_temp_sprintf("%lld", mtime_epoch));
+    if (!ctx) return false;
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_HOST_EFFECT,
+                                  EVENT_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR,
+                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_current_binary_dir(ctx),
+                                  &action_key)) {
+        return false;
+    }
+    for (size_t i = 0; i < arena_arr_len(inputs); ++i) {
+        if (!eval_emit_replay_action_add_input(ctx, origin, action_key, inputs[i])) return false;
+    }
+    if (!eval_emit_replay_action_add_output(ctx, origin, action_key, output_path) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, mtime)) {
+        return false;
+    }
+    return true;
+}
+
+static bool file_emit_replay_archive_extract(EvalExecContext *ctx,
+                                             Cmake_Event_Origin origin,
+                                             String_View input_path,
+                                             String_View output_path) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctx) return false;
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_HOST_EFFECT,
+                                  EVENT_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR,
+                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_current_binary_dir(ctx),
+                                  &action_key) ||
+        !eval_emit_replay_action_add_input(ctx, origin, action_key, input_path) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, output_path)) {
+        return false;
+    }
+    return true;
+}
+
 static bool handle_file_generate(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     Eval_File_Generate_Job job = {0};
@@ -442,9 +544,20 @@ bool eval_file_generate_flush(EvalExecContext *ctx) {
             continue;
         }
 
+        String_View mode_octal = nob_sv_from_cstr("");
+#if !defined(_WIN32)
+        if (job->has_file_permissions && job->file_mode != 0) {
+            mode_octal = eval_replay_mode_octal_temp(ctx, job->file_mode);
+        } else if (job->use_source_permissions && job->has_input && have_input_st) {
+            mode_octal = eval_replay_mode_octal_temp(ctx, (unsigned int)(in_st.st_mode & 0777));
+        }
+#endif
         bool same = false;
         if (!file_path_content_same(ctx, job->output_path, final_content, &same)) continue;
-        if (same) continue;
+        if (same) {
+            (void)file_emit_replay_write_text(ctx, job->origin, job->output_path, final_content, mode_octal);
+            continue;
+        }
 
         char *out_c = eval_sv_to_cstr_temp(ctx, job->output_path);
         EVAL_OOM_RETURN_IF_NULL(ctx, out_c, false);
@@ -462,6 +575,7 @@ bool eval_file_generate_flush(EvalExecContext *ctx) {
             // Explicitly keep default backend permissions.
         }
 #endif
+        (void)file_emit_replay_write_text(ctx, job->origin, job->output_path, final_content, mode_octal);
     }
 
     arena_arr_set_len(ctx->file_state.file_generate_jobs, 0);
@@ -546,6 +660,7 @@ static bool handle_file_lock(EvalExecContext *ctx, const Node *node, SV_List arg
             eval_file_lock_remove_at(ctx, (size_t)existing);
         }
         if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("0"));
+        (void)file_emit_replay_lock(ctx, o, EVENT_REPLAY_OPCODE_HOST_LOCK_RELEASE, lock_path);
         return true;
     }
 
@@ -609,6 +724,7 @@ static bool handle_file_lock(EvalExecContext *ctx, const Node *node, SV_List arg
         return true;
     }
     if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("0"));
+    (void)file_emit_replay_lock(ctx, o, EVENT_REPLAY_OPCODE_HOST_LOCK_ACQUIRE, lock_path);
     return true;
 #else
     int fd = open(path_c, O_RDWR | O_CREAT, 0666);
@@ -652,6 +768,7 @@ static bool handle_file_lock(EvalExecContext *ctx, const Node *node, SV_List arg
     }
 
     if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("0"));
+    (void)file_emit_replay_lock(ctx, o, EVENT_REPLAY_OPCODE_HOST_LOCK_ACQUIRE, lock_path);
     return true;
 #endif
 }
@@ -878,6 +995,14 @@ static bool handle_file_archive_create(EvalExecContext *ctx, const Node *node, S
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(ARCHIVE_CREATE) failed to run tar backend"), out_path);
     }
     file_cmd_reset(&cmd);
+    if (eval_sv_eq_ci_lit(format, "PAXR") &&
+        (compression.count == 0 || eval_sv_eq_ci_lit(compression, "NONE")) &&
+        !has_compression_level &&
+        has_mtime) {
+        (void)file_emit_replay_archive_create(ctx, o, out_path, resolved_paths, mtime_epoch);
+    } else {
+        (void)file_emit_replay_reject_marker(ctx, o, EVENT_REPLAY_ACTION_HOST_EFFECT);
+    }
     return true;
 }
 
@@ -971,6 +1096,15 @@ static bool handle_file_archive_extract(EvalExecContext *ctx, const Node *node, 
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(ARCHIVE_EXTRACT) failed to run tar backend"), in_path);
     }
     file_cmd_reset(&cmd);
+    if (!list_only &&
+        !verbose &&
+        !touch &&
+        arena_arr_len(patterns) == 0 &&
+        !(in_path.count >= 4 && eval_sv_eq_ci_lit(nob_sv_from_parts(in_path.data + in_path.count - 4, 4), ".zip"))) {
+        (void)file_emit_replay_archive_extract(ctx, o, in_path, dst_path);
+    } else {
+        (void)file_emit_replay_reject_marker(ctx, o, EVENT_REPLAY_ACTION_HOST_EFFECT);
+    }
     return true;
 }
 

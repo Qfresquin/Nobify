@@ -67,6 +67,103 @@ static void bm_validate_contiguous_id(bool matches,
     bm_diag_error(sink, provenance, "build_model_validate", "structural", cause, hint);
 }
 
+static bool bm_validate_replay_opcode_kind(const BM_Replay_Action_Record *action,
+                                           Diag_Sink *sink,
+                                           bool *had_error) {
+    if (!action) return false;
+    if (action->opcode == BM_REPLAY_OPCODE_NONE) return true;
+
+    if ((action->opcode == BM_REPLAY_OPCODE_FS_MKDIR ||
+         action->opcode == BM_REPLAY_OPCODE_FS_WRITE_TEXT ||
+         action->opcode == BM_REPLAY_OPCODE_FS_APPEND_TEXT ||
+         action->opcode == BM_REPLAY_OPCODE_FS_COPY_FILE) &&
+        action->kind == BM_REPLAY_ACTION_FILESYSTEM) {
+        return true;
+    }
+
+    if ((action->opcode == BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL ||
+         action->opcode == BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR ||
+         action->opcode == BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR ||
+         action->opcode == BM_REPLAY_OPCODE_HOST_LOCK_ACQUIRE ||
+         action->opcode == BM_REPLAY_OPCODE_HOST_LOCK_RELEASE) &&
+        action->kind == BM_REPLAY_ACTION_HOST_EFFECT) {
+        return true;
+    }
+
+    *had_error = true;
+    bm_diag_error(sink,
+                  action->provenance,
+                  "build_model_validate",
+                  "structural",
+                  "replay action opcode is incompatible with replay action kind",
+                  "emit filesystem opcodes only for filesystem actions and host opcodes only for host-effect actions");
+    return false;
+}
+
+static bool bm_validate_replay_payload_shape(const BM_Replay_Action_Record *action,
+                                             Diag_Sink *sink,
+                                             bool *had_error) {
+    size_t input_count = 0;
+    size_t output_count = 0;
+    size_t argv_count = 0;
+    size_t env_count = 0;
+    bool ok = true;
+    if (!action) return false;
+
+    input_count = arena_arr_len(action->inputs);
+    output_count = arena_arr_len(action->outputs);
+    argv_count = arena_arr_len(action->argv);
+    env_count = arena_arr_len(action->environment);
+
+    switch (action->opcode) {
+        case BM_REPLAY_OPCODE_NONE:
+            return true;
+
+        case BM_REPLAY_OPCODE_FS_MKDIR:
+            ok = input_count == 0 && output_count > 0 && argv_count == 0 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_FS_WRITE_TEXT:
+            ok = input_count == 0 && output_count == 1 && argv_count == 2 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_FS_APPEND_TEXT:
+            ok = input_count == 0 && output_count == 1 && argv_count == 1 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_FS_COPY_FILE:
+            ok = input_count == 1 && output_count == 1 && argv_count == 1 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL:
+            ok = input_count == 1 && output_count == 1 && argv_count == 2 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR:
+            ok = input_count > 0 && output_count == 1 && argv_count == 1 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR:
+            ok = input_count == 1 && output_count == 1 && argv_count == 0 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_HOST_LOCK_ACQUIRE:
+        case BM_REPLAY_OPCODE_HOST_LOCK_RELEASE:
+            ok = input_count == 0 && output_count == 1 && argv_count == 0 && env_count == 0;
+            break;
+    }
+
+    if (ok) return true;
+    *had_error = true;
+    bm_diag_error(sink,
+                  action->provenance,
+                  "build_model_validate",
+                  "structural",
+                  "replay action payload shape is invalid for opcode",
+                  "emit inputs/outputs/argv/environment using the frozen payload layout for the selected replay opcode");
+    return false;
+}
+
 static void bm_validate_duplicate_target_names(const Build_Model_Draft *draft, Diag_Sink *sink, bool *had_error) {
     for (size_t i = 0; i < arena_arr_len(draft->targets); ++i) {
         for (size_t j = i + 1; j < arena_arr_len(draft->targets); ++j) {
@@ -193,6 +290,15 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
                           "replay action kind is invalid",
                           "map every replay action kind to a canonical BM_Replay_Action_Kind");
         }
+        if (action->opcode > BM_REPLAY_OPCODE_HOST_LOCK_RELEASE) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          action->provenance,
+                          "build_model_validate",
+                          "structural",
+                          "replay action opcode is invalid",
+                          "map every replay action opcode to a canonical BM_Replay_Opcode");
+        }
         if (action->phase > BM_REPLAY_PHASE_HOST_ONLY) {
             *had_error = true;
             bm_diag_error(sink,
@@ -202,6 +308,8 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
                           "replay action phase is invalid",
                           "map every replay action phase to a canonical BM_Replay_Phase");
         }
+        (void)bm_validate_replay_opcode_kind(action, sink, had_error);
+        (void)bm_validate_replay_payload_shape(action, sink, had_error);
     }
 
     for (size_t i = 0; i < arena_arr_len(draft->tests); ++i) {

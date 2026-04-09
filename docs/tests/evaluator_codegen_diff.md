@@ -2,7 +2,7 @@
 
 ## Status
 
-As of April 6, 2026, `test-evaluator-codegen-diff` is the canonical
+As of April 9, 2026, `test-evaluator-codegen-diff` is the canonical
 explicit-only closure harness for the remaining
 `evaluator -> Event IR -> build_model -> codegen` gap.
 
@@ -42,6 +42,9 @@ Product rules:
 - query memoization proof is legal only as query-time derived-cache evidence;
   it does not create a new semantic state and does not authorize persistence of
   inferred semantics back into `Build_Model`
+- `C2` parity-pass cases may now prove deterministic configure replay for the
+  supported filesystem and local host-effect subset through observable build
+  tree outputs alone, without requiring evaluator-local variable replay
 
 ## State Model
 

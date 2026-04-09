@@ -20,6 +20,25 @@ static String_View cg_install_target_destination(String_View specific, String_Vi
     return specific.count > 0 ? specific : generic;
 }
 
+static String_View cg_install_trim_current_dir_prefixes(String_View path) {
+    while (path.count >= 2 &&
+           path.data[0] == '.' &&
+           (path.data[1] == '/' || path.data[1] == '\\')) {
+        path.data += 2;
+        path.count -= 2;
+    }
+    return path;
+}
+
+static bool cg_install_path_has_prefix(String_View path, String_View prefix) {
+    path = cg_install_trim_current_dir_prefixes(path);
+    prefix = cg_install_trim_current_dir_prefixes(prefix);
+    if (prefix.count == 0 || path.count < prefix.count) return false;
+    if (!nob_sv_starts_with(path, prefix)) return false;
+    if (path.count == prefix.count) return true;
+    return path.data[prefix.count] == '/' || path.data[prefix.count] == '\\';
+}
+
 static bool cg_resolve_install_item_from_owner_dirs(CG_Context *ctx,
                                                     BM_Directory_Id owner_dir,
                                                     String_View item,
@@ -35,6 +54,10 @@ static bool cg_resolve_install_item_from_owner_dirs(CG_Context *ctx,
 
     source_dir = bm_query_directory_source_dir(ctx->model, owner_dir);
     binary_dir = bm_query_directory_binary_dir(ctx->model, owner_dir);
+    if ((source_dir.count > 0 && cg_install_path_has_prefix(item, source_dir)) ||
+        (binary_dir.count > 0 && cg_install_path_has_prefix(item, binary_dir))) {
+        return cg_rebase_path_from_cwd(ctx, item, out);
+    }
     if (!cg_rebase_from_base(ctx, item, source_dir, &source_candidate)) return false;
     if (nob_file_exists(nob_temp_sv_to_cstr(source_candidate))) {
         *out = source_candidate;

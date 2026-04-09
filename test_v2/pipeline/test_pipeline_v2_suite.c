@@ -72,6 +72,22 @@ static const char *pipeline_replay_phase_name(BM_Replay_Phase phase) {
     return "UNKNOWN";
 }
 
+static const char *pipeline_replay_opcode_name(BM_Replay_Opcode opcode) {
+    switch (opcode) {
+        case BM_REPLAY_OPCODE_NONE: return "none";
+        case BM_REPLAY_OPCODE_FS_MKDIR: return "fs_mkdir";
+        case BM_REPLAY_OPCODE_FS_WRITE_TEXT: return "fs_write_text";
+        case BM_REPLAY_OPCODE_FS_APPEND_TEXT: return "fs_append_text";
+        case BM_REPLAY_OPCODE_FS_COPY_FILE: return "fs_copy_file";
+        case BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL: return "host_download_local";
+        case BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR: return "host_archive_create_paxr";
+        case BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR: return "host_archive_extract_tar";
+        case BM_REPLAY_OPCODE_HOST_LOCK_ACQUIRE: return "host_lock_acquire";
+        case BM_REPLAY_OPCODE_HOST_LOCK_RELEASE: return "host_lock_release";
+    }
+    return "unknown";
+}
+
 static const char *pipeline_export_kind_name(BM_Export_Kind kind) {
     switch (kind) {
         case BM_EXPORT_INSTALL: return "INSTALL";
@@ -255,10 +271,12 @@ static void append_pipeline_build_graph_snapshot(Nob_String_Builder *sb, const B
     nob_sb_append_cstr(sb, nob_temp_sprintf("REPLAY_ACTIONS count=%zu\n", replay_action_count));
     for (size_t i = 0; i < replay_action_count; ++i) {
         BM_Replay_Action_Id action_id = (BM_Replay_Action_Id)i;
-        nob_sb_append_cstr(sb, nob_temp_sprintf("REPLAY[%zu] kind=%s phase=%s owner_dir=%u inputs=%zu outputs=%zu argv=%zu env=%zu working_dir=",
+        nob_sb_append_cstr(sb, nob_temp_sprintf("REPLAY[%zu] kind=%s opcode=%s phase=%s owner_dir=%u inputs=%zu outputs=%zu argv=%zu env=%zu working_dir=",
                                                 i,
                                                 pipeline_replay_action_kind_name(
                                                     bm_query_replay_action_kind(model, action_id)),
+                                                pipeline_replay_opcode_name(
+                                                    bm_query_replay_action_opcode(model, action_id)),
                                                 pipeline_replay_phase_name(
                                                     bm_query_replay_action_phase(model, action_id)),
                                                 (unsigned)bm_query_replay_action_owner_directory(model, action_id),
@@ -569,35 +587,31 @@ TEST(pipeline_build_graph_snapshot_surfaces_replay_actions) {
     ASSERT(event_stream_push(stream, &ev));
 
     pipeline_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 2);
-    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("snapshot_proc");
-    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_PROCESS;
-    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_BUILD;
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("snapshot_write");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_FILESYSTEM;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_FS_WRITE_TEXT;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_CONFIGURE;
     ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("tools");
     ASSERT(event_stream_push(stream, &ev));
 
-    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_INPUT, 3);
-    ev.as.replay_action_add_input.action_key = nob_sv_from_cstr("snapshot_proc");
-    ev.as.replay_action_add_input.path = nob_sv_from_cstr("tool.in");
-    ASSERT(event_stream_push(stream, &ev));
-
-    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 4);
-    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("snapshot_proc");
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 3);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("snapshot_write");
     ev.as.replay_action_add_output.path = nob_sv_from_cstr("tool.out");
     ASSERT(event_stream_push(stream, &ev));
 
-    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 5);
-    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("snapshot_proc");
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 4);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("snapshot_write");
     ev.as.replay_action_add_argv.arg_index = 0;
-    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("tool");
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("snapshot");
     ASSERT(event_stream_push(stream, &ev));
 
-    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ENV, 6);
-    ev.as.replay_action_add_env.action_key = nob_sv_from_cstr("snapshot_proc");
-    ev.as.replay_action_add_env.key = nob_sv_from_cstr("MODE");
-    ev.as.replay_action_add_env.value = nob_sv_from_cstr("snapshot");
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 5);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("snapshot_write");
+    ev.as.replay_action_add_argv.arg_index = 1;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("");
     ASSERT(event_stream_push(stream, &ev));
 
-    pipeline_init_event(&ev, EVENT_DIRECTORY_LEAVE, 7);
+    pipeline_init_event(&ev, EVENT_DIRECTORY_LEAVE, 6);
     ev.as.directory_leave.source_dir = nob_sv_from_cstr("graph_src");
     ev.as.directory_leave.binary_dir = nob_sv_from_cstr("graph_build");
     ASSERT(event_stream_push(stream, &ev));
@@ -612,8 +626,8 @@ TEST(pipeline_build_graph_snapshot_surfaces_replay_actions) {
     ASSERT(sb.items != NULL);
     ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("BUILD_STEPS count=0")));
     ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("REPLAY_ACTIONS count=1")));
-    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("REPLAY[0] kind=PROCESS phase=BUILD")));
-    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("inputs=1 outputs=1 argv=1 env=1")));
+    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("REPLAY[0] kind=FILESYSTEM opcode=fs_write_text phase=CONFIGURE")));
+    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("inputs=0 outputs=1 argv=2 env=0")));
 
     nob_sb_free(sb);
     arena_destroy(arena);

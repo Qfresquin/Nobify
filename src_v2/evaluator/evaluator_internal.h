@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "nob.h"
@@ -1340,6 +1341,7 @@ static inline bool eval_emit_replay_action_declare(EvalExecContext *ctx,
                                                    Event_Origin origin,
                                                    String_View action_key,
                                                    Event_Replay_Action_Kind action_kind,
+                                                   Event_Replay_Opcode opcode,
                                                    Event_Replay_Phase phase,
                                                    String_View working_directory) {
     Event ev = {0};
@@ -1347,6 +1349,7 @@ static inline bool eval_emit_replay_action_declare(EvalExecContext *ctx,
     ev.h.origin = origin;
     ev.as.replay_action_declare.action_key = sv_copy_to_event_arena(ctx, action_key);
     ev.as.replay_action_declare.action_kind = action_kind;
+    ev.as.replay_action_declare.opcode = opcode;
     ev.as.replay_action_declare.phase = phase;
     ev.as.replay_action_declare.working_directory = sv_copy_to_event_arena(ctx, working_directory);
     return emit_event(ctx, ev);
@@ -1402,6 +1405,34 @@ static inline bool eval_emit_replay_action_add_env(EvalExecContext *ctx,
     ev.as.replay_action_add_env.key = sv_copy_to_event_arena(ctx, key);
     ev.as.replay_action_add_env.value = sv_copy_to_event_arena(ctx, value);
     return emit_event(ctx, ev);
+}
+
+static inline String_View eval_replay_mode_octal_temp(EvalExecContext *ctx, unsigned int mode) {
+    char *buf = NULL;
+    if (!ctx) return nob_sv_from_cstr("");
+    buf = arena_alloc(eval_temp_arena(ctx), 8);
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    snprintf(buf, 8, "%04o", mode & 0777u);
+    return nob_sv_from_cstr(buf);
+}
+
+static inline bool eval_begin_replay_action(EvalExecContext *ctx,
+                                            Event_Origin origin,
+                                            Event_Replay_Action_Kind action_kind,
+                                            Event_Replay_Opcode opcode,
+                                            Event_Replay_Phase phase,
+                                            String_View working_directory,
+                                            String_View *out_action_key) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (out_action_key) *out_action_key = nob_sv_from_cstr("");
+    if (!ctx) return false;
+    action_key = eval_alloc_replay_action_key(ctx);
+    if (eval_should_stop(ctx) || action_key.count == 0) return false;
+    if (!eval_emit_replay_action_declare(ctx, origin, action_key, action_kind, opcode, phase, working_directory)) {
+        return false;
+    }
+    if (out_action_key) *out_action_key = action_key;
+    return true;
 }
 
 static inline bool eval_emit_target_prop_set(EvalExecContext *ctx,

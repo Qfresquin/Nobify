@@ -239,6 +239,8 @@ bool bm_replay_action_id_is_valid(BM_Replay_Action_Id id);
 size_t bm_query_replay_action_count(const Build_Model *model);
 BM_Replay_Action_Kind bm_query_replay_action_kind(const Build_Model *model,
                                                   BM_Replay_Action_Id id);
+BM_Replay_Opcode bm_query_replay_action_opcode(const Build_Model *model,
+                                               BM_Replay_Action_Id id);
 BM_Replay_Phase bm_query_replay_action_phase(const Build_Model *model,
                                              BM_Replay_Action_Id id);
 BM_Directory_Id bm_query_replay_action_owner_directory(const Build_Model *model,
@@ -257,7 +259,7 @@ BM_String_Span bm_query_replay_action_environment(const Build_Model *model,
 
 This is the minimum stable replay-domain surface. Future query helpers may add
 kind-specific payload accessors, but codegen must be implementable through the
-generic surface above plus existing domain queries.
+generic spans above, the typed opcode, and existing domain queries.
 
 ## 4. Raw vs Effective Query Rules
 

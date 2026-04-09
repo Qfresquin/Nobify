@@ -45,7 +45,6 @@ The canonical generated CLI is:
 
 - `configure`
 - `build [targets...]`
-- `test`
 - `install [--prefix <path>] [--component <name>]`
 - `export`
 - `package [--generator <name>] [--output-dir <path>]`
@@ -65,18 +64,14 @@ The runtime owns these phases:
 - `configure`
   executes replay actions frozen with `BM_REPLAY_PHASE_CONFIGURE`
 - `build`
-  executes normal target/build-step work plus any replay actions owned by the
-  build phase
-- `test`
-  executes replay actions frozen with `BM_REPLAY_PHASE_TEST`
+  executes normal target/build-step work after configure ownership is
+  satisfied
 - `install`
-  executes install rules plus any additional install-phase replay actions
+  executes install rules after configure ownership is satisfied
 - `export`
-  executes standalone export generation plus any additional export-phase replay
-  actions
+  executes standalone export generation after configure ownership is satisfied
 - `package`
-  executes package-plan behavior plus any additional package-phase replay
-  actions
+  executes package-plan behavior after configure ownership is satisfied
 - `clean`
   removes backend-owned staging and emitted outputs according to the generated
   cleanup contract
@@ -86,9 +81,9 @@ from the frozen build model.
 
 ## 5. Auto-Configure Rule
 
-The canonical rule is:
+The canonical `C2` rule is:
 
-- `build`, `test`, `install`, `export`, and `package` must ensure that required
+- `build`, `install`, `export`, and `package` must ensure that required
   configure-phase actions are satisfied before their own phase proceeds
 
 The default product behavior is:
@@ -96,6 +91,8 @@ The default product behavior is:
 - if configure work is pending, later phases trigger `configure` first
 - explicit `configure` remains available so users can run configuration-only
   workflows
+- configure freshness is tracked by backend-owned per-config stamps under
+  `.nob/`
 
 This rule applies equally when invocation begins with the default no-subcommand
 entry.
@@ -135,6 +132,11 @@ Canonical precedence:
 
 This rule already applies to `cmake`, `cpack`, `gzip`, and `xz` and extends to
 new helper families only through documented additions.
+
+Current documented additions include:
+
+- `NOB_TAR_BIN` override, else bare `tar`, for configure replay archive
+  extraction and archive-create helpers
 
 ## 8. Rejection Policy
 

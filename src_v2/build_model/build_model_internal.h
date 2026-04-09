@@ -65,6 +65,7 @@ typedef struct {
     BM_Directory_Id owner_directory_id;
     BM_Provenance provenance;
     BM_Replay_Action_Kind kind;
+    BM_Replay_Opcode opcode;
     BM_Replay_Phase phase;
     String_View working_directory;
     String_View *inputs;
@@ -352,6 +353,7 @@ BM_Target_Kind bm_target_kind_from_event(Cmake_Target_Type type);
 BM_Build_Step_Kind bm_build_step_kind_from_event(Event_Build_Step_Kind kind);
 BM_Replay_Phase bm_replay_phase_from_event(Event_Replay_Phase phase);
 BM_Replay_Action_Kind bm_replay_action_kind_from_event(Event_Replay_Action_Kind kind);
+BM_Replay_Opcode bm_replay_opcode_from_event(Event_Replay_Opcode opcode);
 BM_Visibility bm_visibility_from_event(Cmake_Visibility visibility);
 BM_Install_Rule_Kind bm_install_rule_kind_from_event(Cmake_Install_Rule_Type kind);
 BM_Directory_Id bm_builder_current_directory_id(const BM_Builder *builder);

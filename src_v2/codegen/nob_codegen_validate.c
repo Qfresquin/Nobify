@@ -25,6 +25,22 @@ static const char *cg_replay_phase_name(BM_Replay_Phase phase) {
     return "unknown";
 }
 
+static const char *cg_replay_opcode_name(BM_Replay_Opcode opcode) {
+    switch (opcode) {
+        case BM_REPLAY_OPCODE_NONE: return "none";
+        case BM_REPLAY_OPCODE_FS_MKDIR: return "fs_mkdir";
+        case BM_REPLAY_OPCODE_FS_WRITE_TEXT: return "fs_write_text";
+        case BM_REPLAY_OPCODE_FS_APPEND_TEXT: return "fs_append_text";
+        case BM_REPLAY_OPCODE_FS_COPY_FILE: return "fs_copy_file";
+        case BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL: return "host_download_local";
+        case BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR: return "host_archive_create_paxr";
+        case BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR: return "host_archive_extract_tar";
+        case BM_REPLAY_OPCODE_HOST_LOCK_ACQUIRE: return "host_lock_acquire";
+        case BM_REPLAY_OPCODE_HOST_LOCK_RELEASE: return "host_lock_release";
+    }
+    return "unknown";
+}
+
 static bool cg_validate_install_rule(CG_Context *ctx, BM_Install_Rule_Id id) {
     BM_Install_Rule_Kind kind = bm_query_install_rule_kind(ctx->model, id);
     String_View item = bm_query_install_rule_item_raw(ctx->model, id);
@@ -177,11 +193,29 @@ bool cg_validate_model_for_backend(CG_Context *ctx) {
 
     for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
         BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
-        nob_log(NOB_ERROR,
-                "codegen: replay action kind '%s' in phase '%s' is not supported yet",
-                cg_replay_action_kind_name(bm_query_replay_action_kind(ctx->model, id)),
-                cg_replay_phase_name(bm_query_replay_action_phase(ctx->model, id)));
-        return false;
+        BM_Replay_Action_Kind kind = bm_query_replay_action_kind(ctx->model, id);
+        BM_Replay_Opcode opcode = bm_query_replay_action_opcode(ctx->model, id);
+        BM_Replay_Phase phase = bm_query_replay_action_phase(ctx->model, id);
+        bool supported = phase == BM_REPLAY_PHASE_CONFIGURE &&
+                         ((kind == BM_REPLAY_ACTION_FILESYSTEM &&
+                           (opcode == BM_REPLAY_OPCODE_FS_MKDIR ||
+                            opcode == BM_REPLAY_OPCODE_FS_WRITE_TEXT ||
+                            opcode == BM_REPLAY_OPCODE_FS_APPEND_TEXT ||
+                            opcode == BM_REPLAY_OPCODE_FS_COPY_FILE)) ||
+                          (kind == BM_REPLAY_ACTION_HOST_EFFECT &&
+                           (opcode == BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL ||
+                            opcode == BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR ||
+                            opcode == BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR ||
+                            opcode == BM_REPLAY_OPCODE_HOST_LOCK_ACQUIRE ||
+                            opcode == BM_REPLAY_OPCODE_HOST_LOCK_RELEASE)));
+        if (!supported) {
+            nob_log(NOB_ERROR,
+                    "codegen: replay action kind '%s' opcode '%s' in phase '%s' is not supported in the generated backend",
+                    cg_replay_action_kind_name(kind),
+                    cg_replay_opcode_name(opcode),
+                    cg_replay_phase_name(phase));
+            return false;
+        }
     }
 
     for (size_t i = 0; i < ctx->target_count; ++i) {

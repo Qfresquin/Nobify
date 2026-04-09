@@ -144,6 +144,8 @@ typedef enum {
     CG_HELPER_GZIP_RESOLVER = 1ull << 12,
     CG_HELPER_XZ_RESOLVER = 1ull << 13,
     CG_HELPER_PACKAGE_ARCHIVE = 1ull << 14,
+    CG_HELPER_TAR_RESOLVER = 1ull << 15,
+    CG_HELPER_REPLAY_SHA256 = 1ull << 16,
 } CG_Helper_Flags;
 
 typedef struct CG_Context {

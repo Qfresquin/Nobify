@@ -150,7 +150,7 @@ The program is split into the following workstreams:
 
 ### 6.4 Generated Backend Runtime
 
-- add explicit `configure` and `test` commands to the generated `nob.c`
+- add explicit `configure` command to the generated `nob.c`
 - define phase semantics, auto-configure rules, runtime helper vocabulary, and
   rejection policy
 - keep generated code understandable and auditable
@@ -276,6 +276,7 @@ Goal:
 
 Deliverables:
 - generated `nob.c` `configure` command
+- generated `nob.c` `build [targets...]` command
 - default CLI rule: no subcommand means `configure + build`
 - auto-configure before later phases when required
 - backend support for deterministic replay families such as:
@@ -286,6 +287,7 @@ Deliverables:
 
 Non-goals:
 - no broad process/probe matrix yet
+- no generated `test` command yet
 - no full `FetchContent_*` or `ctest_*` completion in this wave
 
 Exit criteria:
