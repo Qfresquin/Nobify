@@ -697,6 +697,7 @@ static void append_v2_evaluator_test_sources(Nob_Cmd *cmd) {
 static void append_v2_evaluator_diff_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/test_host_fixture_support.c",
+        "test_v2/test_case_dsl.c",
         "test_v2/test_manifest_support.c",
         "test_v2/test_v2_assert.c",
         "test_v2/test_snapshot_support.c",
@@ -709,6 +710,7 @@ static void append_v2_evaluator_diff_test_sources(Nob_Cmd *cmd) {
 static void append_v2_evaluator_codegen_diff_test_sources(Nob_Cmd *cmd) {
     nob_cmd_append(cmd,
         "test_v2/test_host_fixture_support.c",
+        "test_v2/test_case_dsl.c",
         "test_v2/test_manifest_support.c",
         "test_v2/test_semantic_pipeline.c",
         "test_v2/test_v2_assert.c",

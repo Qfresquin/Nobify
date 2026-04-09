@@ -14,6 +14,7 @@ typedef enum {
     EGD_CLASS_PARITY_PASS = 0,
     EGD_CLASS_BACKEND_REJECT,
     EGD_CLASS_EVALUATOR_ONLY,
+    EGD_CLASS_EXPLICIT_NON_GOAL,
 } EGD_Case_Classification;
 
 typedef enum {
@@ -24,41 +25,55 @@ typedef enum {
     EGD_PARITY_PACKAGE_ARCHIVE,
 } EGD_Parity_Kind;
 
-typedef enum {
-    EGD_SCOPE_SOURCE = 0,
-    EGD_SCOPE_BUILD,
-} EGD_Path_Scope;
+typedef Test_Case_Dsl_Path_Scope EGD_Path_Scope;
+typedef Test_Case_Dsl_Mode EGD_Case_Mode;
+typedef Test_Case_Dsl_Expected_Outcome EGD_Expected_Outcome;
+typedef Test_Case_Dsl_Path_Entry EGD_Path_Entry;
+typedef Test_Case_Dsl_Text_Fixture EGD_Text_Fixture;
+typedef Test_Case_Dsl_Case EGD_Parsed_Case;
+
+#define EGD_SCOPE_SOURCE TEST_CASE_DSL_PATH_SCOPE_SOURCE
+#define EGD_SCOPE_BUILD TEST_CASE_DSL_PATH_SCOPE_BUILD
+#define EGD_MODE_PROJECT TEST_CASE_DSL_MODE_PROJECT
+#define EGD_MODE_SCRIPT TEST_CASE_DSL_MODE_SCRIPT
+#define EGD_OUTCOME_SUCCESS TEST_CASE_DSL_EXPECT_SUCCESS
+#define EGD_OUTCOME_ERROR TEST_CASE_DSL_EXPECT_ERROR
+
+enum {
+    EGD_PHASE_CONFIGURE = 1u << 0,
+    EGD_PHASE_BUILD = 1u << 1,
+    EGD_PHASE_TEST = 1u << 2,
+    EGD_PHASE_INSTALL = 1u << 3,
+    EGD_PHASE_EXPORT = 1u << 4,
+    EGD_PHASE_PACKAGE = 1u << 5,
+    EGD_PHASE_HOST_ONLY = 1u << 6,
+};
+
+enum {
+    EGD_TOOL_NONE = 0,
+    EGD_TOOL_CMAKE = 1u << 0,
+    EGD_TOOL_CPACK = 1u << 1,
+    EGD_TOOL_GZIP = 1u << 2,
+    EGD_TOOL_XZ = 1u << 3,
+    EGD_TOOL_PYTHON = 1u << 4,
+    EGD_TOOL_TAR = 1u << 5,
+};
 
 typedef enum {
-    EGD_MODE_PROJECT = 0,
-    EGD_MODE_SCRIPT,
-} EGD_Case_Mode;
-
-typedef enum {
-    EGD_OUTCOME_SUCCESS = 0,
-    EGD_OUTCOME_ERROR,
-} EGD_Expected_Outcome;
+    EGD_DIFF_TREE = 0,
+    EGD_DIFF_FILE_TEXT,
+    EGD_DIFF_FILE_SHA256,
+} EGD_Diff_Primitive;
 
 typedef struct {
-    EGD_Path_Scope scope;
-    String_View relpath;
-} EGD_Path_Entry;
-
-typedef struct {
-    EGD_Path_Scope scope;
-    String_View relpath;
-    String_View text;
-} EGD_Text_Fixture;
-
-typedef struct {
-    String_View name;
-    String_View body;
-    EGD_Case_Mode mode;
-    EGD_Expected_Outcome expected_outcome;
-    EGD_Path_Entry *files;
-    EGD_Path_Entry *dirs;
-    EGD_Text_Fixture *text_files;
-} EGD_Parsed_Case;
+    const char *command;
+    const char *source_pack_path;
+    EGD_Case_Classification classification;
+    unsigned phase_mask;
+    const char *domain_owner;
+    const char *reason;
+    const char *tracking_key;
+} EGD_Command_Inventory;
 
 typedef struct {
     const char *family;
@@ -66,9 +81,34 @@ typedef struct {
     const char *source_pack_path;
     const char *case_name;
     EGD_Case_Classification classification;
+    unsigned phase_mask;
+    const char *domain_owner;
     const char *reason;
-    const char *backlog_key;
+    const char *tracking_key;
+    const char *workload_key;
 } EGD_Subcommand_Inventory;
+
+typedef struct {
+    const char *label;
+    const char *relpath;
+    EGD_Diff_Primitive primitive;
+} EGD_Observed_Output;
+
+typedef struct {
+    bool cmake;
+    bool cpack;
+    bool gzip;
+    bool xz;
+    bool python;
+    bool tar;
+} EGD_Tool_Availability;
+
+typedef struct {
+    int parity_pass;
+    int backend_reject;
+    int evaluator_only;
+    int explicit_non_goal;
+} EGD_Inventory_State_Counts;
 
 typedef struct {
     const char *case_name;
@@ -77,8 +117,15 @@ typedef struct {
     const char *signature;
     EGD_Case_Classification classification;
     EGD_Parity_Kind parity_kind;
+    EGD_Expected_Outcome expected_outcome;
+    unsigned phase_mask;
+    unsigned required_tools;
+    const char *domain_owner;
     const char *reason;
-    const char *backlog_key;
+    const char *tracking_key;
+    const char *workload_key;
+    const EGD_Observed_Output *observed_outputs;
+    size_t observed_output_count;
     const Test_Manifest_Request *manifest_requests;
     size_t manifest_request_count;
     const char *package_generator;
@@ -88,8 +135,12 @@ typedef struct {
     int parity_passed;
     int backend_rejected;
     int evaluator_only;
+    int explicit_non_goal;
     int skipped_by_tool;
 } EGD_Case_Summary;
+
+#define EGD_EXPECTED_FULL_COMMANDS 124u
+#define EGD_COMMAND_INVENTORY_VERSION "2026-04-08-c0"
 
 #define EGD_PACK_EVAL_DEFAULT "test_v2/evaluator/golden/evaluator_default.cmake"
 #define EGD_PACK_EVAL_ALL "test_v2/evaluator/golden/evaluator_all.cmake"
@@ -104,11 +155,13 @@ typedef struct {
 #define EGD_PACK_CMAKE_LANGUAGE "test_v2/evaluator_diff/cases/cmake_language_seed_cases.cmake"
 #define EGD_PACK_CMAKE_PATH "test_v2/evaluator_diff/cases/cmake_path_seed_cases.cmake"
 #define EGD_PACK_CTEST "test_v2/evaluator_diff/cases/ctest_special_seed_cases.cmake"
+#define EGD_PACK_TESTING_META "test_v2/evaluator_diff/cases/testing_meta_seed_cases.cmake"
 #define EGD_PACK_TRY_COMPILE "test_v2/evaluator_diff/cases/try_compile_special_seed_cases.cmake"
 #define EGD_PACK_TRY_RUN "test_v2/evaluator_diff/cases/try_run_special_seed_cases.cmake"
 #define EGD_PACK_FETCHCONTENT "test_v2/evaluator_diff/cases/fetchcontent_host_effect_seed_cases.cmake"
 #define EGD_PACK_FIND_PACKAGE "test_v2/evaluator_diff/cases/find_package_special_seed_cases.cmake"
 #define EGD_PACK_FIND_PATHLIKE "test_v2/evaluator_diff/cases/find_pathlike_seed_cases.cmake"
+#define EGD_PACK_GET_FILENAME_COMPONENT "test_v2/evaluator_diff/cases/get_filename_component_seed_cases.cmake"
 #define EGD_PACK_CACHE_LOADING "test_v2/evaluator_diff/cases/cache_loading_seed_cases.cmake"
 #define EGD_PACK_ARGUMENT_PARSING "test_v2/evaluator_diff/cases/argument_parsing_seed_cases.cmake"
 #define EGD_PACK_MESSAGE "test_v2/evaluator_diff/cases/message_seed_cases.cmake"
@@ -116,11 +169,17 @@ typedef struct {
 #define EGD_PACK_INCLUDE "test_v2/evaluator_diff/cases/include_seed_cases.cmake"
 #define EGD_PACK_VARS "test_v2/evaluator_diff/cases/var_commands_seed_cases.cmake"
 #define EGD_PACK_PROPERTY_QUERY "test_v2/evaluator_diff/cases/property_query_seed_cases.cmake"
+#define EGD_PACK_PROPERTY_SETTERS "test_v2/evaluator_diff/cases/property_setters_seed_cases.cmake"
 #define EGD_PACK_PROPERTY_WRAPPERS "test_v2/evaluator_diff/cases/property_wrappers_seed_cases.cmake"
 #define EGD_PACK_HOST_IDENTITY "test_v2/evaluator_diff/cases/host_identity_seed_cases.cmake"
 #define EGD_PACK_CONFIGURE_FILE "test_v2/evaluator_diff/cases/configure_file_seed_cases.cmake"
+#define EGD_PACK_EXECUTE_PROCESS "test_v2/evaluator_diff/cases/execute_process_seed_cases.cmake"
 #define EGD_PACK_ADD_TARGETS "test_v2/evaluator_diff/cases/add_targets_seed_cases.cmake"
 #define EGD_PACK_ADD_SUBDIRECTORY "test_v2/evaluator_diff/cases/add_subdirectory_seed_cases.cmake"
+#define EGD_PACK_FLOW_CONTROL "test_v2/evaluator_diff/cases/flow_control_structural_seed_cases.cmake"
+#define EGD_PACK_CALLABLE_SCOPE "test_v2/evaluator_diff/cases/callable_scope_structural_seed_cases.cmake"
+#define EGD_PACK_FILE_API_META "test_v2/evaluator_diff/cases/file_api_meta_special_seed_cases.cmake"
+#define EGD_PACK_LEGACY_META "test_v2/evaluator_diff/cases/legacy_meta_special_seed_cases.cmake"
 #define EGD_PACK_SEEDS "test_v2/evaluator_codegen_diff/cases/backend_seed_cases.cmake"
 
 static const Test_Manifest_Request s_egd_build_manifests[] = {
@@ -136,54 +195,67 @@ static const Test_Manifest_Request s_egd_export_manifests[] = {
     {TEST_MANIFEST_CAPTURE_FILE_TEXT, "export_install_set", "build/meta-export.cmake"},
 };
 
+static const EGD_Observed_Output s_egd_build_outputs[] = {
+    {"build_tree", "artifacts", EGD_DIFF_TREE},
+};
+
+static const EGD_Observed_Output s_egd_install_outputs[] = {
+    {"install_tree", "", EGD_DIFF_TREE},
+};
+
+static const EGD_Observed_Output s_egd_export_outputs[] = {
+    {"export_targets", "build/meta-targets.cmake", EGD_DIFF_FILE_TEXT},
+    {"export_install_set", "build/meta-export.cmake", EGD_DIFF_FILE_TEXT},
+};
+
+static const EGD_Observed_Output s_egd_package_outputs[] = {
+    {"package_outputs", "packages", EGD_DIFF_TREE},
+    {"package_payload", "", EGD_DIFF_TREE},
+};
+
 static const char *s_egd_command_names[] = {
 #define EGD_COMMAND_NAME(name, handler, impl, fallback) name,
     EVAL_COMMAND_REGISTRY(EGD_COMMAND_NAME)
 #undef EGD_COMMAND_NAME
 };
 
+static const EGD_Command_Inventory s_egd_command_inventory[] = {
+#include "test_evaluator_codegen_diff_inventory.inc"
+};
+
 static const EGD_Subcommand_Inventory s_egd_subcommand_inventory[] = {
-    {"file", "DOWNLOAD", EGD_PACK_FILE, "file_host_effect_download_surface", EGD_CLASS_BACKEND_REJECT, "host-effect subcommand still lives in evaluator-only execution today", "epic-b.file.download"},
-    {"file", "ARCHIVE_CREATE|ARCHIVE_EXTRACT", EGD_PACK_FILE, "file_host_effect_archive_surface", EGD_CLASS_BACKEND_REJECT, "archive host effects are not replayed by generated Nob", "epic-b.file.archive"},
-    {"file", "GENERATE|LOCK|GET_RUNTIME_DEPENDENCIES", EGD_PACK_FILE, "file_host_effect_generate_lock_and_runtime_deps_surface", EGD_CLASS_BACKEND_REJECT, "file host effects still need downstream modeling or explicit backend support", "epic-b.file.generate_lock_runtime"},
-    {"string", "APPEND|JOIN|CONFIGURE|REGEX|HASH", EGD_PACK_STRING, "string_text_regex_and_misc_surface", EGD_CLASS_EVALUATOR_ONLY, "pure evaluator string semantics remain outside backend replay", NULL},
-    {"list", "TRANSFORM|SORT", EGD_PACK_LIST, "list_sort_and_transform_selector_surface_matches_documented_combinations", EGD_CLASS_EVALUATOR_ONLY, "list semantics only matter through frozen downstream state", NULL},
-    {"math", "EXPR", EGD_PACK_MATH, "math_expr_precedence_bitwise_and_hex_output", EGD_CLASS_EVALUATOR_ONLY, "math is evaluator-only and should not be replayed in nob.c", NULL},
-    {"cmake_language", "CALL|EVAL|DEFER", EGD_PACK_CMAKE_LANGUAGE, "cmake_language_defer_queue_cancel_and_flush_surface", EGD_CLASS_EVALUATOR_ONLY, "cmake_language stays on the evaluator side unless a later product decision moves specific host effects downstream", NULL},
-    {"cmake_path", "SET|GET|APPEND|COMPARE", EGD_PACK_CMAKE_PATH, "cmake_path_extended_surface_matches_local_seed", EGD_CLASS_EVALUATOR_ONLY, "path computation is evaluator-only unless it already freezes into target metadata", NULL},
-    {"ctest_*", "ctest_start|ctest_test|ctest_submit", EGD_PACK_CTEST, "ctest_local_dashboard_surface", EGD_CLASS_EVALUATOR_ONLY, "ctest family is explicitly outside generated Nob replay today", NULL},
+    {"file", "DOWNLOAD", EGD_PACK_FILE, "file_host_effect_download_surface", EGD_CLASS_BACKEND_REJECT, EGD_PHASE_CONFIGURE, "replay.backlog.file-host-effects", "host-effect subcommand still lives in evaluator-only execution today", "epic-b.file.download", NULL},
+    {"file", "ARCHIVE_CREATE|ARCHIVE_EXTRACT", EGD_PACK_FILE, "file_host_effect_archive_surface", EGD_CLASS_BACKEND_REJECT, EGD_PHASE_CONFIGURE, "replay.backlog.file-host-effects", "archive host effects are not replayed by generated Nob", "epic-b.file.archive", NULL},
+    {"file", "GENERATE|LOCK|GET_RUNTIME_DEPENDENCIES", EGD_PACK_FILE, "file_host_effect_generate_lock_and_runtime_deps_surface", EGD_CLASS_BACKEND_REJECT, EGD_PHASE_CONFIGURE, "replay.backlog.file-host-effects", "file host effects still need downstream modeling or explicit backend support", "epic-b.file.generate_lock_runtime", NULL},
+    {"string", "APPEND|JOIN|CONFIGURE|REGEX|HASH", EGD_PACK_STRING, "string_text_regex_and_misc_surface", EGD_CLASS_EVALUATOR_ONLY, EGD_PHASE_CONFIGURE, "evaluator.frozen-semantic.string", "pure evaluator string semantics remain outside backend replay", NULL, NULL},
+    {"list", "TRANSFORM|SORT", EGD_PACK_LIST, "list_sort_and_transform_selector_surface_matches_documented_combinations", EGD_CLASS_EVALUATOR_ONLY, EGD_PHASE_CONFIGURE, "evaluator.frozen-semantic.list", "list semantics only matter through frozen downstream state", NULL, NULL},
+    {"math", "EXPR", EGD_PACK_MATH, "math_expr_precedence_bitwise_and_hex_output", EGD_CLASS_EVALUATOR_ONLY, EGD_PHASE_CONFIGURE, "evaluator.frozen-semantic.math", "math is evaluator-only and should not be replayed in nob.c", NULL, NULL},
+    {"cmake_language", "CALL|EVAL|DEFER", EGD_PACK_CMAKE_LANGUAGE, "cmake_language_defer_queue_cancel_and_flush_surface", EGD_CLASS_EVALUATOR_ONLY, EGD_PHASE_CONFIGURE, "evaluator.frozen-semantic.cmake-language", "cmake_language stays on the evaluator side unless a later product decision moves specific host effects downstream", NULL, NULL},
+    {"cmake_path", "SET|GET|APPEND|COMPARE", EGD_PACK_CMAKE_PATH, "cmake_path_extended_surface_matches_local_seed", EGD_CLASS_EVALUATOR_ONLY, EGD_PHASE_CONFIGURE, "evaluator.frozen-semantic.cmake-path", "path computation is evaluator-only unless it already freezes into target metadata", NULL, NULL},
+    {"ctest_*", "ctest_start|ctest_test|ctest_submit", EGD_PACK_CTEST, "ctest_local_dashboard_surface", EGD_CLASS_EVALUATOR_ONLY, EGD_PHASE_TEST | EGD_PHASE_HOST_ONLY, "evaluator.host-introspection.ctest", "ctest family is explicitly outside generated Nob replay today", NULL, NULL},
 };
 
 static const EGD_Case_Def s_egd_cases[] = {
-    {"backend_build_controlled_artifacts", EGD_PACK_SEEDS, "add_library", "build subtree parity", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, "positive backend-owned build artifact parity", NULL, s_egd_build_manifests, NOB_ARRAY_LEN(s_egd_build_manifests), NULL},
-    {"backend_install_supported_surface", EGD_PACK_SEEDS, "install", "supported install subset", EGD_CLASS_PARITY_PASS, EGD_PARITY_INSTALL_TREE, "positive install parity for supported subset", NULL, s_egd_install_manifests, NOB_ARRAY_LEN(s_egd_install_manifests), NULL},
-    {"export_host_effect_target_and_export_file_surface", EGD_PACK_EXPORT, "export", "standalone export files", EGD_CLASS_PARITY_PASS, EGD_PARITY_EXPORT_FILES, "positive standalone export parity through explicit export command", NULL, s_egd_export_manifests, NOB_ARRAY_LEN(s_egd_export_manifests), NULL},
-    {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package TGZ", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, "positive full-package parity for TGZ", NULL, NULL, 0, "TGZ"},
-    {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package TXZ", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, "positive full-package parity for TXZ", NULL, NULL, 0, "TXZ"},
-    {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package ZIP", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, "positive full-package parity for ZIP", NULL, NULL, 0, "ZIP"},
-    {"backend_reject_target_precompile_headers", EGD_PACK_SEEDS, "target_precompile_headers", "PCH explicit reject", EGD_CLASS_BACKEND_REJECT, EGD_PARITY_NONE, "backend still rejects concrete precompile header semantics", "epic-a.target_precompile_headers", NULL, 0, NULL},
-    {"backend_reject_export_append", EGD_PACK_SEEDS, "export", "APPEND explicit reject", EGD_CLASS_BACKEND_REJECT, EGD_PARITY_NONE, "standalone export append remains an explicit backend reject", "epic-a.export-append", NULL, 0, NULL},
-    {"math_expr_precedence_bitwise_and_hex_output", EGD_PACK_MATH, "math", "math(EXPR)", EGD_CLASS_EVALUATOR_ONLY, EGD_PARITY_NONE, "pure evaluator arithmetic should stay outside backend replay", NULL, NULL, 0, NULL},
-    {"string_text_regex_and_misc_surface", EGD_PACK_STRING, "string", "string() surface", EGD_CLASS_EVALUATOR_ONLY, EGD_PARITY_NONE, "string operations are evaluator-only unless they already freeze into downstream state", NULL, NULL, 0, NULL},
+    {"backend_build_controlled_artifacts", EGD_PACK_SEEDS, "add_library", "build subtree parity", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE, "build-model.build-graph", "positive backend-owned build artifact parity", NULL, "workload.codegen.build-tree", s_egd_build_outputs, NOB_ARRAY_LEN(s_egd_build_outputs), s_egd_build_manifests, NOB_ARRAY_LEN(s_egd_build_manifests), NULL},
+    {"backend_install_supported_surface", EGD_PACK_SEEDS, "install", "supported install subset", EGD_CLASS_PARITY_PASS, EGD_PARITY_INSTALL_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD | EGD_PHASE_INSTALL, EGD_TOOL_CMAKE, "build-model.install", "positive install parity for supported subset", NULL, "workload.codegen.install-tree", s_egd_install_outputs, NOB_ARRAY_LEN(s_egd_install_outputs), s_egd_install_manifests, NOB_ARRAY_LEN(s_egd_install_manifests), NULL},
+    {"export_host_effect_target_and_export_file_surface", EGD_PACK_EXPORT, "export", "standalone export files", EGD_CLASS_PARITY_PASS, EGD_PARITY_EXPORT_FILES, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_EXPORT, EGD_TOOL_CMAKE, "build-model.export", "positive standalone export parity through explicit export command", NULL, "workload.codegen.export-files", s_egd_export_outputs, NOB_ARRAY_LEN(s_egd_export_outputs), s_egd_export_manifests, NOB_ARRAY_LEN(s_egd_export_manifests), NULL},
+    {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package TGZ", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_TAR | EGD_TOOL_GZIP, "build-model.package", "positive full-package parity for TGZ", NULL, "workload.codegen.package-tgz", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "TGZ"},
+    {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package TXZ", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_TAR | EGD_TOOL_XZ, "build-model.package", "positive full-package parity for TXZ", NULL, "workload.codegen.package-txz", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "TXZ"},
+    {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package ZIP", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_PYTHON, "build-model.package", "positive full-package parity for ZIP", NULL, "workload.codegen.package-zip", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "ZIP"},
+    {"backend_reject_target_precompile_headers", EGD_PACK_SEEDS, "target_precompile_headers", "PCH explicit reject", EGD_CLASS_BACKEND_REJECT, EGD_PARITY_NONE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_NONE, "replay.backlog.target-usage", "backend still rejects concrete precompile header semantics", "epic-a.target_precompile_headers", NULL, NULL, 0, NULL, 0, NULL},
+    {"backend_reject_export_append", EGD_PACK_SEEDS, "export", "APPEND explicit reject", EGD_CLASS_BACKEND_REJECT, EGD_PARITY_NONE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_EXPORT, EGD_TOOL_NONE, "replay.backlog.export", "standalone export append remains an explicit backend reject", "epic-a.export-append", NULL, NULL, 0, NULL, 0, NULL},
+    {"math_expr_precedence_bitwise_and_hex_output", EGD_PACK_MATH, "math", "math(EXPR)", EGD_CLASS_EVALUATOR_ONLY, EGD_PARITY_NONE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE, EGD_TOOL_NONE, "evaluator.frozen-semantic.math", "pure evaluator arithmetic should stay outside backend replay", NULL, NULL, NULL, 0, NULL, 0, NULL},
+    {"string_text_regex_and_misc_surface", EGD_PACK_STRING, "string", "string() surface", EGD_CLASS_EVALUATOR_ONLY, EGD_PARITY_NONE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE, EGD_TOOL_NONE, "evaluator.frozen-semantic.string", "string operations are evaluator-only unless they already freeze into downstream state", NULL, NULL, NULL, 0, NULL, 0, NULL},
 };
 
-static bool egd_starts_with(const char *text, const char *prefix) {
-    size_t prefix_len = prefix ? strlen(prefix) : 0;
-    if (!text || !prefix) return false;
-    return strncmp(text, prefix, prefix_len) == 0;
-}
+static bool egd_body_contains(String_View body, const char *needle);
+static bool egd_host_program_available(const char *program);
 
 static bool egd_ends_with(const char *text, const char *suffix) {
     size_t text_len = text ? strlen(text) : 0;
     size_t suffix_len = suffix ? strlen(suffix) : 0;
     if (!text || !suffix || suffix_len > text_len) return false;
     return strcmp(text + text_len - suffix_len, suffix) == 0;
-}
-
-static bool egd_sv_has_prefix(String_View sv, const char *prefix) {
-    size_t prefix_len = prefix ? strlen(prefix) : 0;
-    if (!prefix || sv.count < prefix_len) return false;
-    return memcmp(sv.data, prefix, prefix_len) == 0;
 }
 
 static String_View egd_copy_sv(Arena *arena, String_View sv) {
@@ -194,139 +266,41 @@ static String_View egd_copy_sv(Arena *arena, String_View sv) {
     return nob_sv_from_parts(copy, sv.count);
 }
 
-static EGD_Case_Classification egd_classify_command(const char *command) {
-    if (!command) return EGD_CLASS_EVALUATOR_ONLY;
-    if (egd_starts_with(command, "ctest_") ||
-        strcmp(command, "string") == 0 ||
-        strcmp(command, "list") == 0 ||
-        strcmp(command, "math") == 0 ||
-        strcmp(command, "set") == 0 ||
-        strcmp(command, "unset") == 0 ||
-        strcmp(command, "message") == 0 ||
-        strcmp(command, "cmake_policy") == 0 ||
-        strcmp(command, "cmake_path") == 0 ||
-        strcmp(command, "cmake_language") == 0 ||
-        strcmp(command, "cmake_parse_arguments") == 0 ||
-        strcmp(command, "get_property") == 0 ||
-        egd_starts_with(command, "get_") ||
-        strcmp(command, "option") == 0 ||
-        strcmp(command, "mark_as_advanced") == 0 ||
-        strcmp(command, "remove") == 0 ||
-        strcmp(command, "remove_definitions") == 0 ||
-        strcmp(command, "separate_arguments") == 0 ||
-        strcmp(command, "site_name") == 0 ||
-        strcmp(command, "build_command") == 0 ||
-        strcmp(command, "build_name") == 0 ||
-        strcmp(command, "cmake_host_system_information") == 0) {
-        return EGD_CLASS_EVALUATOR_ONLY;
-    }
-
-    if (strcmp(command, "file") == 0 ||
-        strcmp(command, "write_file") == 0 ||
-        strcmp(command, "make_directory") == 0 ||
-        strcmp(command, "execute_process") == 0 ||
-        strcmp(command, "exec_program") == 0 ||
-        strcmp(command, "try_compile") == 0 ||
-        strcmp(command, "try_run") == 0 ||
-        strcmp(command, "cmake_file_api") == 0 ||
-        strcmp(command, "target_precompile_headers") == 0 ||
-        egd_starts_with(command, "FetchContent_") ||
-        egd_starts_with(command, "cpack_add_") ||
-        strcmp(command, "create_test_sourcelist") == 0 ||
-        strcmp(command, "qt_wrap_cpp") == 0 ||
-        strcmp(command, "qt_wrap_ui") == 0 ||
-        strcmp(command, "fltk_wrap_ui") == 0 ||
-        strcmp(command, "export_library_dependencies") == 0 ||
-        strcmp(command, "include_external_msproject") == 0 ||
-        strcmp(command, "include_regular_expression") == 0 ||
-        strcmp(command, "output_required_files") == 0 ||
-        strcmp(command, "source_group") == 0 ||
-        strcmp(command, "load_command") == 0) {
-        return EGD_CLASS_BACKEND_REJECT;
-    }
-
-    return EGD_CLASS_PARITY_PASS;
-}
-
-static const char *egd_command_source_pack(const char *command) {
-    if (!command) return EGD_PACK_EVAL_DEFAULT;
-    if (strcmp(command, "string") == 0) return EGD_PACK_STRING;
-    if (strcmp(command, "list") == 0) return EGD_PACK_LIST;
-    if (strcmp(command, "math") == 0) return EGD_PACK_MATH;
-    if (strcmp(command, "cmake_language") == 0) return EGD_PACK_CMAKE_LANGUAGE;
-    if (strcmp(command, "cmake_path") == 0) return EGD_PACK_CMAKE_PATH;
-    if (egd_starts_with(command, "ctest_")) return EGD_PACK_CTEST;
-    if (strcmp(command, "install") == 0 ||
-        strcmp(command, "install_files") == 0 ||
-        strcmp(command, "install_programs") == 0 ||
-        strcmp(command, "install_targets") == 0) return EGD_PACK_INSTALL;
-    if (strcmp(command, "export") == 0) return EGD_PACK_EXPORT;
-    if (strcmp(command, "file") == 0 ||
-        strcmp(command, "write_file") == 0 ||
-        strcmp(command, "make_directory") == 0) return EGD_PACK_FILE;
-    if (egd_starts_with(command, "FetchContent_")) return EGD_PACK_FETCHCONTENT;
-    if (strcmp(command, "try_compile") == 0) return EGD_PACK_TRY_COMPILE;
-    if (strcmp(command, "try_run") == 0) return EGD_PACK_TRY_RUN;
-    if (strcmp(command, "find_package") == 0) return EGD_PACK_FIND_PACKAGE;
-    if (egd_starts_with(command, "find_")) return EGD_PACK_FIND_PATHLIKE;
-    if (strcmp(command, "load_cache") == 0) return EGD_PACK_CACHE_LOADING;
-    if (strcmp(command, "separate_arguments") == 0 ||
-        strcmp(command, "cmake_parse_arguments") == 0) return EGD_PACK_ARGUMENT_PARSING;
-    if (strcmp(command, "message") == 0) return EGD_PACK_MESSAGE;
-    if (strcmp(command, "cmake_policy") == 0) return EGD_PACK_POLICY;
-    if (strcmp(command, "include") == 0 || strcmp(command, "include_guard") == 0) return EGD_PACK_INCLUDE;
-    if (strcmp(command, "set") == 0 ||
-        strcmp(command, "unset") == 0 ||
-        strcmp(command, "option") == 0 ||
-        strcmp(command, "mark_as_advanced") == 0 ||
-        strcmp(command, "remove") == 0) return EGD_PACK_VARS;
-    if (strcmp(command, "get_property") == 0 ||
-        strcmp(command, "get_target_property") == 0 ||
-        strcmp(command, "get_source_file_property") == 0 ||
-        strcmp(command, "get_test_property") == 0) return EGD_PACK_PROPERTY_QUERY;
-    if (strcmp(command, "get_cmake_property") == 0 ||
-        strcmp(command, "get_directory_property") == 0) return EGD_PACK_PROPERTY_WRAPPERS;
-    if (strcmp(command, "build_command") == 0 ||
-        strcmp(command, "build_name") == 0 ||
-        strcmp(command, "site_name") == 0 ||
-        strcmp(command, "cmake_host_system_information") == 0) return EGD_PACK_HOST_IDENTITY;
-    if (strcmp(command, "configure_file") == 0) return EGD_PACK_CONFIGURE_FILE;
-    if (egd_starts_with(command, "target_") ||
-        strcmp(command, "include_directories") == 0 ||
-        strcmp(command, "link_directories") == 0 ||
-        strcmp(command, "link_libraries") == 0) return EGD_PACK_TARGET_USAGE;
-    if (egd_starts_with(command, "add_") ||
-        strcmp(command, "project") == 0 ||
-        strcmp(command, "cmake_minimum_required") == 0) return EGD_PACK_ADD_TARGETS;
-    if (strcmp(command, "add_subdirectory") == 0) return EGD_PACK_ADD_SUBDIRECTORY;
-    return EGD_PACK_EVAL_DEFAULT;
-}
-
-static const char *egd_command_reason(const char *command) {
-    switch (egd_classify_command(command)) {
-        case EGD_CLASS_PARITY_PASS:
-            return "command participates in downstream state or backend execution already exercised by supported codegen paths";
-        case EGD_CLASS_BACKEND_REJECT:
-            return "command is implemented by the evaluator but still needs explicit backend work or deliberate non-goal treatment";
-        case EGD_CLASS_EVALUATOR_ONLY:
-            return "command remains evaluator-only and should affect codegen only through already-frozen downstream state";
-    }
-    return "unclassified";
-}
-
-static const char *egd_command_backlog_key(const char *command) {
+static const EGD_Command_Inventory *egd_lookup_command_inventory(const char *command) {
     if (!command) return NULL;
-    if (strcmp(command, "file") == 0 ||
-        strcmp(command, "write_file") == 0 ||
-        strcmp(command, "make_directory") == 0) return "epic-b.file-host-effects";
-    if (strcmp(command, "target_precompile_headers") == 0) return "epic-a.target_precompile_headers";
-    if (strcmp(command, "try_compile") == 0 || strcmp(command, "try_run") == 0) return "epic-c.try-apis";
-    if (strcmp(command, "execute_process") == 0 || strcmp(command, "exec_program") == 0) return "epic-c.process-probes";
-    if (egd_starts_with(command, "FetchContent_")) return "epic-c.fetchcontent";
-    if (egd_starts_with(command, "cpack_add_")) return "epic-a.component-packaging";
-    if (egd_starts_with(command, "ctest_")) return "epic-c.ctest";
-    if (strcmp(command, "cmake_file_api") == 0) return "epic-c.file-api";
-    return "epic-backend-reject.default";
+    for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_command_inventory); ++i) {
+        if (strcmp(s_egd_command_inventory[i].command, command) == 0) {
+            return &s_egd_command_inventory[i];
+        }
+    }
+    return NULL;
+}
+
+static bool egd_tracking_key_required(EGD_Case_Classification classification) {
+    return classification == EGD_CLASS_BACKEND_REJECT ||
+           classification == EGD_CLASS_EXPLICIT_NON_GOAL;
+}
+
+static bool egd_phase_mask_is_valid(unsigned phase_mask) {
+    unsigned known = EGD_PHASE_CONFIGURE |
+                     EGD_PHASE_BUILD |
+                     EGD_PHASE_TEST |
+                     EGD_PHASE_INSTALL |
+                     EGD_PHASE_EXPORT |
+                     EGD_PHASE_PACKAGE |
+                     EGD_PHASE_HOST_ONLY;
+    return phase_mask != 0 && (phase_mask & ~known) == 0;
+}
+
+static bool egd_tool_mask_is_valid(unsigned tool_mask) {
+    unsigned known = EGD_TOOL_NONE |
+                     EGD_TOOL_CMAKE |
+                     EGD_TOOL_CPACK |
+                     EGD_TOOL_GZIP |
+                     EGD_TOOL_XZ |
+                     EGD_TOOL_PYTHON |
+                     EGD_TOOL_TAR;
+    return (tool_mask & ~known) == 0;
 }
 
 static const char *egd_classification_name(EGD_Case_Classification classification) {
@@ -334,233 +308,291 @@ static const char *egd_classification_name(EGD_Case_Classification classificatio
         case EGD_CLASS_PARITY_PASS: return "parity-pass";
         case EGD_CLASS_BACKEND_REJECT: return "backend-reject";
         case EGD_CLASS_EVALUATOR_ONLY: return "evaluator-only";
+        case EGD_CLASS_EXPLICIT_NON_GOAL: return "explicit-non-goal";
     }
     return "unknown";
+}
+
+static void egd_inventory_state_counts_add(EGD_Inventory_State_Counts *counts,
+                                           EGD_Case_Classification classification) {
+    if (!counts) return;
+    switch (classification) {
+        case EGD_CLASS_PARITY_PASS: counts->parity_pass++; break;
+        case EGD_CLASS_BACKEND_REJECT: counts->backend_reject++; break;
+        case EGD_CLASS_EVALUATOR_ONLY: counts->evaluator_only++; break;
+        case EGD_CLASS_EXPLICIT_NON_GOAL: counts->explicit_non_goal++; break;
+    }
+}
+
+static void egd_log_inventory_state_counts(const char *label,
+                                           const EGD_Inventory_State_Counts *counts) {
+    if (!label || !counts) return;
+    nob_log(NOB_INFO,
+            "%s: parity-pass=%d backend-reject=%d evaluator-only=%d explicit-non-goal=%d",
+            label,
+            counts->parity_pass,
+            counts->backend_reject,
+            counts->evaluator_only,
+            counts->explicit_non_goal);
+}
+
+static const char *egd_diff_primitive_name(EGD_Diff_Primitive primitive) {
+    switch (primitive) {
+        case EGD_DIFF_TREE: return "TREE";
+        case EGD_DIFF_FILE_TEXT: return "FILE_TEXT";
+        case EGD_DIFF_FILE_SHA256: return "FILE_SHA256";
+    }
+    return "unknown";
+}
+
+static const char *egd_tool_name(unsigned tool) {
+    switch (tool) {
+        case EGD_TOOL_CMAKE: return "cmake";
+        case EGD_TOOL_CPACK: return "cpack";
+        case EGD_TOOL_GZIP: return "gzip";
+        case EGD_TOOL_XZ: return "xz";
+        case EGD_TOOL_PYTHON: return "python";
+        case EGD_TOOL_TAR: return "tar";
+    }
+    return "unknown-tool";
+}
+
+static void egd_format_tool_mask(unsigned tool_mask, char *buffer, size_t buffer_size) {
+    size_t used = 0;
+    bool first = true;
+    const unsigned tools[] = {
+        EGD_TOOL_CMAKE,
+        EGD_TOOL_CPACK,
+        EGD_TOOL_GZIP,
+        EGD_TOOL_XZ,
+        EGD_TOOL_PYTHON,
+        EGD_TOOL_TAR,
+    };
+
+    if (!buffer || buffer_size == 0) return;
+    buffer[0] = '\0';
+    if (tool_mask == EGD_TOOL_NONE) {
+        (void)snprintf(buffer, buffer_size, "none");
+        return;
+    }
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(tools); ++i) {
+        if ((tool_mask & tools[i]) == 0) continue;
+        used += (size_t)snprintf(buffer + used,
+                                 used < buffer_size ? buffer_size - used : 0,
+                                 "%s%s",
+                                 first ? "" : ",",
+                                 egd_tool_name(tools[i]));
+        first = false;
+        if (used >= buffer_size) break;
+    }
+}
+
+static bool egd_detect_tool_availability(EGD_Tool_Availability *out) {
+    char cmake_bin[_TINYDIR_PATH_MAX] = {0};
+    char cpack_bin[_TINYDIR_PATH_MAX] = {0};
+
+    if (!out) return false;
+    *out = (EGD_Tool_Availability){
+        .cmake = codegen_resolve_host_cmake_bin(cmake_bin),
+        .cpack = codegen_resolve_host_cpack_bin(cpack_bin),
+        .gzip = egd_host_program_available("gzip"),
+        .xz = egd_host_program_available("xz"),
+        .python = egd_host_program_available("python3") || egd_host_program_available("python"),
+        .tar = egd_host_program_available("tar"),
+    };
+    return true;
+}
+
+static unsigned egd_required_tools_missing(unsigned required_tools,
+                                           const EGD_Tool_Availability *available) {
+    unsigned missing = 0;
+    if (!available) return required_tools;
+    if ((required_tools & EGD_TOOL_CMAKE) && !available->cmake) missing |= EGD_TOOL_CMAKE;
+    if ((required_tools & EGD_TOOL_CPACK) && !available->cpack) missing |= EGD_TOOL_CPACK;
+    if ((required_tools & EGD_TOOL_GZIP) && !available->gzip) missing |= EGD_TOOL_GZIP;
+    if ((required_tools & EGD_TOOL_XZ) && !available->xz) missing |= EGD_TOOL_XZ;
+    if ((required_tools & EGD_TOOL_PYTHON) && !available->python) missing |= EGD_TOOL_PYTHON;
+    if ((required_tools & EGD_TOOL_TAR) && !available->tar) missing |= EGD_TOOL_TAR;
+    return missing;
+}
+
+static bool egd_command_name_in_registry(const char *command) {
+    if (!command) return false;
+    for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_command_names); ++i) {
+        if (strcmp(s_egd_command_names[i], command) == 0) return true;
+    }
+    return false;
+}
+
+static bool egd_observed_output_is_valid(const EGD_Observed_Output *output) {
+    if (!output || !output->label || output->label[0] == '\0' || !output->relpath) return false;
+    switch (output->primitive) {
+        case EGD_DIFF_TREE:
+            return true;
+        case EGD_DIFF_FILE_TEXT:
+        case EGD_DIFF_FILE_SHA256:
+            return output->relpath[0] != '\0';
+    }
+    return false;
+}
+
+static bool egd_subcommand_metadata_is_valid(const EGD_Subcommand_Inventory *item) {
+    if (!item ||
+        !item->family || item->family[0] == '\0' ||
+        !item->signature || item->signature[0] == '\0' ||
+        !item->source_pack_path || item->source_pack_path[0] == '\0' ||
+        !item->case_name || item->case_name[0] == '\0' ||
+        !item->domain_owner || item->domain_owner[0] == '\0' ||
+        !item->reason || item->reason[0] == '\0') {
+        return false;
+    }
+    if (!egd_phase_mask_is_valid(item->phase_mask)) return false;
+    if (egd_tracking_key_required(item->classification) &&
+        (!item->tracking_key || item->tracking_key[0] == '\0')) {
+        return false;
+    }
+    if (item->tracking_key && item->tracking_key[0] == '\0') return false;
+    if (item->workload_key && item->workload_key[0] == '\0') return false;
+    return strcmp(egd_classification_name(item->classification), "unknown") != 0;
+}
+
+static bool egd_case_metadata_is_valid(const EGD_Case_Def *case_def,
+                                       const EGD_Parsed_Case *parsed_case) {
+    if (!case_def ||
+        !case_def->case_name || case_def->case_name[0] == '\0' ||
+        !case_def->source_pack_path || case_def->source_pack_path[0] == '\0' ||
+        !case_def->command_family || case_def->command_family[0] == '\0' ||
+        !case_def->signature || case_def->signature[0] == '\0' ||
+        !case_def->domain_owner || case_def->domain_owner[0] == '\0' ||
+        !case_def->reason || case_def->reason[0] == '\0') {
+        return false;
+    }
+    if (!egd_phase_mask_is_valid(case_def->phase_mask) ||
+        !egd_tool_mask_is_valid(case_def->required_tools) ||
+        strcmp(egd_classification_name(case_def->classification), "unknown") == 0) {
+        return false;
+    }
+    if (parsed_case && parsed_case->expected_outcome != case_def->expected_outcome) return false;
+    if (egd_tracking_key_required(case_def->classification) &&
+        (!case_def->tracking_key || case_def->tracking_key[0] == '\0')) {
+        return false;
+    }
+    if (case_def->tracking_key && case_def->tracking_key[0] == '\0') return false;
+    if (case_def->workload_key && case_def->workload_key[0] == '\0') return false;
+
+    if (case_def->classification == EGD_CLASS_PARITY_PASS) {
+        if (case_def->parity_kind == EGD_PARITY_NONE ||
+            case_def->expected_outcome != EGD_OUTCOME_SUCCESS ||
+            case_def->observed_output_count == 0 ||
+            !case_def->observed_outputs) {
+            return false;
+        }
+    } else if (case_def->parity_kind != EGD_PARITY_NONE ||
+               case_def->observed_output_count != 0 ||
+               case_def->observed_outputs != NULL ||
+               case_def->manifest_request_count != 0 ||
+               case_def->manifest_requests != NULL ||
+               case_def->package_generator != NULL) {
+        return false;
+    }
+
+    if (case_def->manifest_request_count > 0 && !case_def->manifest_requests) return false;
+    if (case_def->parity_kind == EGD_PARITY_PACKAGE_ARCHIVE) {
+        if (!case_def->package_generator || case_def->package_generator[0] == '\0') return false;
+    } else if (case_def->package_generator != NULL) {
+        return false;
+    }
+
+    for (size_t i = 0; i < case_def->observed_output_count; ++i) {
+        if (!egd_observed_output_is_valid(&case_def->observed_outputs[i])) return false;
+        if (strcmp(egd_diff_primitive_name(case_def->observed_outputs[i].primitive), "unknown") == 0) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static size_t egd_count_full_native_rows(String_View matrix) {
+    size_t count = 0;
+    size_t pos = 0;
+    while (pos < matrix.count) {
+        size_t line_start = pos;
+        size_t line_end = pos;
+        while (line_end < matrix.count && matrix.data[line_end] != '\n') line_end++;
+        pos = line_end < matrix.count ? line_end + 1 : line_end;
+
+        String_View line = test_case_pack_trim_cr(
+            nob_sv_from_parts(matrix.data + line_start, line_end - line_start));
+        if (line.count >= 3 &&
+            line.data[0] == '|' &&
+            line.data[1] == ' ' &&
+            line.data[2] == '`' &&
+            egd_body_contains(line, "| native | FULL | FULL |")) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static void egd_log_curated_subcommand_family_counts(void) {
+    for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_subcommand_inventory); ++i) {
+        EGD_Inventory_State_Counts counts = {0};
+        bool seen = false;
+        const char *family = s_egd_subcommand_inventory[i].family;
+        for (size_t j = 0; j < i; ++j) {
+            if (strcmp(s_egd_subcommand_inventory[j].family, family) == 0) {
+                seen = true;
+                break;
+            }
+        }
+        if (seen) continue;
+        for (size_t j = 0; j < NOB_ARRAY_LEN(s_egd_subcommand_inventory); ++j) {
+            if (strcmp(s_egd_subcommand_inventory[j].family, family) == 0) {
+                egd_inventory_state_counts_add(&counts, s_egd_subcommand_inventory[j].classification);
+            }
+        }
+        egd_log_inventory_state_counts(
+            nob_temp_sprintf("evaluator->codegen diff curated subcommand family %s", family),
+            &counts);
+    }
+}
+
+static void egd_log_case_family_counts(void) {
+    for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_cases); ++i) {
+        EGD_Inventory_State_Counts counts = {0};
+        bool seen = false;
+        const char *family = s_egd_cases[i].command_family;
+        for (size_t j = 0; j < i; ++j) {
+            if (strcmp(s_egd_cases[j].command_family, family) == 0) {
+                seen = true;
+                break;
+            }
+        }
+        if (seen) continue;
+        for (size_t j = 0; j < NOB_ARRAY_LEN(s_egd_cases); ++j) {
+            if (strcmp(s_egd_cases[j].command_family, family) == 0) {
+                egd_inventory_state_counts_add(&counts, s_egd_cases[j].classification);
+            }
+        }
+        egd_log_inventory_state_counts(
+            nob_temp_sprintf("evaluator->codegen diff case family %s", family),
+            &counts);
+    }
 }
 
 static bool egd_case_exists_in_pack(Arena *arena,
                                     const char *case_pack_path,
                                     const char *case_name) {
-    String_View content = {0};
-    Test_Case_Pack_Entry *entries = NULL;
-    if (!arena || !case_pack_path || !case_name) return false;
-    if (!test_snapshot_load_text_file_to_arena(arena, case_pack_path, &content) ||
-        !test_snapshot_parse_case_pack_to_arena(arena, content, &entries)) {
-        return false;
-    }
-    for (size_t i = 0; i < arena_arr_len(entries); ++i) {
-        if (nob_sv_eq(entries[i].name, nob_sv_from_cstr(case_name))) return true;
-    }
-    return false;
-}
-
-static String_View egd_trim_cr(String_View sv) {
-    if (sv.count > 0 && sv.data[sv.count - 1] == '\r') {
-        sv.count--;
-    }
-    return sv;
-}
-
-static bool egd_split_scoped_path(String_View raw,
-                                  EGD_Path_Scope default_scope,
-                                  EGD_Path_Scope *out_scope,
-                                  String_View *out_relpath) {
-    if (!out_scope || !out_relpath) return false;
-    if (egd_sv_has_prefix(raw, "source/")) {
-        *out_scope = EGD_SCOPE_SOURCE;
-        *out_relpath = nob_sv_from_parts(raw.data + 7, raw.count - 7);
-        return true;
-    }
-    if (egd_sv_has_prefix(raw, "build/")) {
-        *out_scope = EGD_SCOPE_BUILD;
-        *out_relpath = nob_sv_from_parts(raw.data + 6, raw.count - 6);
-        return true;
-    }
-    *out_scope = default_scope;
-    *out_relpath = raw;
-    return true;
-}
-
-static bool egd_parse_scoped_path_entry(Arena *arena,
-                                        String_View raw,
-                                        EGD_Path_Scope default_scope,
-                                        EGD_Path_Entry *out_entry) {
-    EGD_Path_Scope scope = EGD_SCOPE_SOURCE;
-    String_View relpath = {0};
-    if (!arena || !out_entry) return false;
-    if (!egd_split_scoped_path(raw, default_scope, &scope, &relpath)) return false;
-    *out_entry = (EGD_Path_Entry){
-        .scope = scope,
-        .relpath = egd_copy_sv(arena, relpath),
-    };
-    return out_entry->relpath.data != NULL;
-}
-
-static bool egd_parse_case(Arena *arena,
-                           Test_Case_Pack_Entry entry,
-                           EGD_Parsed_Case *out_case) {
-    Nob_String_Builder body = {0};
-    bool have_outcome = false;
-    size_t pos = 0;
-    if (!arena || !out_case) return false;
-    *out_case = (EGD_Parsed_Case){
-        .name = egd_copy_sv(arena, entry.name),
-        .mode = EGD_MODE_PROJECT,
-        .expected_outcome = EGD_OUTCOME_SUCCESS,
-    };
-    if (!out_case->name.data) return false;
-
-    while (pos < entry.script.count) {
-        size_t line_start = pos;
-        size_t line_end = pos;
-        while (line_end < entry.script.count && entry.script.data[line_end] != '\n') line_end++;
-        pos = line_end < entry.script.count ? line_end + 1 : line_end;
-
-        String_View raw_line = nob_sv_from_parts(entry.script.data + line_start, line_end - line_start);
-        String_View line = egd_trim_cr(raw_line);
-
-        if (nob_sv_chop_prefix(&line, nob_sv_from_cstr("#@@OUTCOME "))) {
-            if (nob_sv_eq(line, nob_sv_from_cstr("SUCCESS"))) out_case->expected_outcome = EGD_OUTCOME_SUCCESS;
-            else if (nob_sv_eq(line, nob_sv_from_cstr("ERROR"))) out_case->expected_outcome = EGD_OUTCOME_ERROR;
-            else {
-                nob_sb_free(body);
-                return false;
-            }
-            have_outcome = true;
-            continue;
-        }
-
-        line = egd_trim_cr(raw_line);
-        if (nob_sv_chop_prefix(&line, nob_sv_from_cstr("#@@MODE "))) {
-            if (nob_sv_eq(line, nob_sv_from_cstr("SCRIPT"))) out_case->mode = EGD_MODE_SCRIPT;
-            else if (nob_sv_eq(line, nob_sv_from_cstr("PROJECT"))) out_case->mode = EGD_MODE_PROJECT;
-            else {
-                nob_sb_free(body);
-                return false;
-            }
-            continue;
-        }
-
-        line = egd_trim_cr(raw_line);
-        if (nob_sv_chop_prefix(&line, nob_sv_from_cstr("#@@FILE "))) {
-            EGD_Path_Entry file = {0};
-            if (!egd_parse_scoped_path_entry(arena, line, EGD_SCOPE_SOURCE, &file) ||
-                !arena_arr_push(arena, out_case->files, file)) {
-                nob_sb_free(body);
-                return false;
-            }
-            continue;
-        }
-
-        line = egd_trim_cr(raw_line);
-        if (nob_sv_chop_prefix(&line, nob_sv_from_cstr("#@@DIR "))) {
-            EGD_Path_Entry dir = {0};
-            if (!egd_parse_scoped_path_entry(arena, line, EGD_SCOPE_SOURCE, &dir) ||
-                !arena_arr_push(arena, out_case->dirs, dir)) {
-                nob_sb_free(body);
-                return false;
-            }
-            continue;
-        }
-
-        line = egd_trim_cr(raw_line);
-        if (nob_sv_chop_prefix(&line, nob_sv_from_cstr("#@@FILE_TEXT "))) {
-            EGD_Path_Entry path_entry = {0};
-            EGD_Text_Fixture text_file = {0};
-            Nob_String_Builder text = {0};
-            bool found_end = false;
-
-            if (!egd_parse_scoped_path_entry(arena, line, EGD_SCOPE_SOURCE, &path_entry)) {
-                nob_sb_free(text);
-                nob_sb_free(body);
-                return false;
-            }
-
-            while (pos < entry.script.count) {
-                size_t text_line_start = pos;
-                size_t text_line_end = pos;
-                while (text_line_end < entry.script.count && entry.script.data[text_line_end] != '\n') text_line_end++;
-                pos = text_line_end < entry.script.count ? text_line_end + 1 : text_line_end;
-
-                String_View text_raw = nob_sv_from_parts(entry.script.data + text_line_start,
-                                                         text_line_end - text_line_start);
-                String_View text_line = egd_trim_cr(text_raw);
-                if (nob_sv_eq(text_line, nob_sv_from_cstr("#@@END_FILE_TEXT"))) {
-                    found_end = true;
-                    break;
-                }
-                if (egd_sv_has_prefix(text_line, "#@@")) {
-                    nob_sb_free(text);
-                    nob_sb_free(body);
-                    return false;
-                }
-                nob_sb_append_buf(&text, text_raw.data, text_raw.count);
-                nob_sb_append(&text, '\n');
-            }
-
-            if (!found_end) {
-                nob_sb_free(text);
-                nob_sb_free(body);
-                return false;
-            }
-
-            text_file.scope = path_entry.scope;
-            text_file.relpath = path_entry.relpath;
-            text_file.text = egd_copy_sv(arena, nob_sv_from_parts(text.items ? text.items : "", text.count));
-            nob_sb_free(text);
-            if (!text_file.text.data || !arena_arr_push(arena, out_case->text_files, text_file)) {
-                nob_sb_free(body);
-                return false;
-            }
-            continue;
-        }
-
-        line = egd_trim_cr(raw_line);
-        if (egd_sv_has_prefix(line, "#@@QUERY ") ||
-            egd_sv_has_prefix(line, "#@@ENV ") ||
-            egd_sv_has_prefix(line, "#@@ENV_UNSET ") ||
-            egd_sv_has_prefix(line, "#@@ENV_PATH ") ||
-            egd_sv_has_prefix(line, "#@@CACHE_INIT ") ||
-            egd_sv_has_prefix(line, "#@@PROJECT_LAYOUT ")) {
-            continue;
-        }
-
-        line = egd_trim_cr(raw_line);
-        if (egd_sv_has_prefix(line, "#@@")) {
-            nob_sb_free(body);
-            return false;
-        }
-
-        nob_sb_append_buf(&body, raw_line.data, raw_line.count);
-        nob_sb_append(&body, '\n');
-    }
-
-    if (!have_outcome) {
-        nob_sb_free(body);
-        return false;
-    }
-
-    out_case->body = egd_copy_sv(arena, nob_sv_from_parts(body.items ? body.items : "", body.count));
-    nob_sb_free(body);
-    return out_case->body.data != NULL;
+    return test_case_dsl_case_exists_in_pack(arena, case_pack_path, case_name);
 }
 
 static bool egd_load_case_from_pack(Arena *arena,
                                     const char *case_pack_path,
                                     const char *case_name,
                                     EGD_Parsed_Case *out_case) {
-    String_View content = {0};
-    Test_Case_Pack_Entry *entries = NULL;
-    if (!arena || !case_pack_path || !case_name || !out_case) return false;
-    if (!test_snapshot_load_text_file_to_arena(arena, case_pack_path, &content) ||
-        !test_snapshot_parse_case_pack_to_arena(arena, content, &entries)) {
-        return false;
-    }
-    for (size_t i = 0; i < arena_arr_len(entries); ++i) {
-        if (!nob_sv_eq(entries[i].name, nob_sv_from_cstr(case_name))) continue;
-        return egd_parse_case(arena, entries[i], out_case);
-    }
-    return false;
+    return test_case_dsl_load_case_from_pack(arena, case_pack_path, case_name, out_case);
 }
 
 static bool egd_body_contains(String_View body, const char *needle) {
@@ -816,9 +848,11 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
                          EGD_Case_Summary *summary) {
     Arena *arena = arena_create(8 * 1024 * 1024);
     EGD_Parsed_Case parsed = {0};
+    EGD_Tool_Availability available = {0};
     String_View script_text = {0};
     char cmake_bin[_TINYDIR_PATH_MAX] = {0};
     char cpack_bin[_TINYDIR_PATH_MAX] = {0};
+    char missing_tools[128] = {0};
     char cmake_src[_TINYDIR_PATH_MAX] = {0};
     char nob_src[_TINYDIR_PATH_MAX] = {0};
     char cmake_build[_TINYDIR_PATH_MAX] = {0};
@@ -852,6 +886,10 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
         arena_destroy(arena);
         return false;
     }
+    if (!egd_case_metadata_is_valid(case_def, &parsed)) {
+        arena_destroy(arena);
+        return false;
+    }
 
     if (snprintf(cmake_src, sizeof(cmake_src), "%s_cmake_src", case_def->case_name) >= (int)sizeof(cmake_src) ||
         snprintf(nob_src, sizeof(nob_src), "%s_nob_src", case_def->case_name) >= (int)sizeof(nob_src) ||
@@ -882,6 +920,12 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
         return false;
     }
 
+    if (case_def->classification == EGD_CLASS_EXPLICIT_NON_GOAL) {
+        summary->explicit_non_goal++;
+        arena_destroy(arena);
+        return true;
+    }
+
     if (case_def->classification == EGD_CLASS_EVALUATOR_ONLY) {
         summary->evaluator_only++;
         arena_destroy(arena);
@@ -906,11 +950,25 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
         return ok;
     }
 
-    if (!codegen_resolve_host_cmake_bin(cmake_bin)) {
-        nob_log(NOB_INFO, "evaluator->codegen diff case %s skipped: cmake unavailable", case_def->case_name);
+    if (!egd_detect_tool_availability(&available)) {
+        arena_destroy(arena);
+        return false;
+    }
+    if (egd_required_tools_missing(case_def->required_tools, &available) != EGD_TOOL_NONE) {
+        egd_format_tool_mask(egd_required_tools_missing(case_def->required_tools, &available),
+                             missing_tools,
+                             sizeof(missing_tools));
+        nob_log(NOB_INFO,
+                "evaluator->codegen diff case %s skipped: missing required tool(s): %s",
+                case_def->case_name,
+                missing_tools);
         summary->skipped_by_tool++;
         arena_destroy(arena);
         return true;
+    }
+    if (!codegen_resolve_host_cmake_bin(cmake_bin)) {
+        arena_destroy(arena);
+        return false;
     }
 
     configure_argv[0] = cmake_bin;
@@ -969,25 +1027,8 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
 
         case EGD_PARITY_PACKAGE_ARCHIVE:
             if (!codegen_resolve_host_cpack_bin(cpack_bin)) {
-                nob_log(NOB_INFO,
-                        "evaluator->codegen diff case %s skipped: cpack unavailable",
-                        case_def->case_name);
-                summary->skipped_by_tool++;
                 arena_destroy(arena);
-                return true;
-            }
-            if ((strcmp(case_def->package_generator, "TGZ") == 0 && !egd_host_program_available("gzip")) ||
-                (strcmp(case_def->package_generator, "TXZ") == 0 && !egd_host_program_available("xz")) ||
-                (strcmp(case_def->package_generator, "ZIP") == 0 &&
-                 !egd_host_program_available("python3") &&
-                 !egd_host_program_available("python"))) {
-                nob_log(NOB_INFO,
-                        "evaluator->codegen diff case %s skipped: missing extractor tool for %s",
-                        case_def->case_name,
-                        case_def->package_generator);
-                summary->skipped_by_tool++;
-                arena_destroy(arena);
-                return true;
+                return false;
             }
 
             {
@@ -1054,6 +1095,7 @@ TEST(evaluator_codegen_diff_inventory_covers_full_commands_and_curated_subcomman
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     Eval_Test_Init init = {0};
     Eval_Test_Runtime *ctx = NULL;
+    EGD_Inventory_State_Counts command_counts = {0};
     String_View matrix = {0};
     const char *repo_root = getenv(CMK2NOB_TEST_REPO_ROOT_ENV);
     char matrix_path[_TINYDIR_PATH_MAX] = {0};
@@ -1074,19 +1116,30 @@ TEST(evaluator_codegen_diff_inventory_covers_full_commands_and_curated_subcomman
     ASSERT(init.stream != NULL);
     ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
+    ASSERT(NOB_ARRAY_LEN(s_egd_command_names) == EGD_EXPECTED_FULL_COMMANDS);
+    ASSERT(NOB_ARRAY_LEN(s_egd_command_inventory) == EGD_EXPECTED_FULL_COMMANDS);
+    ASSERT(egd_count_full_native_rows(matrix) == EGD_EXPECTED_FULL_COMMANDS);
 
     for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_command_names); ++i) {
         Command_Capability cap = {0};
         const char *command = s_egd_command_names[i];
+        const EGD_Command_Inventory *item = egd_lookup_command_inventory(command);
         char expected_row[192] = {0};
         ASSERT(eval_test_get_command_capability(ctx, nob_sv_from_cstr(command), &cap));
         ASSERT(cap.implemented_level == EVAL_CMD_IMPL_FULL);
-        ASSERT(egd_command_source_pack(command) != NULL);
-        ASSERT(egd_command_reason(command) != NULL);
-        ASSERT(egd_classification_name(egd_classify_command(command)) != NULL);
-        if (egd_classify_command(command) == EGD_CLASS_BACKEND_REJECT) {
-            ASSERT(egd_command_backlog_key(command) != NULL);
+        ASSERT(item != NULL);
+        ASSERT(item->source_pack_path != NULL && item->source_pack_path[0] != '\0');
+        ASSERT(item->domain_owner != NULL && item->domain_owner[0] != '\0');
+        ASSERT(item->reason != NULL && item->reason[0] != '\0');
+        ASSERT(egd_phase_mask_is_valid(item->phase_mask));
+        ASSERT(strcmp(egd_classification_name(item->classification), "unknown") != 0);
+        ASSERT(test_snapshot_load_text_file_to_arena(arena, item->source_pack_path, &(String_View){0}));
+        if (egd_tracking_key_required(item->classification)) {
+            ASSERT(item->tracking_key != NULL && item->tracking_key[0] != '\0');
+        } else if (item->tracking_key) {
+            ASSERT(item->tracking_key[0] != '\0');
         }
+        egd_inventory_state_counts_add(&command_counts, item->classification);
         ASSERT(snprintf(expected_row,
                         sizeof(expected_row),
                         "| `%s` | native | FULL | FULL |",
@@ -1094,17 +1147,42 @@ TEST(evaluator_codegen_diff_inventory_covers_full_commands_and_curated_subcomman
         ASSERT(codegen_sv_contains(matrix, expected_row));
     }
 
-    for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_subcommand_inventory); ++i) {
-        const EGD_Subcommand_Inventory *item = &s_egd_subcommand_inventory[i];
-        ASSERT(item->family != NULL);
-        ASSERT(item->signature != NULL);
-        ASSERT(item->source_pack_path != NULL);
-        ASSERT(item->reason != NULL);
-        ASSERT(egd_case_exists_in_pack(arena, item->source_pack_path, item->case_name));
-        if (item->classification == EGD_CLASS_BACKEND_REJECT) {
-            ASSERT(item->backlog_key != NULL);
+    for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_command_inventory); ++i) {
+        const EGD_Command_Inventory *item = &s_egd_command_inventory[i];
+        ASSERT(item->command != NULL && item->command[0] != '\0');
+        ASSERT(egd_command_name_in_registry(item->command));
+        ASSERT(item->source_pack_path != NULL && item->source_pack_path[0] != '\0');
+        ASSERT(item->domain_owner != NULL && item->domain_owner[0] != '\0');
+        ASSERT(item->reason != NULL && item->reason[0] != '\0');
+        ASSERT(egd_phase_mask_is_valid(item->phase_mask));
+        ASSERT(strcmp(egd_classification_name(item->classification), "unknown") != 0);
+        if (egd_tracking_key_required(item->classification)) {
+            ASSERT(item->tracking_key != NULL && item->tracking_key[0] != '\0');
+        } else if (item->tracking_key) {
+            ASSERT(item->tracking_key[0] != '\0');
+        }
+        for (size_t j = i + 1; j < NOB_ARRAY_LEN(s_egd_command_inventory); ++j) {
+            ASSERT(strcmp(item->command, s_egd_command_inventory[j].command) != 0);
         }
     }
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_subcommand_inventory); ++i) {
+        const EGD_Subcommand_Inventory *item = &s_egd_subcommand_inventory[i];
+        ASSERT(egd_subcommand_metadata_is_valid(item));
+        ASSERT(egd_case_exists_in_pack(arena, item->source_pack_path, item->case_name));
+    }
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_cases); ++i) {
+        EGD_Parsed_Case parsed = {0};
+        ASSERT(egd_load_case_from_pack(arena, s_egd_cases[i].source_pack_path, s_egd_cases[i].case_name, &parsed));
+        ASSERT(egd_case_metadata_is_valid(&s_egd_cases[i], &parsed));
+    }
+
+    nob_log(NOB_INFO,
+            "evaluator->codegen diff command inventory version: %s",
+            EGD_COMMAND_INVENTORY_VERSION);
+    egd_log_inventory_state_counts("evaluator->codegen diff full-command inventory", &command_counts);
+    egd_log_curated_subcommand_family_counts();
 
     eval_test_destroy(ctx);
     arena_destroy(event_arena);
@@ -1112,28 +1190,59 @@ TEST(evaluator_codegen_diff_inventory_covers_full_commands_and_curated_subcomman
     TEST_PASS();
 }
 
+TEST(evaluator_codegen_diff_tool_capability_resolution_is_host_independent) {
+    EGD_Tool_Availability available = {
+        .cmake = true,
+        .cpack = false,
+        .gzip = true,
+        .xz = false,
+        .python = false,
+        .tar = true,
+    };
+
+    ASSERT(egd_required_tools_missing(EGD_TOOL_CMAKE | EGD_TOOL_TAR, &available) == EGD_TOOL_NONE);
+    ASSERT(egd_required_tools_missing(EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_TAR, &available) ==
+           EGD_TOOL_CPACK);
+    ASSERT(egd_required_tools_missing(EGD_TOOL_XZ | EGD_TOOL_PYTHON, &available) ==
+           (EGD_TOOL_XZ | EGD_TOOL_PYTHON));
+    ASSERT(egd_required_tools_missing(EGD_TOOL_NONE, &available) == EGD_TOOL_NONE);
+    TEST_PASS();
+}
+
 TEST(evaluator_codegen_diff_executes_classified_cases) {
+    EGD_Inventory_State_Counts declared = {0};
     EGD_Case_Summary summary = {0};
-    char cmake_bin[_TINYDIR_PATH_MAX] = {0};
-    bool have_cmake = codegen_resolve_host_cmake_bin(cmake_bin);
+    EGD_Tool_Availability available = {0};
+    ASSERT(egd_detect_tool_availability(&available));
+    for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_cases); ++i) {
+        egd_inventory_state_counts_add(&declared, s_egd_cases[i].classification);
+    }
     for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_cases); ++i) {
         ASSERT(egd_run_case(&s_egd_cases[i], &summary));
     }
 
+    egd_log_case_family_counts();
+    egd_log_inventory_state_counts("evaluator->codegen diff declared case inventory", &declared);
     nob_log(NOB_INFO,
-            "evaluator->codegen diff summary: parity-pass=%d backend-reject=%d evaluator-only=%d skip-by-tool=%d",
+            "evaluator->codegen diff runtime summary: parity-pass=%d backend-reject=%d evaluator-only=%d explicit-non-goal=%d skip-by-tool=%d",
             summary.parity_passed,
             summary.backend_rejected,
             summary.evaluator_only,
+            summary.explicit_non_goal,
             summary.skipped_by_tool);
 
-    if (have_cmake) {
+    ASSERT(summary.backend_rejected == declared.backend_reject);
+    ASSERT(summary.evaluator_only == declared.evaluator_only);
+    ASSERT(summary.explicit_non_goal == declared.explicit_non_goal);
+    ASSERT(summary.parity_passed + summary.skipped_by_tool == declared.parity_pass);
+
+    if (available.cmake) {
         ASSERT(summary.parity_passed >= 3);
     } else {
         ASSERT(summary.skipped_by_tool >= 3);
     }
-    ASSERT(summary.backend_rejected >= 2);
-    ASSERT(summary.evaluator_only >= 2);
+    ASSERT(summary.backend_rejected == 2);
+    ASSERT(summary.evaluator_only == 2);
     TEST_PASS();
 }
 
@@ -1163,6 +1272,8 @@ void run_evaluator_codegen_diff_v2_tests(int *passed, int *failed, int *skipped)
     codegen_test_set_repo_root(repo_root);
 
     test_evaluator_codegen_diff_inventory_covers_full_commands_and_curated_subcommands(
+        passed, failed, skipped);
+    test_evaluator_codegen_diff_tool_capability_resolution_is_host_independent(
         passed, failed, skipped);
     test_evaluator_codegen_diff_executes_classified_cases(passed, failed, skipped);
 

@@ -45,8 +45,8 @@ Product rules:
 
 ## State Model
 
-Each case and each inventoried command/subcommand is classified into one of the
-following states:
+Each case and each inventoried command/subcommand carries one declared semantic
+classification from the following set:
 
 - `parity-pass`
   The case is replayed through real `cmake` and through
@@ -61,10 +61,17 @@ following states:
 - `explicit-non-goal`
   The case is outside the intended generated-backend product surface by
   explicit variant-level decision and written justification.
+
+Runtime reporting may additionally emit:
+
 - `skip-by-tool`
   The case is otherwise valid for proof, but the host is missing a required
   external tool such as `cmake`, `cpack`, `gzip`, `xz`, or a later-wave helper
   dependency.
+
+`skip-by-tool` is not a host-dependent inventory classification. It is a
+runtime execution/reporting result layered on top of the declared semantic
+state.
 
 `explicit-non-goal` is a legal state but not the default destination for the
 families chosen as closure-program support targets. It must never be used as a
@@ -204,7 +211,8 @@ locking, logging, and tool-resolution behavior from `src_v2/build/nob_test.c`.
 ## Reporting
 
 The closure harness reports status by command family, subcommand family, and
-classification state.
+classification state, while reporting `skip-by-tool` separately as a runtime
+execution result.
 
 Minimum reporting vocabulary:
 

@@ -4,6 +4,7 @@
 #include "../codegen/test_codegen_v2_support.h"
 #include "../evaluator/test_evaluator_v2_support.h"
 
+#include "test_case_dsl.h"
 #include "test_case_pack.h"
 #include "test_fs.h"
 #include "test_manifest_support.h"
