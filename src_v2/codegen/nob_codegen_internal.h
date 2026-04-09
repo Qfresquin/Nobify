@@ -90,41 +90,6 @@ typedef enum {
 } CG_Resolved_Target_Kind;
 
 typedef struct {
-    BM_Target_Id target_id;
-    BM_Query_Usage_Mode usage_mode;
-    String_View config;
-    String_View compile_language;
-    CG_Effective_Query_Family family;
-    BM_String_Item_Span items;
-    bool ready;
-} CG_Effective_Item_Cache_Entry;
-
-typedef struct {
-    BM_Target_Id target_id;
-    BM_Query_Usage_Mode usage_mode;
-    String_View config;
-    String_View compile_language;
-    CG_Effective_Query_Family family;
-    BM_String_Span values;
-    bool ready;
-} CG_Effective_Value_Cache_Entry;
-
-typedef struct {
-    BM_Target_Id target_id;
-    String_View config;
-    bool linker_file;
-    String_View path;
-    bool ready;
-} CG_Target_File_Cache_Entry;
-
-typedef struct {
-    BM_Target_Id target_id;
-    String_View config;
-    BM_String_Span languages;
-    bool ready;
-} CG_Imported_Link_Lang_Cache_Entry;
-
-typedef struct {
     String_View original_item;
     BM_Target_Id target_id;
     BM_Target_Id resolved_target_id;
@@ -200,10 +165,7 @@ typedef struct CG_Context {
     size_t target_count;
     CG_Build_Step_Info *build_steps;
     size_t build_step_count;
-    CG_Effective_Item_Cache_Entry *effective_item_cache;
-    CG_Effective_Value_Cache_Entry *effective_value_cache;
-    CG_Target_File_Cache_Entry *target_file_cache;
-    CG_Imported_Link_Lang_Cache_Entry *imported_link_lang_cache;
+    BM_Query_Session *query_session;
     uint64_t helper_bits;
 } CG_Context;
 

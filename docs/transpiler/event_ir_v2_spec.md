@@ -97,6 +97,17 @@ Current families:
 - `PACKAGE`
 - `EXPORT`
 
+Current dual-role downstream replay bridge kinds:
+- `EVENT_REPLAY_ACTION_DECLARE`
+- `EVENT_REPLAY_ACTION_ADD_INPUT`
+- `EVENT_REPLAY_ACTION_ADD_OUTPUT`
+- `EVENT_REPLAY_ACTION_ADD_ARGV`
+- `EVENT_REPLAY_ACTION_ADD_ENV`
+
+These kinds remain inside the canonical family set and use
+`EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC` so downstream replay
+consumers can ingest them without introducing a replay-only family.
+
 Base-contract freeze rules:
 - canonical `Event_Family` and `Event_Kind` values are append-only
 - new canonical entries append at the tail of the enum lists

@@ -67,6 +67,28 @@ static bool bm_freeze_check_invariants(const Build_Model_Draft *draft, Diag_Sink
         }
     }
 
+    for (size_t i = 0; i < arena_arr_len(draft->replay_actions); ++i) {
+        if (draft->replay_actions[i].id != (BM_Replay_Action_Id)i) {
+            bm_diag_error(sink,
+                          draft->replay_actions[i].provenance,
+                          "build_model_freeze",
+                          "freeze",
+                          "replay action ids are not contiguous",
+                          "freeze requires validated contiguous replay action ids");
+            return false;
+        }
+        if (draft->replay_actions[i].owner_directory_id != BM_DIRECTORY_ID_INVALID &&
+            (size_t)draft->replay_actions[i].owner_directory_id >= arena_arr_len(draft->directories)) {
+            bm_diag_error(sink,
+                          draft->replay_actions[i].provenance,
+                          "build_model_freeze",
+                          "freeze",
+                          "replay action owner_directory_id is invalid",
+                          "freeze requires validated replay action ownership");
+            return false;
+        }
+    }
+
     for (size_t i = 0; i < arena_arr_len(draft->exports); ++i) {
         if (draft->exports[i].id != (BM_Export_Id)i) {
             bm_diag_error(sink,
@@ -296,6 +318,24 @@ static bool bm_clone_build_steps(const Build_Model_Draft *draft, Build_Model *mo
             !bm_clone_build_step_commands(arena, &step.commands, src->commands) ||
             !bm_clone_provenance(arena, &step.provenance, src->provenance) ||
             !arena_arr_push(arena, model->build_steps, step)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool bm_clone_replay_actions(const Build_Model_Draft *draft, Build_Model *model, Arena *arena) {
+    for (size_t i = 0; i < arena_arr_len(draft->replay_actions); ++i) {
+        const BM_Replay_Action_Record *src = &draft->replay_actions[i];
+        BM_Replay_Action_Record action = *src;
+        action.action_key = (String_View){0};
+        if (!bm_copy_string(arena, src->working_directory, &action.working_directory) ||
+            !bm_clone_string_array(arena, &action.inputs, src->inputs) ||
+            !bm_clone_string_array(arena, &action.outputs, src->outputs) ||
+            !bm_clone_string_array(arena, &action.argv, src->argv) ||
+            !bm_clone_string_array(arena, &action.environment, src->environment) ||
+            !bm_clone_provenance(arena, &action.provenance, src->provenance) ||
+            !arena_arr_push(arena, model->replay_actions, action)) {
             return false;
         }
     }
@@ -777,6 +817,7 @@ const Build_Model *bm_freeze_draft(const Build_Model_Draft *draft,
         !bm_clone_directories(draft, model, out_arena) ||
         !bm_clone_targets(draft, model, out_arena, sink) ||
         !bm_clone_build_steps(draft, model, out_arena) ||
+        !bm_clone_replay_actions(draft, model, out_arena) ||
         !bm_clone_tests(draft, model, out_arena) ||
         !bm_clone_install_rules(draft, model, out_arena, sink) ||
         !bm_clone_exports(draft, model, out_arena, sink) ||

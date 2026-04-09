@@ -3,7 +3,7 @@ static void log_test_front_door_usage(const char *argv0) {
             "Usage: %s test [smoke|<module>] [--verbose] [--asan|--ubsan|--msan|--san|--cov]",
             argv0);
     nob_log(NOB_INFO,
-            "Usage: %s test clean",
+            "Usage: %s test clean [--force]",
             argv0);
     nob_log(NOB_INFO,
             "Usage: %s test tidy <all|module> [--verbose]",
@@ -18,7 +18,7 @@ static void log_test_front_door_usage(const char *argv0) {
     nob_log(NOB_INFO,
             "T6 fronts all human-facing test commands through `./build/nob test ...`. "
             "Default aggregate naming is `smoke`, watch output is compact/failure-first by default, "
-            "and `--verbose` enables full roots/reroute detail. Use `%s test daemon start|stop|status` "
+            "and `--verbose` enables full roots/reroute detail. Use `%s test daemon start|stop [--force]|restart|status` "
             "for lifecycle control.",
             argv0);
 }
@@ -43,6 +43,7 @@ bool test_runner_parse_front_door(const char *argv0,
     const char *profile_flag = NULL;
     Test_Runner_Action action = TEST_RUNNER_ACTION_RUN_AGGREGATE;
     bool verbose = false;
+    bool force = false;
     bool selector_seen = false;
     bool tidy_mode = false;
     bool tidy_target_seen = false;
@@ -57,6 +58,16 @@ bool test_runner_parse_front_door(const char *argv0,
 
         if (cstr_equals(arg, "--verbose")) {
             verbose = true;
+            continue;
+        }
+
+        if (cstr_equals(arg, "--force")) {
+            if (force) {
+                nob_log(NOB_ERROR, "duplicate test flag: %s", arg);
+                log_test_front_door_usage(argv0);
+                return false;
+            }
+            force = true;
             continue;
         }
 
@@ -192,11 +203,17 @@ bool test_runner_parse_front_door(const char *argv0,
             return false;
         }
         out_request->action = action;
+        out_request->force = force;
         return true;
     }
 
     if (action == TEST_RUNNER_ACTION_RUN_TIDY_AGGREGATE ||
         action == TEST_RUNNER_ACTION_RUN_TIDY_MODULE) {
+        if (force) {
+            nob_log(NOB_ERROR, "`./build/nob test tidy ...` does not accept `--force`");
+            log_test_front_door_usage(argv0);
+            return false;
+        }
         if (profile_flag) {
             nob_log(NOB_ERROR, "`./build/nob test tidy ...` does not accept profile flags");
             log_test_front_door_usage(argv0);
@@ -207,6 +224,12 @@ bool test_runner_parse_front_door(const char *argv0,
         out_request->verbose = verbose;
         out_request->skip_preflight = false;
         return true;
+    }
+
+    if (force) {
+        nob_log(NOB_ERROR, "`./build/nob test [smoke|<module>]` does not accept `--force`");
+        log_test_front_door_usage(argv0);
+        return false;
     }
 
     if (!profile_flag) {
@@ -244,6 +267,12 @@ bool test_runner_parse_watch_front_door(const char *argv0,
         if (cstr_equals(arg, "--verbose")) {
             verbose = true;
             continue;
+        }
+
+        if (cstr_equals(arg, "--force")) {
+            nob_log(NOB_ERROR, "watch mode does not support `--force`; use `./build/nob test daemon stop --force`");
+            log_test_front_door_usage(argv0);
+            return false;
         }
 
         candidate_profile = find_test_profile_by_front_door_flag(arg);

@@ -78,6 +78,7 @@ typedef struct {
     Test_Runner_Module_Id module_id;
     Test_Runner_Profile_Id profile_id;
     bool verbose;
+    bool force;
     bool skip_preflight;
 } Test_Runner_Request;
 

@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/epoll.h>
 #include <sys/inotify.h>
 #include <sys/socket.h>
@@ -60,22 +61,6 @@ typedef struct {
 } Test_Daemon_Launcher_Cache;
 
 typedef enum {
-    TEST_DAEMON_LAUNCHER_CACHE_HIT = 0,
-    TEST_DAEMON_LAUNCHER_CACHE_COLD,
-    TEST_DAEMON_LAUNCHER_CACHE_PATH,
-    TEST_DAEMON_LAUNCHER_CACHE_OVERRIDE,
-} Test_Daemon_Launcher_Cache_Reason;
-
-typedef enum {
-    TEST_DAEMON_PREFLIGHT_REASON_HIT = 0,
-    TEST_DAEMON_PREFLIGHT_REASON_COLD,
-    TEST_DAEMON_PREFLIGHT_REASON_FINGERPRINT,
-    TEST_DAEMON_PREFLIGHT_REASON_PATH,
-    TEST_DAEMON_PREFLIGHT_REASON_LLVM_TOOLS,
-    TEST_DAEMON_PREFLIGHT_REASON_LIB_FLAGS,
-} Test_Daemon_Preflight_Reason;
-
-typedef enum {
     TEST_DAEMON_WATCH_ROUTE_MATCH = 0,
     TEST_DAEMON_WATCH_ROUTE_BROAD,
     TEST_DAEMON_WATCH_ROUTE_RESCAN,
@@ -108,6 +93,7 @@ typedef struct {
     bool exit_after_rerun;
     bool batch_is_baseline;
     uint64_t request_id;
+    uint64_t started_usec;
     int inotify_fd;
     sd_event_source *inotify_source;
     sd_event_source *client_source;
@@ -140,13 +126,26 @@ typedef struct {
     bool worker_exited;
     bool stdout_closed;
     bool stderr_closed;
+    bool worker_cancel_requested;
     bool shutting_down;
+    bool force_stop_requested;
+    bool kill_escalation_sent;
+    bool startup_recovered_socket;
+    bool startup_recovered_pid;
     uint64_t current_request_id;
+    uint64_t worker_started_usec;
     char worker_result_path[TEST_RUNNER_PATH_CAPACITY];
+    char status_detail[TEST_RUNNER_SUMMARY_CAPACITY];
     Test_Daemon_State state;
     Test_Daemon_Preflight_Cache_Entry preflight_cache[TEST_RUNNER_PROFILE_COUNT];
     Test_Daemon_Launcher_Cache launcher_cache;
     Test_Daemon_Request_Telemetry current_telemetry;
+    Test_Daemon_Request_Telemetry last_telemetry;
+    Test_Daemon_Admission_Policy current_policy;
+    Test_Runner_Request current_worker_request;
+    bool current_worker_request_valid;
+    Test_Runner_Result last_result;
+    bool last_result_valid;
     Nob_String_Builder buffered_stdout;
     Nob_String_Builder buffered_stderr;
     Test_Daemon_Watch_Session watch;
@@ -161,8 +160,21 @@ static bool daemon_spawn_worker(Test_Daemon_Server *server,
 static bool daemon_finish_active_run(Test_Daemon_Server *server);
 static void daemon_handle_client_disconnect(Test_Daemon_Server *server);
 static void daemon_watch_reset_session(Test_Daemon_Server *server);
-static bool daemon_watch_begin_worker_cancel(Test_Daemon_Server *server, bool closing_session);
+static bool daemon_begin_worker_cancel(Test_Daemon_Server *server,
+                                       bool mark_watch_cancel,
+                                       bool closing_session);
+static Test_Runner_Profile_Id daemon_watch_profile_for_module(const Test_Daemon_Server *server,
+                                                              Test_Runner_Module_Id module_id);
 static void daemon_reset_request_telemetry(Test_Daemon_Server *server);
+static bool daemon_send_status_result(int fd,
+                                      uint64_t request_id,
+                                      const Test_Daemon_Server *server,
+                                      const char *summary);
+static bool daemon_send_structured_error(Test_Daemon_Server *server,
+                                         int fd,
+                                         uint64_t request_id,
+                                         Test_Daemon_Error_Code code,
+                                         const char *message);
 static int daemon_on_watch_inotify(sd_event_source *source,
                                    int fd,
                                    uint32_t revents,
@@ -170,6 +182,12 @@ static int daemon_on_watch_inotify(sd_event_source *source,
 static int daemon_on_watch_debounce(sd_event_source *source,
                                     uint64_t usec,
                                     void *userdata);
+
+static uint64_t daemon_now_usec(void) {
+    struct timespec ts = {0};
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0) return 0;
+    return (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
+}
 
 static bool daemon_copy_string(char *dst, size_t dst_size, const char *src) {
     int n = 0;
@@ -189,26 +207,17 @@ static void daemon_close_fd(int *fd) {
     *fd = -1;
 }
 
-static const char *daemon_launcher_cache_reason_name(Test_Daemon_Launcher_Cache_Reason reason) {
-    switch (reason) {
-        case TEST_DAEMON_LAUNCHER_CACHE_HIT: return "hit";
-        case TEST_DAEMON_LAUNCHER_CACHE_COLD: return "cold";
-        case TEST_DAEMON_LAUNCHER_CACHE_PATH: return "PATH";
-        case TEST_DAEMON_LAUNCHER_CACHE_OVERRIDE: return "override";
-    }
-    return "unknown";
-}
+static void daemon_set_status_detail(Test_Daemon_Server *server, const char *fmt, ...) {
+    va_list args;
+    int n = 0;
 
-static const char *daemon_preflight_reason_name(Test_Daemon_Preflight_Reason reason) {
-    switch (reason) {
-        case TEST_DAEMON_PREFLIGHT_REASON_HIT: return "hit";
-        case TEST_DAEMON_PREFLIGHT_REASON_COLD: return "cold";
-        case TEST_DAEMON_PREFLIGHT_REASON_FINGERPRINT: return "fingerprint";
-        case TEST_DAEMON_PREFLIGHT_REASON_PATH: return "PATH";
-        case TEST_DAEMON_PREFLIGHT_REASON_LLVM_TOOLS: return "LLVM_TOOLS";
-        case TEST_DAEMON_PREFLIGHT_REASON_LIB_FLAGS: return "LIB_FLAGS";
+    if (!server || !fmt) return;
+    va_start(args, fmt);
+    n = vsnprintf(server->status_detail, sizeof(server->status_detail), fmt, args);
+    va_end(args);
+    if (n < 0 || (size_t)n >= sizeof(server->status_detail)) {
+        server->status_detail[0] = '\0';
     }
-    return "unknown";
 }
 
 static bool daemon_watch_is_verbose(const Test_Daemon_Server *server) {
@@ -268,8 +277,135 @@ defer:
 
 static Test_Daemon_State daemon_effective_state(const Test_Daemon_Server *server) {
     if (!server) return TEST_DAEMON_STATE_STOPPED;
-    if (server->watch.active) return TEST_DAEMON_STATE_BUSY;
+    if (server->shutting_down) {
+        if (server->worker_pid > 0 || server->watch.active) return TEST_DAEMON_STATE_DRAINING;
+        return TEST_DAEMON_STATE_STOPPING;
+    }
+    if (server->watch.active) return TEST_DAEMON_STATE_WATCHING;
+    if (server->worker_pid > 0) return TEST_DAEMON_STATE_BUSY;
     return server->state;
+}
+
+static void daemon_fill_request_names(const Test_Daemon_Server *server,
+                                      Test_Daemon_Request_Metadata *out_metadata) {
+    const Test_Runner_Module_Def *module = NULL;
+    const Test_Runner_Profile_Def *profile = NULL;
+
+    if (!server || !out_metadata) return;
+
+    if (server->current_worker_request_valid) {
+        if (server->current_worker_request.action == TEST_RUNNER_ACTION_RUN_MODULE) {
+            module = test_runner_get_module_def(server->current_worker_request.module_id);
+            if (module) (void)daemon_copy_string(out_metadata->module_name, sizeof(out_metadata->module_name), module->name);
+        } else if (server->current_worker_request.action == TEST_RUNNER_ACTION_RUN_AGGREGATE) {
+            (void)daemon_copy_string(out_metadata->module_name, sizeof(out_metadata->module_name), "smoke");
+        }
+        profile = test_runner_get_profile_def(server->current_worker_request.profile_id);
+        if (profile) (void)daemon_copy_string(out_metadata->profile_name, sizeof(out_metadata->profile_name), profile->name);
+        out_metadata->module_id = module ? (uint32_t)module->id : UINT32_MAX;
+        out_metadata->profile_id = profile ? (uint32_t)profile->id : UINT32_MAX;
+        return;
+    }
+
+    if (!server->watch.active) {
+        out_metadata->module_id = UINT32_MAX;
+        out_metadata->profile_id = UINT32_MAX;
+        return;
+    }
+
+    if (server->watch.request.mode == TEST_RUNNER_WATCH_MODE_MODULE) {
+        module = test_runner_get_module_def(server->watch.request.module_id);
+        if (module) {
+            out_metadata->module_id = (uint32_t)module->id;
+            (void)daemon_copy_string(out_metadata->module_name, sizeof(out_metadata->module_name), module->name);
+        }
+        profile = test_runner_get_profile_def(daemon_watch_profile_for_module(server, server->watch.request.module_id));
+        if (profile) {
+            out_metadata->profile_id = (uint32_t)profile->id;
+            (void)daemon_copy_string(out_metadata->profile_name, sizeof(out_metadata->profile_name), profile->name);
+        }
+        return;
+    }
+
+    out_metadata->module_id = UINT32_MAX;
+    out_metadata->profile_id = server->watch.request.profile_explicit ? (uint32_t)server->watch.request.profile_id : UINT32_MAX;
+    (void)daemon_copy_string(out_metadata->module_name, sizeof(out_metadata->module_name), "auto");
+    if (server->watch.request.profile_explicit) {
+        profile = test_runner_get_profile_def(server->watch.request.profile_id);
+        if (profile) {
+            (void)daemon_copy_string(out_metadata->profile_name, sizeof(out_metadata->profile_name), profile->name);
+        }
+    } else {
+        (void)daemon_copy_string(out_metadata->profile_name,
+                                 sizeof(out_metadata->profile_name),
+                                 "module-defaults");
+    }
+}
+
+static bool daemon_fill_request_metadata(const Test_Daemon_Server *server,
+                                         Test_Daemon_Request_Metadata *out_metadata) {
+    uint64_t now_usec = 0;
+
+    if (!out_metadata) return false;
+    *out_metadata = (Test_Daemon_Request_Metadata){0};
+    if (!server) return true;
+
+    now_usec = daemon_now_usec();
+    if (server->watch.active) {
+        out_metadata->kind = TEST_DAEMON_REQUEST_WATCH_SESSION;
+        out_metadata->admission_policy = (uint32_t)server->current_policy;
+        out_metadata->watch_mode = (uint32_t)server->watch.request.mode;
+        out_metadata->client_attached = server->current_client_fd >= 0 ? 1u : 0u;
+        out_metadata->pending_cancel = server->worker_cancel_requested ? 1u : 0u;
+        out_metadata->pending_rerun =
+            (server->watch.rerun_pending || server->watch.changed_paths.count > 0 || server->watch.rescan_required) ? 1u : 0u;
+        out_metadata->pending_drain = (server->shutting_down || server->watch.closing) ? 1u : 0u;
+        out_metadata->force_stop = server->force_stop_requested ? 1u : 0u;
+        out_metadata->kill_escalation_armed = server->kill_timer_source ? 1u : 0u;
+        out_metadata->kill_escalation_sent = server->kill_escalation_sent ? 1u : 0u;
+        out_metadata->request_id = server->watch.request_id;
+        if (server->worker_pid > 0 && server->worker_started_usec > 0 && now_usec > server->worker_started_usec) {
+            out_metadata->active_duration_usec = now_usec - server->worker_started_usec;
+        } else if (server->watch.started_usec > 0 && now_usec > server->watch.started_usec) {
+            out_metadata->active_duration_usec = now_usec - server->watch.started_usec;
+        }
+        daemon_fill_request_names(server, out_metadata);
+        return true;
+    }
+
+    if (server->worker_pid > 0 || (server->current_client_fd >= 0 && server->current_request_id != 0)) {
+        out_metadata->kind = TEST_DAEMON_REQUEST_FOREGROUND_RUN;
+        out_metadata->admission_policy = (uint32_t)server->current_policy;
+        out_metadata->client_attached = server->current_client_fd >= 0 ? 1u : 0u;
+        out_metadata->pending_cancel = server->worker_cancel_requested ? 1u : 0u;
+        out_metadata->pending_drain = server->shutting_down ? 1u : 0u;
+        out_metadata->force_stop = server->force_stop_requested ? 1u : 0u;
+        out_metadata->kill_escalation_armed = server->kill_timer_source ? 1u : 0u;
+        out_metadata->kill_escalation_sent = server->kill_escalation_sent ? 1u : 0u;
+        out_metadata->request_id = server->current_request_id;
+        if (server->worker_started_usec > 0 && now_usec > server->worker_started_usec) {
+            out_metadata->active_duration_usec = now_usec - server->worker_started_usec;
+        }
+        daemon_fill_request_names(server, out_metadata);
+        return true;
+    }
+
+    return true;
+}
+
+static Test_Daemon_Request_Telemetry daemon_effective_telemetry(const Test_Daemon_Server *server) {
+    Test_Daemon_Request_Telemetry telemetry = {
+        .launcher_kind = TEST_RUNNER_LAUNCHER_NONE,
+        .launcher_cache_reason = TEST_DAEMON_LAUNCHER_CACHE_COLD,
+        .preflight_reason = TEST_DAEMON_PREFLIGHT_REASON_COLD,
+    };
+
+    if (!server) return telemetry;
+    if (server->watch.active || server->worker_pid > 0 || server->current_worker_request_valid) {
+        return server->current_telemetry;
+    }
+    if (server->last_result_valid) return server->last_telemetry;
+    return telemetry;
 }
 
 static bool daemon_watch_path_matches_root(const char *root, const char *path) {
@@ -396,9 +532,23 @@ static bool daemon_write_pid_file(void) {
     return nob_write_entire_file(TEST_DAEMON_PID_PATH, buffer, (size_t)n);
 }
 
-static void daemon_remove_state_files(void) {
+static void daemon_remove_state_files(Test_Daemon_Server *server, bool record_existing) {
+    bool had_socket = nob_file_exists(TEST_DAEMON_SOCKET_PATH);
+    bool had_pid = nob_file_exists(TEST_DAEMON_PID_PATH);
+
     (void)unlink(TEST_DAEMON_SOCKET_PATH);
     (void)unlink(TEST_DAEMON_PID_PATH);
+    if (!record_existing || !server) return;
+
+    server->startup_recovered_socket = had_socket;
+    server->startup_recovered_pid = had_pid;
+    if (had_socket && had_pid) {
+        daemon_set_status_detail(server, "startup recovered stale socket and pid artifacts");
+    } else if (had_socket) {
+        daemon_set_status_detail(server, "startup recovered a stale socket artifact");
+    } else if (had_pid) {
+        daemon_set_status_detail(server, "startup recovered a stale pid artifact");
+    }
 }
 
 static bool daemon_watch_send_text(Test_Daemon_Server *server, Test_Daemon_Message_Type type, const char *text) {
@@ -422,7 +572,7 @@ static void daemon_handle_client_disconnect(Test_Daemon_Server *server) {
     daemon_close_fd(&server->current_client_fd);
     if (server->watch.active) {
         if (server->worker_pid > 0) {
-            (void)daemon_watch_begin_worker_cancel(server, true);
+            (void)daemon_begin_worker_cancel(server, true, true);
         } else {
             daemon_watch_reset_session(server);
         }
@@ -500,13 +650,17 @@ static void daemon_watch_reset_session(Test_Daemon_Server *server) {
         daemon_close_fd(&server->current_client_fd);
         server->current_request_id = 0;
         server->state = TEST_DAEMON_STATE_IDLE;
+        server->current_policy = TEST_DAEMON_POLICY_NONE;
     }
 }
 
-static bool daemon_watch_begin_worker_cancel(Test_Daemon_Server *server, bool closing_session) {
+static bool daemon_begin_worker_cancel(Test_Daemon_Server *server,
+                                       bool mark_watch_cancel,
+                                       bool closing_session) {
     if (!server || server->worker_pid <= 0) return true;
     if (closing_session) server->watch.closing = true;
-    if (!server->watch.cancel_requested) server->watch.cancel_requested = true;
+    if (mark_watch_cancel && !server->watch.cancel_requested) server->watch.cancel_requested = true;
+    server->worker_cancel_requested = true;
     if (kill(server->worker_pid, SIGTERM) < 0 && errno != ESRCH) {
         nob_log(NOB_ERROR, "daemon failed to cancel worker %ld: %s", (long)server->worker_pid, strerror(errno));
         return false;
@@ -520,6 +674,8 @@ static bool daemon_watch_begin_worker_cancel(Test_Daemon_Server *server, bool cl
                                    daemon_on_kill_timer,
                                    server) < 0) {
         kill(server->worker_pid, SIGKILL);
+        server->kill_escalation_sent = true;
+        daemon_set_status_detail(server, "kill escalation sent immediately after timer registration failure");
     }
     return true;
 }
@@ -534,11 +690,18 @@ static void daemon_reset_worker_state(Test_Daemon_Server *server, bool close_cli
     server->worker_pid = -1;
     server->worker_exit_code = 1;
     server->worker_exited = false;
+    server->worker_cancel_requested = false;
     server->stdout_closed = true;
     server->stderr_closed = true;
+    server->worker_started_usec = 0;
+    server->kill_escalation_sent = false;
+    server->force_stop_requested = false;
+    server->current_worker_request = (Test_Runner_Request){0};
+    server->current_worker_request_valid = false;
     if (close_client_fd && !server->watch.active) server->current_request_id = 0;
     server->worker_result_path[0] = '\0';
-    server->state = server->watch.active ? TEST_DAEMON_STATE_BUSY : TEST_DAEMON_STATE_IDLE;
+    server->state = server->watch.active ? TEST_DAEMON_STATE_WATCHING : TEST_DAEMON_STATE_IDLE;
+    if (!server->watch.active) server->current_policy = TEST_DAEMON_POLICY_NONE;
     server->worker_stdout_source = sd_event_source_unref(server->worker_stdout_source);
     server->worker_stderr_source = sd_event_source_unref(server->worker_stderr_source);
     server->worker_pidfd_source = sd_event_source_unref(server->worker_pidfd_source);
@@ -546,20 +709,70 @@ static void daemon_reset_worker_state(Test_Daemon_Server *server, bool close_cli
     daemon_reset_request_telemetry(server);
 }
 
-static bool daemon_send_status_result(int fd,
-                                      uint64_t request_id,
-                                      Test_Daemon_State state,
-                                      const char *summary) {
-    Test_Daemon_Result_Payload payload = {0};
-    payload.daemon_state = (uint32_t)state;
-    payload.runner_ok = 1u;
-    payload.exit_code = 0;
-    payload.pid = (uint32_t)getpid();
-    if (!daemon_copy_string(payload.socket_path, sizeof(payload.socket_path), TEST_DAEMON_SOCKET_PATH) ||
-        !daemon_copy_string(payload.summary, sizeof(payload.summary), summary)) {
+static bool daemon_fill_status_payload(const Test_Daemon_Server *server,
+                                       const char *summary,
+                                       Test_Daemon_Result_Payload *out_payload) {
+    Test_Daemon_Request_Metadata active_request = {0};
+    Test_Daemon_Request_Telemetry telemetry = {0};
+
+    if (!server || !out_payload) return false;
+    *out_payload = (Test_Daemon_Result_Payload){0};
+    out_payload->daemon_state = (uint32_t)daemon_effective_state(server);
+    out_payload->runner_ok = 1u;
+    out_payload->pid = (uint32_t)getpid();
+    if (!daemon_fill_request_metadata(server, &active_request)) return false;
+    out_payload->active_request = active_request;
+    telemetry = daemon_effective_telemetry(server);
+    out_payload->cache_launcher_kind = (uint32_t)telemetry.launcher_kind;
+    out_payload->cache_launcher_reason = (uint32_t)telemetry.launcher_cache_reason;
+    out_payload->cache_preflight_reason = (uint32_t)telemetry.preflight_reason;
+    if (!daemon_copy_string(out_payload->socket_path, sizeof(out_payload->socket_path), TEST_DAEMON_SOCKET_PATH) ||
+        !daemon_copy_string(out_payload->detail, sizeof(out_payload->detail), server->status_detail) ||
+        !daemon_copy_string(out_payload->summary,
+                            sizeof(out_payload->summary),
+                            summary ? summary : test_daemon_state_name((Test_Daemon_State)out_payload->daemon_state))) {
         return false;
     }
+
+    if (server->last_result_valid) {
+        if (!daemon_copy_string(out_payload->preserved_workspace_path,
+                                sizeof(out_payload->preserved_workspace_path),
+                                server->last_result.preserved_workspace_path) ||
+            !daemon_copy_string(out_payload->stdout_log_path,
+                                sizeof(out_payload->stdout_log_path),
+                                server->last_result.stdout_log_path) ||
+            !daemon_copy_string(out_payload->stderr_log_path,
+                                sizeof(out_payload->stderr_log_path),
+                                server->last_result.stderr_log_path)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool daemon_send_status_result(int fd,
+                                      uint64_t request_id,
+                                      const Test_Daemon_Server *server,
+                                      const char *summary) {
+    Test_Daemon_Result_Payload payload = {0};
+    if (!daemon_fill_status_payload(server, summary, &payload)) return false;
     return test_daemon_send_result(fd, request_id, &payload);
+}
+
+static bool daemon_send_structured_error(Test_Daemon_Server *server,
+                                         int fd,
+                                         uint64_t request_id,
+                                         Test_Daemon_Error_Code code,
+                                         const char *message) {
+    Test_Daemon_Request_Metadata active_request = {0};
+
+    (void)daemon_fill_request_metadata(server, &active_request);
+    return test_daemon_send_error(fd,
+                                  request_id,
+                                  code,
+                                  daemon_effective_state(server),
+                                  &active_request,
+                                  message);
 }
 
 static bool daemon_verify_peer_uid(int fd) {
@@ -1139,9 +1352,11 @@ static bool daemon_watch_start_next_module(Test_Daemon_Server *server) {
 
     daemon_reset_request_telemetry(server);
     if (!daemon_ensure_preflight(server, request.profile_id)) {
-        return test_daemon_send_error_text(server->current_client_fd,
-                                           server->watch.request_id,
-                                           "daemon preflight failed");
+        return daemon_send_structured_error(server,
+                                            server->current_client_fd,
+                                            server->watch.request_id,
+                                            TEST_DAEMON_ERROR_PREFLIGHT_FAILED,
+                                            "daemon preflight failed");
     }
     if (!daemon_watch_send_infof(server,
                                  "[watch] running %s (%s)\n",
@@ -1150,9 +1365,11 @@ static bool daemon_watch_start_next_module(Test_Daemon_Server *server) {
         return false;
     }
     if (!daemon_spawn_worker(server, &request, server->watch.request_id)) {
-        return test_daemon_send_error_text(server->current_client_fd,
-                                           server->watch.request_id,
-                                           "watch failed to start worker");
+        return daemon_send_structured_error(server,
+                                            server->current_client_fd,
+                                            server->watch.request_id,
+                                            TEST_DAEMON_ERROR_WORKER_START_FAILED,
+                                            "watch failed to start worker");
     }
     return true;
 }
@@ -1169,7 +1386,7 @@ static int daemon_on_watch_client(sd_event_source *source,
     if (!server || !server->watch.active) return 0;
 
     if (server->worker_pid > 0) {
-        (void)daemon_watch_begin_worker_cancel(server, true);
+        (void)daemon_begin_worker_cancel(server, true, true);
     } else {
         daemon_watch_reset_session(server);
         if (server->shutting_down) (void)sd_event_exit(server->event, 0);
@@ -1194,7 +1411,7 @@ static int daemon_on_watch_debounce(sd_event_source *source,
         if (!server->watch.cancel_requested) {
             (void)daemon_watch_send_infof(server, "[watch] canceling stale run after newer changes\n");
         }
-        (void)daemon_watch_begin_worker_cancel(server, false);
+        (void)daemon_begin_worker_cancel(server, true, false);
         return 0;
     }
 
@@ -1283,19 +1500,36 @@ static bool daemon_watch_start_session(Test_Daemon_Server *server,
     bool ok = false;
 
     if (!server || !message) return false;
-    if (!test_daemon_decode_watch_request(message, &argc, &argv)) return false;
-    if (!test_runner_parse_watch_front_door("nob", argc, argv, &request)) goto defer;
+    if (!test_daemon_decode_watch_request(message, &argc, &argv)) {
+        return daemon_send_structured_error(server,
+                                            fd,
+                                            message->header.request_id,
+                                            TEST_DAEMON_ERROR_MALFORMED_REQUEST,
+                                            "failed to decode watch request");
+    }
+    if (!test_runner_parse_watch_front_door("nob", argc, argv, &request)) {
+        (void)daemon_send_structured_error(server,
+                                           fd,
+                                           message->header.request_id,
+                                           TEST_DAEMON_ERROR_MALFORMED_REQUEST,
+                                           "invalid watch request arguments");
+        goto defer;
+    }
     if (!daemon_watch_build_root_set(server, &request)) goto defer;
 
     server->watch.active = true;
     server->watch.request = request;
     server->watch.request_id = message->header.request_id;
+    server->watch.started_usec = daemon_now_usec();
     server->watch.inotify_fd = -1;
     server->watch.exit_after_rerun = getenv("NOB_TEST_WATCH_EXIT_AFTER_RERUN") != NULL &&
                                      strcmp(getenv("NOB_TEST_WATCH_EXIT_AFTER_RERUN"), "1") == 0;
     server->current_client_fd = fd;
     server->current_request_id = message->header.request_id;
-    server->state = TEST_DAEMON_STATE_BUSY;
+    server->current_worker_request = (Test_Runner_Request){0};
+    server->current_worker_request_valid = false;
+    server->current_policy = TEST_DAEMON_POLICY_WATCH_REPLACE_RUNNING;
+    server->state = TEST_DAEMON_STATE_WATCHING;
 
     if (!daemon_watch_register_roots(server)) goto defer;
     if (sd_event_add_io(server->event,
@@ -1397,8 +1631,8 @@ static bool daemon_emit_fast_path_summary(Test_Daemon_Server *server,
                  sizeof(buffer),
                  "[daemon] fast-path: launcher=%s launcher_cache=%s preflight=%s jobs=%u rebuilt=%u reused=%u linked=%s\n",
                  test_runner_launcher_kind_name(server->current_telemetry.launcher_kind),
-                 daemon_launcher_cache_reason_name(server->current_telemetry.launcher_cache_reason),
-                 daemon_preflight_reason_name(server->current_telemetry.preflight_reason),
+                 test_daemon_launcher_cache_reason_name(server->current_telemetry.launcher_cache_reason),
+                 test_daemon_preflight_reason_name(server->current_telemetry.preflight_reason),
                  result->build_stats.compile_jobs,
                  result->build_stats.objects_rebuilt,
                  result->build_stats.objects_reused,
@@ -1465,12 +1699,21 @@ static bool daemon_finish_active_run(Test_Daemon_Server *server) {
         return false;
     }
 
-    if (!test_daemon_result_from_runner(watch_active ? TEST_DAEMON_STATE_BUSY : TEST_DAEMON_STATE_IDLE,
+    server->last_result = runner_result;
+    server->last_result_valid = true;
+    server->last_telemetry = server->current_telemetry;
+
+    if (!test_daemon_result_from_runner(daemon_effective_state(server),
                                         getpid(),
                                         &runner_result,
                                         &payload)) {
         ok = false;
     } else {
+        (void)daemon_fill_request_metadata(server, &payload.active_request);
+        payload.cache_launcher_kind = (uint32_t)server->current_telemetry.launcher_kind;
+        payload.cache_launcher_reason = (uint32_t)server->current_telemetry.launcher_cache_reason;
+        payload.cache_preflight_reason = (uint32_t)server->current_telemetry.preflight_reason;
+        (void)daemon_copy_string(payload.detail, sizeof(payload.detail), server->status_detail);
         ok = test_daemon_send_result(server->current_client_fd, server->current_request_id, &payload);
     }
 
@@ -1575,7 +1818,13 @@ static int daemon_on_kill_timer(sd_event_source *source,
     Test_Daemon_Server *server = userdata;
     (void)source;
     (void)usec;
-    if (server->worker_pid > 0) kill(server->worker_pid, SIGKILL);
+    if (server && server->worker_pid > 0) {
+        kill(server->worker_pid, SIGKILL);
+        server->kill_escalation_sent = true;
+        daemon_set_status_detail(server,
+                                 "kill escalation sent after %.1fs grace timeout",
+                                 (double)TEST_DAEMON_KILL_GRACE_USEC / 1000000.0);
+    }
     return 0;
 }
 
@@ -1587,6 +1836,8 @@ static int daemon_on_signal(sd_event_source *source,
     (void)source;
     (void)siginfo;
     server->shutting_down = true;
+    server->force_stop_requested = false;
+    daemon_set_status_detail(server, "shutdown requested by signal");
     if (server->watch.active) server->watch.closing = true;
     if (server->worker_pid <= 0) {
         if (server->watch.active) daemon_watch_reset_session(server);
@@ -1594,7 +1845,7 @@ static int daemon_on_signal(sd_event_source *source,
         return 0;
     }
 
-    (void)daemon_watch_begin_worker_cancel(server, server->watch.active);
+    (void)daemon_begin_worker_cancel(server, server->watch.active, server->watch.active);
     return 0;
 }
 
@@ -1668,6 +1919,9 @@ static bool daemon_spawn_worker(Test_Daemon_Server *server,
     server->stderr_closed = false;
     server->worker_exit_code = 1;
     server->current_request_id = request_id;
+    server->worker_started_usec = daemon_now_usec();
+    server->current_worker_request = *request;
+    server->current_worker_request_valid = true;
     server->state = TEST_DAEMON_STATE_BUSY;
 
     if (sd_event_add_io(server->event,
@@ -1704,9 +1958,47 @@ fail:
     daemon_close_fd(&stderr_pipe[0]);
     daemon_close_fd(&stderr_pipe[1]);
     daemon_close_fd(&pidfd);
+    server->worker_stdout_source = sd_event_source_unref(server->worker_stdout_source);
+    server->worker_stderr_source = sd_event_source_unref(server->worker_stderr_source);
+    server->worker_pidfd_source = sd_event_source_unref(server->worker_pidfd_source);
+    server->worker_pid = -1;
+    server->worker_pidfd = -1;
+    server->worker_stdout_fd = -1;
+    server->worker_stderr_fd = -1;
+    server->worker_started_usec = 0;
+    server->current_worker_request = (Test_Runner_Request){0};
+    server->current_worker_request_valid = false;
+    server->state = server->watch.active ? TEST_DAEMON_STATE_WATCHING : TEST_DAEMON_STATE_IDLE;
     if (server->worker_result_path[0] != '\0') (void)unlink(server->worker_result_path);
     server->worker_result_path[0] = '\0';
     return false;
+}
+
+static bool daemon_send_admission_error(Test_Daemon_Server *server,
+                                        int fd,
+                                        uint64_t request_id) {
+    Test_Daemon_State state = daemon_effective_state(server);
+
+    if (!server) return false;
+    if (state == TEST_DAEMON_STATE_DRAINING || state == TEST_DAEMON_STATE_STOPPING) {
+        return daemon_send_structured_error(server,
+                                            fd,
+                                            request_id,
+                                            TEST_DAEMON_ERROR_STOPPING,
+                                            "daemon is draining or stopping");
+    }
+    if (server->watch.active) {
+        return daemon_send_structured_error(server,
+                                            fd,
+                                            request_id,
+                                            TEST_DAEMON_ERROR_BUSY_WATCH,
+                                            "daemon is busy with an active watch session");
+    }
+    return daemon_send_structured_error(server,
+                                        fd,
+                                        request_id,
+                                        TEST_DAEMON_ERROR_BUSY_FOREGROUND,
+                                        "daemon is busy with an active foreground run");
 }
 
 static bool daemon_handle_control(Test_Daemon_Server *server,
@@ -1719,26 +2011,63 @@ static bool daemon_handle_control(Test_Daemon_Server *server,
 
     switch ((Test_Daemon_Control_Command)payload->command) {
         case TEST_DAEMON_CONTROL_PING:
-            return daemon_send_status_result(fd, request_id, state, "pong");
+            return daemon_send_status_result(fd, request_id, server, "pong");
 
         case TEST_DAEMON_CONTROL_STATUS:
             return daemon_send_status_result(fd,
                                              request_id,
-                                             state,
+                                             server,
                                              test_daemon_state_name(state));
 
         case TEST_DAEMON_CONTROL_STOP:
-            if (state == TEST_DAEMON_STATE_BUSY) {
-                return test_daemon_send_error_text(fd, request_id, "daemon busy");
+            if (server->shutting_down) {
+                return daemon_send_status_result(fd, request_id, server, test_daemon_state_name(state));
             }
             server->shutting_down = true;
-            if (!daemon_send_status_result(fd, request_id, TEST_DAEMON_STATE_IDLE, "stopping")) {
+            server->force_stop_requested = false;
+            if (server->watch.active) server->watch.closing = true;
+            daemon_set_status_detail(server, "graceful drain requested");
+            if (!daemon_send_status_result(fd,
+                                           request_id,
+                                           server,
+                                           (server->worker_pid > 0 || server->watch.active) ? "draining" : "stopping")) {
+                return false;
+            }
+            if (server->watch.active && server->worker_pid <= 0) daemon_watch_reset_session(server);
+            if (server->worker_pid > 0) return true;
+            return sd_event_exit(server->event, 0) >= 0;
+
+        case TEST_DAEMON_CONTROL_STOP_FORCE:
+            if (server->shutting_down && server->force_stop_requested) {
+                return daemon_send_status_result(fd, request_id, server, test_daemon_state_name(state));
+            }
+            server->shutting_down = true;
+            server->force_stop_requested = true;
+            if (server->watch.active) server->watch.closing = true;
+            daemon_set_status_detail(server, "force stop requested; SIGKILL after %.1fs if needed",
+                                     (double)TEST_DAEMON_KILL_GRACE_USEC / 1000000.0);
+            if (server->worker_pid > 0) {
+                if (!daemon_begin_worker_cancel(server, server->watch.active, server->watch.active)) {
+                    return daemon_send_structured_error(server,
+                                                        fd,
+                                                        request_id,
+                                                        TEST_DAEMON_ERROR_INTERNAL,
+                                                        "failed to cancel active daemon worker");
+                }
+                return daemon_send_status_result(fd, request_id, server, "force-stopping");
+            }
+            if (server->watch.active) daemon_watch_reset_session(server);
+            if (!daemon_send_status_result(fd, request_id, server, "stopping")) {
                 return false;
             }
             return sd_event_exit(server->event, 0) >= 0;
     }
 
-    return test_daemon_send_error_text(fd, request_id, "unknown daemon control command");
+    return daemon_send_structured_error(server,
+                                        fd,
+                                        request_id,
+                                        TEST_DAEMON_ERROR_UNKNOWN_CONTROL,
+                                        "unknown daemon control command");
 }
 
 static bool daemon_handle_run_request(Test_Daemon_Server *server,
@@ -1749,26 +2078,44 @@ static bool daemon_handle_run_request(Test_Daemon_Server *server,
     Test_Runner_Request request = {0};
     bool ok = false;
 
-    if (daemon_effective_state(server) == TEST_DAEMON_STATE_BUSY) {
-        return test_daemon_send_error_text(fd, message->header.request_id, "daemon busy");
+    if (daemon_effective_state(server) != TEST_DAEMON_STATE_IDLE) {
+        return daemon_send_admission_error(server, fd, message->header.request_id);
     }
 
-    if (!test_daemon_decode_run_request(message, &argc, &argv)) return false;
-    if (!test_runner_parse_front_door("nob", argc, argv, &request)) goto defer;
+    if (!test_daemon_decode_run_request(message, &argc, &argv)) {
+        return daemon_send_structured_error(server,
+                                            fd,
+                                            message->header.request_id,
+                                            TEST_DAEMON_ERROR_MALFORMED_REQUEST,
+                                            "failed to decode run request");
+    }
+    if (!test_runner_parse_front_door("nob", argc, argv, &request)) {
+        (void)daemon_send_structured_error(server,
+                                           fd,
+                                           message->header.request_id,
+                                           TEST_DAEMON_ERROR_MALFORMED_REQUEST,
+                                           "invalid run request arguments");
+        goto defer;
+    }
+    server->current_policy = TEST_DAEMON_POLICY_FOREGROUND_EXCLUSIVE;
     daemon_reset_request_telemetry(server);
     if (!daemon_ensure_preflight(server, request.profile_id)) {
-        (void)test_daemon_send_error_text(fd,
-                                          message->header.request_id,
-                                          "daemon preflight failed");
+        (void)daemon_send_structured_error(server,
+                                           fd,
+                                           message->header.request_id,
+                                           TEST_DAEMON_ERROR_PREFLIGHT_FAILED,
+                                           "daemon preflight failed");
         goto defer;
     }
 
     server->current_client_fd = fd;
     if (!test_daemon_send_message(fd, TEST_DAEMON_MESSAGE_ACK, message->header.request_id, NULL, 0)) goto defer;
     if (!daemon_spawn_worker(server, &request, message->header.request_id)) {
-        (void)test_daemon_send_error_text(fd,
-                                          message->header.request_id,
-                                          "daemon failed to start worker");
+        (void)daemon_send_structured_error(server,
+                                           fd,
+                                           message->header.request_id,
+                                           TEST_DAEMON_ERROR_WORKER_START_FAILED,
+                                           "daemon failed to start worker");
         daemon_close_fd(&server->current_client_fd);
         goto defer;
     }
@@ -1783,8 +2130,8 @@ static bool daemon_handle_watch_request(Test_Daemon_Server *server,
                                         int fd,
                                         const Test_Daemon_Message *message) {
     if (!server || !message) return false;
-    if (daemon_effective_state(server) == TEST_DAEMON_STATE_BUSY) {
-        return test_daemon_send_error_text(fd, message->header.request_id, "daemon busy");
+    if (daemon_effective_state(server) != TEST_DAEMON_STATE_IDLE) {
+        return daemon_send_admission_error(server, fd, message->header.request_id);
     }
     return daemon_watch_start_session(server, fd, message);
 }
@@ -1807,7 +2154,12 @@ static int daemon_on_listener(sd_event_source *source,
     if (!daemon_verify_peer_uid(client_fd)) goto close_client;
     if (!test_daemon_recv_message(client_fd, &hello)) goto close_client;
     if (hello.header.type != TEST_DAEMON_MESSAGE_HELLO) {
-        (void)test_daemon_send_error_text(client_fd, hello.header.request_id, "expected HELLO");
+        (void)test_daemon_send_error(client_fd,
+                                     hello.header.request_id,
+                                     TEST_DAEMON_ERROR_PROTOCOL,
+                                     daemon_effective_state(server),
+                                     NULL,
+                                     "expected HELLO");
         goto close_client;
     }
     if (!test_daemon_send_message(client_fd, TEST_DAEMON_MESSAGE_ACK, hello.header.request_id, NULL, 0)) {
@@ -1818,7 +2170,11 @@ static int daemon_on_listener(sd_event_source *source,
     switch ((Test_Daemon_Message_Type)request.header.type) {
         case TEST_DAEMON_MESSAGE_CONTROL_REQUEST:
             if (request.header.payload_len != sizeof(Test_Daemon_Control_Request_Payload)) {
-                (void)test_daemon_send_error_text(client_fd, request.header.request_id, "malformed control request");
+                (void)daemon_send_structured_error(server,
+                                                   client_fd,
+                                                   request.header.request_id,
+                                                   TEST_DAEMON_ERROR_MALFORMED_REQUEST,
+                                                   "malformed control request");
                 goto close_client;
             }
             (void)daemon_handle_control(server,
@@ -1840,7 +2196,11 @@ static int daemon_on_listener(sd_event_source *source,
             goto close_client;
 
         default:
-            (void)test_daemon_send_error_text(client_fd, request.header.request_id, "unsupported daemon message");
+            (void)daemon_send_structured_error(server,
+                                               client_fd,
+                                               request.header.request_id,
+                                               TEST_DAEMON_ERROR_MALFORMED_REQUEST,
+                                               "unsupported daemon message");
             goto close_client;
     }
 
@@ -1856,7 +2216,7 @@ static bool daemon_setup_listener(Test_Daemon_Server *server) {
 
     if (!server) return false;
     if (!daemon_prepare_runtime_root()) return false;
-    daemon_remove_state_files();
+    daemon_remove_state_files(server, true);
 
     server->listen_fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
     if (server->listen_fd < 0) {
@@ -1941,7 +2301,7 @@ static void daemon_teardown(Test_Daemon_Server *server) {
     server->kill_timer_source = sd_event_source_unref(server->kill_timer_source);
     daemon_close_fd(&server->listen_fd);
     server->event = sd_event_unref(server->event);
-    daemon_remove_state_files();
+    daemon_remove_state_files(server, false);
 }
 
 int test_daemon_main(int argc, char **argv) {
@@ -1965,6 +2325,9 @@ int test_daemon_main(int argc, char **argv) {
         nob_log(NOB_INFO, "Usage: %s serve", argv[0]);
         return 1;
     }
+
+    daemon_reset_request_telemetry(&server);
+    server.last_telemetry = server.current_telemetry;
 
     if (!daemon_setup_listener(&server)) goto defer;
     if (!daemon_register_sources(&server)) goto defer;

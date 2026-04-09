@@ -147,7 +147,12 @@ typedef enum {
     X(EVENT_EXPORT_INSTALL, EVENT_FAMILY_EXPORT, "export_install", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_EXPORT_BUILD_DECLARE, EVENT_FAMILY_EXPORT, "export_build_declare", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_EXPORT_BUILD_ADD_TARGET, EVENT_FAMILY_EXPORT, "export_build_add_target", EVENT_ROLE_BUILD_SEMANTIC) \
-    X(EVENT_EXPORT_PACKAGE_REGISTRY, EVENT_FAMILY_EXPORT, "export_package_registry", EVENT_ROLE_BUILD_SEMANTIC)
+    X(EVENT_EXPORT_PACKAGE_REGISTRY, EVENT_FAMILY_EXPORT, "export_package_registry", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_REPLAY_ACTION_DECLARE, EVENT_FAMILY_BUILD_GRAPH, "replay_action_declare", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_REPLAY_ACTION_ADD_INPUT, EVENT_FAMILY_BUILD_GRAPH, "replay_action_add_input", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_REPLAY_ACTION_ADD_OUTPUT, EVENT_FAMILY_BUILD_GRAPH, "replay_action_add_output", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_REPLAY_ACTION_ADD_ARGV, EVENT_FAMILY_BUILD_GRAPH, "replay_action_add_argv", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_REPLAY_ACTION_ADD_ENV, EVENT_FAMILY_BUILD_GRAPH, "replay_action_add_env", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC)
 
 typedef enum {
 #define DECLARE_EVENT_KIND(kind, family, label, roles) kind,
@@ -213,6 +218,25 @@ typedef enum {
     EVENT_BUILD_STEP_TARGET_PRE_LINK,
     EVENT_BUILD_STEP_TARGET_POST_BUILD,
 } Event_Build_Step_Kind;
+
+typedef enum {
+    EVENT_REPLAY_PHASE_CONFIGURE = 0,
+    EVENT_REPLAY_PHASE_BUILD,
+    EVENT_REPLAY_PHASE_TEST,
+    EVENT_REPLAY_PHASE_INSTALL,
+    EVENT_REPLAY_PHASE_EXPORT,
+    EVENT_REPLAY_PHASE_PACKAGE,
+    EVENT_REPLAY_PHASE_HOST_ONLY,
+} Event_Replay_Phase;
+
+typedef enum {
+    EVENT_REPLAY_ACTION_FILESYSTEM = 0,
+    EVENT_REPLAY_ACTION_PROCESS,
+    EVENT_REPLAY_ACTION_PROBE,
+    EVENT_REPLAY_ACTION_DEPENDENCY_MATERIALIZATION,
+    EVENT_REPLAY_ACTION_TEST_DRIVER,
+    EVENT_REPLAY_ACTION_HOST_EFFECT,
+} Event_Replay_Action_Kind;
 
 typedef enum {
     EVENT_EXPORT_SOURCE_INSTALL_EXPORT = 0,
@@ -771,6 +795,35 @@ typedef struct {
 } Event_Build_Step_Add_Command;
 
 typedef struct {
+    String_View action_key;
+    Event_Replay_Action_Kind action_kind;
+    Event_Replay_Phase phase;
+    String_View working_directory;
+} Event_Replay_Action_Declare;
+
+typedef struct {
+    String_View action_key;
+    String_View path;
+} Event_Replay_Action_Add_Input;
+
+typedef struct {
+    String_View action_key;
+    String_View path;
+} Event_Replay_Action_Add_Output;
+
+typedef struct {
+    String_View action_key;
+    uint32_t arg_index;
+    String_View value;
+} Event_Replay_Action_Add_Argv;
+
+typedef struct {
+    String_View action_key;
+    String_View key;
+    String_View value;
+} Event_Replay_Action_Add_Env;
+
+typedef struct {
     String_View target_name;
     String_View key;
     String_View value;
@@ -959,6 +1012,11 @@ typedef struct {
         Event_Build_Step_Add_Byproduct build_step_add_byproduct;
         Event_Build_Step_Add_Dependency build_step_add_dependency;
         Event_Build_Step_Add_Command build_step_add_command;
+        Event_Replay_Action_Declare replay_action_declare;
+        Event_Replay_Action_Add_Input replay_action_add_input;
+        Event_Replay_Action_Add_Output replay_action_add_output;
+        Event_Replay_Action_Add_Argv replay_action_add_argv;
+        Event_Replay_Action_Add_Env replay_action_add_env;
         Event_Target_Prop_Set target_prop_set;
         Event_Target_Link_Libraries target_link_libraries;
         Event_Target_Link_Options target_link_options;

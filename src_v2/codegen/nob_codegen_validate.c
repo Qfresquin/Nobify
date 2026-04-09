@@ -1,5 +1,30 @@
 #include "nob_codegen_internal.h"
 
+static const char *cg_replay_action_kind_name(BM_Replay_Action_Kind kind) {
+    switch (kind) {
+        case BM_REPLAY_ACTION_FILESYSTEM: return "filesystem";
+        case BM_REPLAY_ACTION_PROCESS: return "process";
+        case BM_REPLAY_ACTION_PROBE: return "probe";
+        case BM_REPLAY_ACTION_DEPENDENCY_MATERIALIZATION: return "dependency_materialization";
+        case BM_REPLAY_ACTION_TEST_DRIVER: return "test_driver";
+        case BM_REPLAY_ACTION_HOST_EFFECT: return "host_effect";
+    }
+    return "unknown";
+}
+
+static const char *cg_replay_phase_name(BM_Replay_Phase phase) {
+    switch (phase) {
+        case BM_REPLAY_PHASE_CONFIGURE: return "configure";
+        case BM_REPLAY_PHASE_BUILD: return "build";
+        case BM_REPLAY_PHASE_TEST: return "test";
+        case BM_REPLAY_PHASE_INSTALL: return "install";
+        case BM_REPLAY_PHASE_EXPORT: return "export";
+        case BM_REPLAY_PHASE_PACKAGE: return "package";
+        case BM_REPLAY_PHASE_HOST_ONLY: return "host_only";
+    }
+    return "unknown";
+}
+
 static bool cg_validate_install_rule(CG_Context *ctx, BM_Install_Rule_Id id) {
     BM_Install_Rule_Kind kind = bm_query_install_rule_kind(ctx->model, id);
     String_View item = bm_query_install_rule_item_raw(ctx->model, id);
@@ -148,6 +173,15 @@ bool cg_validate_model_for_backend(CG_Context *ctx) {
             nob_log(NOB_ERROR, "codegen: APPEND custom-command steps are not supported yet");
             return false;
         }
+    }
+
+    for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
+        BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
+        nob_log(NOB_ERROR,
+                "codegen: replay action kind '%s' in phase '%s' is not supported yet",
+                cg_replay_action_kind_name(bm_query_replay_action_kind(ctx->model, id)),
+                cg_replay_phase_name(bm_query_replay_action_phase(ctx->model, id)));
+        return false;
     }
 
     for (size_t i = 0; i < ctx->target_count; ++i) {

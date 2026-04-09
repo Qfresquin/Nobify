@@ -35,6 +35,11 @@ As of April 9, 2026:
 - only the `nobify` product needs portability; test infrastructure does not
 - inter-wave breakage remains acceptable if it shortens time-to-daemon
 
+The core execution-owner rewrite is now landed. The main remaining pain is
+operational rather than structural: daemon state, recovery, lifecycle, and
+watch session ownership now need explicit hardening ahead of any further
+throughput or scheduler expansion.
+
 The target end state of this roadmap is:
 
 `./build/nob` front door -> daemon client/supervisor -> reactor `nob_testd` -> shared runner core -> suites
@@ -114,6 +119,7 @@ The target CLI contract is:
 - `./build/nob test watch auto`
 - `./build/nob test daemon start`
 - `./build/nob test daemon stop`
+- `./build/nob test daemon restart`
 - `./build/nob test daemon status`
 
 ## 4. Why This Is A Separate Program
@@ -175,6 +181,22 @@ as a contract that must survive intact.
 
 - remove or hollow out `build/nob_test`
 - align docs and scripts around the new mental model
+
+### 5.7 Operational Ergonomics, Recovery, And Introspection
+
+- make daemon lifecycle and active-work state visible and explainable through
+  CLI and protocol surfaces
+- replace opaque `busy`/recovery behavior with structured control-plane
+  outcomes and explicit admission policy
+- remove manual stop/clean/status choreography from the common local workflow
+
+### 5.8 Detached Watch Sessions And Session Ownership
+
+- move long-lived watch ownership fully into the daemon instead of the active
+  client connection
+- let watch sessions survive transient client disconnects by default
+- surface detached watch state and lifecycle through `status` and daemon
+  control paths
 
 ## 6. Wave Plan
 
@@ -363,6 +385,64 @@ Exit criteria:
 - there is one clear public entrypoint and one clear execution owner
 - stale mental models around the old runner are gone
 
+### T7 Operational Hardening And Introspection
+
+Goal:
+- make the daemon predictable to operate during normal day-to-day development
+
+Deliverables:
+- enriched `daemon status` output covering effective state, active work,
+  module/profile, run duration, attached client state, preserved logs or
+  workspace paths, pending cancel/drain state, and cache hit/miss reasons
+- explicit admission policy:
+  - foreground run versus another foreground run rejects with a structured
+    error instead of only free-form text
+  - watch reruns use documented replace-running behavior
+  - the daemon reports which policy was applied for the active request
+- `daemon stop` becomes drain-aware instead of failing solely because the
+  daemon is currently `busy`
+- `daemon stop --force` becomes the official immediate-cancel path with
+  timeout-aware escalation
+- `./build/nob test daemon restart` becomes an official lifecycle path
+- `./build/nob test clean` stops requiring manual pre-stop coordination:
+  - default `clean` coordinates daemon drain/stop first
+  - `clean --force` performs immediate daemon teardown before cleanup
+- the binary protocol gains stable error codes plus optional metadata for the
+  active request so text messages stop being the only control-plane surface
+- stale socket/PID recovery and kill-escalation outcomes become visible through
+  `status` and structured errors instead of remaining purely internal behavior
+
+Non-goals:
+- no general parallel scheduler yet
+- no detached watch sessions yet
+- no portability work
+
+Exit criteria:
+- `busy` is explainable and recoverable from the CLI
+- `status` shows what the daemon is actually doing
+- `stop` and `clean` work from both idle and busy states
+- watch replace/cancel behavior is explicit instead of implicit
+
+### T8 Detached Watch Sessions
+
+Goal:
+- decouple watch session lifetime from the client connection that started it
+
+Deliverables:
+- watch sessions become daemon-owned state instead of attached-client state
+- terminal or client disconnect no longer stops watch by default
+- `status` and daemon lifecycle surfaces report and control detached watch
+  sessions explicitly
+
+Non-goals:
+- no multi-user sharing model
+- no rich attach UX in this wave
+
+Exit criteria:
+- watch survives client disconnect
+- detached watch ownership and state are visible and controllable through the
+  daemon surface
+
 ## 7. Required Interfaces And Behavior
 
 The implementation target for later waves is:
@@ -374,17 +454,27 @@ The implementation target for later waves is:
   embedding them in CLI-only flow
 - daemon-facing control flow uses typed request/result structures and stable
   ids, even if the CLI remains text-oriented
+- the control plane eventually exposes structured daemon states including
+  `idle`, `busy`, `watching`, `draining`, and `stopping`
+- the control plane eventually exposes stable error codes and optional active
+  request metadata rather than relying on free-form text alone
+- daemon lifecycle eventually includes `start`, `stop`, `stop --force`,
+  `restart`, and `status`
 - the daemon is a single-threaded Linux reactor that owns:
   - local socket accept/read/write
   - child-process supervision
   - timer-based debounce and timeout handling
   - watch event intake and overflow recovery
+- `clean` eventually coordinates with daemon lifecycle instead of requiring
+  users to manually stop the daemon first
 - logs, preserved failure workspaces, and `Temp_tests` layout remain
   conceptually intact unless a later wave explicitly replaces them
 - old preflight checks stay logically owned by runner-core, but local daemon
   runs may cache or skip them under the fast profile
 - module registry entries carry the watch roots and routing metadata needed by
   `watch auto`
+- detached watch session ownership eventually belongs to daemon state rather
+  than to the lifetime of a single foreground client
 - sanitizer, coverage, and explicit heavy suites remain supported, but the
   fast loop is optimized around normal local development rather than around
   those profiles
@@ -397,14 +487,21 @@ The daemon program is only complete when it has explicit proof for:
 - transitional self-rebuild for `src_v2/build/nob_test.c`
 - `./build/nob test <module>` end-to-end
 - daemon auto-start on first client request
-- `daemon start|stop|status`
+- `daemon start|stop|restart|status`
+- enriched `daemon status` for an active run, including active-work metadata
 - stale socket and stale PID recovery
 - client/daemon compatibility for the versioned local protocol
 - peer validation on the local UNIX socket
+- structured `busy` and recovery errors instead of text-only rejection
+- `daemon stop` while work is active
+- `daemon stop --force` against a stuck worker
+- `./build/nob test clean` from both idle and busy daemon states
 - watch rerun on save
 - `watch auto` routing for representative file changes
 - last-write-wins cancellation under save storms
+- explicit watch replace-running reporting under save storms
 - watch recovery after rename churn or inotify overflow
+- detached watch persistence across client disconnect in the T8 wave
 - fast profile behavior not regressing strict or sanitizer profiles
 - preserved failure workspaces and captured logs still working through daemon
   execution

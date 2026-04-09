@@ -17,6 +17,7 @@ consume query-visible model semantics instead of bypassing the frozen model.
 - Public functions return explicit spans or scalar values.
 - No public API returns a mutable pointer into the model.
 - Effective-property queries may use a caller-provided scratch arena.
+- Repeated derived queries may also use a canonical `BM_Query_Session`.
 
 ## 3. Public Query Surface
 
@@ -176,6 +177,48 @@ The `*_items(...)` variants are the canonical codegen-facing API. They preserve
 `BM_String_Span` variants remain compatibility wrappers that strip each item
 down to `value` only.
 
+### Query Session
+
+`C1M` adds an arena-owned memoized derived-query surface for consumers that
+issue many repeated effective or imported-target lookups:
+
+```c
+typedef struct BM_Query_Session BM_Query_Session;
+
+typedef struct {
+    size_t effective_item_hits;
+    size_t effective_item_misses;
+    size_t effective_value_hits;
+    size_t effective_value_misses;
+    size_t target_file_hits;
+    size_t target_file_misses;
+    size_t imported_link_language_hits;
+    size_t imported_link_language_misses;
+} BM_Query_Session_Stats;
+
+BM_Query_Session *bm_query_session_create(Arena *arena, const Build_Model *model);
+const BM_Query_Session_Stats *bm_query_session_stats(const BM_Query_Session *session);
+```
+
+The session is query-time only:
+
+- it does not mutate or persist anything back into `Build_Model`
+- it preserves the same raw/effective semantics as the stateless APIs
+- it owns memoized lifetime through the caller-provided arena
+
+The canonical memoized surface covers:
+
+- effective include directories, compile definitions, compile options, link
+  libraries, link options, and link directories in both item and value form
+- effective compile features
+- effective imported/local target file and linker file resolution
+- imported link-language lookup
+
+Memoization keys must include all caller-visible semantic context required to
+keep derived results correct, including target, family, usage mode, current
+target, config, compile language, platform id, and build/install interface
+state.
+
 ### Other Domains
 
 Release-1 must also include query helpers for:
@@ -192,6 +235,7 @@ Release-1 must also include query helpers for:
 The canonical replay query surface is:
 
 ```c
+bool bm_replay_action_id_is_valid(BM_Replay_Action_Id id);
 size_t bm_query_replay_action_count(const Build_Model *model);
 BM_Replay_Action_Kind bm_query_replay_action_kind(const Build_Model *model,
                                                   BM_Replay_Action_Id id);

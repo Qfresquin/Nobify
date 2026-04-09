@@ -47,6 +47,31 @@ static const char *pipeline_build_step_kind_name(BM_Build_Step_Kind kind) {
     return "UNKNOWN";
 }
 
+static const char *pipeline_replay_action_kind_name(BM_Replay_Action_Kind kind) {
+    switch (kind) {
+        case BM_REPLAY_ACTION_FILESYSTEM: return "FILESYSTEM";
+        case BM_REPLAY_ACTION_PROCESS: return "PROCESS";
+        case BM_REPLAY_ACTION_PROBE: return "PROBE";
+        case BM_REPLAY_ACTION_DEPENDENCY_MATERIALIZATION: return "DEPENDENCY_MATERIALIZATION";
+        case BM_REPLAY_ACTION_TEST_DRIVER: return "TEST_DRIVER";
+        case BM_REPLAY_ACTION_HOST_EFFECT: return "HOST_EFFECT";
+    }
+    return "UNKNOWN";
+}
+
+static const char *pipeline_replay_phase_name(BM_Replay_Phase phase) {
+    switch (phase) {
+        case BM_REPLAY_PHASE_CONFIGURE: return "CONFIGURE";
+        case BM_REPLAY_PHASE_BUILD: return "BUILD";
+        case BM_REPLAY_PHASE_TEST: return "TEST";
+        case BM_REPLAY_PHASE_INSTALL: return "INSTALL";
+        case BM_REPLAY_PHASE_EXPORT: return "EXPORT";
+        case BM_REPLAY_PHASE_PACKAGE: return "PACKAGE";
+        case BM_REPLAY_PHASE_HOST_ONLY: return "HOST_ONLY";
+    }
+    return "UNKNOWN";
+}
+
 static const char *pipeline_export_kind_name(BM_Export_Kind kind) {
     switch (kind) {
         case BM_EXPORT_INSTALL: return "INSTALL";
@@ -72,6 +97,23 @@ static size_t pipeline_count_non_private_items(BM_String_Item_Span items) {
         if (items.items[i].visibility != BM_VISIBILITY_PRIVATE) count++;
     }
     return count;
+}
+
+static bool pipeline_sv_contains(String_View haystack, String_View needle) {
+    if (needle.count == 0 || haystack.count < needle.count) return false;
+    for (size_t i = 0; i + needle.count <= haystack.count; ++i) {
+        if (memcmp(haystack.data + i, needle.data, needle.count) == 0) return true;
+    }
+    return false;
+}
+
+static void pipeline_init_event(Event *ev, Event_Kind kind, size_t line) {
+    if (!ev) return;
+    *ev = (Event){0};
+    ev->h.kind = kind;
+    ev->h.origin.file_path = nob_sv_from_cstr("graph_src/CMakeLists.txt");
+    ev->h.origin.line = line;
+    ev->h.origin.col = 1;
 }
 
 static String_View pipeline_stable_path_in_workspace(Arena *arena, String_View path) {
@@ -183,6 +225,7 @@ static bool pipeline_snapshot_from_script(const char *script,
 
 static void append_pipeline_build_graph_snapshot(Nob_String_Builder *sb, const Build_Model *model) {
     size_t build_step_count = bm_query_build_step_count(model);
+    size_t replay_action_count = bm_query_replay_action_count(model);
     size_t target_count = bm_query_target_count(model);
     size_t export_count = bm_query_export_count(model);
     size_t cpack_package_count = bm_query_cpack_package_count(model);
@@ -207,6 +250,24 @@ static void append_pipeline_build_graph_snapshot(Nob_String_Builder *sb, const B
             bm_query_build_step_producer_dependencies(model, step_id).count,
             bm_query_build_step_file_dependencies(model, step_id).count,
             bm_query_build_step_command_count(model, step_id)));
+    }
+
+    nob_sb_append_cstr(sb, nob_temp_sprintf("REPLAY_ACTIONS count=%zu\n", replay_action_count));
+    for (size_t i = 0; i < replay_action_count; ++i) {
+        BM_Replay_Action_Id action_id = (BM_Replay_Action_Id)i;
+        nob_sb_append_cstr(sb, nob_temp_sprintf("REPLAY[%zu] kind=%s phase=%s owner_dir=%u inputs=%zu outputs=%zu argv=%zu env=%zu working_dir=",
+                                                i,
+                                                pipeline_replay_action_kind_name(
+                                                    bm_query_replay_action_kind(model, action_id)),
+                                                pipeline_replay_phase_name(
+                                                    bm_query_replay_action_phase(model, action_id)),
+                                                (unsigned)bm_query_replay_action_owner_directory(model, action_id),
+                                                bm_query_replay_action_inputs(model, action_id).count,
+                                                bm_query_replay_action_outputs(model, action_id).count,
+                                                bm_query_replay_action_argv(model, action_id).count,
+                                                bm_query_replay_action_environment(model, action_id).count));
+        test_snapshot_append_escaped_sv(sb, bm_query_replay_action_working_directory(model, action_id));
+        nob_sb_append_cstr(sb, "\n");
     }
 
     nob_sb_append_cstr(sb, nob_temp_sprintf("EXPORTS count=%zu\n", export_count));
@@ -486,6 +547,81 @@ TEST(pipeline_golden_build_graph_cases) {
     TEST_PASS();
 }
 
+TEST(pipeline_build_graph_snapshot_surfaces_replay_actions) {
+    Arena *arena = arena_create(2 * 1024 * 1024);
+    Arena *validate_arena = arena_create(512 * 1024);
+    Arena *model_arena = arena_create(2 * 1024 * 1024);
+    Test_Semantic_Pipeline_Build_Result build = {0};
+    Event_Stream *stream = NULL;
+    Event ev = {0};
+    Nob_String_Builder sb = {0};
+
+    ASSERT(arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
+
+    stream = event_stream_create(arena);
+    ASSERT(stream != NULL);
+
+    pipeline_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr("graph_src");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr("graph_build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 2);
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("snapshot_proc");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_PROCESS;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_BUILD;
+    ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("tools");
+    ASSERT(event_stream_push(stream, &ev));
+
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_INPUT, 3);
+    ev.as.replay_action_add_input.action_key = nob_sv_from_cstr("snapshot_proc");
+    ev.as.replay_action_add_input.path = nob_sv_from_cstr("tool.in");
+    ASSERT(event_stream_push(stream, &ev));
+
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 4);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("snapshot_proc");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("tool.out");
+    ASSERT(event_stream_push(stream, &ev));
+
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 5);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("snapshot_proc");
+    ev.as.replay_action_add_argv.arg_index = 0;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("tool");
+    ASSERT(event_stream_push(stream, &ev));
+
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ENV, 6);
+    ev.as.replay_action_add_env.action_key = nob_sv_from_cstr("snapshot_proc");
+    ev.as.replay_action_add_env.key = nob_sv_from_cstr("MODE");
+    ev.as.replay_action_add_env.value = nob_sv_from_cstr("snapshot");
+    ASSERT(event_stream_push(stream, &ev));
+
+    pipeline_init_event(&ev, EVENT_DIRECTORY_LEAVE, 7);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr("graph_src");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr("graph_build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    ASSERT(test_semantic_pipeline_build_model_from_stream(arena, validate_arena, model_arena, stream, &build));
+    ASSERT(build.builder_ok);
+    ASSERT(build.validate_ok);
+    ASSERT(build.freeze_ok);
+    ASSERT(build.model != NULL);
+
+    append_pipeline_build_graph_snapshot(&sb, build.model);
+    ASSERT(sb.items != NULL);
+    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("BUILD_STEPS count=0")));
+    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("REPLAY_ACTIONS count=1")));
+    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("REPLAY[0] kind=PROCESS phase=BUILD")));
+    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("inputs=1 outputs=1 argv=1 env=1")));
+
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
+    TEST_PASS();
+}
+
 void run_pipeline_v2_tests(int *passed, int *failed, int *skipped) {
     Test_Workspace ws = {0};
     char prev_cwd[_TINYDIR_PATH_MAX] = {0};
@@ -508,6 +644,7 @@ void run_pipeline_v2_tests(int *passed, int *failed, int *skipped) {
 
     test_pipeline_golden_all_cases(passed, failed, skipped);
     test_pipeline_golden_build_graph_cases(passed, failed, skipped);
+    test_pipeline_build_graph_snapshot_surfaces_replay_actions(passed, failed, skipped);
 
     if (!test_ws_leave(prev_cwd)) {
         if (failed) (*failed)++;

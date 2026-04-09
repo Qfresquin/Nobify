@@ -541,6 +541,7 @@ typedef struct {
     SV_List generated_deferred_ids;
     size_t next_deferred_call_id;
     size_t next_build_step_id;
+    size_t next_replay_action_id;
     size_t next_export_id;
     size_t next_cpack_package_id;
 } Eval_File_State;
@@ -1201,6 +1202,14 @@ static inline String_View eval_alloc_build_step_key(EvalExecContext *ctx) {
     return nob_sv_from_cstr(buf);
 }
 
+static inline String_View eval_alloc_replay_action_key(EvalExecContext *ctx) {
+    if (!ctx) return nob_sv_from_cstr("");
+    char *tmp = nob_temp_sprintf("replay_%zu", ctx->file_state.next_replay_action_id++);
+    char *buf = tmp ? arena_strndup(eval_event_arena(ctx), tmp, strlen(tmp)) : NULL;
+    EVAL_OOM_RETURN_IF_NULL(ctx, buf, nob_sv_from_cstr(""));
+    return nob_sv_from_cstr(buf);
+}
+
 static inline String_View eval_alloc_export_key(EvalExecContext *ctx) {
     if (!ctx) return nob_sv_from_cstr("");
     char *tmp = nob_temp_sprintf("export_%zu", ctx->file_state.next_export_id++);
@@ -1324,6 +1333,74 @@ static inline bool eval_emit_build_step_add_command(EvalExecContext *ctx,
     ev.as.build_step_add_command.argc = argv ? arena_arr_len(*argv) : 0;
     ev.as.build_step_add_command.argv = eval_sv_list_copy_to_event_arena(ctx, argv);
     if (eval_should_stop(ctx)) return false;
+    return emit_event(ctx, ev);
+}
+
+static inline bool eval_emit_replay_action_declare(EvalExecContext *ctx,
+                                                   Event_Origin origin,
+                                                   String_View action_key,
+                                                   Event_Replay_Action_Kind action_kind,
+                                                   Event_Replay_Phase phase,
+                                                   String_View working_directory) {
+    Event ev = {0};
+    ev.h.kind = EVENT_REPLAY_ACTION_DECLARE;
+    ev.h.origin = origin;
+    ev.as.replay_action_declare.action_key = sv_copy_to_event_arena(ctx, action_key);
+    ev.as.replay_action_declare.action_kind = action_kind;
+    ev.as.replay_action_declare.phase = phase;
+    ev.as.replay_action_declare.working_directory = sv_copy_to_event_arena(ctx, working_directory);
+    return emit_event(ctx, ev);
+}
+
+static inline bool eval_emit_replay_action_add_input(EvalExecContext *ctx,
+                                                     Event_Origin origin,
+                                                     String_View action_key,
+                                                     String_View path) {
+    Event ev = {0};
+    ev.h.kind = EVENT_REPLAY_ACTION_ADD_INPUT;
+    ev.h.origin = origin;
+    ev.as.replay_action_add_input.action_key = sv_copy_to_event_arena(ctx, action_key);
+    ev.as.replay_action_add_input.path = sv_copy_to_event_arena(ctx, path);
+    return emit_event(ctx, ev);
+}
+
+static inline bool eval_emit_replay_action_add_output(EvalExecContext *ctx,
+                                                      Event_Origin origin,
+                                                      String_View action_key,
+                                                      String_View path) {
+    Event ev = {0};
+    ev.h.kind = EVENT_REPLAY_ACTION_ADD_OUTPUT;
+    ev.h.origin = origin;
+    ev.as.replay_action_add_output.action_key = sv_copy_to_event_arena(ctx, action_key);
+    ev.as.replay_action_add_output.path = sv_copy_to_event_arena(ctx, path);
+    return emit_event(ctx, ev);
+}
+
+static inline bool eval_emit_replay_action_add_argv(EvalExecContext *ctx,
+                                                    Event_Origin origin,
+                                                    String_View action_key,
+                                                    uint32_t arg_index,
+                                                    String_View value) {
+    Event ev = {0};
+    ev.h.kind = EVENT_REPLAY_ACTION_ADD_ARGV;
+    ev.h.origin = origin;
+    ev.as.replay_action_add_argv.action_key = sv_copy_to_event_arena(ctx, action_key);
+    ev.as.replay_action_add_argv.arg_index = arg_index;
+    ev.as.replay_action_add_argv.value = sv_copy_to_event_arena(ctx, value);
+    return emit_event(ctx, ev);
+}
+
+static inline bool eval_emit_replay_action_add_env(EvalExecContext *ctx,
+                                                   Event_Origin origin,
+                                                   String_View action_key,
+                                                   String_View key,
+                                                   String_View value) {
+    Event ev = {0};
+    ev.h.kind = EVENT_REPLAY_ACTION_ADD_ENV;
+    ev.h.origin = origin;
+    ev.as.replay_action_add_env.action_key = sv_copy_to_event_arena(ctx, action_key);
+    ev.as.replay_action_add_env.key = sv_copy_to_event_arena(ctx, key);
+    ev.as.replay_action_add_env.value = sv_copy_to_event_arena(ctx, value);
     return emit_event(ctx, ev);
 }
 

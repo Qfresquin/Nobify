@@ -1,5 +1,14 @@
 #include "test_codegen_v2_common.h"
 
+static void codegen_reject_init_event(Event *ev, Event_Kind kind, size_t line) {
+    if (!ev) return;
+    *ev = (Event){0};
+    ev->h.kind = kind;
+    ev->h.origin.file_path = nob_sv_from_cstr("CMakeLists.txt");
+    ev->h.origin.line = line;
+    ev->h.origin.col = 1;
+}
+
 TEST(codegen_rejects_module_target_as_link_dependency) {
     Nob_String_Builder sb = {0};
     diag_reset();
@@ -200,6 +209,84 @@ TEST(codegen_rejects_cpack_archive_component_install_before_render) {
     TEST_PASS();
 }
 
+TEST(codegen_rejects_replay_actions_before_render) {
+    Arena *builder_arena = arena_create(2 * 1024 * 1024);
+    Arena *validate_arena = arena_create(512 * 1024);
+    Arena *model_arena = arena_create(2 * 1024 * 1024);
+    Arena *codegen_arena = arena_create(2 * 1024 * 1024);
+    Test_Semantic_Pipeline_Build_Result build = {0};
+    Event_Stream *stream = NULL;
+    Event ev = {0};
+    Nob_String_Builder sb = {0};
+    Nob_Codegen_Options opts = {
+        .input_path = {0},
+        .output_path = {0},
+        .target_platform = NOB_CODEGEN_PLATFORM_HOST,
+        .backend = NOB_CODEGEN_BACKEND_AUTO,
+    };
+
+    ASSERT(builder_arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
+    ASSERT(codegen_arena != NULL);
+
+    stream = event_stream_create(builder_arena);
+    ASSERT(stream != NULL);
+
+    codegen_reject_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    codegen_reject_init_event(&ev, EVENT_PROJECT_DECLARE, 2);
+    ev.as.project_declare.name = nob_sv_from_cstr("ReplayReject");
+    ev.as.project_declare.languages = nob_sv_from_cstr("C");
+    ASSERT(event_stream_push(stream, &ev));
+
+    codegen_reject_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 3);
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("reject_me");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_PROCESS;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_CONFIGURE;
+    ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("tools");
+    ASSERT(event_stream_push(stream, &ev));
+
+    codegen_reject_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 4);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("reject_me");
+    ev.as.replay_action_add_argv.arg_index = 0;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("tool");
+    ASSERT(event_stream_push(stream, &ev));
+
+    codegen_reject_init_event(&ev, EVENT_DIRECTORY_LEAVE, 5);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    ASSERT(test_semantic_pipeline_build_model_from_stream(builder_arena,
+                                                          validate_arena,
+                                                          model_arena,
+                                                          stream,
+                                                          &build));
+    ASSERT(build.builder_ok);
+    ASSERT(build.validate_ok);
+    ASSERT(build.freeze_ok);
+    ASSERT(build.model != NULL);
+    ASSERT(bm_query_replay_action_count(build.model) == 1);
+
+    diag_reset();
+    diag_set_strict(false);
+    diag_telemetry_reset();
+    opts.input_path = nob_sv_from_cstr("CMakeLists.txt");
+    opts.output_path = nob_sv_from_cstr("nob.c");
+    ASSERT(!nob_codegen_render(build.model, codegen_arena, &opts, &sb));
+
+    nob_sb_free(sb);
+    arena_destroy(builder_arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
+    arena_destroy(codegen_arena);
+    TEST_PASS();
+}
+
 void run_codegen_v2_reject_tests(int *passed, int *failed, int *skipped) {
     test_codegen_rejects_module_target_as_link_dependency(passed, failed, skipped);
     test_codegen_rejects_unsupported_generator_expression_operator(passed, failed, skipped);
@@ -212,4 +299,5 @@ void run_codegen_v2_reject_tests(int *passed, int *failed, int *skipped) {
     test_codegen_rejects_invalid_platform_backend_pair(passed, failed, skipped);
     test_codegen_rejects_macosx_bundle_targets(passed, failed, skipped);
     test_codegen_rejects_cpack_archive_component_install_before_render(passed, failed, skipped);
+    test_codegen_rejects_replay_actions_before_render(passed, failed, skipped);
 }

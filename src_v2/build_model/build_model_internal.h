@@ -60,6 +60,20 @@ typedef struct {
 } BM_Build_Step_Record;
 
 typedef struct {
+    BM_Replay_Action_Id id;
+    String_View action_key;
+    BM_Directory_Id owner_directory_id;
+    BM_Provenance provenance;
+    BM_Replay_Action_Kind kind;
+    BM_Replay_Phase phase;
+    String_View working_directory;
+    String_View *inputs;
+    String_View *outputs;
+    String_View *argv;
+    String_View *environment;
+} BM_Replay_Action_Record;
+
+typedef struct {
     String_View path;
     String_View directory_source_dir;
     String_View directory_binary_dir;
@@ -277,6 +291,7 @@ struct Build_Model_Draft {
     BM_Directory_Id root_directory_id;
     BM_Target_Record *targets;
     BM_Build_Step_Record *build_steps;
+    BM_Replay_Action_Record *replay_actions;
     BM_Source_Generated_Mark_Record *generated_source_marks;
     BM_Test_Record *tests;
     BM_Install_Rule_Record *install_rules;
@@ -300,6 +315,7 @@ struct Build_Model {
     BM_Directory_Id root_directory_id;
     BM_Target_Record *targets;
     BM_Build_Step_Record *build_steps;
+    BM_Replay_Action_Record *replay_actions;
     BM_Test_Record *tests;
     BM_Install_Rule_Record *install_rules;
     BM_Export_Record *exports;
@@ -334,6 +350,8 @@ bool bm_path_join(Arena *arena, String_View lhs, String_View rhs, String_View *o
 bool bm_path_rebase(Arena *arena, String_View base_dir, String_View path, String_View *out);
 BM_Target_Kind bm_target_kind_from_event(Cmake_Target_Type type);
 BM_Build_Step_Kind bm_build_step_kind_from_event(Event_Build_Step_Kind kind);
+BM_Replay_Phase bm_replay_phase_from_event(Event_Replay_Phase phase);
+BM_Replay_Action_Kind bm_replay_action_kind_from_event(Event_Replay_Action_Kind kind);
 BM_Visibility bm_visibility_from_event(Cmake_Visibility visibility);
 BM_Install_Rule_Kind bm_install_rule_kind_from_event(Cmake_Install_Rule_Type kind);
 BM_Directory_Id bm_builder_current_directory_id(const BM_Builder *builder);
@@ -341,6 +359,9 @@ BM_Directory_Record *bm_draft_get_directory(Build_Model_Draft *draft, BM_Directo
 const BM_Directory_Record *bm_draft_get_directory_const(const Build_Model_Draft *draft, BM_Directory_Id id);
 BM_Build_Step_Record *bm_draft_find_build_step(Build_Model_Draft *draft, String_View step_key);
 const BM_Build_Step_Record *bm_draft_find_build_step_const(const Build_Model_Draft *draft, String_View step_key);
+BM_Replay_Action_Record *bm_draft_find_replay_action(Build_Model_Draft *draft, String_View action_key);
+const BM_Replay_Action_Record *bm_draft_find_replay_action_const(const Build_Model_Draft *draft,
+                                                                 String_View action_key);
 BM_Target_Record *bm_draft_find_target(Build_Model_Draft *draft, String_View name);
 const BM_Target_Record *bm_draft_find_target_const(const Build_Model_Draft *draft, String_View name);
 BM_Target_Id bm_draft_find_target_id(const Build_Model_Draft *draft, String_View name);
@@ -384,6 +405,7 @@ bool bm_builder_handle_directory_event(BM_Builder *builder, const Event *ev);
 bool bm_builder_handle_project_event(BM_Builder *builder, const Event *ev);
 bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev);
 bool bm_builder_handle_build_graph_event(BM_Builder *builder, const Event *ev);
+bool bm_builder_handle_replay_event(BM_Builder *builder, const Event *ev);
 bool bm_builder_handle_test_event(BM_Builder *builder, const Event *ev);
 bool bm_builder_handle_install_event(BM_Builder *builder, const Event *ev);
 bool bm_builder_handle_export_event(BM_Builder *builder, const Event *ev);

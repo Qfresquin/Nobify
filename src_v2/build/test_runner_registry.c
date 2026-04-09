@@ -158,6 +158,7 @@ static void append_v2_build_model_runtime_sources(Nob_Cmd *cmd) {
                    "src_v2/build_model/build_model_builder_package.c",
                    "src_v2/build_model/build_model_builder_project.c",
                    "src_v2/build_model/build_model_builder_target.c",
+                   "src_v2/build_model/build_model_builder_replay.c",
                    "src_v2/build_model/build_model_builder_test.c",
                    "src_v2/build_model/build_model_freeze.c",
                    "src_v2/build_model/build_model_query.c",

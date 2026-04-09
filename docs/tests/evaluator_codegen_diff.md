@@ -243,6 +243,7 @@ Legal memoization evidence includes:
 - targeted repeated-query workloads over closure-harness cases that stress
   effective-query and target-resolution access
 - before/after measurements tied to the same case set and tool availability
+- `BM_Query_Session` hit/miss counters gathered while those workloads run
 - proof that canonical memoized query paths replace duplicated first-line
   consumer caches without changing case classification or observable outputs
 
@@ -255,6 +256,8 @@ Memoization evidence does not replace the normal closure gate:
 
 Unless the roadmap later freezes a numeric gate, memoization measurements are
 comparative and diagnostic rather than release-blocking by absolute threshold.
+Session counters are therefore valid supporting evidence even when a host is
+not suitable for stable wall-clock benchmarking.
 
 ## Relationship To Other Suites
 

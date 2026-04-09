@@ -329,6 +329,7 @@ bool test_daemon_result_from_runner(Test_Daemon_State daemon_state,
                                  runner_result->stderr_log_path)) {
         return false;
     }
+    out_payload->detail[0] = '\0';
     if (!test_daemon_copy_string(out_payload->summary,
                                  sizeof(out_payload->summary),
                                  runner_result->summary)) {
@@ -347,8 +348,17 @@ bool test_daemon_send_result(int fd,
                                     (uint32_t)sizeof(*payload));
 }
 
-bool test_daemon_send_error_text(int fd, uint64_t request_id, const char *message) {
+bool test_daemon_send_error(int fd,
+                            uint64_t request_id,
+                            Test_Daemon_Error_Code code,
+                            Test_Daemon_State state,
+                            const Test_Daemon_Request_Metadata *active_request,
+                            const char *message) {
     Test_Daemon_Error_Payload payload = {0};
+
+    payload.code = (uint32_t)code;
+    payload.daemon_state = (uint32_t)state;
+    if (active_request) payload.active_request = *active_request;
     if (!test_daemon_copy_string(payload.message, sizeof(payload.message), message)) {
         return false;
     }
@@ -359,11 +369,81 @@ bool test_daemon_send_error_text(int fd, uint64_t request_id, const char *messag
                                     (uint32_t)sizeof(payload));
 }
 
+bool test_daemon_send_error_text(int fd, uint64_t request_id, const char *message) {
+    return test_daemon_send_error(fd,
+                                  request_id,
+                                  TEST_DAEMON_ERROR_INTERNAL,
+                                  TEST_DAEMON_STATE_STOPPED,
+                                  NULL,
+                                  message);
+}
+
 const char *test_daemon_state_name(Test_Daemon_State state) {
     switch (state) {
         case TEST_DAEMON_STATE_IDLE: return "idle";
         case TEST_DAEMON_STATE_BUSY: return "busy";
+        case TEST_DAEMON_STATE_WATCHING: return "watching";
+        case TEST_DAEMON_STATE_DRAINING: return "draining";
+        case TEST_DAEMON_STATE_STOPPING: return "stopping";
         case TEST_DAEMON_STATE_STOPPED:
         default: return "stopped";
     }
+}
+
+const char *test_daemon_request_kind_name(Test_Daemon_Request_Kind kind) {
+    switch (kind) {
+        case TEST_DAEMON_REQUEST_FOREGROUND_RUN: return "foreground-run";
+        case TEST_DAEMON_REQUEST_WATCH_SESSION: return "watch-session";
+        case TEST_DAEMON_REQUEST_NONE:
+        default: return "none";
+    }
+}
+
+const char *test_daemon_admission_policy_name(Test_Daemon_Admission_Policy policy) {
+    switch (policy) {
+        case TEST_DAEMON_POLICY_FOREGROUND_EXCLUSIVE: return "foreground-exclusive";
+        case TEST_DAEMON_POLICY_WATCH_REPLACE_RUNNING: return "watch-replace-running";
+        case TEST_DAEMON_POLICY_DRAIN_STOP: return "drain-stop";
+        case TEST_DAEMON_POLICY_FORCE_STOP: return "force-stop";
+        case TEST_DAEMON_POLICY_NONE:
+        default: return "none";
+    }
+}
+
+const char *test_daemon_error_code_name(Test_Daemon_Error_Code code) {
+    switch (code) {
+        case TEST_DAEMON_ERROR_PROTOCOL: return "protocol";
+        case TEST_DAEMON_ERROR_MALFORMED_REQUEST: return "malformed-request";
+        case TEST_DAEMON_ERROR_UNKNOWN_CONTROL: return "unknown-control";
+        case TEST_DAEMON_ERROR_BUSY_FOREGROUND: return "busy-foreground";
+        case TEST_DAEMON_ERROR_BUSY_WATCH: return "busy-watch";
+        case TEST_DAEMON_ERROR_STOPPING: return "stopping";
+        case TEST_DAEMON_ERROR_PREFLIGHT_FAILED: return "preflight-failed";
+        case TEST_DAEMON_ERROR_WORKER_START_FAILED: return "worker-start-failed";
+        case TEST_DAEMON_ERROR_INTERNAL: return "internal";
+        case TEST_DAEMON_ERROR_NONE:
+        default: return "none";
+    }
+}
+
+const char *test_daemon_launcher_cache_reason_name(Test_Daemon_Launcher_Cache_Reason reason) {
+    switch (reason) {
+        case TEST_DAEMON_LAUNCHER_CACHE_HIT: return "hit";
+        case TEST_DAEMON_LAUNCHER_CACHE_COLD: return "cold";
+        case TEST_DAEMON_LAUNCHER_CACHE_PATH: return "PATH";
+        case TEST_DAEMON_LAUNCHER_CACHE_OVERRIDE: return "override";
+    }
+    return "unknown";
+}
+
+const char *test_daemon_preflight_reason_name(Test_Daemon_Preflight_Reason reason) {
+    switch (reason) {
+        case TEST_DAEMON_PREFLIGHT_REASON_HIT: return "hit";
+        case TEST_DAEMON_PREFLIGHT_REASON_COLD: return "cold";
+        case TEST_DAEMON_PREFLIGHT_REASON_FINGERPRINT: return "fingerprint";
+        case TEST_DAEMON_PREFLIGHT_REASON_PATH: return "PATH";
+        case TEST_DAEMON_PREFLIGHT_REASON_LLVM_TOOLS: return "LLVM_TOOLS";
+        case TEST_DAEMON_PREFLIGHT_REASON_LIB_FLAGS: return "LIB_FLAGS";
+    }
+    return "unknown";
 }

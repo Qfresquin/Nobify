@@ -35,6 +35,11 @@ static const BM_Build_Step_Record *bm_model_build_step(const Build_Model *model,
     return &model->build_steps[id];
 }
 
+static const BM_Replay_Action_Record *bm_model_replay_action(const Build_Model *model, BM_Replay_Action_Id id) {
+    if (!model || id == BM_REPLAY_ACTION_ID_INVALID || (size_t)id >= arena_arr_len(model->replay_actions)) return NULL;
+    return &model->replay_actions[id];
+}
+
 static const BM_Test_Record *bm_model_test(const Build_Model *model, BM_Test_Id id) {
     if (!model || id == BM_TEST_ID_INVALID || (size_t)id >= arena_arr_len(model->tests)) return NULL;
     return &model->tests[id];
@@ -751,10 +756,12 @@ bool bm_query_target_property_value(const Build_Model *model,
 
 #include "build_model_query_imported.c"
 #include "build_model_query_effective.c"
+#include "build_model_query_session.c"
 
 bool bm_model_has_project(const Build_Model *model) { return model ? model->project.present : false; }
 bool bm_target_id_is_valid(BM_Target_Id id) { return id != BM_TARGET_ID_INVALID; }
 bool bm_build_step_id_is_valid(BM_Build_Step_Id id) { return id != BM_BUILD_STEP_ID_INVALID; }
+bool bm_replay_action_id_is_valid(BM_Replay_Action_Id id) { return id != BM_REPLAY_ACTION_ID_INVALID; }
 bool bm_directory_id_is_valid(BM_Directory_Id id) { return id != BM_DIRECTORY_ID_INVALID; }
 bool bm_test_id_is_valid(BM_Test_Id id) { return id != BM_TEST_ID_INVALID; }
 bool bm_export_id_is_valid(BM_Export_Id id) { return id != BM_EXPORT_ID_INVALID; }
@@ -763,6 +770,7 @@ bool bm_package_id_is_valid(BM_Package_Id id) { return id != BM_PACKAGE_ID_INVAL
 size_t bm_query_directory_count(const Build_Model *model) { return model ? arena_arr_len(model->directories) : 0; }
 size_t bm_query_target_count(const Build_Model *model) { return model ? arena_arr_len(model->targets) : 0; }
 size_t bm_query_build_step_count(const Build_Model *model) { return model ? arena_arr_len(model->build_steps) : 0; }
+size_t bm_query_replay_action_count(const Build_Model *model) { return model ? arena_arr_len(model->replay_actions) : 0; }
 size_t bm_query_test_count(const Build_Model *model) { return model ? arena_arr_len(model->tests) : 0; }
 size_t bm_query_install_rule_count(const Build_Model *model) { return model ? arena_arr_len(model->install_rules) : 0; }
 size_t bm_query_export_count(const Build_Model *model) { return model ? arena_arr_len(model->exports) : 0; }
@@ -1214,6 +1222,46 @@ BM_String_Span bm_query_build_step_command_argv(const Build_Model *model, BM_Bui
     const BM_Build_Step_Record *step = bm_model_build_step(model, id);
     if (!step || command_index >= arena_arr_len(step->commands)) return (BM_String_Span){0};
     return bm_string_span(step->commands[command_index].argv);
+}
+
+BM_Replay_Action_Kind bm_query_replay_action_kind(const Build_Model *model, BM_Replay_Action_Id id) {
+    const BM_Replay_Action_Record *action = bm_model_replay_action(model, id);
+    return action ? action->kind : BM_REPLAY_ACTION_FILESYSTEM;
+}
+
+BM_Replay_Phase bm_query_replay_action_phase(const Build_Model *model, BM_Replay_Action_Id id) {
+    const BM_Replay_Action_Record *action = bm_model_replay_action(model, id);
+    return action ? action->phase : BM_REPLAY_PHASE_CONFIGURE;
+}
+
+BM_Directory_Id bm_query_replay_action_owner_directory(const Build_Model *model, BM_Replay_Action_Id id) {
+    const BM_Replay_Action_Record *action = bm_model_replay_action(model, id);
+    return action ? action->owner_directory_id : BM_DIRECTORY_ID_INVALID;
+}
+
+String_View bm_query_replay_action_working_directory(const Build_Model *model, BM_Replay_Action_Id id) {
+    const BM_Replay_Action_Record *action = bm_model_replay_action(model, id);
+    return action ? action->working_directory : nob_sv_from_cstr("");
+}
+
+BM_String_Span bm_query_replay_action_inputs(const Build_Model *model, BM_Replay_Action_Id id) {
+    const BM_Replay_Action_Record *action = bm_model_replay_action(model, id);
+    return action ? bm_string_span(action->inputs) : (BM_String_Span){0};
+}
+
+BM_String_Span bm_query_replay_action_outputs(const Build_Model *model, BM_Replay_Action_Id id) {
+    const BM_Replay_Action_Record *action = bm_model_replay_action(model, id);
+    return action ? bm_string_span(action->outputs) : (BM_String_Span){0};
+}
+
+BM_String_Span bm_query_replay_action_argv(const Build_Model *model, BM_Replay_Action_Id id) {
+    const BM_Replay_Action_Record *action = bm_model_replay_action(model, id);
+    return action ? bm_string_span(action->argv) : (BM_String_Span){0};
+}
+
+BM_String_Span bm_query_replay_action_environment(const Build_Model *model, BM_Replay_Action_Id id) {
+    const BM_Replay_Action_Record *action = bm_model_replay_action(model, id);
+    return action ? bm_string_span(action->environment) : (BM_String_Span){0};
 }
 
 bool bm_query_testing_enabled(const Build_Model *model) {

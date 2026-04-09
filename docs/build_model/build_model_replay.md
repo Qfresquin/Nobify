@@ -137,9 +137,14 @@ invent replay actions from evaluator-private state.
 Builder requirements:
 
 - only events documented as downstream-consumable may create replay actions
+- canonical replay ingest uses dedicated Event IR kinds:
+  `EVENT_REPLAY_ACTION_DECLARE`, `EVENT_REPLAY_ACTION_ADD_INPUT`,
+  `EVENT_REPLAY_ACTION_ADD_OUTPUT`, `EVENT_REPLAY_ACTION_ADD_ARGV`,
+  `EVENT_REPLAY_ACTION_ADD_ENV`
 - replay actions copy retained strings into builder-owned storage
 - owner directory is captured from the active directory frame at ingest time
 - argv, env, inputs, and outputs are stored as explicit spans
+- environment entries freeze as normalized `KEY=VALUE` strings
 - the draft may keep unresolved symbolic references where necessary, but the
   frozen model must expose stable typed accessors only
 

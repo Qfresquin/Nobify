@@ -62,6 +62,11 @@ static bool bm_is_supported_build_event(Event_Kind kind) {
         case EVENT_BUILD_STEP_ADD_BYPRODUCT:
         case EVENT_BUILD_STEP_ADD_DEPENDENCY:
         case EVENT_BUILD_STEP_ADD_COMMAND:
+        case EVENT_REPLAY_ACTION_DECLARE:
+        case EVENT_REPLAY_ACTION_ADD_INPUT:
+        case EVENT_REPLAY_ACTION_ADD_OUTPUT:
+        case EVENT_REPLAY_ACTION_ADD_ARGV:
+        case EVENT_REPLAY_ACTION_ADD_ENV:
         case EVENT_TARGET_PROP_SET:
         case EVENT_TARGET_LINK_LIBRARIES:
         case EVENT_TARGET_LINK_OPTIONS:
@@ -274,6 +279,31 @@ BM_Build_Step_Kind bm_build_step_kind_from_event(Event_Build_Step_Kind kind) {
     return BM_BUILD_STEP_OUTPUT_RULE;
 }
 
+BM_Replay_Phase bm_replay_phase_from_event(Event_Replay_Phase phase) {
+    switch (phase) {
+        case EVENT_REPLAY_PHASE_CONFIGURE: return BM_REPLAY_PHASE_CONFIGURE;
+        case EVENT_REPLAY_PHASE_BUILD: return BM_REPLAY_PHASE_BUILD;
+        case EVENT_REPLAY_PHASE_TEST: return BM_REPLAY_PHASE_TEST;
+        case EVENT_REPLAY_PHASE_INSTALL: return BM_REPLAY_PHASE_INSTALL;
+        case EVENT_REPLAY_PHASE_EXPORT: return BM_REPLAY_PHASE_EXPORT;
+        case EVENT_REPLAY_PHASE_PACKAGE: return BM_REPLAY_PHASE_PACKAGE;
+        case EVENT_REPLAY_PHASE_HOST_ONLY: return BM_REPLAY_PHASE_HOST_ONLY;
+    }
+    return BM_REPLAY_PHASE_CONFIGURE;
+}
+
+BM_Replay_Action_Kind bm_replay_action_kind_from_event(Event_Replay_Action_Kind kind) {
+    switch (kind) {
+        case EVENT_REPLAY_ACTION_FILESYSTEM: return BM_REPLAY_ACTION_FILESYSTEM;
+        case EVENT_REPLAY_ACTION_PROCESS: return BM_REPLAY_ACTION_PROCESS;
+        case EVENT_REPLAY_ACTION_PROBE: return BM_REPLAY_ACTION_PROBE;
+        case EVENT_REPLAY_ACTION_DEPENDENCY_MATERIALIZATION: return BM_REPLAY_ACTION_DEPENDENCY_MATERIALIZATION;
+        case EVENT_REPLAY_ACTION_TEST_DRIVER: return BM_REPLAY_ACTION_TEST_DRIVER;
+        case EVENT_REPLAY_ACTION_HOST_EFFECT: return BM_REPLAY_ACTION_HOST_EFFECT;
+    }
+    return BM_REPLAY_ACTION_FILESYSTEM;
+}
+
 BM_Visibility bm_visibility_from_event(Cmake_Visibility visibility) {
     switch (visibility) {
         case EV_VISIBILITY_PUBLIC: return BM_VISIBILITY_PUBLIC;
@@ -322,6 +352,23 @@ const BM_Build_Step_Record *bm_draft_find_build_step_const(const Build_Model_Dra
     if (!draft) return NULL;
     for (size_t i = 0; i < arena_arr_len(draft->build_steps); ++i) {
         if (nob_sv_eq(draft->build_steps[i].step_key, step_key)) return &draft->build_steps[i];
+    }
+    return NULL;
+}
+
+BM_Replay_Action_Record *bm_draft_find_replay_action(Build_Model_Draft *draft, String_View action_key) {
+    if (!draft) return NULL;
+    for (size_t i = 0; i < arena_arr_len(draft->replay_actions); ++i) {
+        if (nob_sv_eq(draft->replay_actions[i].action_key, action_key)) return &draft->replay_actions[i];
+    }
+    return NULL;
+}
+
+const BM_Replay_Action_Record *bm_draft_find_replay_action_const(const Build_Model_Draft *draft,
+                                                                 String_View action_key) {
+    if (!draft) return NULL;
+    for (size_t i = 0; i < arena_arr_len(draft->replay_actions); ++i) {
+        if (nob_sv_eq(draft->replay_actions[i].action_key, action_key)) return &draft->replay_actions[i];
     }
     return NULL;
 }
@@ -586,6 +633,13 @@ bool bm_builder_apply_event(BM_Builder *builder, const Event *ev) {
                 return bm_builder_handle_build_graph_event(builder, ev);
             }
             return bm_builder_handle_target_event(builder, ev);
+
+        case EVENT_REPLAY_ACTION_DECLARE:
+        case EVENT_REPLAY_ACTION_ADD_INPUT:
+        case EVENT_REPLAY_ACTION_ADD_OUTPUT:
+        case EVENT_REPLAY_ACTION_ADD_ARGV:
+        case EVENT_REPLAY_ACTION_ADD_ENV:
+            return bm_builder_handle_replay_event(builder, ev);
 
         case EVENT_TEST_ENABLE:
         case EVENT_TEST_ADD:

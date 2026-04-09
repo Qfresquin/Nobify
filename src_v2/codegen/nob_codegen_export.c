@@ -130,7 +130,7 @@ static bool cg_export_collect_build_interface_includes(CG_Context *ctx,
     BM_Directory_Id owner_dir = BM_DIRECTORY_ID_INVALID;
     qctx.build_interface_active = true;
     qctx.install_interface_active = false;
-    if (!bm_query_target_effective_include_directories_with_context(ctx->model, target_id, &qctx, ctx->scratch, &includes)) {
+    if (!cg_query_effective_values_cached(ctx, target_id, &qctx, CG_EFFECTIVE_INCLUDE_DIRECTORIES, &includes)) {
         return false;
     }
     owner_dir = bm_query_target_owner_directory(ctx->model, target_id);

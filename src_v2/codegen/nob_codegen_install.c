@@ -178,7 +178,7 @@ static bool cg_export_collect_interface_includes(CG_Context *ctx,
     String_View export_dir = bm_query_export_destination(ctx->model, export_id);
     qctx.build_interface_active = false;
     qctx.install_interface_active = true;
-    if (!bm_query_target_effective_include_directories_with_context(ctx->model, target_id, &qctx, ctx->scratch, &includes)) {
+    if (!cg_query_effective_values_cached(ctx, target_id, &qctx, CG_EFFECTIVE_INCLUDE_DIRECTORIES, &includes)) {
         return false;
     }
     for (size_t i = 0; i < includes.count; ++i) {

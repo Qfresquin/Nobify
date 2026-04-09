@@ -194,6 +194,51 @@ TEST(codegen_generated_nob_compiles_cleanly_with_werror_for_representative_paths
     TEST_PASS();
 }
 
+TEST(codegen_render_multi_config_mixed_language_and_imported_queries_stay_stable) {
+    Nob_String_Builder sb = {0};
+    Codegen_Test_Config config = {
+        .input_path = "memo_codegen_src/CMakeLists.txt",
+        .output_path = "memo_codegen_nob.c",
+        .source_dir = "memo_codegen_src",
+        .binary_dir = "memo_codegen_build",
+    };
+    ASSERT(codegen_render_script_with_config(
+        "project(Test LANGUAGES C CXX)\n"
+        "add_library(iface INTERFACE)\n"
+        "target_include_directories(iface INTERFACE\n"
+        "  \"$<BUILD_INTERFACE:iface/include>\"\n"
+        "  \"$<INSTALL_INTERFACE:iface_install/include>\")\n"
+        "target_compile_definitions(iface INTERFACE\n"
+        "  \"$<$<CONFIG:Debug>:DBG_MODE>\"\n"
+        "  \"$<$<COMPILE_LANGUAGE:C>:C_ONLY>\"\n"
+        "  \"$<$<COMPILE_LANGUAGE:CXX>:CXX_ONLY>\"\n"
+        "  \"$<$<PLATFORM_ID:Linux>:LINUX_ONLY>\")\n"
+        "target_link_libraries(iface INTERFACE \"$<LINK_ONLY:m>\")\n"
+        "add_library(ext SHARED IMPORTED)\n"
+        "set_target_properties(ext PROPERTIES\n"
+        "  IMPORTED_LOCATION imports/libbase.so\n"
+        "  IMPORTED_LOCATION_DEBUG imports/libdebug.so\n"
+        "  IMPORTED_IMPLIB_DEBUG imports/libdebug_link.so\n"
+        "  MAP_IMPORTED_CONFIG_RELWITHDEBINFO Debug\n"
+        "  IMPORTED_LINK_INTERFACE_LANGUAGES_DEBUG \"CXX;C\")\n"
+        "add_executable(app main.c main.cpp)\n"
+        "target_link_libraries(app PRIVATE iface ext)\n",
+        &config,
+        &sb));
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items ? sb.items : "");
+    ASSERT(strstr(output, "DBG_MODE") != NULL);
+    ASSERT(strstr(output, "C_ONLY") != NULL);
+    ASSERT(strstr(output, "CXX_ONLY") != NULL);
+    ASSERT(strstr(output, "LINUX_ONLY") != NULL);
+    ASSERT(strstr(output, "imports/libbase.so") != NULL);
+    ASSERT(strstr(output, "imports/libdebug_link.so") != NULL);
+    ASSERT(strstr(output, "config_matches(g_build_config") != NULL);
+    ASSERT(strstr(output, "-lm") != NULL);
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
 void run_codegen_v2_render_tests(int *passed, int *failed, int *skipped) {
     test_codegen_simple_executable_generates_compilable_nob(passed, failed, skipped);
     test_codegen_static_interface_alias_usage_propagates_flags(passed, failed, skipped);
@@ -201,4 +246,5 @@ void run_codegen_v2_render_tests(int *passed, int *failed, int *skipped) {
     test_codegen_runtime_emits_only_helpers_needed_for_simple_builds(passed, failed, skipped);
     test_codegen_export_only_render_does_not_emit_install_only_helpers(passed, failed, skipped);
     test_codegen_generated_nob_compiles_cleanly_with_werror_for_representative_paths(passed, failed, skipped);
+    test_codegen_render_multi_config_mixed_language_and_imported_queries_stay_stable(passed, failed, skipped);
 }

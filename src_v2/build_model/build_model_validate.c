@@ -166,6 +166,44 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
         }
     }
 
+    for (size_t i = 0; i < arena_arr_len(draft->replay_actions); ++i) {
+        const BM_Replay_Action_Record *action = &draft->replay_actions[i];
+        bm_validate_contiguous_id(action->id == (BM_Replay_Action_Id)i,
+                                  action->provenance,
+                                  sink,
+                                  had_error,
+                                  "replay action id mismatch",
+                                  "replay action ids must be contiguous");
+        bm_validate_owner_directory(draft, action->owner_directory_id, action->provenance, "replay action", sink, had_error);
+        if (bm_string_view_is_empty(action->action_key)) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          action->provenance,
+                          "build_model_validate",
+                          "structural",
+                          "replay action has empty action_key",
+                          "ensure EVENT_REPLAY_ACTION_DECLARE carries a stable replay key");
+        }
+        if (action->kind > BM_REPLAY_ACTION_HOST_EFFECT) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          action->provenance,
+                          "build_model_validate",
+                          "structural",
+                          "replay action kind is invalid",
+                          "map every replay action kind to a canonical BM_Replay_Action_Kind");
+        }
+        if (action->phase > BM_REPLAY_PHASE_HOST_ONLY) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          action->provenance,
+                          "build_model_validate",
+                          "structural",
+                          "replay action phase is invalid",
+                          "map every replay action phase to a canonical BM_Replay_Phase");
+        }
+    }
+
     for (size_t i = 0; i < arena_arr_len(draft->tests); ++i) {
         const BM_Test_Record *test = &draft->tests[i];
         bm_validate_contiguous_id(test->id == (BM_Test_Id)i,

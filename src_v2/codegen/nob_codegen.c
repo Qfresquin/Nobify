@@ -2410,6 +2410,8 @@ static bool cg_init_context(CG_Context *ctx,
     }
 
     ctx->emit_dir_abs = cg_dirname_to_arena(ctx->scratch, ctx->emit_path_abs);
+    ctx->query_session = bm_query_session_create(ctx->scratch, ctx->model);
+    if (!ctx->query_session) return false;
     if (!cg_collect_known_configs(ctx) || !cg_init_targets(ctx) || !cg_init_build_steps(ctx)) return false;
     if (!cg_validate_model_for_backend(ctx)) return false;
     cg_collect_helper_requirements(ctx);

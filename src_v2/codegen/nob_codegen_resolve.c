@@ -1,96 +1,31 @@
 #include "nob_codegen_internal.h"
 
-static bool cg_query_effective_items_cached_impl(CG_Context *ctx,
-                                                 BM_Target_Id id,
-                                                 const BM_Query_Eval_Context *qctx,
-                                                 CG_Effective_Query_Family family,
-                                                 BM_String_Item_Span *out) {
-    BM_String_Item_Span items = {0};
-    if (!ctx || !qctx || !out) return false;
-    out->items = NULL;
-    out->count = 0;
-
-    switch (family) {
-        case CG_EFFECTIVE_INCLUDE_DIRECTORIES:
-            if (!bm_query_target_effective_include_directories_items_with_context(ctx->model, id, qctx, ctx->scratch, &items)) {
-                return false;
-            }
-            break;
-
-        case CG_EFFECTIVE_COMPILE_DEFINITIONS:
-            if (!bm_query_target_effective_compile_definitions_items_with_context(ctx->model, id, qctx, ctx->scratch, &items)) {
-                return false;
-            }
-            break;
-
-        case CG_EFFECTIVE_COMPILE_OPTIONS:
-            if (!bm_query_target_effective_compile_options_items_with_context(ctx->model, id, qctx, ctx->scratch, &items)) {
-                return false;
-            }
-            break;
-
-        case CG_EFFECTIVE_LINK_DIRECTORIES:
-            if (!bm_query_target_effective_link_directories_items_with_context(ctx->model, id, qctx, ctx->scratch, &items)) {
-                return false;
-            }
-            break;
-
-        case CG_EFFECTIVE_LINK_OPTIONS:
-            if (!bm_query_target_effective_link_options_items_with_context(ctx->model, id, qctx, ctx->scratch, &items)) {
-                return false;
-            }
-            break;
-
-        case CG_EFFECTIVE_LINK_LIBRARIES:
-            if (!bm_query_target_effective_link_libraries_items_with_context(ctx->model, id, qctx, ctx->scratch, &items)) {
-                return false;
-            }
-            break;
-
-        case CG_EFFECTIVE_COMPILE_FEATURES:
-            return false;
-    }
-
-    *out = items;
-    return true;
-}
-
 bool cg_query_effective_items_cached(CG_Context *ctx,
                                      BM_Target_Id id,
                                      const BM_Query_Eval_Context *qctx,
                                      CG_Effective_Query_Family family,
                                      BM_String_Item_Span *out) {
-    if (!ctx || !qctx || !out) return false;
-    out->items = NULL;
-    out->count = 0;
+    if (!ctx || !qctx || !out || !ctx->query_session) return false;
+    *out = (BM_String_Item_Span){0};
 
-    for (size_t i = 0; i < arena_arr_len(ctx->effective_item_cache); ++i) {
-        CG_Effective_Item_Cache_Entry *entry = &ctx->effective_item_cache[i];
-        if (!entry->ready) continue;
-        if (entry->target_id != id ||
-            entry->usage_mode != qctx->usage_mode ||
-            entry->family != family ||
-            !nob_sv_eq(entry->config, qctx->config) ||
-            !nob_sv_eq(entry->compile_language, qctx->compile_language)) {
-            continue;
-        }
-        *out = entry->items;
-        return true;
+    switch (family) {
+        case CG_EFFECTIVE_INCLUDE_DIRECTORIES:
+            return bm_query_session_target_effective_include_directories_items(ctx->query_session, id, qctx, out);
+        case CG_EFFECTIVE_COMPILE_DEFINITIONS:
+            return bm_query_session_target_effective_compile_definitions_items(ctx->query_session, id, qctx, out);
+        case CG_EFFECTIVE_COMPILE_OPTIONS:
+            return bm_query_session_target_effective_compile_options_items(ctx->query_session, id, qctx, out);
+        case CG_EFFECTIVE_LINK_DIRECTORIES:
+            return bm_query_session_target_effective_link_directories_items(ctx->query_session, id, qctx, out);
+        case CG_EFFECTIVE_LINK_OPTIONS:
+            return bm_query_session_target_effective_link_options_items(ctx->query_session, id, qctx, out);
+        case CG_EFFECTIVE_LINK_LIBRARIES:
+            return bm_query_session_target_effective_link_libraries_items(ctx->query_session, id, qctx, out);
+        case CG_EFFECTIVE_COMPILE_FEATURES:
+            return false;
     }
 
-    {
-        CG_Effective_Item_Cache_Entry entry = {0};
-        if (!cg_query_effective_items_cached_impl(ctx, id, qctx, family, &entry.items)) return false;
-        entry.target_id = id;
-        entry.usage_mode = qctx->usage_mode;
-        entry.config = qctx->config;
-        entry.compile_language = qctx->compile_language;
-        entry.family = family;
-        entry.ready = true;
-        if (!arena_arr_push(ctx->scratch, ctx->effective_item_cache, entry)) return false;
-        *out = arena_arr_last(ctx->effective_item_cache).items;
-    }
-    return true;
+    return false;
 }
 
 bool cg_query_effective_values_cached(CG_Context *ctx,
@@ -98,61 +33,27 @@ bool cg_query_effective_values_cached(CG_Context *ctx,
                                       const BM_Query_Eval_Context *qctx,
                                       CG_Effective_Query_Family family,
                                       BM_String_Span *out) {
-    if (!ctx || !qctx || !out) return false;
-    out->items = NULL;
-    out->count = 0;
+    if (!ctx || !qctx || !out || !ctx->query_session) return false;
+    *out = (BM_String_Span){0};
 
-    for (size_t i = 0; i < arena_arr_len(ctx->effective_value_cache); ++i) {
-        CG_Effective_Value_Cache_Entry *entry = &ctx->effective_value_cache[i];
-        if (!entry->ready) continue;
-        if (entry->target_id != id ||
-            entry->usage_mode != qctx->usage_mode ||
-            entry->family != family ||
-            !nob_sv_eq(entry->config, qctx->config) ||
-            !nob_sv_eq(entry->compile_language, qctx->compile_language)) {
-            continue;
-        }
-        *out = entry->values;
-        return true;
+    switch (family) {
+        case CG_EFFECTIVE_COMPILE_FEATURES:
+            return bm_query_session_target_effective_compile_features(ctx->query_session, id, qctx, out);
+        case CG_EFFECTIVE_INCLUDE_DIRECTORIES:
+            return bm_query_session_target_effective_include_directories(ctx->query_session, id, qctx, out);
+        case CG_EFFECTIVE_COMPILE_DEFINITIONS:
+            return bm_query_session_target_effective_compile_definitions(ctx->query_session, id, qctx, out);
+        case CG_EFFECTIVE_COMPILE_OPTIONS:
+            return bm_query_session_target_effective_compile_options(ctx->query_session, id, qctx, out);
+        case CG_EFFECTIVE_LINK_DIRECTORIES:
+            return bm_query_session_target_effective_link_directories(ctx->query_session, id, qctx, out);
+        case CG_EFFECTIVE_LINK_OPTIONS:
+            return bm_query_session_target_effective_link_options(ctx->query_session, id, qctx, out);
+        case CG_EFFECTIVE_LINK_LIBRARIES:
+            return bm_query_session_target_effective_link_libraries(ctx->query_session, id, qctx, out);
     }
 
-    {
-        CG_Effective_Value_Cache_Entry entry = {0};
-        bool ok = false;
-        switch (family) {
-            case CG_EFFECTIVE_COMPILE_FEATURES:
-                ok = bm_query_target_effective_compile_features(ctx->model, id, qctx, ctx->scratch, &entry.values);
-                break;
-            case CG_EFFECTIVE_INCLUDE_DIRECTORIES:
-                ok = bm_query_target_effective_include_directories_with_context(ctx->model, id, qctx, ctx->scratch, &entry.values);
-                break;
-            case CG_EFFECTIVE_COMPILE_DEFINITIONS:
-                ok = bm_query_target_effective_compile_definitions_with_context(ctx->model, id, qctx, ctx->scratch, &entry.values);
-                break;
-            case CG_EFFECTIVE_COMPILE_OPTIONS:
-                ok = bm_query_target_effective_compile_options_with_context(ctx->model, id, qctx, ctx->scratch, &entry.values);
-                break;
-            case CG_EFFECTIVE_LINK_DIRECTORIES:
-                ok = bm_query_target_effective_link_directories_with_context(ctx->model, id, qctx, ctx->scratch, &entry.values);
-                break;
-            case CG_EFFECTIVE_LINK_OPTIONS:
-                ok = bm_query_target_effective_link_options_with_context(ctx->model, id, qctx, ctx->scratch, &entry.values);
-                break;
-            case CG_EFFECTIVE_LINK_LIBRARIES:
-                ok = bm_query_target_effective_link_libraries_with_context(ctx->model, id, qctx, ctx->scratch, &entry.values);
-                break;
-        }
-        if (!ok) return false;
-        entry.target_id = id;
-        entry.usage_mode = qctx->usage_mode;
-        entry.config = qctx->config;
-        entry.compile_language = qctx->compile_language;
-        entry.family = family;
-        entry.ready = true;
-        if (!arena_arr_push(ctx->scratch, ctx->effective_value_cache, entry)) return false;
-        *out = arena_arr_last(ctx->effective_value_cache).values;
-    }
-    return true;
+    return false;
 }
 
 bool cg_query_target_file_cached(CG_Context *ctx,
@@ -160,65 +61,20 @@ bool cg_query_target_file_cached(CG_Context *ctx,
                                  const BM_Query_Eval_Context *qctx,
                                  bool linker_file,
                                  String_View *out) {
-    if (!ctx || !qctx || !out) return false;
+    if (!ctx || !qctx || !out || !ctx->query_session) return false;
     *out = nob_sv_from_cstr("");
-
-    for (size_t i = 0; i < arena_arr_len(ctx->target_file_cache); ++i) {
-        CG_Target_File_Cache_Entry *entry = &ctx->target_file_cache[i];
-        if (!entry->ready) continue;
-        if (entry->target_id != id ||
-            entry->linker_file != linker_file ||
-            !nob_sv_eq(entry->config, qctx->config)) {
-            continue;
-        }
-        *out = entry->path;
-        return true;
-    }
-
-    {
-        CG_Target_File_Cache_Entry entry = {0};
-        bool ok = linker_file
-            ? bm_query_target_effective_linker_file(ctx->model, id, qctx, ctx->scratch, &entry.path)
-            : bm_query_target_effective_file(ctx->model, id, qctx, ctx->scratch, &entry.path);
-        if (!ok) return false;
-        entry.target_id = id;
-        entry.config = qctx->config;
-        entry.linker_file = linker_file;
-        entry.ready = true;
-        if (!arena_arr_push(ctx->scratch, ctx->target_file_cache, entry)) return false;
-        *out = arena_arr_last(ctx->target_file_cache).path;
-    }
-    return true;
+    return linker_file
+        ? bm_query_session_target_effective_linker_file(ctx->query_session, id, qctx, out)
+        : bm_query_session_target_effective_file(ctx->query_session, id, qctx, out);
 }
 
 bool cg_query_imported_link_languages_cached(CG_Context *ctx,
                                              BM_Target_Id id,
                                              const BM_Query_Eval_Context *qctx,
                                              BM_String_Span *out) {
-    if (!ctx || !qctx || !out) return false;
-    out->items = NULL;
-    out->count = 0;
-
-    for (size_t i = 0; i < arena_arr_len(ctx->imported_link_lang_cache); ++i) {
-        CG_Imported_Link_Lang_Cache_Entry *entry = &ctx->imported_link_lang_cache[i];
-        if (!entry->ready) continue;
-        if (entry->target_id != id || !nob_sv_eq(entry->config, qctx->config)) continue;
-        *out = entry->languages;
-        return true;
-    }
-
-    {
-        CG_Imported_Link_Lang_Cache_Entry entry = {0};
-        if (!bm_query_target_imported_link_languages(ctx->model, id, qctx, ctx->scratch, &entry.languages)) {
-            return false;
-        }
-        entry.target_id = id;
-        entry.config = qctx->config;
-        entry.ready = true;
-        if (!arena_arr_push(ctx->scratch, ctx->imported_link_lang_cache, entry)) return false;
-        *out = arena_arr_last(ctx->imported_link_lang_cache).languages;
-    }
-    return true;
+    if (!ctx || !qctx || !out || !ctx->query_session) return false;
+    *out = (BM_String_Span){0};
+    return bm_query_session_target_imported_link_languages(ctx->query_session, id, qctx, out);
 }
 
 bool cg_resolve_target_ref(CG_Context *ctx,

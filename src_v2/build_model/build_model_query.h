@@ -4,6 +4,8 @@
 #include "build_model_types.h"
 #include "bm_compile_features.h"
 
+typedef struct BM_Query_Session BM_Query_Session;
+
 typedef enum {
     BM_QUERY_USAGE_COMPILE = 0,
     BM_QUERY_USAGE_LINK,
@@ -19,9 +21,24 @@ typedef struct {
     bool install_interface_active;
 } BM_Query_Eval_Context;
 
+typedef struct {
+    size_t effective_item_hits;
+    size_t effective_item_misses;
+    size_t effective_value_hits;
+    size_t effective_value_misses;
+    size_t target_file_hits;
+    size_t target_file_misses;
+    size_t imported_link_language_hits;
+    size_t imported_link_language_misses;
+} BM_Query_Session_Stats;
+
+BM_Query_Session *bm_query_session_create(Arena *arena, const Build_Model *model);
+const BM_Query_Session_Stats *bm_query_session_stats(const BM_Query_Session *session);
+
 bool bm_model_has_project(const Build_Model *model);
 bool bm_target_id_is_valid(BM_Target_Id id);
 bool bm_build_step_id_is_valid(BM_Build_Step_Id id);
+bool bm_replay_action_id_is_valid(BM_Replay_Action_Id id);
 bool bm_directory_id_is_valid(BM_Directory_Id id);
 bool bm_test_id_is_valid(BM_Test_Id id);
 bool bm_export_id_is_valid(BM_Export_Id id);
@@ -30,6 +47,7 @@ bool bm_package_id_is_valid(BM_Package_Id id);
 size_t bm_query_directory_count(const Build_Model *model);
 size_t bm_query_target_count(const Build_Model *model);
 size_t bm_query_build_step_count(const Build_Model *model);
+size_t bm_query_replay_action_count(const Build_Model *model);
 size_t bm_query_test_count(const Build_Model *model);
 size_t bm_query_install_rule_count(const Build_Model *model);
 size_t bm_query_export_count(const Build_Model *model);
@@ -136,6 +154,15 @@ BM_Build_Step_Id_Span bm_query_build_step_producer_dependencies(const Build_Mode
 BM_String_Span bm_query_build_step_file_dependencies(const Build_Model *model, BM_Build_Step_Id id);
 size_t bm_query_build_step_command_count(const Build_Model *model, BM_Build_Step_Id id);
 BM_String_Span bm_query_build_step_command_argv(const Build_Model *model, BM_Build_Step_Id id, size_t command_index);
+
+BM_Replay_Action_Kind bm_query_replay_action_kind(const Build_Model *model, BM_Replay_Action_Id id);
+BM_Replay_Phase bm_query_replay_action_phase(const Build_Model *model, BM_Replay_Action_Id id);
+BM_Directory_Id bm_query_replay_action_owner_directory(const Build_Model *model, BM_Replay_Action_Id id);
+String_View bm_query_replay_action_working_directory(const Build_Model *model, BM_Replay_Action_Id id);
+BM_String_Span bm_query_replay_action_inputs(const Build_Model *model, BM_Replay_Action_Id id);
+BM_String_Span bm_query_replay_action_outputs(const Build_Model *model, BM_Replay_Action_Id id);
+BM_String_Span bm_query_replay_action_argv(const Build_Model *model, BM_Replay_Action_Id id);
+BM_String_Span bm_query_replay_action_environment(const Build_Model *model, BM_Replay_Action_Id id);
 
 bool bm_query_target_effective_include_directories_items(const Build_Model *model,
                                                          BM_Target_Id id,
@@ -250,6 +277,58 @@ bool bm_query_target_effective_compile_features(const Build_Model *model,
                                                 const BM_Query_Eval_Context *ctx,
                                                 Arena *scratch,
                                                 BM_String_Span *out);
+bool bm_query_session_target_effective_include_directories_items(BM_Query_Session *session,
+                                                                 BM_Target_Id id,
+                                                                 const BM_Query_Eval_Context *ctx,
+                                                                 BM_String_Item_Span *out);
+bool bm_query_session_target_effective_compile_definitions_items(BM_Query_Session *session,
+                                                                 BM_Target_Id id,
+                                                                 const BM_Query_Eval_Context *ctx,
+                                                                 BM_String_Item_Span *out);
+bool bm_query_session_target_effective_compile_options_items(BM_Query_Session *session,
+                                                             BM_Target_Id id,
+                                                             const BM_Query_Eval_Context *ctx,
+                                                             BM_String_Item_Span *out);
+bool bm_query_session_target_effective_link_libraries_items(BM_Query_Session *session,
+                                                            BM_Target_Id id,
+                                                            const BM_Query_Eval_Context *ctx,
+                                                            BM_String_Item_Span *out);
+bool bm_query_session_target_effective_link_options_items(BM_Query_Session *session,
+                                                          BM_Target_Id id,
+                                                          const BM_Query_Eval_Context *ctx,
+                                                          BM_String_Item_Span *out);
+bool bm_query_session_target_effective_link_directories_items(BM_Query_Session *session,
+                                                              BM_Target_Id id,
+                                                              const BM_Query_Eval_Context *ctx,
+                                                              BM_String_Item_Span *out);
+bool bm_query_session_target_effective_include_directories(BM_Query_Session *session,
+                                                           BM_Target_Id id,
+                                                           const BM_Query_Eval_Context *ctx,
+                                                           BM_String_Span *out);
+bool bm_query_session_target_effective_compile_definitions(BM_Query_Session *session,
+                                                           BM_Target_Id id,
+                                                           const BM_Query_Eval_Context *ctx,
+                                                           BM_String_Span *out);
+bool bm_query_session_target_effective_compile_options(BM_Query_Session *session,
+                                                       BM_Target_Id id,
+                                                       const BM_Query_Eval_Context *ctx,
+                                                       BM_String_Span *out);
+bool bm_query_session_target_effective_link_libraries(BM_Query_Session *session,
+                                                      BM_Target_Id id,
+                                                      const BM_Query_Eval_Context *ctx,
+                                                      BM_String_Span *out);
+bool bm_query_session_target_effective_link_options(BM_Query_Session *session,
+                                                    BM_Target_Id id,
+                                                    const BM_Query_Eval_Context *ctx,
+                                                    BM_String_Span *out);
+bool bm_query_session_target_effective_link_directories(BM_Query_Session *session,
+                                                        BM_Target_Id id,
+                                                        const BM_Query_Eval_Context *ctx,
+                                                        BM_String_Span *out);
+bool bm_query_session_target_effective_compile_features(BM_Query_Session *session,
+                                                        BM_Target_Id id,
+                                                        const BM_Query_Eval_Context *ctx,
+                                                        BM_String_Span *out);
 bool bm_query_target_effective_file(const Build_Model *model,
                                     BM_Target_Id id,
                                     const BM_Query_Eval_Context *ctx,
@@ -265,6 +344,18 @@ bool bm_query_target_imported_link_languages(const Build_Model *model,
                                              const BM_Query_Eval_Context *ctx,
                                              Arena *scratch,
                                              BM_String_Span *out);
+bool bm_query_session_target_effective_file(BM_Query_Session *session,
+                                            BM_Target_Id id,
+                                            const BM_Query_Eval_Context *ctx,
+                                            String_View *out);
+bool bm_query_session_target_effective_linker_file(BM_Query_Session *session,
+                                                   BM_Target_Id id,
+                                                   const BM_Query_Eval_Context *ctx,
+                                                   String_View *out);
+bool bm_query_session_target_imported_link_languages(BM_Query_Session *session,
+                                                     BM_Target_Id id,
+                                                     const BM_Query_Eval_Context *ctx,
+                                                     BM_String_Span *out);
 
 bool bm_query_testing_enabled(const Build_Model *model);
 String_View bm_query_test_name(const Build_Model *model, BM_Test_Id id);

@@ -83,6 +83,31 @@ static const char *event_build_step_kind_name(Event_Build_Step_Kind kind) {
     return "unknown";
 }
 
+static const char *event_replay_phase_name(Event_Replay_Phase phase) {
+    switch (phase) {
+        case EVENT_REPLAY_PHASE_CONFIGURE: return "configure";
+        case EVENT_REPLAY_PHASE_BUILD: return "build";
+        case EVENT_REPLAY_PHASE_TEST: return "test";
+        case EVENT_REPLAY_PHASE_INSTALL: return "install";
+        case EVENT_REPLAY_PHASE_EXPORT: return "export";
+        case EVENT_REPLAY_PHASE_PACKAGE: return "package";
+        case EVENT_REPLAY_PHASE_HOST_ONLY: return "host_only";
+    }
+    return "unknown";
+}
+
+static const char *event_replay_action_kind_name(Event_Replay_Action_Kind kind) {
+    switch (kind) {
+        case EVENT_REPLAY_ACTION_FILESYSTEM: return "filesystem";
+        case EVENT_REPLAY_ACTION_PROCESS: return "process";
+        case EVENT_REPLAY_ACTION_PROBE: return "probe";
+        case EVENT_REPLAY_ACTION_DEPENDENCY_MATERIALIZATION: return "dependency_materialization";
+        case EVENT_REPLAY_ACTION_TEST_DRIVER: return "test_driver";
+        case EVENT_REPLAY_ACTION_HOST_EFFECT: return "host_effect";
+    }
+    return "unknown";
+}
+
 static const char *event_export_source_kind_name(Event_Export_Source_Kind kind) {
     switch (kind) {
         case EVENT_EXPORT_SOURCE_INSTALL_EXPORT: return "install_export";
@@ -466,6 +491,27 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
                 return false;
             }
             break;
+        case EVENT_REPLAY_ACTION_DECLARE:
+            if (!event_copy_sv_inplace(arena, &ev->as.replay_action_declare.action_key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.replay_action_declare.working_directory)) return false;
+            break;
+        case EVENT_REPLAY_ACTION_ADD_INPUT:
+            if (!event_copy_sv_inplace(arena, &ev->as.replay_action_add_input.action_key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.replay_action_add_input.path)) return false;
+            break;
+        case EVENT_REPLAY_ACTION_ADD_OUTPUT:
+            if (!event_copy_sv_inplace(arena, &ev->as.replay_action_add_output.action_key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.replay_action_add_output.path)) return false;
+            break;
+        case EVENT_REPLAY_ACTION_ADD_ARGV:
+            if (!event_copy_sv_inplace(arena, &ev->as.replay_action_add_argv.action_key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.replay_action_add_argv.value)) return false;
+            break;
+        case EVENT_REPLAY_ACTION_ADD_ENV:
+            if (!event_copy_sv_inplace(arena, &ev->as.replay_action_add_env.action_key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.replay_action_add_env.key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.replay_action_add_env.value)) return false;
+            break;
         case EVENT_TARGET_PROP_SET:
             if (!event_copy_sv_inplace(arena, &ev->as.target_prop_set.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_prop_set.key)) return false;
@@ -815,6 +861,44 @@ static void event_dump_one(const Event *ev) {
                    ev->as.build_step_add_command.step_key.data ? ev->as.build_step_add_command.step_key.data : "",
                    (unsigned)ev->as.build_step_add_command.command_index,
                    ev->as.build_step_add_command.argc);
+            break;
+        case EVENT_REPLAY_ACTION_DECLARE:
+            printf(" action=%.*s kind=%s phase=%s",
+                   (int)ev->as.replay_action_declare.action_key.count,
+                   ev->as.replay_action_declare.action_key.data ? ev->as.replay_action_declare.action_key.data : "",
+                   event_replay_action_kind_name(ev->as.replay_action_declare.action_kind),
+                   event_replay_phase_name(ev->as.replay_action_declare.phase));
+            break;
+        case EVENT_REPLAY_ACTION_ADD_INPUT:
+            printf(" action=%.*s path=%.*s",
+                   (int)ev->as.replay_action_add_input.action_key.count,
+                   ev->as.replay_action_add_input.action_key.data ? ev->as.replay_action_add_input.action_key.data : "",
+                   (int)ev->as.replay_action_add_input.path.count,
+                   ev->as.replay_action_add_input.path.data ? ev->as.replay_action_add_input.path.data : "");
+            break;
+        case EVENT_REPLAY_ACTION_ADD_OUTPUT:
+            printf(" action=%.*s path=%.*s",
+                   (int)ev->as.replay_action_add_output.action_key.count,
+                   ev->as.replay_action_add_output.action_key.data ? ev->as.replay_action_add_output.action_key.data : "",
+                   (int)ev->as.replay_action_add_output.path.count,
+                   ev->as.replay_action_add_output.path.data ? ev->as.replay_action_add_output.path.data : "");
+            break;
+        case EVENT_REPLAY_ACTION_ADD_ARGV:
+            printf(" action=%.*s arg_index=%u value=%.*s",
+                   (int)ev->as.replay_action_add_argv.action_key.count,
+                   ev->as.replay_action_add_argv.action_key.data ? ev->as.replay_action_add_argv.action_key.data : "",
+                   (unsigned)ev->as.replay_action_add_argv.arg_index,
+                   (int)ev->as.replay_action_add_argv.value.count,
+                   ev->as.replay_action_add_argv.value.data ? ev->as.replay_action_add_argv.value.data : "");
+            break;
+        case EVENT_REPLAY_ACTION_ADD_ENV:
+            printf(" action=%.*s key=%.*s value=%.*s",
+                   (int)ev->as.replay_action_add_env.action_key.count,
+                   ev->as.replay_action_add_env.action_key.data ? ev->as.replay_action_add_env.action_key.data : "",
+                   (int)ev->as.replay_action_add_env.key.count,
+                   ev->as.replay_action_add_env.key.data ? ev->as.replay_action_add_env.key.data : "",
+                   (int)ev->as.replay_action_add_env.value.count,
+                   ev->as.replay_action_add_env.value.data ? ev->as.replay_action_add_env.value.data : "");
             break;
         case EVENT_TARGET_PROP_SET:
             printf(" target=%.*s key=%.*s",

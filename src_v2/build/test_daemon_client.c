@@ -18,25 +18,44 @@ static uint64_t test_daemon_client_next_request_id(void) {
     return ((uint64_t)getpid() << 32) ^ (uint64_t)time(NULL) ^ counter;
 }
 
+static bool test_daemon_client_copy_cstr(char *dst, size_t dst_size, const char *src) {
+    if (!dst || dst_size == 0) return false;
+    if (snprintf(dst, dst_size, "%s", src ? src : "") >= (int)dst_size) return false;
+    return true;
+}
+
 static bool test_daemon_client_copy_status(Test_Daemon_Status *out_status,
                                            const Test_Daemon_Result_Payload *payload) {
     if (!out_status || !payload) return false;
     memset(out_status, 0, sizeof(*out_status));
     out_status->state = (Test_Daemon_State)payload->daemon_state;
     out_status->pid = (pid_t)payload->pid;
-    if (snprintf(out_status->socket_path,
-                 sizeof(out_status->socket_path),
-                 "%s",
-                 payload->socket_path) >= (int)sizeof(out_status->socket_path)) {
-        return false;
-    }
-    if (snprintf(out_status->summary,
-                 sizeof(out_status->summary),
-                 "%s",
-                 payload->summary) >= (int)sizeof(out_status->summary)) {
-        return false;
-    }
-    return true;
+    out_status->daemon_reachable = true;
+    out_status->socket_present = true;
+    out_status->pid_file_present = payload->pid != 0;
+    out_status->pid_alive = payload->pid != 0;
+    out_status->active_request = payload->active_request;
+    out_status->cache_launcher_kind = (Test_Runner_Launcher_Kind)payload->cache_launcher_kind;
+    out_status->cache_launcher_reason = (Test_Daemon_Launcher_Cache_Reason)payload->cache_launcher_reason;
+    out_status->cache_preflight_reason = (Test_Daemon_Preflight_Reason)payload->cache_preflight_reason;
+    return test_daemon_client_copy_cstr(out_status->socket_path,
+                                        sizeof(out_status->socket_path),
+                                        payload->socket_path) &&
+           test_daemon_client_copy_cstr(out_status->preserved_workspace_path,
+                                        sizeof(out_status->preserved_workspace_path),
+                                        payload->preserved_workspace_path) &&
+           test_daemon_client_copy_cstr(out_status->stdout_log_path,
+                                        sizeof(out_status->stdout_log_path),
+                                        payload->stdout_log_path) &&
+           test_daemon_client_copy_cstr(out_status->stderr_log_path,
+                                        sizeof(out_status->stderr_log_path),
+                                        payload->stderr_log_path) &&
+           test_daemon_client_copy_cstr(out_status->detail,
+                                        sizeof(out_status->detail),
+                                        payload->detail) &&
+           test_daemon_client_copy_cstr(out_status->summary,
+                                        sizeof(out_status->summary),
+                                        payload->summary);
 }
 
 static bool test_daemon_client_copy_result(Test_Runner_Result *out_result,
@@ -45,31 +64,18 @@ static bool test_daemon_client_copy_result(Test_Runner_Result *out_result,
     *out_result = (Test_Runner_Result){0};
     out_result->ok = payload->runner_ok != 0;
     out_result->exit_code = payload->exit_code;
-    if (snprintf(out_result->preserved_workspace_path,
-                 sizeof(out_result->preserved_workspace_path),
-                 "%s",
-                 payload->preserved_workspace_path) >= (int)sizeof(out_result->preserved_workspace_path)) {
-        return false;
-    }
-    if (snprintf(out_result->stdout_log_path,
-                 sizeof(out_result->stdout_log_path),
-                 "%s",
-                 payload->stdout_log_path) >= (int)sizeof(out_result->stdout_log_path)) {
-        return false;
-    }
-    if (snprintf(out_result->stderr_log_path,
-                 sizeof(out_result->stderr_log_path),
-                 "%s",
-                 payload->stderr_log_path) >= (int)sizeof(out_result->stderr_log_path)) {
-        return false;
-    }
-    if (snprintf(out_result->summary,
-                 sizeof(out_result->summary),
-                 "%s",
-                 payload->summary) >= (int)sizeof(out_result->summary)) {
-        return false;
-    }
-    return true;
+    return test_daemon_client_copy_cstr(out_result->preserved_workspace_path,
+                                        sizeof(out_result->preserved_workspace_path),
+                                        payload->preserved_workspace_path) &&
+           test_daemon_client_copy_cstr(out_result->stdout_log_path,
+                                        sizeof(out_result->stdout_log_path),
+                                        payload->stdout_log_path) &&
+           test_daemon_client_copy_cstr(out_result->stderr_log_path,
+                                        sizeof(out_result->stderr_log_path),
+                                        payload->stderr_log_path) &&
+           test_daemon_client_copy_cstr(out_result->summary,
+                                        sizeof(out_result->summary),
+                                        payload->summary);
 }
 
 static int test_daemon_client_connect(void) {
@@ -125,6 +131,83 @@ static bool test_daemon_client_pid_alive(pid_t pid) {
     return kill(pid, 0) == 0 || errno == EPERM;
 }
 
+bool test_daemon_client_inspect_local_status(Test_Daemon_Status *out_status) {
+    pid_t pid = 0;
+    bool pid_file_present = false;
+    bool socket_present = false;
+    bool pid_alive = false;
+
+    if (!out_status) return false;
+    *out_status = (Test_Daemon_Status){0};
+    out_status->state = TEST_DAEMON_STATE_STOPPED;
+    out_status->cache_launcher_kind = TEST_RUNNER_LAUNCHER_NONE;
+    out_status->cache_launcher_reason = TEST_DAEMON_LAUNCHER_CACHE_COLD;
+    out_status->cache_preflight_reason = TEST_DAEMON_PREFLIGHT_REASON_COLD;
+
+    pid_file_present = test_daemon_client_read_pid_file(&pid);
+    socket_present = nob_file_exists(TEST_DAEMON_SOCKET_PATH);
+    pid_alive = pid_file_present && test_daemon_client_pid_alive(pid);
+
+    out_status->pid = pid;
+    out_status->socket_present = socket_present;
+    out_status->pid_file_present = pid_file_present;
+    out_status->pid_alive = pid_alive;
+    out_status->stale_socket = socket_present && !pid_alive;
+    out_status->stale_pid_file = pid_file_present && !pid_alive;
+
+    if (!test_daemon_client_copy_cstr(out_status->socket_path,
+                                      sizeof(out_status->socket_path),
+                                      TEST_DAEMON_SOCKET_PATH) ||
+        !test_daemon_client_copy_cstr(out_status->summary,
+                                      sizeof(out_status->summary),
+                                      "stopped")) {
+        return false;
+    }
+
+    if (pid_alive) {
+        return test_daemon_client_copy_cstr(out_status->detail,
+                                            sizeof(out_status->detail),
+                                            "pid file is alive but the daemon control socket is unresponsive");
+    }
+    if (out_status->stale_socket && out_status->stale_pid_file) {
+        return test_daemon_client_copy_cstr(out_status->detail,
+                                            sizeof(out_status->detail),
+                                            "stale socket and pid artifacts are present");
+    }
+    if (out_status->stale_socket) {
+        return test_daemon_client_copy_cstr(out_status->detail,
+                                            sizeof(out_status->detail),
+                                            "stale daemon socket artifact is present");
+    }
+    if (out_status->stale_pid_file) {
+        return test_daemon_client_copy_cstr(out_status->detail,
+                                            sizeof(out_status->detail),
+                                            "stale daemon pid artifact is present");
+    }
+    return test_daemon_client_copy_cstr(out_status->detail, sizeof(out_status->detail), "");
+}
+
+static void test_daemon_client_log_error_payload(const Test_Daemon_Error_Payload *payload) {
+    const Test_Daemon_Request_Metadata *active = NULL;
+
+    if (!payload) return;
+    active = &payload->active_request;
+    nob_log(NOB_ERROR,
+            "[daemon:%s] %s",
+            test_daemon_error_code_name((Test_Daemon_Error_Code)payload->code),
+            payload->message);
+    if ((Test_Daemon_Request_Kind)active->kind == TEST_DAEMON_REQUEST_NONE) return;
+
+    nob_log(NOB_ERROR,
+            "daemon state=%s active=%s policy=%s module=%s profile=%s duration=%lluus",
+            test_daemon_state_name((Test_Daemon_State)payload->daemon_state),
+            test_daemon_request_kind_name((Test_Daemon_Request_Kind)active->kind),
+            test_daemon_admission_policy_name((Test_Daemon_Admission_Policy)active->admission_policy),
+            active->module_name[0] != '\0' ? active->module_name : "<none>",
+            active->profile_name[0] != '\0' ? active->profile_name : "<none>",
+            (unsigned long long)active->active_duration_usec);
+}
+
 static bool test_daemon_client_request_control(Test_Daemon_Control_Command command,
                                                Test_Daemon_Status *out_status,
                                                bool *out_ok) {
@@ -146,7 +229,11 @@ static bool test_daemon_client_request_control(Test_Daemon_Control_Command comma
 
     if (message.header.type == TEST_DAEMON_MESSAGE_ERROR) {
         const Test_Daemon_Error_Payload *error_payload = (const Test_Daemon_Error_Payload *)message.payload;
-        nob_log(NOB_ERROR, "%s", error_payload->message);
+        if (message.header.payload_len != sizeof(*error_payload)) {
+            nob_log(NOB_ERROR, "unexpected daemon error payload size");
+            goto defer;
+        }
+        test_daemon_client_log_error_payload(error_payload);
         goto defer;
     }
     if (message.header.type != TEST_DAEMON_MESSAGE_RESULT ||
@@ -181,16 +268,22 @@ bool test_daemon_client_stop(Test_Daemon_Status *out_status) {
     return test_daemon_client_request_control(TEST_DAEMON_CONTROL_STOP, out_status, &ok) && ok;
 }
 
-bool test_daemon_client_cleanup_stale_artifacts(void) {
-    pid_t pid = 0;
-    bool removed = false;
-    bool pid_known = test_daemon_client_read_pid_file(&pid);
-    bool pid_alive = pid_known && test_daemon_client_pid_alive(pid);
+bool test_daemon_client_stop_force(Test_Daemon_Status *out_status) {
+    bool ok = false;
+    return test_daemon_client_request_control(TEST_DAEMON_CONTROL_STOP_FORCE, out_status, &ok) && ok;
+}
 
-    if (!pid_alive && nob_file_exists(TEST_DAEMON_SOCKET_PATH)) {
+bool test_daemon_client_cleanup_stale_artifacts(void) {
+    Test_Daemon_Status status = {0};
+    bool removed = false;
+
+    if (!test_daemon_client_inspect_local_status(&status)) return false;
+    if (status.pid_alive) return false;
+
+    if (status.socket_present) {
         if (unlink(TEST_DAEMON_SOCKET_PATH) == 0 || errno == ENOENT) removed = true;
     }
-    if (!pid_alive && nob_file_exists(TEST_DAEMON_PID_PATH)) {
+    if (status.pid_file_present) {
         if (unlink(TEST_DAEMON_PID_PATH) == 0 || errno == ENOENT) removed = true;
     }
     return removed || (!nob_file_exists(TEST_DAEMON_SOCKET_PATH) && !nob_file_exists(TEST_DAEMON_PID_PATH));
@@ -329,7 +422,11 @@ bool test_daemon_client_run_request(const Test_Runner_Request *request,
             case TEST_DAEMON_MESSAGE_ERROR: {
                 const Test_Daemon_Error_Payload *error_payload =
                     (const Test_Daemon_Error_Payload *)message.payload;
-                nob_log(NOB_ERROR, "%s", error_payload->message);
+                if (message.header.payload_len != sizeof(*error_payload)) {
+                    nob_log(NOB_ERROR, "unexpected daemon error payload size");
+                    goto defer;
+                }
+                test_daemon_client_log_error_payload(error_payload);
                 goto defer;
             }
 
@@ -422,7 +519,11 @@ bool test_daemon_client_watch(const Test_Runner_Watch_Request *request) {
             case TEST_DAEMON_MESSAGE_ERROR: {
                 const Test_Daemon_Error_Payload *error_payload =
                     (const Test_Daemon_Error_Payload *)message.payload;
-                nob_log(NOB_ERROR, "%s", error_payload->message);
+                if (message.header.payload_len != sizeof(*error_payload)) {
+                    nob_log(NOB_ERROR, "unexpected daemon error payload size");
+                    goto defer;
+                }
+                test_daemon_client_log_error_payload(error_payload);
                 goto defer;
             }
 
