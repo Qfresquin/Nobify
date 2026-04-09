@@ -1053,6 +1053,167 @@ TEST(codegen_configure_replay_supported_effects_and_phase_cli_work) {
     TEST_PASS();
 }
 
+TEST(codegen_test_phase_auto_builds_registered_targets_and_honors_config_filters) {
+    const char *release_test_argv[] = {"--config", "Release", "test", "cfg_only"};
+    const char *debug_test_argv[] = {"--config", "Debug", "test", "cfg_only"};
+    const char *smoke_test_argv[] = {"test", "smoke"};
+    const char *script =
+        "project(Test C)\n"
+        "enable_testing()\n"
+        "add_executable(app main.c)\n"
+        "add_test(NAME smoke COMMAND app)\n"
+        "add_test(NAME cfg_only COMMAND app CONFIGURATIONS Debug)\n";
+    Codegen_Test_Config config = {
+        .input_path = "CMakeLists.txt",
+        .output_path = "test_phase_nob.c",
+        .source_dir = "test_phase_src",
+        .binary_dir = "test_phase_build",
+    };
+
+    ASSERT(codegen_write_text_file(
+        "test_phase_src/main.c",
+        "#include <stdio.h>\n"
+        "int main(void) {\n"
+        "    FILE *fp = fopen(\"smoke.txt\", \"wb\");\n"
+        "    if (!fp) return 1;\n"
+        "    fputs(\"ran\\n\", fp);\n"
+        "    fclose(fp);\n"
+        "    return 0;\n"
+        "}\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("test_phase_nob.c", "test_phase_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./test_phase_nob_gen", release_test_argv, NOB_ARRAY_LEN(release_test_argv)));
+    ASSERT(!test_ws_host_path_exists("test_phase_build/app"));
+    ASSERT(!test_ws_host_path_exists("test_phase_build/smoke.txt"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./test_phase_nob_gen", debug_test_argv, NOB_ARRAY_LEN(debug_test_argv)));
+    ASSERT(test_ws_host_path_exists("test_phase_build/app"));
+    ASSERT(test_ws_host_path_exists("test_phase_build/smoke.txt"));
+
+    ASSERT(codegen_run_binary_in_dir(".", "./test_phase_nob_gen", "clean", NULL));
+    ASSERT(!test_ws_host_path_exists("test_phase_build/app"));
+    ASSERT(test_fs_delete_file_like("test_phase_build/smoke.txt"));
+    ASSERT(!test_ws_host_path_exists("test_phase_build/smoke.txt"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./test_phase_nob_gen", smoke_test_argv, NOB_ARRAY_LEN(smoke_test_argv)));
+    ASSERT(test_ws_host_path_exists("test_phase_build/app"));
+    ASSERT(test_ws_host_path_exists("test_phase_build/smoke.txt"));
+    TEST_PASS();
+}
+
+TEST(codegen_fetchcontent_local_materialization_replays_from_clean_workspace) {
+    const char *script =
+        "include(FetchContent)\n"
+        "set(FETCHCONTENT_BASE_DIR \"${CMAKE_CURRENT_BINARY_DIR}/fc_base\")\n"
+        "set(FC_ARCHIVE_PATH \"${CMAKE_CURRENT_SOURCE_DIR}/fc_archive_dep.tar\")\n"
+        "file(ARCHIVE_CREATE OUTPUT \"${FC_ARCHIVE_PATH}\" PATHS \"${CMAKE_CURRENT_SOURCE_DIR}/fc_archive_src/CMakeLists.txt\" FORMAT paxr MTIME 0)\n"
+        "FetchContent_Declare(SavedDep SOURCE_DIR \"${CMAKE_CURRENT_SOURCE_DIR}/fc_saved_dep\")\n"
+        "FetchContent_Declare(ArchiveDep URL \"${FC_ARCHIVE_PATH}\")\n"
+        "FetchContent_MakeAvailable(SavedDep ArchiveDep)\n"
+        "FetchContent_MakeAvailable(SavedDep ArchiveDep)\n";
+    Codegen_Test_Config config = {
+        .input_path = "CMakeLists.txt",
+        .output_path = "fetchcontent_local_nob.c",
+        .source_dir = "fetchcontent_local_src",
+        .binary_dir = "fetchcontent_local_build",
+    };
+
+    if (!codegen_host_program_available("tar")) {
+        TEST_SKIP("requires tar for local FetchContent archive replay");
+    }
+
+    ASSERT(codegen_write_text_file(
+        "fetchcontent_local_src/fc_saved_dep/CMakeLists.txt",
+        "file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/from_saved.txt\" \"saved-subdir\\n\")\n"));
+    ASSERT(codegen_write_text_file(
+        "fetchcontent_local_src/fc_archive_src/CMakeLists.txt",
+        "file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/from_archive.txt\" \"archive-subdir\\n\")\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("fetchcontent_local_nob.c", "fetchcontent_local_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir(".", "./fetchcontent_local_nob_gen", "configure", NULL));
+    ASSERT(test_ws_host_path_exists("fetchcontent_local_build/fc_base/saveddep-build"));
+    ASSERT(test_ws_host_path_exists("fetchcontent_local_build/fc_base/archivedep-src/CMakeLists.txt"));
+    ASSERT(test_ws_host_path_exists("fetchcontent_local_build/fc_base/archivedep-build"));
+    TEST_PASS();
+}
+
+TEST(codegen_ctest_local_dashboard_replay_stages_testing_tree) {
+    Arena *arena = arena_create(64 * 1024);
+    String_View tag_file = {0};
+    size_t tag_len = 0;
+    char tag_dir[_TINYDIR_PATH_MAX] = {0};
+    const char *test_argv[] = {"test"};
+    const char *script =
+        "set(CMAKE_SOURCE_DIR \"${CMAKE_CURRENT_LIST_DIR}\")\n"
+        "set(CMAKE_BINARY_DIR \"${CMAKE_CURRENT_LIST_DIR}\")\n"
+        "set(CMAKE_CURRENT_SOURCE_DIR \"${CMAKE_CURRENT_LIST_DIR}\")\n"
+        "set(CMAKE_CURRENT_BINARY_DIR \"${CMAKE_CURRENT_LIST_DIR}\")\n"
+        "set(CTEST_SOURCE_DIRECTORY \"${CMAKE_CURRENT_LIST_DIR}/ctest_dash_src\")\n"
+        "set(CTEST_BINARY_DIRECTORY \"${CMAKE_CURRENT_LIST_DIR}/ctest_dash_build\")\n"
+        "set(CTEST_CMAKE_COMMAND \"${CMAKE_COMMAND}\")\n"
+        "set(CTEST_BUILD_COMMAND \"${CMAKE_COMMAND} --build .\")\n"
+        "ctest_empty_binary_directory(\"${CTEST_BINARY_DIRECTORY}\")\n"
+        "ctest_start(Experimental \"${CTEST_SOURCE_DIRECTORY}\" \"${CTEST_BINARY_DIRECTORY}\" QUIET)\n"
+        "ctest_configure(QUIET)\n"
+        "ctest_build(QUIET)\n"
+        "ctest_test(QUIET)\n"
+        "ctest_sleep(0.01)\n";
+    Codegen_Test_Config config = {
+        .input_path = "CMakeLists.txt",
+        .output_path = "ctest_local_nob.c",
+        .source_dir = "ctest_local_src",
+        .binary_dir = "ctest_local_build",
+    };
+
+    ASSERT(arena != NULL);
+    if (!codegen_host_cmake_available()) {
+        arena_destroy(arena);
+        TEST_SKIP("requires host cmake for local ctest replay");
+    }
+
+    ASSERT(codegen_write_text_file(
+        "ctest_local_src/ctest_dash_src/CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(C3Dash C)\n"
+        "enable_testing()\n"
+        "add_executable(dash main.c)\n"
+        "add_test(NAME dash_run COMMAND dash)\n"));
+    ASSERT(codegen_write_text_file(
+        "ctest_local_src/ctest_dash_src/main.c",
+        "#include <stdio.h>\n"
+        "int main(void) {\n"
+        "    FILE *fp = fopen(\"dash-test.txt\", \"wb\");\n"
+        "    if (!fp) return 1;\n"
+        "    fputs(\"dash\\n\", fp);\n"
+        "    fclose(fp);\n"
+        "    return 0;\n"
+        "}\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("ctest_local_nob.c", "ctest_local_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./ctest_local_nob_gen", test_argv, NOB_ARRAY_LEN(test_argv)));
+    ASSERT(test_ws_host_path_exists("ctest_dash_build/Testing/TAG"));
+    ASSERT(test_ws_host_path_exists("ctest_dash_build/dash"));
+    ASSERT(test_ws_host_path_exists("ctest_dash_build/dash-test.txt"));
+    ASSERT(codegen_load_text_file_to_arena(arena, "ctest_dash_build/Testing/TAG", &tag_file));
+    while (tag_len < tag_file.count && tag_file.data[tag_len] != '\n' && tag_file.data[tag_len] != '\r') tag_len++;
+    ASSERT(tag_len > 0);
+    ASSERT(snprintf(tag_dir,
+                    sizeof(tag_dir),
+                    "ctest_dash_build/Testing/%.*s",
+                    (int)tag_len,
+                    tag_file.data) < (int)sizeof(tag_dir));
+    ASSERT(test_ws_host_path_exists(tag_dir));
+    ASSERT(test_ws_host_path_exists(nob_temp_sprintf("%s/Start.txt", tag_dir)));
+    ASSERT(test_ws_host_path_exists(nob_temp_sprintf("%s/Configure.xml", tag_dir)));
+    ASSERT(test_ws_host_path_exists(nob_temp_sprintf("%s/Build.xml", tag_dir)));
+    ASSERT(test_ws_host_path_exists(nob_temp_sprintf("%s/Test.xml", tag_dir)));
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(codegen_install_export_and_package_auto_configure_from_clean_workspace) {
     const char *install_argv[] = {"install", "--prefix", "cfg_auto_prefix"};
     const char *export_argv[] = {"export"};
@@ -1961,6 +2122,9 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_cxx_static_dependency_uses_cxx_driver_for_link_out_of_source(passed, failed, skipped);
     test_codegen_clean_removes_out_of_source_outputs_but_preserves_binary_root(passed, failed, skipped);
     test_codegen_configure_replay_supported_effects_and_phase_cli_work(passed, failed, skipped);
+    test_codegen_test_phase_auto_builds_registered_targets_and_honors_config_filters(passed, failed, skipped);
+    test_codegen_fetchcontent_local_materialization_replays_from_clean_workspace(passed, failed, skipped);
+    test_codegen_ctest_local_dashboard_replay_stages_testing_tree(passed, failed, skipped);
     test_codegen_install_export_and_package_auto_configure_from_clean_workspace(passed, failed, skipped);
     test_codegen_install_full_custom_prefix_preserves_program_mode_and_directory_semantics(passed, failed, skipped);
     test_codegen_install_component_selection_and_default_component_fallback_work(passed, failed, skipped);

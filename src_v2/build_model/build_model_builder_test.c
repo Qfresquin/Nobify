@@ -19,6 +19,18 @@ bool bm_builder_handle_test_event(BM_Builder *builder, const Event *ev) {
             test.owner_directory_id = current_directory_id;
             test.provenance = bm_provenance_from_event(builder->arena, ev);
             test.command_expand_lists = ev->as.test_add.command_expand_lists;
+            for (size_t cfg_index = 0; cfg_index < ev->as.test_add.configuration_count; ++cfg_index) {
+                String_View owned_cfg = {0};
+                if (!bm_copy_string(builder->arena,
+                                    ev->as.test_add.configurations[cfg_index],
+                                    &owned_cfg) ||
+                    !arena_arr_push(builder->arena, test.configurations, owned_cfg)) {
+                    return bm_builder_error(builder,
+                                            ev,
+                                            "failed to append test configuration",
+                                            "increase arena capacity");
+                }
+            }
             if (!bm_copy_string(builder->arena, ev->as.test_add.name, &test.name) ||
                 !bm_copy_string(builder->arena, ev->as.test_add.command, &test.command) ||
                 !bm_copy_string(builder->arena, ev->as.test_add.working_dir, &test.working_dir) ||

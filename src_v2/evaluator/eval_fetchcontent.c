@@ -49,6 +49,163 @@ static bool fetchcontent_git_emit_failure(EvalExecContext *ctx,
                                           const Node *node,
                                           String_View cause,
                                           String_View detail);
+static String_View fetchcontent_current_source_dir(EvalExecContext *ctx);
+static bool fetchcontent_looks_like_url(String_View value);
+
+static bool fetchcontent_parse_expected_hash(String_View in,
+                                             String_View *out_algo,
+                                             String_View *out_hex) {
+    if (!out_algo || !out_hex) return false;
+    *out_algo = nob_sv_from_cstr("");
+    *out_hex = nob_sv_from_cstr("");
+    for (size_t i = 0; i < in.count; ++i) {
+        if (in.data[i] != '=') continue;
+        *out_algo = nob_sv_from_parts(in.data, i);
+        *out_hex = nob_sv_from_parts(in.data + i + 1, in.count - i - 1);
+        return out_algo->count > 0 && out_hex->count > 0;
+    }
+    return false;
+}
+
+static String_View fetchcontent_strip_file_scheme_temp(EvalExecContext *ctx, String_View value) {
+    if (!ctx) return nob_sv_from_cstr("");
+    if (value.count >= 7 &&
+        (memcmp(value.data, "file://", 7) == 0 || memcmp(value.data, "FILE://", 7) == 0)) {
+        return sv_copy_to_temp_arena(ctx, nob_sv_from_parts(value.data + 7, value.count - 7));
+    }
+    return value;
+}
+
+static bool fetchcontent_emit_replay_marker(EvalExecContext *ctx,
+                                            Cmake_Event_Origin origin) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctx) return false;
+    return eval_begin_replay_action(ctx,
+                                    origin,
+                                    EVENT_REPLAY_ACTION_DEPENDENCY_MATERIALIZATION,
+                                    EVENT_REPLAY_OPCODE_NONE,
+                                    EVENT_REPLAY_PHASE_CONFIGURE,
+                                    eval_current_binary_dir(ctx),
+                                    &action_key);
+}
+
+static bool fetchcontent_emit_replay_source_dir(EvalExecContext *ctx,
+                                                Cmake_Event_Origin origin,
+                                                String_View dependency_name,
+                                                String_View source_dir,
+                                                String_View binary_dir) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctx) return false;
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_DEPENDENCY_MATERIALIZATION,
+                                  EVENT_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR,
+                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_current_binary_dir(ctx),
+                                  &action_key) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, source_dir) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, binary_dir) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, dependency_name)) {
+        return false;
+    }
+    return true;
+}
+
+static bool fetchcontent_emit_replay_local_archive(EvalExecContext *ctx,
+                                                   Cmake_Event_Origin origin,
+                                                   String_View dependency_name,
+                                                   String_View archive_path,
+                                                   String_View source_dir,
+                                                   String_View binary_dir,
+                                                   String_View hash_algo,
+                                                   String_View hash_digest,
+                                                   bool preserve_timestamps) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctx) return false;
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_DEPENDENCY_MATERIALIZATION,
+                                  EVENT_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE,
+                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_current_binary_dir(ctx),
+                                  &action_key) ||
+        !eval_emit_replay_action_add_input(ctx, origin, action_key, archive_path) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, source_dir) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, binary_dir) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, dependency_name) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 1, hash_algo) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 2, hash_digest) ||
+        !eval_emit_replay_action_add_argv(ctx,
+                                          origin,
+                                          action_key,
+                                          3,
+                                          preserve_timestamps ? nob_sv_from_cstr("1")
+                                                              : nob_sv_from_cstr("0"))) {
+        return false;
+    }
+    return true;
+}
+
+static bool fetchcontent_emit_replay_materialization(EvalExecContext *ctx,
+                                                     Cmake_Event_Origin origin,
+                                                     String_View dependency_name,
+                                                     const Eval_FetchContent_Declaration *decl,
+                                                     String_View source_dir,
+                                                     String_View binary_dir,
+                                                     bool has_source_override,
+                                                     bool resolved_by_provider,
+                                                     bool resolved_by_find_package) {
+    if (!ctx || !decl) return false;
+    if (resolved_by_provider || resolved_by_find_package) {
+        return fetchcontent_emit_replay_marker(ctx, origin);
+    }
+
+    if (!decl->has_download_command &&
+        !decl->has_patch_command &&
+        !decl->has_update_command &&
+        decl->transport == EVAL_FETCHCONTENT_TRANSPORT_NONE &&
+        (decl->has_source_dir || has_source_override)) {
+        return fetchcontent_emit_replay_source_dir(ctx,
+                                                   origin,
+                                                   dependency_name,
+                                                   source_dir,
+                                                   binary_dir);
+    }
+
+    if (!decl->has_download_command &&
+        !decl->has_patch_command &&
+        !decl->has_update_command &&
+        decl->transport == EVAL_FETCHCONTENT_TRANSPORT_URL &&
+        arena_arr_len(decl->urls) == 1 &&
+        !decl->download_no_extract &&
+        decl->url_md5.count == 0) {
+        String_View hash_algo = nob_sv_from_cstr("");
+        String_View hash_digest = nob_sv_from_cstr("");
+        String_View archive_path = fetchcontent_strip_file_scheme_temp(ctx, decl->urls[0]);
+        bool local_archive = !fetchcontent_looks_like_url(archive_path);
+        bool hash_ok = decl->url_hash.count == 0 ||
+                       (fetchcontent_parse_expected_hash(decl->url_hash, &hash_algo, &hash_digest) &&
+                        eval_sv_eq_ci_lit(hash_algo, "SHA256"));
+        if (local_archive && hash_ok) {
+            archive_path = eval_path_resolve_for_cmake_arg(ctx,
+                                                           archive_path,
+                                                           fetchcontent_current_source_dir(ctx),
+                                                           false);
+            if (eval_should_stop(ctx)) return false;
+            return fetchcontent_emit_replay_local_archive(ctx,
+                                                          origin,
+                                                          dependency_name,
+                                                          archive_path,
+                                                          source_dir,
+                                                          binary_dir,
+                                                          hash_algo,
+                                                          hash_digest,
+                                                          decl->download_extract_timestamp);
+        }
+    }
+
+    return fetchcontent_emit_replay_marker(ctx, origin);
+}
 
 static bool fetchcontent_require_module(EvalExecContext *ctx,
                                         String_View command,
@@ -1987,6 +2144,7 @@ static bool fetchcontent_populate_content(EvalExecContext *ctx,
     if (eval_should_stop(ctx)) return false;
 
     String_View override_source_dir = eval_var_get_visible(ctx, override_key);
+    bool has_source_override = override_source_dir.count > 0;
     if (override_source_dir.count > 0) {
         source_dir = eval_path_resolve_for_cmake_arg(ctx, override_source_dir, fetchcontent_current_source_dir(ctx), false);
         if (eval_should_stop(ctx)) return false;
@@ -2035,6 +2193,17 @@ static bool fetchcontent_populate_content(EvalExecContext *ctx,
                                           binary_dir,
                                           false,
                                           false)) {
+        return false;
+    }
+    if (!fetchcontent_emit_replay_materialization(ctx,
+                                                  eval_origin_from_node(ctx, node),
+                                                  dependency_name,
+                                                  decl,
+                                                  source_dir,
+                                                  binary_dir,
+                                                  has_source_override,
+                                                  false,
+                                                  false)) {
         return false;
     }
 
@@ -2177,6 +2346,9 @@ static bool fetchcontent_makeavailable_one(EvalExecContext *ctx,
                                                true,
                                                provider_state->source_dir,
                                                provider_state->binary_dir);
+        if (ok) {
+            ok = fetchcontent_emit_replay_marker(ctx, eval_origin_from_node(ctx, node));
+        }
         goto cleanup;
     }
 
@@ -2200,6 +2372,7 @@ static bool fetchcontent_makeavailable_one(EvalExecContext *ctx,
                                               binary_dir,
                                               false,
                                               true);
+        if (ok) ok = fetchcontent_emit_replay_marker(ctx, eval_origin_from_node(ctx, node));
         goto cleanup;
     }
 

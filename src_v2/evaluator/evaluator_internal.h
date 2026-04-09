@@ -1636,7 +1636,8 @@ static inline bool eval_emit_test_add(EvalExecContext *ctx,
                                       String_View name,
                                       String_View command,
                                       String_View working_dir,
-                                      bool command_expand_lists) {
+                                      bool command_expand_lists,
+                                      const SV_List *configurations) {
     Event ev = {0};
     ev.h.kind = EVENT_TEST_ADD;
     ev.h.origin = origin;
@@ -1644,6 +1645,9 @@ static inline bool eval_emit_test_add(EvalExecContext *ctx,
     ev.as.test_add.command = sv_copy_to_event_arena(ctx, command);
     ev.as.test_add.working_dir = sv_copy_to_event_arena(ctx, working_dir);
     ev.as.test_add.command_expand_lists = command_expand_lists;
+    ev.as.test_add.configuration_count = configurations ? arena_arr_len(*configurations) : 0;
+    ev.as.test_add.configurations = eval_sv_list_copy_to_event_arena(ctx, configurations);
+    if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_install_rule_add(EvalExecContext *ctx,

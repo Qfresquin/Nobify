@@ -430,6 +430,7 @@ static const Ctest_Parse_Spec s_ctest_upload_parse_spec = {
 
 static String_View ctest_current_binary_dir(EvalExecContext *ctx);
 static String_View ctest_binary_root(EvalExecContext *ctx);
+static String_View ctest_source_root(EvalExecContext *ctx);
 static String_View ctest_get_session_field(EvalExecContext *ctx, const char *field_name);
 static bool ctest_append_command_tokens_temp(EvalExecContext *ctx, String_View raw, SV_List *out_argv);
 static bool ctest_path_exists(EvalExecContext *ctx, String_View path);
@@ -467,6 +468,172 @@ static bool ctest_set_field(EvalExecContext *ctx,
                      field_name);
     if (n < 0) return ctx_oom(ctx);
     return eval_var_set_current(ctx, nob_sv_from_cstr(buf), value);
+}
+
+static bool ctest_paths_match_normalized(EvalExecContext *ctx, String_View lhs, String_View rhs) {
+    if (!ctx) return false;
+    lhs = eval_sv_path_normalize_temp(ctx, lhs);
+    if (eval_should_stop(ctx)) return false;
+    rhs = eval_sv_path_normalize_temp(ctx, rhs);
+    if (eval_should_stop(ctx)) return false;
+    return nob_sv_eq(lhs, rhs);
+}
+
+static bool ctest_path_is_self_source_dir(EvalExecContext *ctx, String_View path) {
+    if (!ctx) return false;
+    return ctest_paths_match_normalized(ctx, path, ctest_source_root(ctx));
+}
+
+static bool ctest_path_is_self_binary_dir(EvalExecContext *ctx, String_View path) {
+    if (!ctx) return false;
+    return ctest_paths_match_normalized(ctx, path, ctest_binary_root(ctx));
+}
+
+static bool ctest_begin_test_driver_action(EvalExecContext *ctx,
+                                           Cmake_Event_Origin origin,
+                                           Event_Replay_Opcode opcode,
+                                           String_View working_directory,
+                                           String_View *out_action_key) {
+    if (out_action_key) *out_action_key = nob_sv_from_cstr("");
+    if (!ctx || !out_action_key) return false;
+    return eval_begin_replay_action(ctx,
+                                    origin,
+                                    EVENT_REPLAY_ACTION_TEST_DRIVER,
+                                    opcode,
+                                    EVENT_REPLAY_PHASE_TEST,
+                                    working_directory.count > 0 ? working_directory
+                                                                : eval_current_binary_dir(ctx),
+                                    out_action_key);
+}
+
+static bool ctest_emit_test_driver_reject_marker(EvalExecContext *ctx,
+                                                 Cmake_Event_Origin origin,
+                                                 String_View working_directory) {
+    String_View action_key = nob_sv_from_cstr("");
+    return ctest_begin_test_driver_action(ctx,
+                                          origin,
+                                          EVENT_REPLAY_OPCODE_NONE,
+                                          working_directory,
+                                          &action_key);
+}
+
+static bool ctest_emit_replay_empty_binary_directory(EvalExecContext *ctx,
+                                                     Cmake_Event_Origin origin,
+                                                     String_View target_dir) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctest_begin_test_driver_action(ctx,
+                                        origin,
+                                        EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY,
+                                        target_dir,
+                                        &action_key) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, target_dir)) {
+        return false;
+    }
+    return true;
+}
+
+static bool ctest_emit_replay_start_local(EvalExecContext *ctx,
+                                          Cmake_Event_Origin origin,
+                                          String_View resolved_source,
+                                          String_View resolved_build,
+                                          String_View model,
+                                          String_View group,
+                                          bool append_mode) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctest_begin_test_driver_action(ctx,
+                                        origin,
+                                        EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL,
+                                        resolved_build,
+                                        &action_key) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, resolved_source) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, resolved_build) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, model) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 1, group) ||
+        !eval_emit_replay_action_add_argv(ctx,
+                                          origin,
+                                          action_key,
+                                          2,
+                                          append_mode ? nob_sv_from_cstr("1")
+                                                      : nob_sv_from_cstr("0"))) {
+        return false;
+    }
+    return true;
+}
+
+static bool ctest_emit_replay_configure_self(EvalExecContext *ctx,
+                                             Cmake_Event_Origin origin,
+                                             String_View resolved_source,
+                                             String_View resolved_build) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctest_begin_test_driver_action(ctx,
+                                        origin,
+                                        EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF,
+                                        resolved_build,
+                                        &action_key) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, resolved_source) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, resolved_build)) {
+        return false;
+    }
+    return true;
+}
+
+static bool ctest_emit_replay_build_self(EvalExecContext *ctx,
+                                         Cmake_Event_Origin origin,
+                                         String_View resolved_build,
+                                         String_View configuration,
+                                         String_View target) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctest_begin_test_driver_action(ctx,
+                                        origin,
+                                        EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF,
+                                        resolved_build,
+                                        &action_key) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, resolved_build) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, configuration) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 1, target)) {
+        return false;
+    }
+    return true;
+}
+
+static bool ctest_emit_replay_test(EvalExecContext *ctx,
+                                   Cmake_Event_Origin origin,
+                                   String_View resolved_build,
+                                   String_View output_junit,
+                                   bool schedule_random) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctest_begin_test_driver_action(ctx,
+                                        origin,
+                                        EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST,
+                                        resolved_build,
+                                        &action_key) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, resolved_build) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, output_junit) ||
+        !eval_emit_replay_action_add_argv(ctx,
+                                          origin,
+                                          action_key,
+                                          1,
+                                          schedule_random ? nob_sv_from_cstr("1")
+                                                          : nob_sv_from_cstr("0"))) {
+        return false;
+    }
+    return true;
+}
+
+static bool ctest_emit_replay_sleep(EvalExecContext *ctx,
+                                    Cmake_Event_Origin origin,
+                                    String_View duration,
+                                    String_View working_directory) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctest_begin_test_driver_action(ctx,
+                                        origin,
+                                        EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP,
+                                        working_directory,
+                                        &action_key) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, duration)) {
+        return false;
+    }
+    return true;
 }
 
 static bool ctest_step_kind_requires_submit_files(Eval_Ctest_Step_Kind kind) {
@@ -4606,6 +4773,19 @@ Eval_Result eval_handle_ctest_build(EvalExecContext *ctx, const Node *node) {
     Ctest_Build_Request req = {0};
     if (!ctest_parse_build_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_build_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (ctest_path_is_self_binary_dir(ctx, req.core.resolved_build)) {
+        if (!ctest_emit_replay_build_self(ctx,
+                                          eval_origin_from_node(ctx, node),
+                                          req.core.resolved_build,
+                                          req.configuration,
+                                          req.target)) {
+            return eval_result_from_ctx(ctx);
+        }
+    } else if (!ctest_emit_test_driver_reject_marker(ctx,
+                                                     eval_origin_from_node(ctx, node),
+                                                     req.core.resolved_build)) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }
 
@@ -5219,6 +5399,19 @@ Eval_Result eval_handle_ctest_configure(EvalExecContext *ctx, const Node *node) 
     Ctest_Configure_Request req = {0};
     if (!ctest_parse_configure_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_configure_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (ctest_path_is_self_source_dir(ctx, req.resolved_source) &&
+        ctest_path_is_self_binary_dir(ctx, req.build_dir)) {
+        if (!ctest_emit_replay_configure_self(ctx,
+                                              eval_origin_from_node(ctx, node),
+                                              req.resolved_source,
+                                              req.build_dir)) {
+            return eval_result_from_ctx(ctx);
+        }
+    } else if (!ctest_emit_test_driver_reject_marker(ctx,
+                                                     eval_origin_from_node(ctx, node),
+                                                     req.build_dir)) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }
 
@@ -5488,6 +5681,12 @@ Eval_Result eval_handle_ctest_coverage(EvalExecContext *ctx, const Node *node) {
     Ctest_Coverage_Request req = {0};
     if (!ctest_parse_coverage_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_coverage_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_emit_test_driver_reject_marker(ctx,
+                                              eval_origin_from_node(ctx, node),
+                                              req.build_dir.count > 0 ? req.build_dir
+                                                                      : ctest_current_binary_dir(ctx))) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }
 
@@ -5761,6 +5960,9 @@ Eval_Result eval_handle_ctest_empty_binary_directory(EvalExecContext *ctx, const
     Ctest_Empty_Binary_Directory_Request req = {0};
     if (!ctest_parse_empty_binary_directory_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_empty_binary_directory_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_emit_replay_empty_binary_directory(ctx, eval_origin_from_node(ctx, node), req.target)) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }
 
@@ -5769,6 +5971,11 @@ Eval_Result eval_handle_ctest_memcheck(EvalExecContext *ctx, const Node *node) {
     Ctest_Memcheck_Request req = {0};
     if (!ctest_parse_memcheck_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_memcheck_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_emit_test_driver_reject_marker(ctx,
+                                              eval_origin_from_node(ctx, node),
+                                              req.core.resolved_build)) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }
 
@@ -5777,6 +5984,11 @@ Eval_Result eval_handle_ctest_read_custom_files(EvalExecContext *ctx, const Node
     Ctest_Read_Custom_Files_Request req = {0};
     if (!ctest_parse_read_custom_files_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_read_custom_files_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_emit_test_driver_reject_marker(ctx,
+                                              eval_origin_from_node(ctx, node),
+                                              ctest_current_binary_dir(ctx))) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }
 
@@ -6511,6 +6723,11 @@ Eval_Result eval_handle_ctest_run_script(EvalExecContext *ctx, const Node *node)
     Ctest_Run_Script_Request req = {0};
     if (!ctest_parse_run_script_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_run_script_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_emit_test_driver_reject_marker(ctx,
+                                              eval_origin_from_node(ctx, node),
+                                              ctest_current_binary_dir(ctx))) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }
 
@@ -6519,6 +6736,12 @@ Eval_Result eval_handle_ctest_sleep(EvalExecContext *ctx, const Node *node) {
     Ctest_Sleep_Request req = {0};
     if (!ctest_parse_sleep_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_sleep_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_emit_replay_sleep(ctx,
+                                 eval_origin_from_node(ctx, node),
+                                 req.duration,
+                                 ctest_current_binary_dir(ctx))) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }
 
@@ -6527,6 +6750,23 @@ Eval_Result eval_handle_ctest_start(EvalExecContext *ctx, const Node *node) {
     Ctest_Start_Request req = {0};
     if (!ctest_parse_start_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_start_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (ctest_start_checkout_command(ctx).count == 0) {
+        String_View model = ctest_get_session_field(ctx, "MODEL");
+        String_View group = ctest_get_session_field(ctx, "TRACK");
+        if (!ctest_emit_replay_start_local(ctx,
+                                           eval_origin_from_node(ctx, node),
+                                           req.resolved_source,
+                                           req.resolved_build,
+                                           model,
+                                           group,
+                                           req.append_mode)) {
+            return eval_result_from_ctx(ctx);
+        }
+    } else if (!ctest_emit_test_driver_reject_marker(ctx,
+                                                     eval_origin_from_node(ctx, node),
+                                                     req.resolved_build)) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }
 
@@ -6535,6 +6775,12 @@ Eval_Result eval_handle_ctest_submit(EvalExecContext *ctx, const Node *node) {
     Ctest_Submit_Request req = {0};
     if (!ctest_parse_submit_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_submit_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_emit_test_driver_reject_marker(ctx,
+                                              eval_origin_from_node(ctx, node),
+                                              req.build_dir.count > 0 ? req.build_dir
+                                                                      : ctest_current_binary_dir(ctx))) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }
 
@@ -6543,6 +6789,13 @@ Eval_Result eval_handle_ctest_test(EvalExecContext *ctx, const Node *node) {
     Ctest_Test_Request req = {0};
     if (!ctest_parse_test_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_test_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_emit_replay_test(ctx,
+                                eval_origin_from_node(ctx, node),
+                                req.core.resolved_build,
+                                req.output_junit,
+                                req.schedule_random)) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }
 
@@ -6551,6 +6804,11 @@ Eval_Result eval_handle_ctest_update(EvalExecContext *ctx, const Node *node) {
     Ctest_Update_Request req = {0};
     if (!ctest_parse_update_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_update_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_emit_test_driver_reject_marker(ctx,
+                                              eval_origin_from_node(ctx, node),
+                                              req.core.resolved_build)) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }
 
@@ -6559,5 +6817,11 @@ Eval_Result eval_handle_ctest_upload(EvalExecContext *ctx, const Node *node) {
     Ctest_Upload_Request req = {0};
     if (!ctest_parse_upload_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_upload_request(ctx, &req)) return eval_result_from_ctx(ctx);
+    if (!ctest_emit_test_driver_reject_marker(ctx,
+                                              eval_origin_from_node(ctx, node),
+                                              req.build_dir.count > 0 ? req.build_dir
+                                                                      : ctest_current_binary_dir(ctx))) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }

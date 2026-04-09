@@ -121,6 +121,17 @@ declare payload. Current bridge opcodes are:
 - `EVENT_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR`
 - `EVENT_REPLAY_OPCODE_HOST_LOCK_ACQUIRE`
 - `EVENT_REPLAY_OPCODE_HOST_LOCK_RELEASE`
+- `EVENT_REPLAY_OPCODE_PROBE_TRY_COMPILE_SOURCE`
+- `EVENT_REPLAY_OPCODE_PROBE_TRY_COMPILE_PROJECT`
+- `EVENT_REPLAY_OPCODE_PROBE_TRY_RUN`
+- `EVENT_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR`
+- `EVENT_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE`
+- `EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY`
+- `EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL`
+- `EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF`
+- `EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF`
+- `EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST`
+- `EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP`
 
 Base-contract freeze rules:
 - canonical `Event_Family` and `Event_Kind` values are append-only
@@ -158,6 +169,19 @@ Important closure-program rule:
 - some `FS`, `PROC`, `TEST`, `PACKAGE`, and related effect-bearing kinds may
   eventually become downstream-consumable when the product chooses backend
   support
+
+`EVENT_TEST_ADD` remains the canonical dedicated test-domain ingest event. Its
+frozen payload now includes:
+
+- test name
+- owner-directory-backed declaration context
+- command text
+- working directory
+- `command_expand_lists`
+- `configurations[]`
+
+Normal registered tests remain part of the dedicated test domain rather than
+being encoded as generic replay actions.
 - that transition is expressed by role metadata and downstream contracts, not
   by bypassing the build model
 

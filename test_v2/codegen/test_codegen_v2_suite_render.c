@@ -117,7 +117,8 @@ TEST(codegen_render_emits_configure_and_build_cli_for_replay_models) {
     ASSERT(strstr(output, "static bool ensure_configured(void)") != NULL);
     ASSERT(strstr(output, "strcmp(argv[argi], \"configure\")") != NULL);
     ASSERT(strstr(output, "strcmp(argv[argi], \"build\")") != NULL);
-    ASSERT(strstr(output, "strcmp(argv[argi], \"test\")") == NULL);
+    ASSERT(strstr(output, "strcmp(argv[argi], \"test\")") != NULL);
+    ASSERT(strstr(output, "static bool run_test_phase(") != NULL);
     nob_sb_free(sb);
     TEST_PASS();
 }

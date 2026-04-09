@@ -595,6 +595,7 @@ static bool bm_clone_tests(const Build_Model_Draft *draft, Build_Model *model, A
         if (!bm_copy_string(arena, test.name, &test.name) ||
             !bm_copy_string(arena, test.command, &test.command) ||
             !bm_copy_string(arena, test.working_dir, &test.working_dir) ||
+            !bm_clone_string_array(arena, &test.configurations, draft->tests[i].configurations) ||
             !bm_clone_provenance(arena, &test.provenance, draft->tests[i].provenance) ||
             !arena_arr_push(arena, model->tests, test) ||
             !bm_add_name_index(arena, &model->test_name_index, test.name, test.id)) {

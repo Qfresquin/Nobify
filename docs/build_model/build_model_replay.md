@@ -91,6 +91,17 @@ typedef enum {
     BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR,
     BM_REPLAY_OPCODE_HOST_LOCK_ACQUIRE,
     BM_REPLAY_OPCODE_HOST_LOCK_RELEASE,
+    BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_SOURCE,
+    BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_PROJECT,
+    BM_REPLAY_OPCODE_PROBE_TRY_RUN,
+    BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR,
+    BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE,
+    BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY,
+    BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL,
+    BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF,
+    BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF,
+    BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST,
+    BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP,
 } BM_Replay_Opcode;
 ```
 
@@ -213,6 +224,47 @@ Current C2 configure replay opcodes freeze payloads as follows:
   `inputs[0] = archive`, `outputs[0] = destination`
 - `HOST_LOCK_ACQUIRE` and `HOST_LOCK_RELEASE`
   `outputs[0] = resolved lock file path`
+
+Current `C3` additions freeze payloads as follows:
+
+- `PROBE_TRY_COMPILE_SOURCE`
+  `inputs[] = ordered source files`, `outputs[0] = binary dir`,
+  `argv[] = typed probe payload`
+- `PROBE_TRY_COMPILE_PROJECT`
+  `inputs[0] = source dir`, `outputs[0] = binary dir`,
+  `argv[] = typed probe payload`
+- `PROBE_TRY_RUN`
+  `outputs[0] = binary dir`, `argv[] = typed probe payload`
+- `DEPS_FETCHCONTENT_SOURCE_DIR`
+  `outputs[0] = effective source dir`, `outputs[1] = effective binary dir`,
+  `argv[0] = dependency name`
+- `DEPS_FETCHCONTENT_LOCAL_ARCHIVE`
+  `inputs[0] = local archive`, `outputs[0] = effective source dir`,
+  `outputs[1] = effective binary dir`, `argv[] = archive/hash payload`
+- `TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY`
+  `outputs[0] = target build dir`
+- `TEST_DRIVER_CTEST_START_LOCAL`
+  `outputs[0] = source dir`, `outputs[1] = build dir`,
+  `argv[0] = model`, `argv[1] = track`, `argv[2] = append flag`
+- `TEST_DRIVER_CTEST_CONFIGURE_SELF`
+  `outputs[0] = source dir`, `outputs[1] = build dir`
+- `TEST_DRIVER_CTEST_BUILD_SELF`
+  `outputs[0] = build dir`, `argv[0] = config`, `argv[1] = target`
+- `TEST_DRIVER_CTEST_TEST`
+  `outputs[0] = build dir`, `argv[0] = output junit or ""`,
+  `argv[1] = random-schedule flag`
+- `TEST_DRIVER_CTEST_SLEEP`
+  `argv[0] = duration text`
+
+In strict local-only `C3`:
+
+- dependency-materialization positive support is limited to saved
+  `SOURCE_DIR` and local archive `URL` plus `URL_HASH`
+- test-driver positive support is limited to local
+  `ctest_empty_binary_directory`, `ctest_start`, `ctest_configure`,
+  `ctest_build`, `ctest_test`, and `ctest_sleep`
+- probe opcodes are typed downstream ownership but remain explicit backend
+  rejects
 
 ## 8. Relationship To Existing Domains
 

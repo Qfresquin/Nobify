@@ -84,6 +84,17 @@ static const char *pipeline_replay_opcode_name(BM_Replay_Opcode opcode) {
         case BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR: return "host_archive_extract_tar";
         case BM_REPLAY_OPCODE_HOST_LOCK_ACQUIRE: return "host_lock_acquire";
         case BM_REPLAY_OPCODE_HOST_LOCK_RELEASE: return "host_lock_release";
+        case BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_SOURCE: return "probe_try_compile_source";
+        case BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_PROJECT: return "probe_try_compile_project";
+        case BM_REPLAY_OPCODE_PROBE_TRY_RUN: return "probe_try_run";
+        case BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR: return "deps_fetchcontent_source_dir";
+        case BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE: return "deps_fetchcontent_local_archive";
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY: return "test_driver_ctest_empty_binary_directory";
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL: return "test_driver_ctest_start_local";
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF: return "test_driver_ctest_configure_self";
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF: return "test_driver_ctest_build_self";
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST: return "test_driver_ctest_test";
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP: return "test_driver_ctest_sleep";
     }
     return "unknown";
 }
@@ -242,6 +253,7 @@ static bool pipeline_snapshot_from_script(const char *script,
 static void append_pipeline_build_graph_snapshot(Nob_String_Builder *sb, const Build_Model *model) {
     size_t build_step_count = bm_query_build_step_count(model);
     size_t replay_action_count = bm_query_replay_action_count(model);
+    size_t test_count = bm_query_test_count(model);
     size_t target_count = bm_query_target_count(model);
     size_t export_count = bm_query_export_count(model);
     size_t cpack_package_count = bm_query_cpack_package_count(model);
@@ -285,6 +297,23 @@ static void append_pipeline_build_graph_snapshot(Nob_String_Builder *sb, const B
                                                 bm_query_replay_action_argv(model, action_id).count,
                                                 bm_query_replay_action_environment(model, action_id).count));
         test_snapshot_append_escaped_sv(sb, bm_query_replay_action_working_directory(model, action_id));
+        nob_sb_append_cstr(sb, "\n");
+    }
+
+    nob_sb_append_cstr(sb, nob_temp_sprintf("TESTS count=%zu\n", test_count));
+    for (size_t i = 0; i < test_count; ++i) {
+        BM_Test_Id test_id = (BM_Test_Id)i;
+        BM_String_Span configs = bm_query_test_configurations(model, test_id);
+        nob_sb_append_cstr(sb, nob_temp_sprintf("TEST[%zu] name=", i));
+        test_snapshot_append_escaped_sv(sb, bm_query_test_name(model, test_id));
+        nob_sb_append_cstr(sb, " owner_dir=");
+        nob_sb_append_cstr(sb, nob_temp_sprintf("%u", (unsigned)bm_query_test_owner_directory(model, test_id)));
+        nob_sb_append_cstr(sb, " working_dir=");
+        test_snapshot_append_escaped_sv(sb, bm_query_test_working_directory(model, test_id));
+        nob_sb_append_cstr(sb, nob_temp_sprintf(" expand_lists=%d configs=%zu command=",
+                                                bm_query_test_command_expand_lists(model, test_id) ? 1 : 0,
+                                                configs.count));
+        test_snapshot_append_escaped_sv(sb, bm_query_test_command(model, test_id));
         nob_sb_append_cstr(sb, "\n");
     }
 
@@ -586,32 +615,48 @@ TEST(pipeline_build_graph_snapshot_surfaces_replay_actions) {
     ev.as.directory_enter.binary_dir = nob_sv_from_cstr("graph_build");
     ASSERT(event_stream_push(stream, &ev));
 
-    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 2);
-    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("snapshot_write");
-    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_FILESYSTEM;
-    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_FS_WRITE_TEXT;
-    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_CONFIGURE;
-    ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("tools");
+    pipeline_init_event(&ev, EVENT_TEST_ENABLE, 2);
+    ev.as.test_enable.enabled = true;
     ASSERT(event_stream_push(stream, &ev));
 
-    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 3);
-    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("snapshot_write");
-    ev.as.replay_action_add_output.path = nob_sv_from_cstr("tool.out");
+    {
+        String_View configs[] = {nob_sv_from_cstr("Debug")};
+        pipeline_init_event(&ev, EVENT_TEST_ADD, 3);
+        ev.as.test_add.name = nob_sv_from_cstr("smoke");
+        ev.as.test_add.command = nob_sv_from_cstr("app");
+        ev.as.test_add.working_dir = nob_sv_from_cstr("graph_build/tests");
+        ev.as.test_add.command_expand_lists = true;
+        ev.as.test_add.configurations = configs;
+        ev.as.test_add.configuration_count = NOB_ARRAY_LEN(configs);
+        ASSERT(event_stream_push(stream, &ev));
+    }
+
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 4);
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("snapshot_ctest");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_TEST_DRIVER;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_TEST;
+    ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("graph_build");
     ASSERT(event_stream_push(stream, &ev));
 
-    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 4);
-    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("snapshot_write");
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 5);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("snapshot_ctest");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("graph_build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 6);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("snapshot_ctest");
     ev.as.replay_action_add_argv.arg_index = 0;
-    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("snapshot");
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("reports/junit.xml");
     ASSERT(event_stream_push(stream, &ev));
 
-    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 5);
-    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("snapshot_write");
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 7);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("snapshot_ctest");
     ev.as.replay_action_add_argv.arg_index = 1;
-    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("");
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("1");
     ASSERT(event_stream_push(stream, &ev));
 
-    pipeline_init_event(&ev, EVENT_DIRECTORY_LEAVE, 6);
+    pipeline_init_event(&ev, EVENT_DIRECTORY_LEAVE, 8);
     ev.as.directory_leave.source_dir = nob_sv_from_cstr("graph_src");
     ev.as.directory_leave.binary_dir = nob_sv_from_cstr("graph_build");
     ASSERT(event_stream_push(stream, &ev));
@@ -626,8 +671,11 @@ TEST(pipeline_build_graph_snapshot_surfaces_replay_actions) {
     ASSERT(sb.items != NULL);
     ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("BUILD_STEPS count=0")));
     ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("REPLAY_ACTIONS count=1")));
-    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("REPLAY[0] kind=FILESYSTEM opcode=fs_write_text phase=CONFIGURE")));
+    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("REPLAY[0] kind=TEST_DRIVER opcode=test_driver_ctest_test phase=TEST")));
     ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("inputs=0 outputs=1 argv=2 env=0")));
+    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("TESTS count=1")));
+    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("TEST[0] name='smoke'")));
+    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("expand_lists=1 configs=1 command='app'")));
 
     nob_sb_free(sb);
     arena_destroy(arena);

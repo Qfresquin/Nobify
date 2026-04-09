@@ -16,6 +16,7 @@ static BM_Query_Eval_Context cg_make_query_ctx(CG_Context *ctx,
                                                String_View compile_language);
 static bool cg_replay_output_is_clean_safe(CG_Context *ctx, String_View output, bool *out_clean_safe);
 static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out);
+static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out);
 
 static bool cg_sv_eq_lit(String_View sv, const char *lit) {
     return nob_sv_eq(sv, nob_sv_from_cstr(lit));
@@ -2138,6 +2139,17 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
 
 static bool cg_emit_build_request(CG_Context *ctx, Nob_String_Builder *out) {
     if (!ctx || !out) return false;
+    nob_sb_append_cstr(out, "static bool build_default_targets(void) {\n");
+    for (size_t i = 0; i < ctx->target_count; ++i) {
+        const CG_Target_Info *info = &ctx->targets[i];
+        if (info->alias || info->imported || info->exclude_from_all || !info->emits_artifact) continue;
+        nob_sb_append_cstr(out, "    if (!build_");
+        nob_sb_append_cstr(out, info->ident);
+        nob_sb_append_cstr(out, "()) return false;\n");
+    }
+    nob_sb_append_cstr(out, "    return true;\n");
+    nob_sb_append_cstr(out, "}\n\n");
+
     nob_sb_append_cstr(out, "static bool build_request(const char *name) {\n");
     nob_sb_append_cstr(out, "    if (!name) return false;\n");
     for (size_t i = 0; i < ctx->target_count; ++i) {
@@ -2282,15 +2294,13 @@ static bool cg_emit_main(CG_Context *ctx, Nob_String_Builder *out) {
         "            }\n"
         "            return 0;\n"
         "        }\n");
-    for (size_t i = 0; i < ctx->target_count; ++i) {
-        const CG_Target_Info *info = &ctx->targets[i];
-        if (info->alias || info->imported || info->exclude_from_all || !info->emits_artifact) continue;
-        nob_sb_append_cstr(out, "        if (!build_");
-        nob_sb_append_cstr(out, info->ident);
-        nob_sb_append_cstr(out, "()) return 1;\n");
-    }
     nob_sb_append_cstr(out,
-        "        return 0;\n"
+        "        return build_default_targets() ? 0 : 1;\n"
+        "    }\n"
+        "    if (argi < argc && strcmp(argv[argi], \"test\") == 0) {\n"
+        "        ++argi;\n"
+        "        if (!ensure_configured()) return 1;\n"
+        "        return run_test_phase((const char **)(argv + argi), (size_t)(argc - argi), g_build_config) ? 0 : 1;\n"
         "    }\n"
         "    if (argi < argc && strcmp(argv[argi], \"install\") == 0) {\n"
         "        const char *install_prefix = \"install\";\n"
@@ -2391,16 +2401,8 @@ static bool cg_emit_main(CG_Context *ctx, Nob_String_Builder *out) {
         "    }\n"
         "    if (!ensure_configured()) return 1;\n");
 
-    for (size_t i = 0; i < ctx->target_count; ++i) {
-        const CG_Target_Info *info = &ctx->targets[i];
-        if (info->alias || info->imported || info->exclude_from_all || !info->emits_artifact) continue;
-        nob_sb_append_cstr(out, "    if (!build_");
-        nob_sb_append_cstr(out, info->ident);
-        nob_sb_append_cstr(out, "()) return 1;\n");
-    }
-
     nob_sb_append_cstr(out,
-        "    return 0;\n"
+        "    return build_default_targets() ? 0 : 1;\n"
         "}\n");
     return true;
 }
@@ -2527,6 +2529,7 @@ bool nob_codegen_render(const Build_Model *model,
 
     if (!cg_emit_configure_functions(&ctx, out) ||
         !cg_emit_build_request(&ctx, out) ||
+        !cg_emit_test_functions(&ctx, out) ||
         !cg_emit_clean_function(&ctx, out) ||
         !cg_emit_install_function(&ctx, out) ||
         !cg_emit_export_function(&ctx, out) ||

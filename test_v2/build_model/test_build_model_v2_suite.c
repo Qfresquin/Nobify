@@ -1070,6 +1070,263 @@ TEST(build_model_replay_actions_reject_invalid_opcode_payload_shapes) {
     arena_destroy(arena);
     arena_destroy(validate_arena);
     arena_destroy(model_arena);
+
+    arena = arena_create(2 * 1024 * 1024);
+    validate_arena = arena_create(512 * 1024);
+    model_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
+
+    stream = event_stream_create(arena);
+    ASSERT(stream != NULL);
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 2);
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("bad_ctest_build");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_TEST_DRIVER;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_TEST;
+    ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("ctest-build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 3);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("bad_ctest_build");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("ctest-build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 4);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_build");
+    ev.as.replay_action_add_argv.arg_index = 0;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("Debug");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, 5);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build = (Test_Semantic_Pipeline_Build_Result){0};
+    ASSERT(test_semantic_pipeline_build_model_from_stream(arena, validate_arena, model_arena, stream, &build));
+    ASSERT(build.builder_ok);
+    ASSERT(!build.validate_ok);
+    ASSERT(!build.freeze_ok);
+
+    arena_destroy(arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
+    TEST_PASS();
+}
+
+TEST(build_model_tests_freeze_owner_working_dir_expand_lists_and_configurations) {
+    Arena *arena = arena_create(2 * 1024 * 1024);
+    Arena *validate_arena = arena_create(512 * 1024);
+    Arena *model_arena = arena_create(2 * 1024 * 1024);
+    Test_Semantic_Pipeline_Build_Result build = {0};
+    Event_Stream *stream = NULL;
+    Event ev = {0};
+    const Build_Model *model = NULL;
+    BM_Directory_Id sub_dir = BM_DIRECTORY_ID_INVALID;
+    BM_Test_Id test_id = (BM_Test_Id)0;
+    String_View configurations[2] = {
+        nob_sv_from_cstr("Debug"),
+        nob_sv_from_cstr("RelWithDebInfo"),
+    };
+
+    ASSERT(arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
+
+    stream = event_stream_create(arena);
+    ASSERT(stream != NULL);
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_ENTER, 2);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr("tests");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr("tests-build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_TEST_ENABLE, 3);
+    ev.as.test_enable.enabled = true;
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_TEST_ADD, 4);
+    ev.as.test_add.name = nob_sv_from_cstr("cfg_only");
+    ev.as.test_add.command = nob_sv_from_cstr("app --mode smoke");
+    ev.as.test_add.working_dir = nob_sv_from_cstr("work");
+    ev.as.test_add.command_expand_lists = true;
+    ev.as.test_add.configurations = configurations;
+    ev.as.test_add.configuration_count = NOB_ARRAY_LEN(configurations);
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, 5);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr("tests");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr("tests-build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, 6);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    ASSERT(test_semantic_pipeline_build_model_from_stream(arena, validate_arena, model_arena, stream, &build));
+    ASSERT(build.builder_ok);
+    ASSERT(build.validate_ok);
+    ASSERT(build.freeze_ok);
+    ASSERT(build.model != NULL);
+
+    model = build.model;
+    sub_dir = build_model_find_directory_id(model, nob_sv_from_cstr("tests"), nob_sv_from_cstr("tests-build"));
+    ASSERT(sub_dir != BM_DIRECTORY_ID_INVALID);
+    ASSERT(bm_query_testing_enabled(model));
+    ASSERT(bm_query_test_count(model) == 1);
+    ASSERT(nob_sv_eq(bm_query_test_name(model, test_id), nob_sv_from_cstr("cfg_only")));
+    ASSERT(nob_sv_eq(bm_query_test_command(model, test_id), nob_sv_from_cstr("app --mode smoke")));
+    ASSERT(bm_query_test_owner_directory(model, test_id) == sub_dir);
+    ASSERT(nob_sv_eq(bm_query_test_working_directory(model, test_id), nob_sv_from_cstr("work")));
+    ASSERT(bm_query_test_command_expand_lists(model, test_id));
+    ASSERT(build_model_string_equals_at(bm_query_test_configurations(model, test_id), 0, "Debug"));
+    ASSERT(build_model_string_equals_at(bm_query_test_configurations(model, test_id), 1, "RelWithDebInfo"));
+    ASSERT(bm_query_test_configurations(model, BM_TEST_ID_INVALID).count == 0);
+    ASSERT(!bm_query_test_command_expand_lists(model, BM_TEST_ID_INVALID));
+    ASSERT(bm_query_test_owner_directory(model, BM_TEST_ID_INVALID) == BM_DIRECTORY_ID_INVALID);
+
+    arena_destroy(arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
+    TEST_PASS();
+}
+
+TEST(build_model_replay_actions_accept_c3_opcodes_and_queries) {
+    Arena *arena = arena_create(2 * 1024 * 1024);
+    Arena *validate_arena = arena_create(512 * 1024);
+    Arena *model_arena = arena_create(2 * 1024 * 1024);
+    Test_Semantic_Pipeline_Build_Result build = {0};
+    Event_Stream *stream = NULL;
+    Event ev = {0};
+    const Build_Model *model = NULL;
+
+    ASSERT(arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
+
+    stream = event_stream_create(arena);
+    ASSERT(stream != NULL);
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 2);
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("fetch_src");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_DEPENDENCY_MATERIALIZATION;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_CONFIGURE;
+    ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("deps");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 3);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("fetch_src");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("deps/zlib-src");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 4);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("fetch_src");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("deps/zlib-build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 5);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("fetch_src");
+    ev.as.replay_action_add_argv.arg_index = 0;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("zlib");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 6);
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("probe_run");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_PROBE;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_PROBE_TRY_RUN;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_CONFIGURE;
+    ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("probe");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 7);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("probe_run");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("probe/bin");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 8);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("probe_run");
+    ev.as.replay_action_add_argv.arg_index = 0;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("TRY_RUN_RESULT");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 9);
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("ctest_local");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_TEST_DRIVER;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_TEST;
+    ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("ctest_build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 10);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("ctest_local");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("ctest_build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 11);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("ctest_local");
+    ev.as.replay_action_add_argv.arg_index = 0;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("reports/junit.xml");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 12);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("ctest_local");
+    ev.as.replay_action_add_argv.arg_index = 1;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("1");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, 13);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    ASSERT(test_semantic_pipeline_build_model_from_stream(arena, validate_arena, model_arena, stream, &build));
+    ASSERT(build.builder_ok);
+    ASSERT(build.validate_ok);
+    ASSERT(build.freeze_ok);
+    ASSERT(build.model != NULL);
+
+    model = build.model;
+    ASSERT(bm_query_replay_action_count(model) == 3);
+    ASSERT(bm_query_replay_action_opcode(model, (BM_Replay_Action_Id)0) == BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR);
+    ASSERT(bm_query_replay_action_kind(model, (BM_Replay_Action_Id)0) == BM_REPLAY_ACTION_DEPENDENCY_MATERIALIZATION);
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_outputs(model, (BM_Replay_Action_Id)0), 0, "deps/zlib-src"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_outputs(model, (BM_Replay_Action_Id)0), 1, "deps/zlib-build"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, (BM_Replay_Action_Id)0), 0, "zlib"));
+
+    ASSERT(bm_query_replay_action_opcode(model, (BM_Replay_Action_Id)1) == BM_REPLAY_OPCODE_PROBE_TRY_RUN);
+    ASSERT(bm_query_replay_action_kind(model, (BM_Replay_Action_Id)1) == BM_REPLAY_ACTION_PROBE);
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_outputs(model, (BM_Replay_Action_Id)1), 0, "probe/bin"));
+
+    ASSERT(bm_query_replay_action_opcode(model, (BM_Replay_Action_Id)2) == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST);
+    ASSERT(bm_query_replay_action_kind(model, (BM_Replay_Action_Id)2) == BM_REPLAY_ACTION_TEST_DRIVER);
+    ASSERT(bm_query_replay_action_phase(model, (BM_Replay_Action_Id)2) == BM_REPLAY_PHASE_TEST);
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_outputs(model, (BM_Replay_Action_Id)2), 0, "ctest_build"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, (BM_Replay_Action_Id)2), 0, "reports/junit.xml"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, (BM_Replay_Action_Id)2), 1, "1"));
+
+    arena_destroy(arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
     TEST_PASS();
 }
 
@@ -2355,6 +2612,8 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_freeze_rejects_duplicate_effective_producers_and_execution_cycles(passed, failed, skipped);
     test_build_model_replay_actions_freeze_query_and_preserve_order(passed, failed, skipped);
     test_build_model_replay_actions_reject_invalid_opcode_payload_shapes(passed, failed, skipped);
+    test_build_model_tests_freeze_owner_working_dir_expand_lists_and_configurations(passed, failed, skipped);
+    test_build_model_replay_actions_accept_c3_opcodes_and_queries(passed, failed, skipped);
     test_build_model_replay_actions_reject_malformed_ordering(passed, failed, skipped);
     test_build_model_context_aware_queries_expand_usage_requirements_and_target_property_genex(passed, failed, skipped);
     test_build_model_platform_context_and_typed_platform_properties_are_queryable(passed, failed, skipped);

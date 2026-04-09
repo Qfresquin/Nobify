@@ -382,6 +382,11 @@ static bool file_emit_replay_archive_extract(EvalExecContext *ctx,
     return true;
 }
 
+static bool file_replay_is_internal_fetchcontent_extract(EvalExecContext *ctx) {
+    return ctx &&
+           arena_arr_len(ctx->semantic_state.fetchcontent.active_makeavailable) > 0;
+}
+
 static bool handle_file_generate(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     Eval_File_Generate_Job job = {0};
@@ -1102,7 +1107,7 @@ static bool handle_file_archive_extract(EvalExecContext *ctx, const Node *node, 
         arena_arr_len(patterns) == 0 &&
         !(in_path.count >= 4 && eval_sv_eq_ci_lit(nob_sv_from_parts(in_path.data + in_path.count - 4, 4), ".zip"))) {
         (void)file_emit_replay_archive_extract(ctx, o, in_path, dst_path);
-    } else {
+    } else if (!file_replay_is_internal_fetchcontent_extract(ctx)) {
         (void)file_emit_replay_reject_marker(ctx, o, EVENT_REPLAY_ACTION_HOST_EFFECT);
     }
     return true;

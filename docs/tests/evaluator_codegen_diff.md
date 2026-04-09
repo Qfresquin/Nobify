@@ -45,6 +45,9 @@ Product rules:
 - `C2` parity-pass cases may now prove deterministic configure replay for the
   supported filesystem and local host-effect subset through observable build
   tree outputs alone, without requiring evaluator-local variable replay
+- `C3` parity-pass cases may additionally prove narrow local-only test-driver
+  replay and local dependency materialization through staged `Testing/` trees,
+  filtered test execution, and local `FetchContent` outputs alone
 
 ## State Model
 
@@ -116,6 +119,7 @@ Curated subcommand families include at least:
 - `cmake_language()`
 - `cmake_path()`
 - `ctest_*`
+- `FetchContent_*`
 
 The closure program may add more curated families as backend ownership expands.
 
@@ -249,6 +253,15 @@ Legal memoization evidence includes:
 - `BM_Query_Session` hit/miss counters gathered while those workloads run
 - proof that canonical memoized query paths replace duplicated first-line
   consumer caches without changing case classification or observable outputs
+
+For `C3`, focused closure seeds may also prove:
+
+- local `ctest_empty_binary_directory`, `ctest_start`, `ctest_configure`,
+  `ctest_build`, `ctest_test`, and `ctest_sleep`
+- local deterministic `FetchContent` `SOURCE_DIR` and local-archive
+  materialization
+- typed downstream `probe` and `process` ownership even when runtime status
+  remains `backend-reject`
 
 Memoization evidence does not replace the normal closure gate:
 

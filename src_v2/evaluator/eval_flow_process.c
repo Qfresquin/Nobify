@@ -89,6 +89,20 @@ typedef struct {
     Flow_Exec_Options options;
 } Flow_Exec_Program_Request;
 
+static bool flow_exec_emit_replay_marker(EvalExecContext *ctx,
+                                         Cmake_Event_Origin origin,
+                                         String_View working_directory) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctx) return false;
+    return eval_begin_replay_action(ctx,
+                                    origin,
+                                    EVENT_REPLAY_ACTION_PROCESS,
+                                    EVENT_REPLAY_OPCODE_NONE,
+                                    EVENT_REPLAY_PHASE_CONFIGURE,
+                                    working_directory,
+                                    &action_key);
+}
+
 static bool flow_exec_result_is_success(String_View result) {
     return flow_sv_eq_exact(result, nob_sv_from_cstr("0"));
 }
@@ -715,6 +729,14 @@ static bool flow_execute_execute_process_request(EvalExecContext *ctx,
         return false;
     }
 
+    if (!flow_exec_emit_replay_marker(ctx,
+                                      origin,
+                                      req->options.has_working_directory
+                                          ? req->options.working_directory
+                                          : eval_current_binary_dir(ctx))) {
+        return false;
+    }
+
     return flow_exec_apply_outputs(ctx,
                                    node,
                                    &req->options,
@@ -863,6 +885,7 @@ static bool flow_execute_exec_program_request(EvalExecContext *ctx,
                                               const Node *node,
                                               const Flow_Exec_Program_Request *req) {
     if (!ctx || !node || !req) return false;
+    Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
 
     String_View stdout_text = nob_sv_from_cstr("");
     String_View stderr_text = nob_sv_from_cstr("");
@@ -876,6 +899,14 @@ static bool flow_execute_exec_program_request(EvalExecContext *ctx,
                                    &last_result,
                                    &results_joined,
                                    &had_error)) {
+        return false;
+    }
+
+    if (!flow_exec_emit_replay_marker(ctx,
+                                      origin,
+                                      req->options.has_working_directory
+                                          ? req->options.working_directory
+                                          : eval_current_binary_dir(ctx))) {
         return false;
     }
 

@@ -1,5 +1,62 @@
 #include "eval_try_compile_internal.h"
 
+static bool try_compile_emit_probe_replay(EvalExecContext *ctx,
+                                          Cmake_Event_Origin origin,
+                                          const Try_Compile_Request *req,
+                                          const Try_Compile_Execution_Result *exec_res) {
+    String_View action_key = nob_sv_from_cstr("");
+    Event_Replay_Opcode opcode = EVENT_REPLAY_OPCODE_PROBE_TRY_COMPILE_SOURCE;
+    if (!ctx || !req) return false;
+    opcode = req->signature == TRY_COMPILE_SIGNATURE_PROJECT
+        ? EVENT_REPLAY_OPCODE_PROBE_TRY_COMPILE_PROJECT
+        : EVENT_REPLAY_OPCODE_PROBE_TRY_COMPILE_SOURCE;
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_PROBE,
+                                  opcode,
+                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  req->binary_dir,
+                                  &action_key) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, req->binary_dir) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, req->result_var) ||
+        !eval_emit_replay_action_add_argv(ctx,
+                                          origin,
+                                          action_key,
+                                          1,
+                                          exec_res ? exec_res->artifact_path : nob_sv_from_cstr(""))) {
+        return false;
+    }
+    if (req->signature == TRY_COMPILE_SIGNATURE_PROJECT) {
+        if (!eval_emit_replay_action_add_input(ctx, origin, action_key, req->source_dir) ||
+            !eval_emit_replay_action_add_argv(ctx,
+                                              origin,
+                                              action_key,
+                                              2,
+                                              req->target_name.count > 0 ? req->target_name
+                                                                         : req->project_name)) {
+            return false;
+        }
+    } else {
+        for (size_t i = 0; i < req->source_items.count; ++i) {
+            if (!eval_emit_replay_action_add_input(ctx,
+                                                   origin,
+                                                   action_key,
+                                                   req->source_items.items[i].path)) {
+                return false;
+            }
+        }
+        if (!eval_emit_replay_action_add_argv(ctx,
+                                              origin,
+                                              action_key,
+                                              2,
+                                              exec_res && exec_res->ok ? nob_sv_from_cstr("1")
+                                                                       : nob_sv_from_cstr("0"))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool try_compile_cache_upsert(EvalExecContext *ctx, String_View key, String_View value) {
     if (!ctx) return false;
     Eval_Cache_Entry *entry = NULL;
@@ -842,6 +899,9 @@ Eval_Result try_compile_execute_and_publish(EvalExecContext *ctx,
     String_View result = exec_res.ok ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE");
     String_View output_text = exec_res.output.count > 0 ? exec_res.output : nob_sv_from_cstr("");
     if (!try_compile_publish_result(ctx, origin, req, result, output_text)) {
+        return eval_result_from_ctx(ctx);
+    }
+    if (!try_compile_emit_probe_replay(ctx, origin, req, &exec_res)) {
         return eval_result_from_ctx(ctx);
     }
 

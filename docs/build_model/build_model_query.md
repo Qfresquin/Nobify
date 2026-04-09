@@ -224,8 +224,8 @@ state.
 Release-1 must also include query helpers for:
 - directory metadata and parent traversal
 - replay actions
-- raw promoted directory/global property access
 - tests
+- raw promoted directory/global property access
 - install rules
 - packages
 - CPack install types, groups, and components
@@ -260,6 +260,28 @@ BM_String_Span bm_query_replay_action_environment(const Build_Model *model,
 This is the minimum stable replay-domain surface. Future query helpers may add
 kind-specific payload accessors, but codegen must be implementable through the
 generic spans above, the typed opcode, and existing domain queries.
+
+### Test Domain
+
+The canonical test query surface includes:
+
+```c
+size_t bm_query_test_count(const Build_Model *model);
+String_View bm_query_test_name(const Build_Model *model, BM_Test_Id id);
+BM_Directory_Id bm_query_test_owner_directory(const Build_Model *model, BM_Test_Id id);
+String_View bm_query_test_working_directory(const Build_Model *model, BM_Test_Id id);
+bool bm_query_test_command_expand_lists(const Build_Model *model, BM_Test_Id id);
+String_View bm_query_test_command(const Build_Model *model, BM_Test_Id id);
+BM_String_Span bm_query_test_configurations(const Build_Model *model, BM_Test_Id id);
+```
+
+These queries are the canonical downstream surface for both:
+
+- the product-facing generated `test` command
+- `C3` test-driver replay such as `ctest_test`
+
+Codegen must not reconstruct test plans from raw Event IR once the frozen test
+domain is available.
 
 ## 4. Raw vs Effective Query Rules
 

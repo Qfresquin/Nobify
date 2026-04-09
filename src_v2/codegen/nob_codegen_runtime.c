@@ -40,6 +40,7 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
 
     /* clean_all() always owns backend-private paths, so filesystem helpers are always needed */
     ctx->helper_bits |= CG_HELPER_FILESYSTEM;
+    ctx->helper_bits |= CG_HELPER_RUN_CMD;
 
     if (arena_arr_len(ctx->known_configs) > 0) ctx->helper_bits |= CG_HELPER_CONFIG_MATCHES;
 
@@ -65,7 +66,6 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
     }
 
     if (ctx->build_step_count > 0) {
-        ctx->helper_bits |= CG_HELPER_RUN_CMD;
         for (size_t i = 0; i < ctx->build_step_count; ++i) {
             BM_Build_Step_Id id = (BM_Build_Step_Id)i;
             if (bm_query_build_step_outputs(ctx->model, id).count > 0 ||
@@ -75,6 +75,7 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
             if (ctx->build_steps[i].uses_stamp) needs_write_stamp = true;
         }
     }
+    if (bm_query_test_count(ctx->model) > 0) ctx->helper_bits |= CG_HELPER_RUN_CMD;
     if (cg_step_uses_bare_tool(ctx, "cmake")) ctx->helper_bits |= CG_HELPER_CMAKE_RESOLVER;
     if (cg_step_uses_bare_tool(ctx, "cpack")) ctx->helper_bits |= CG_HELPER_CPACK_RESOLVER;
 
@@ -100,14 +101,23 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
         BM_Replay_Opcode opcode = bm_query_replay_action_opcode(ctx->model, id);
         needs_write_stamp = true;
         if (opcode == BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR ||
-            opcode == BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR) {
+            opcode == BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR ||
+            opcode == BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE) {
             needs_tar_resolver = true;
         }
-        if (opcode == BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL) {
+        if (opcode == BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL ||
+            opcode == BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE) {
             BM_String_Span argv = bm_query_replay_action_argv(ctx->model, id);
-            if (argv.count >= 2 && argv.items[0].count > 0 && argv.items[1].count > 0) {
+            size_t hash_algo_index = opcode == BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE ? 1u : 0u;
+            size_t hash_value_index = opcode == BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE ? 2u : 1u;
+            if (argv.count > hash_value_index &&
+                argv.items[hash_algo_index].count > 0 &&
+                argv.items[hash_value_index].count > 0) {
                 needs_replay_sha256 = true;
             }
+        }
+        if (bm_query_replay_action_phase(ctx->model, id) == BM_REPLAY_PHASE_TEST) {
+            ctx->helper_bits |= CG_HELPER_RUN_CMD;
         }
     }
 

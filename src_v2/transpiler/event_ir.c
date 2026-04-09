@@ -120,6 +120,17 @@ static const char *event_replay_opcode_name(Event_Replay_Opcode opcode) {
         case EVENT_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR: return "host_archive_extract_tar";
         case EVENT_REPLAY_OPCODE_HOST_LOCK_ACQUIRE: return "host_lock_acquire";
         case EVENT_REPLAY_OPCODE_HOST_LOCK_RELEASE: return "host_lock_release";
+        case EVENT_REPLAY_OPCODE_PROBE_TRY_COMPILE_SOURCE: return "probe_try_compile_source";
+        case EVENT_REPLAY_OPCODE_PROBE_TRY_COMPILE_PROJECT: return "probe_try_compile_project";
+        case EVENT_REPLAY_OPCODE_PROBE_TRY_RUN: return "probe_try_run";
+        case EVENT_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR: return "deps_fetchcontent_source_dir";
+        case EVENT_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE: return "deps_fetchcontent_local_archive";
+        case EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY: return "test_driver_ctest_empty_binary_directory";
+        case EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL: return "test_driver_ctest_start_local";
+        case EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF: return "test_driver_ctest_configure_self";
+        case EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF: return "test_driver_ctest_build_self";
+        case EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST: return "test_driver_ctest_test";
+        case EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP: return "test_driver_ctest_sleep";
     }
     return "unknown";
 }
@@ -378,6 +389,11 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.test_add.name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.test_add.command)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.test_add.working_dir)) return false;
+            if (!event_copy_sv_array_inplace(arena,
+                                             &ev->as.test_add.configurations,
+                                             ev->as.test_add.configuration_count)) {
+                return false;
+            }
             break;
         case EVENT_INSTALL_RULE_ADD:
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.item)) return false;
@@ -877,6 +893,17 @@ static void event_dump_one(const Event *ev) {
                    ev->as.build_step_add_command.step_key.data ? ev->as.build_step_add_command.step_key.data : "",
                    (unsigned)ev->as.build_step_add_command.command_index,
                    ev->as.build_step_add_command.argc);
+            break;
+        case EVENT_TEST_ADD:
+            printf(" name=%.*s command=%.*s working_dir=%.*s expand_lists=%d configurations=%zu",
+                   (int)ev->as.test_add.name.count,
+                   ev->as.test_add.name.data ? ev->as.test_add.name.data : "",
+                   (int)ev->as.test_add.command.count,
+                   ev->as.test_add.command.data ? ev->as.test_add.command.data : "",
+                   (int)ev->as.test_add.working_dir.count,
+                   ev->as.test_add.working_dir.data ? ev->as.test_add.working_dir.data : "",
+                   ev->as.test_add.command_expand_lists ? 1 : 0,
+                   ev->as.test_add.configuration_count);
             break;
         case EVENT_REPLAY_ACTION_DECLARE:
             printf(" action=%.*s kind=%s opcode=%s phase=%s",

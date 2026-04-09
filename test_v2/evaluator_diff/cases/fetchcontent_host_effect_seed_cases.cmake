@@ -1,3 +1,29 @@
+#@@CASE fetchcontent_local_materialization_surface
+#@@OUTCOME SUCCESS
+#@@FILE_TEXT source/fc_saved_dep/CMakeLists.txt
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/from_saved.txt" "saved-subdir\n")
+#@@END_FILE_TEXT
+#@@FILE_TEXT source/fc_archive_src/CMakeLists.txt
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/from_archive.txt" "archive-subdir\n")
+#@@END_FILE_TEXT
+include(FetchContent)
+set(FETCHCONTENT_BASE_DIR "${CMAKE_CURRENT_BINARY_DIR}/fc_base")
+set(FC_ARCHIVE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/fc_archive_dep.tar")
+file(ARCHIVE_CREATE
+  OUTPUT "${FC_ARCHIVE_PATH}"
+  PATHS "${CMAKE_CURRENT_SOURCE_DIR}/fc_archive_src/CMakeLists.txt"
+  FORMAT paxr
+  MTIME 0)
+file(SHA256 "${FC_ARCHIVE_PATH}" FC_ARCHIVE_HASH)
+FetchContent_Declare(SavedDep
+  SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/fc_saved_dep")
+FetchContent_Declare(ArchiveDep
+  URL "${FC_ARCHIVE_PATH}"
+  URL_HASH "SHA256=${FC_ARCHIVE_HASH}")
+FetchContent_MakeAvailable(SavedDep ArchiveDep)
+FetchContent_MakeAvailable(SavedDep ArchiveDep)
+#@@ENDCASE
+
 #@@CASE fetchcontent_host_effect_local_archive_makeavailable_surface
 #@@OUTCOME SUCCESS
 #@@QUERY VAR URL_POP

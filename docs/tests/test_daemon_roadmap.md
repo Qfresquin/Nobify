@@ -198,6 +198,16 @@ as a contract that must survive intact.
 - surface detached watch state and lifecycle through `status` and daemon
   control paths
 
+### 5.9 Case-Scoped Debug UX
+
+- add case-level filtering to the human-facing front door so developers can
+  rerun one failing test case inside a heavy module without paying the full
+  module cost every time
+- emit a compact end-of-run failure summary that names the failing cases and
+  their key locations instead of forcing log-grep as the primary diagnosis path
+- keep this as a runner-core and daemon control-plane feature rather than a
+  suite-local ad hoc convention
+
 ## 6. Wave Plan
 
 The wave descriptions below intentionally preserve the state and assumptions
@@ -443,6 +453,43 @@ Exit criteria:
 - detached watch ownership and state are visible and controllable through the
   daemon surface
 
+### T9 Case Filters And Failure Summaries
+
+Goal:
+- make heavy daemon-fronted modules materially cheaper to debug when only one
+  or two cases are failing
+
+Deliverables:
+- `./build/nob test <module> --case <case-name>` becomes an official
+  front-door path for modules that expose case names through the runner-core
+- the typed request/result path grows a canonical optional case-filter field
+  instead of treating case selection as suite-local argv parsing
+- runner-core and official suites may honor the case filter to skip unrelated
+  cases inside the selected module binary
+- failing module runs end with a compact summary block listing, at minimum:
+  - failing case name
+  - source file and line when available
+  - preserved failure workspace when available
+- the failure summary is emitted as the canonical first diagnostic surface for
+  module-level failures so grep is no longer required just to identify the
+  failing case
+- daemon/client result reporting preserves the compact summary in both normal
+  foreground runs and watch-triggered reruns
+
+Non-goals:
+- no arbitrary regex/query language for selecting cases
+- no per-case parallel scheduler in this wave
+- no replacement of full logs or preserved workspaces; this wave only improves
+  the first failure-discovery step
+
+Exit criteria:
+- a known failing `codegen` or similarly heavy module case can be rerun through
+  `./build/nob test <module> --case <case-name>`
+- a failing module run ends with a compact machine-readable or consistently
+  parseable human summary of failing cases
+- developers no longer need an extra full-module rerun plus ad hoc `rg` just
+  to learn which case failed
+
 ## 7. Required Interfaces And Behavior
 
 The implementation target for later waves is:
@@ -454,6 +501,7 @@ The implementation target for later waves is:
   embedding them in CLI-only flow
 - daemon-facing control flow uses typed request/result structures and stable
   ids, even if the CLI remains text-oriented
+- typed requests may carry an optional case filter for case-aware modules
 - the control plane eventually exposes structured daemon states including
   `idle`, `busy`, `watching`, `draining`, and `stopping`
 - the control plane eventually exposes stable error codes and optional active
@@ -478,6 +526,8 @@ The implementation target for later waves is:
 - sanitizer, coverage, and explicit heavy suites remain supported, but the
   fast loop is optimized around normal local development rather than around
   those profiles
+- module failures eventually surface a compact failing-case summary in addition
+  to full logs and preserved workspaces
 
 ## 8. Evidence And Acceptance
 
@@ -496,6 +546,9 @@ The daemon program is only complete when it has explicit proof for:
 - `daemon stop` while work is active
 - `daemon stop --force` against a stuck worker
 - `./build/nob test clean` from both idle and busy daemon states
+- `./build/nob test <module> --case <case-name>` for at least one heavy module
+- compact end-of-run failure summary for module failures, including failing
+  case identity and source location when available
 - watch rerun on save
 - `watch auto` routing for representative file changes
 - last-write-wins cancellation under save storms

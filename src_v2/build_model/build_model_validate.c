@@ -90,6 +90,29 @@ static bool bm_validate_replay_opcode_kind(const BM_Replay_Action_Record *action
         return true;
     }
 
+    if ((action->opcode == BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_SOURCE ||
+         action->opcode == BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_PROJECT ||
+         action->opcode == BM_REPLAY_OPCODE_PROBE_TRY_RUN) &&
+        action->kind == BM_REPLAY_ACTION_PROBE) {
+        return true;
+    }
+
+    if ((action->opcode == BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR ||
+         action->opcode == BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE) &&
+        action->kind == BM_REPLAY_ACTION_DEPENDENCY_MATERIALIZATION) {
+        return true;
+    }
+
+    if ((action->opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY ||
+         action->opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL ||
+         action->opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF ||
+         action->opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF ||
+         action->opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST ||
+         action->opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP) &&
+        action->kind == BM_REPLAY_ACTION_TEST_DRIVER) {
+        return true;
+    }
+
     *had_error = true;
     bm_diag_error(sink,
                   action->provenance,
@@ -150,6 +173,50 @@ static bool bm_validate_replay_payload_shape(const BM_Replay_Action_Record *acti
         case BM_REPLAY_OPCODE_HOST_LOCK_ACQUIRE:
         case BM_REPLAY_OPCODE_HOST_LOCK_RELEASE:
             ok = input_count == 0 && output_count == 1 && argv_count == 0 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_SOURCE:
+            ok = input_count > 0 && output_count == 1 && argv_count >= 1 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_PROJECT:
+            ok = input_count == 1 && output_count == 1 && argv_count >= 1 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_PROBE_TRY_RUN:
+            ok = input_count == 0 && output_count == 1 && argv_count >= 1 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR:
+            ok = input_count == 0 && output_count == 2 && argv_count == 1 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE:
+            ok = input_count == 1 && output_count == 2 && argv_count == 4 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY:
+            ok = input_count == 0 && output_count == 1 && argv_count == 0 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL:
+            ok = input_count == 0 && output_count == 2 && argv_count == 3 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF:
+            ok = input_count == 0 && output_count == 2 && argv_count == 0 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF:
+            ok = input_count == 0 && output_count == 1 && argv_count == 2 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST:
+            ok = input_count == 0 && output_count == 1 && argv_count == 2 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP:
+            ok = input_count == 0 && output_count == 0 && argv_count == 1 && env_count == 0;
             break;
     }
 
@@ -290,7 +357,7 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
                           "replay action kind is invalid",
                           "map every replay action kind to a canonical BM_Replay_Action_Kind");
         }
-        if (action->opcode > BM_REPLAY_OPCODE_HOST_LOCK_RELEASE) {
+        if (action->opcode > BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP) {
             *had_error = true;
             bm_diag_error(sink,
                           action->provenance,

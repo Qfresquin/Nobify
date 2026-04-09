@@ -1302,6 +1302,26 @@ String_View bm_query_test_command(const Build_Model *model, BM_Test_Id id) {
     return test ? test->command : (String_View){0};
 }
 
+BM_Directory_Id bm_query_test_owner_directory(const Build_Model *model, BM_Test_Id id) {
+    const BM_Test_Record *test = bm_model_test(model, id);
+    return test ? test->owner_directory_id : BM_DIRECTORY_ID_INVALID;
+}
+
+String_View bm_query_test_working_directory(const Build_Model *model, BM_Test_Id id) {
+    const BM_Test_Record *test = bm_model_test(model, id);
+    return test ? test->working_dir : (String_View){0};
+}
+
+bool bm_query_test_command_expand_lists(const Build_Model *model, BM_Test_Id id) {
+    const BM_Test_Record *test = bm_model_test(model, id);
+    return test ? test->command_expand_lists : false;
+}
+
+BM_String_Span bm_query_test_configurations(const Build_Model *model, BM_Test_Id id) {
+    const BM_Test_Record *test = bm_model_test(model, id);
+    return test ? bm_string_span(test->configurations) : (BM_String_Span){0};
+}
+
 BM_Install_Rule_Kind bm_query_install_rule_kind(const Build_Model *model, BM_Install_Rule_Id id) {
     const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
     return rule ? rule->kind : BM_INSTALL_RULE_FILE;

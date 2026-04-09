@@ -14,6 +14,7 @@ STEP[2] kind=TARGET_PRE_BUILD owner_target='app' outputs=0 byproducts=1 target_d
 STEP[3] kind=TARGET_PRE_LINK owner_target='app' outputs=0 byproducts=1 target_deps=0 producer_deps=0 file_deps=0 commands=1
 STEP[4] kind=TARGET_POST_BUILD owner_target='app' outputs=0 byproducts=1 target_deps=0 producer_deps=0 file_deps=0 commands=1
 REPLAY_ACTIONS count=0
+TESTS count=0
 EXPORTS count=3
 EXPORT[0] kind=BUILD_TREE source=TARGETS name='HelperTargets' namespace='Demo::' output='graph_build/exports/HelperTargets.cmake' registry_prefix='' enabled=1 targets=1
 EXPORT[1] kind=BUILD_TREE source=EXPORT_SET name='DemoTargets' namespace='Demo::' output='graph_build/exports/DemoTargets.cmake' registry_prefix='' enabled=1 targets=1
@@ -35,6 +36,7 @@ DIAG errors=1 warnings=0
 EVENTS count=32
 BUILD_STEPS count=0
 REPLAY_ACTIONS count=0
+TESTS count=0
 EXPORTS count=0
 CPACK_PACKAGES count=1
 CPACK_PACKAGE[0] name='PackDemo' version='1.0.0' file='pack-demo' output='graph_build/packages/out' include_toplevel=0 archive_component_install=0 generators=2 components=2

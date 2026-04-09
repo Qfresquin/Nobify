@@ -62,6 +62,7 @@ typedef struct {
     String_View command_name;
     String_View working_dir;
     bool command_expand_lists;
+    SV_List configurations;
 } Add_Test_Option_State;
 
 static bool add_test_on_option(EvalExecContext *ctx,
@@ -84,6 +85,9 @@ static bool add_test_on_option(EvalExecContext *ctx,
         if (arena_arr_len(values) == 0) {
             EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("eval_test"), st->command_name, st->origin, nob_sv_from_cstr("add_test(NAME ...) CONFIGURATIONS requires at least one value"), nob_sv_from_cstr("Usage: add_test(NAME <name> COMMAND <cmd...> [CONFIGURATIONS <cfg>...])"));
             return false;
+        }
+        for (size_t i = 0; i < arena_arr_len(values); ++i) {
+            if (!svu_list_push_temp(ctx, &st->configurations, values[i])) return false;
         }
         return true;
     }
@@ -114,6 +118,7 @@ Eval_Result eval_handle_add_test(EvalExecContext *ctx, const Node *node) {
     String_View command = nob_sv_from_cstr("");
     String_View working_dir = nob_sv_from_cstr("");
     bool command_expand_lists = false;
+    SV_List configurations = NULL;
 
     if (eval_sv_eq_ci_lit(a[0], "NAME")) {
         if (arena_arr_len(a) < 4) {
@@ -150,6 +155,7 @@ Eval_Result eval_handle_add_test(EvalExecContext *ctx, const Node *node) {
             .command_name = node->as.cmd.name,
             .working_dir = working_dir,
             .command_expand_lists = command_expand_lists,
+            .configurations = NULL,
         };
         Eval_Opt_Parse_Config cfg = {
             .origin = o,
@@ -171,6 +177,7 @@ Eval_Result eval_handle_add_test(EvalExecContext *ctx, const Node *node) {
         }
         working_dir = st.working_dir;
         command_expand_lists = st.command_expand_lists;
+        configurations = st.configurations;
     } else {
         name = a[0];
         command = svu_join_space_temp(ctx, &a[1], arena_arr_len(a) - 1);
@@ -190,7 +197,15 @@ Eval_Result eval_handle_add_test(EvalExecContext *ctx, const Node *node) {
     if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     if (!eval_var_set_current(ctx, scoped_marker, nob_sv_from_cstr("1"))) return eval_result_from_ctx(ctx);
 
-    if (!eval_emit_test_add(ctx, o, name, command, working_dir, command_expand_lists)) return eval_result_from_ctx(ctx);
+    if (!eval_emit_test_add(ctx,
+                            o,
+                            name,
+                            command,
+                            working_dir,
+                            command_expand_lists,
+                            &configurations)) {
+        return eval_result_from_ctx(ctx);
+    }
     return eval_result_from_ctx(ctx);
 }
 

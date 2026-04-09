@@ -171,6 +171,7 @@ typedef struct {
     String_View command;
     String_View working_dir;
     bool command_expand_lists;
+    String_View *configurations;
 } BM_Test_Record;
 
 typedef struct {

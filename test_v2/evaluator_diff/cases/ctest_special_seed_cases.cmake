@@ -1,3 +1,35 @@
+#@@CASE ctest_local_dashboard_parity_surface
+#@@MODE SCRIPT
+#@@OUTCOME SUCCESS
+#@@FILE_TEXT dash_src/CMakeLists.txt
+cmake_minimum_required(VERSION 3.28)
+project(NobDiffDash C)
+enable_testing()
+add_executable(dash main.c)
+add_test(NAME dash_run COMMAND dash)
+#@@END_FILE_TEXT
+#@@FILE_TEXT dash_src/main.c
+int main(void) { return 0; }
+#@@END_FILE_TEXT
+#@@QUERY TREE build/Testing
+include("${CMAKE_CURRENT_LIST_DIR}/__nob_diff_helpers/__nob_diff_oracle_common.cmake")
+set(CMAKE_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}")
+set(CMAKE_BINARY_DIR "${CMAKE_CURRENT_LIST_DIR}")
+set(CMAKE_CURRENT_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}")
+set(CMAKE_CURRENT_BINARY_DIR "${CMAKE_CURRENT_LIST_DIR}")
+set(CTEST_SOURCE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/dash_src")
+set(CTEST_BINARY_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/dash_build")
+set(CTEST_CMAKE_COMMAND "$ENV{NOB_DIFF_CMAKE_BIN}")
+set(CTEST_COMMAND "$ENV{NOB_DIFF_CTEST_BIN}")
+set(CTEST_BUILD_COMMAND "$ENV{NOB_DIFF_CMAKE_BIN} --build .")
+ctest_empty_binary_directory("${CTEST_BINARY_DIRECTORY}")
+ctest_start(Experimental "${CTEST_SOURCE_DIRECTORY}" "${CTEST_BINARY_DIRECTORY}" QUIET)
+ctest_configure(QUIET)
+ctest_build(QUIET)
+ctest_test(QUIET)
+ctest_sleep(0.01)
+#@@ENDCASE
+
 #@@CASE ctest_local_dashboard_surface
 #@@MODE SCRIPT
 #@@OUTCOME SUCCESS

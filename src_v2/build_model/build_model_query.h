@@ -361,6 +361,10 @@ bool bm_query_session_target_imported_link_languages(BM_Query_Session *session,
 bool bm_query_testing_enabled(const Build_Model *model);
 String_View bm_query_test_name(const Build_Model *model, BM_Test_Id id);
 String_View bm_query_test_command(const Build_Model *model, BM_Test_Id id);
+BM_Directory_Id bm_query_test_owner_directory(const Build_Model *model, BM_Test_Id id);
+String_View bm_query_test_working_directory(const Build_Model *model, BM_Test_Id id);
+bool bm_query_test_command_expand_lists(const Build_Model *model, BM_Test_Id id);
+BM_String_Span bm_query_test_configurations(const Build_Model *model, BM_Test_Id id);
 
 BM_Install_Rule_Kind bm_query_install_rule_kind(const Build_Model *model, BM_Install_Rule_Id id);
 BM_Directory_Id bm_query_install_rule_owner_directory(const Build_Model *model, BM_Install_Rule_Id id);

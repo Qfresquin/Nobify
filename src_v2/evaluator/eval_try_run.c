@@ -13,6 +13,29 @@ typedef struct {
     bool has_stderr_output;
 } Try_Run_Cache_Answers;
 
+static bool try_run_emit_probe_replay(EvalExecContext *ctx,
+                                      Cmake_Event_Origin origin,
+                                      const Try_Run_Request *req,
+                                      String_View artifact_path,
+                                      String_View working_directory) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctx || !req) return false;
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_PROBE,
+                                  EVENT_REPLAY_OPCODE_PROBE_TRY_RUN,
+                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  req->compile_req.binary_dir,
+                                  &action_key) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, req->compile_req.binary_dir) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, artifact_path) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 1, working_directory) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 2, req->run_result_var)) {
+        return false;
+    }
+    return true;
+}
+
 static bool try_run_clear_run_outputs(EvalExecContext *ctx, const Try_Run_Request *req) {
     if (!ctx || !req) return false;
     if (req->run_output_var.count > 0 && !eval_var_set_current(ctx, req->run_output_var, nob_sv_from_cstr(""))) return false;
@@ -476,8 +499,21 @@ static bool try_run_execute_request(EvalExecContext *ctx,
     Cmake_Event_Origin origin = eval_origin_from_node(ctx, node);
     Try_Compile_Execution_Result exec_res = {0};
     Try_Run_Result run_res = {0};
+    String_View replay_working_dir = nob_sv_from_cstr("");
     if (!try_run_execute_compile_phase(ctx, node, req, &exec_res, &run_res)) return false;
     if (!try_run_publish_compile_phase(ctx, origin, req, &run_res)) return false;
+
+    replay_working_dir = req->working_directory.count > 0
+        ? eval_path_resolve_for_cmake_arg(ctx, req->working_directory, req->compile_req.current_bin_dir, false)
+        : req->compile_req.binary_dir;
+    if (eval_should_stop(ctx)) return false;
+    if (!try_run_emit_probe_replay(ctx,
+                                   origin,
+                                   req,
+                                   exec_res.artifact_path,
+                                   replay_working_dir)) {
+        return false;
+    }
 
     if (!run_res.compile_ok) {
         return try_run_finish_without_run(ctx, req, origin, run_res.compile_output, nob_sv_from_cstr(""));
@@ -521,15 +557,10 @@ static bool try_run_execute_request(EvalExecContext *ctx,
     }
     if (!try_run_append_exec_argv(ctx, req, exec_path, &argv)) return false;
 
-    String_View working_dir = req->working_directory.count > 0
-        ? eval_path_resolve_for_cmake_arg(ctx, req->working_directory, req->compile_req.current_bin_dir, false)
-        : req->compile_req.binary_dir;
-    if (eval_should_stop(ctx)) return false;
-
     Eval_Process_Run_Request proc_req = {
         .argv = argv,
         .argc = arena_arr_len(argv),
-        .working_directory = working_dir,
+        .working_directory = replay_working_dir,
         .stdin_data = nob_sv_from_cstr(""),
     };
     Eval_Process_Run_Result proc_res = {0};

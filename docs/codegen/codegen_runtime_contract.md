@@ -45,6 +45,7 @@ The canonical generated CLI is:
 
 - `configure`
 - `build [targets...]`
+- `test [tests...] [--config <name>]`
 - `install [--prefix <path>] [--component <name>]`
 - `export`
 - `package [--generator <name>] [--output-dir <path>]`
@@ -66,6 +67,10 @@ The runtime owns these phases:
 - `build`
   executes normal target/build-step work after configure ownership is
   satisfied
+- `test`
+  ensures configure ownership, auto-builds selected registered-test targets
+  when required, then executes the filtered test plan and any supported
+  test-driver replay
 - `install`
   executes install rules after configure ownership is satisfied
 - `export`
@@ -81,9 +86,9 @@ from the frozen build model.
 
 ## 5. Auto-Configure Rule
 
-The canonical `C2` rule is:
+The canonical `C2/C3` rule is:
 
-- `build`, `install`, `export`, and `package` must ensure that required
+- `build`, `test`, `install`, `export`, and `package` must ensure that required
   configure-phase actions are satisfied before their own phase proceeds
 
 The default product behavior is:
@@ -96,6 +101,23 @@ The default product behavior is:
 
 This rule applies equally when invocation begins with the default no-subcommand
 entry.
+
+## 5.1 Test Contract
+
+The product-facing `test` command is distinct from scripted `ctest_test`
+replay:
+
+- `test` uses the frozen build-model test domain
+- it filters by explicit names and optional `--config`
+- it resolves first-token executable target names to runtime artifact paths
+- it auto-builds those resolved targets before execution
+- it runs commands from the frozen effective working directory
+
+`ctest_test` remains a test-driver replay step:
+
+- it also consumes the frozen build-model test domain
+- it does not auto-build beyond prior explicit `ctest_build` replay
+- in `C3`, only the narrow local dashboard subset is supported
 
 ## 6. Helper Vocabulary
 
@@ -152,6 +174,13 @@ Required properties:
   family enters the closure program
 
 The generated backend must not silently skip unsupported replay actions.
+
+For `C3`, explicit reject coverage includes at least:
+
+- generic process replay such as `execute_process()` and `exec_program()`
+- probe replay such as `try_compile()` and `try_run()`
+- unsupported `ctest_*` dashboard/script/network variants
+- unsupported `FetchContent` provider, VCS, remote, and custom-command flows
 
 ## 9. Legibility Requirement
 
