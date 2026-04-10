@@ -182,7 +182,7 @@ typedef struct {
 } EGD_Corpus_Finding_Inventory;
 
 #define EGD_EXPECTED_FULL_COMMANDS 124u
-#define EGD_COMMAND_INVENTORY_VERSION "2026-04-09-c4"
+#define EGD_COMMAND_INVENTORY_VERSION "2026-04-10-c5"
 #define EGD_SUPPORTED_SUBSET_DOC "docs/codegen/generated_backend_supported_subset.md"
 
 #define EGD_PACK_EVAL_DEFAULT "test_v2/evaluator/golden/evaluator_default.cmake"
@@ -276,6 +276,14 @@ static const EGD_Observed_Output s_egd_fetchcontent_local_outputs[] = {
     {"archive_marker", "fc_base/archivedep-build/from_archive.txt", EGD_DIFF_FILE_TEXT},
 };
 
+static const Test_Manifest_Request s_egd_ctest_extended_manifests[] = {
+    {TEST_MANIFEST_CAPTURE_FILE_TEXT, "ctest_extended_report", "__oracle/ctest_extended_report.txt"},
+};
+
+static const EGD_Observed_Output s_egd_ctest_extended_outputs[] = {
+    {"ctest_extended_report", "__oracle/ctest_extended_report.txt", EGD_DIFF_FILE_TEXT},
+};
+
 static const EGD_Observed_Output s_egd_install_outputs[] = {
     {"install_tree", "", EGD_DIFF_TREE},
 };
@@ -321,7 +329,8 @@ static const EGD_Subcommand_Inventory s_egd_subcommand_inventory[] = {
     {"cmake_language", "CALL|EVAL|DEFER", EGD_PACK_CMAKE_LANGUAGE, "cmake_language_defer_queue_cancel_and_flush_surface", EGD_CLASS_EVALUATOR_ONLY, EGD_PHASE_CONFIGURE, "evaluator.frozen-semantic.cmake-language", "cmake_language stays on the evaluator side unless a later product decision moves specific host effects downstream", NULL, NULL},
     {"cmake_path", "SET|GET|APPEND|COMPARE", EGD_PACK_CMAKE_PATH, "cmake_path_extended_surface_matches_local_seed", EGD_CLASS_EVALUATOR_ONLY, EGD_PHASE_CONFIGURE, "evaluator.frozen-semantic.cmake-path", "path computation is evaluator-only unless it already freezes into target metadata", NULL, NULL},
     {"ctest_*", "ctest_empty_binary_directory|ctest_start|ctest_configure|ctest_build|ctest_test|ctest_sleep", EGD_PACK_CTEST, "ctest_local_dashboard_parity_surface", EGD_CLASS_PARITY_PASS, EGD_PHASE_TEST | EGD_PHASE_HOST_ONLY, "build-model.replay.test-driver", "local dashboard ctest steps now replay through the generated backend test-driver runtime", NULL, "workload.codegen.local-ctest"},
-    {"ctest_*", "ctest_submit|ctest_upload|ctest_run_script|ctest_read_custom_files|ctest_update|ctest_coverage|ctest_memcheck", EGD_PACK_CTEST, "ctest_local_dashboard_surface", EGD_CLASS_BACKEND_REJECT, EGD_PHASE_TEST | EGD_PHASE_HOST_ONLY, "build-model.replay.test-driver", "networked, script, and probe-heavy ctest variants remain explicit backend rejects in the narrow local-only C3 surface", "epic-c.ctest-extended", NULL},
+    {"ctest_*", "ctest_coverage|ctest_memcheck", EGD_PACK_CTEST, "ctest_local_coverage_memcheck_parity_surface", EGD_CLASS_PARITY_PASS, EGD_PHASE_TEST | EGD_PHASE_HOST_ONLY, "build-model.replay.test-driver", "local coverage and memcheck dashboard steps now replay through the generated backend in the narrow local-only C5 subset", NULL, "workload.codegen.local-ctest-extended"},
+    {"ctest_*", "ctest_submit|ctest_upload|ctest_run_script|ctest_read_custom_files|ctest_update", EGD_PACK_CTEST, "ctest_local_dashboard_surface", EGD_CLASS_BACKEND_REJECT, EGD_PHASE_TEST | EGD_PHASE_HOST_ONLY, "build-model.replay.test-driver", "networked and child-script ctest variants remain explicit backend rejects after the local-only C5 coverage and memcheck promotion", "epic-c.ctest-extended", NULL},
     {"FetchContent_*", "SOURCE_DIR|LOCAL_ARCHIVE", EGD_PACK_FETCHCONTENT, "fetchcontent_local_materialization_surface", EGD_CLASS_PARITY_PASS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, "build-model.replay.dependency-materialization", "local deterministic FetchContent source-dir and archive materialization now replay through the generated backend", NULL, "workload.codegen.fetchcontent-local"},
     {"FetchContent_*", "GetProperties", EGD_PACK_FETCHCONTENT, "fetchcontent_local_materialization_surface", EGD_CLASS_EVALUATOR_ONLY, EGD_PHASE_CONFIGURE, "evaluator.frozen-semantic.fetchcontent", "FetchContent_GetProperties only affects configure-time variables and remains evaluator-only", NULL, NULL},
     {"FetchContent_*", "provider|custom-command|VCS|remote", EGD_PACK_FETCHCONTENT, "fetchcontent_local_materialization_surface", EGD_CLASS_BACKEND_REJECT, EGD_PHASE_CONFIGURE, "build-model.replay.dependency-materialization", "provider, custom-command, VCS, and remote FetchContent variants remain explicit backend rejects in C3", "epic-c.fetchcontent", NULL},
@@ -337,6 +346,7 @@ static const EGD_Case_Def s_egd_cases[] = {
     {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package TXZ", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_TAR | EGD_TOOL_XZ, "build-model.package", "positive full-package parity for TXZ", NULL, "workload.codegen.package-txz", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "TXZ"},
     {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package ZIP", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_PYTHON, "build-model.package", "positive full-package parity for ZIP", NULL, "workload.codegen.package-zip", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "ZIP"},
     {"fetchcontent_local_materialization_surface", EGD_PACK_FETCHCONTENT, "FetchContent_MakeAvailable", "local SOURCE_DIR + local archive materialization", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE | EGD_TOOL_TAR, "build-model.replay.dependency-materialization", "focused C3 parity for local deterministic FetchContent materialization only", NULL, "workload.codegen.fetchcontent-local", s_egd_fetchcontent_local_outputs, NOB_ARRAY_LEN(s_egd_fetchcontent_local_outputs), s_egd_fetchcontent_local_manifests, NOB_ARRAY_LEN(s_egd_fetchcontent_local_manifests), NULL},
+    {"ctest_local_coverage_memcheck_parity_surface", EGD_PACK_CTEST, "ctest_coverage|ctest_memcheck", "local coverage + memcheck staging", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_TEST | EGD_PHASE_HOST_ONLY, EGD_TOOL_CMAKE, "build-model.replay.test-driver", "focused C5 parity for local-only coverage and memcheck staging through the generated backend", NULL, "workload.codegen.local-ctest-extended", s_egd_ctest_extended_outputs, NOB_ARRAY_LEN(s_egd_ctest_extended_outputs), s_egd_ctest_extended_manifests, NOB_ARRAY_LEN(s_egd_ctest_extended_manifests), NULL},
     {"backend_reject_target_precompile_headers", EGD_PACK_SEEDS, "target_precompile_headers", "PCH explicit reject", EGD_CLASS_BACKEND_REJECT, EGD_PARITY_NONE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_NONE, "replay.backlog.target-usage", "replay-domain foundation landed, but concrete precompile header semantics are still explicit backend rejects", "epic-a.target_precompile_headers", NULL, NULL, 0, NULL, 0, NULL},
     {"backend_reject_export_append", EGD_PACK_SEEDS, "export", "APPEND explicit reject", EGD_CLASS_BACKEND_REJECT, EGD_PARITY_NONE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_EXPORT, EGD_TOOL_NONE, "replay.backlog.export", "replay-domain foundation landed, but standalone export append remains an explicit backend reject", "epic-a.export-append", NULL, NULL, 0, NULL, 0, NULL},
     {"math_expr_precedence_bitwise_and_hex_output", EGD_PACK_MATH, "math", "math(EXPR)", EGD_CLASS_EVALUATOR_ONLY, EGD_PARITY_NONE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE, EGD_TOOL_NONE, "evaluator.frozen-semantic.math", "pure evaluator arithmetic should stay outside backend replay", NULL, NULL, NULL, 0, NULL, 0, NULL},

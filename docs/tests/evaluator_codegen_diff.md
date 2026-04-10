@@ -2,7 +2,7 @@
 
 ## Status
 
-As of April 9, 2026, `test-evaluator-codegen-diff` is the canonical
+As of April 10, 2026, `test-evaluator-codegen-diff` is the canonical
 explicit-only closure harness for the remaining
 `evaluator -> Event IR -> build_model -> codegen` gap.
 
@@ -48,6 +48,9 @@ Product rules:
 - `C3` parity-pass cases may additionally prove narrow local-only test-driver
   replay and local dependency materialization through staged `Testing/` trees,
   filtered test execution, and local `FetchContent` outputs alone
+- `C5` parity-pass cases may additionally prove local-only
+  `ctest_coverage()` and `ctest_memcheck()` replay through staged coverage and
+  memcheck artifacts plus focused working-directory side effects
 
 ## State Model
 

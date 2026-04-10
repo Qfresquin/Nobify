@@ -1119,6 +1119,216 @@ TEST(build_model_replay_actions_reject_invalid_opcode_payload_shapes) {
     arena_destroy(arena);
     arena_destroy(validate_arena);
     arena_destroy(model_arena);
+
+    arena = arena_create(2 * 1024 * 1024);
+    validate_arena = arena_create(512 * 1024);
+    model_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
+
+    stream = event_stream_create(arena);
+    ASSERT(stream != NULL);
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 2);
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("bad_ctest_coverage");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_TEST_DRIVER;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_TEST;
+    ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("ctest-build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 3);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("bad_ctest_coverage");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("ctest-build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 4);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_coverage");
+    ev.as.replay_action_add_argv.arg_index = 0;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("Experimental");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 5);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_coverage");
+    ev.as.replay_action_add_argv.arg_index = 1;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("Nightly");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 6);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_coverage");
+    ev.as.replay_action_add_argv.arg_index = 2;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("1");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 7);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_coverage");
+    ev.as.replay_action_add_argv.arg_index = 3;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("2");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 8);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_coverage");
+    ev.as.replay_action_add_argv.arg_index = 4;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("gcov");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, 9);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build = (Test_Semantic_Pipeline_Build_Result){0};
+    ASSERT(test_semantic_pipeline_build_model_from_stream(arena, validate_arena, model_arena, stream, &build));
+    ASSERT(build.builder_ok);
+    ASSERT(!build.validate_ok);
+    ASSERT(!build.freeze_ok);
+
+    arena_destroy(arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
+
+    arena = arena_create(2 * 1024 * 1024);
+    validate_arena = arena_create(512 * 1024);
+    model_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
+
+    stream = event_stream_create(arena);
+    ASSERT(stream != NULL);
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 2);
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_TEST_DRIVER;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_TEST;
+    ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("ctest-build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_INPUT, 3);
+    ev.as.replay_action_add_input.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_input.path = nob_sv_from_cstr("resource.json");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 4);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("ctest-build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 5);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("reports/memcheck.junit.xml");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 6);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_argv.arg_index = 0;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("Experimental");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 7);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_argv.arg_index = 1;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("Nightly");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 8);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_argv.arg_index = 2;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("1");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 9);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_argv.arg_index = 3;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 10);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_argv.arg_index = 4;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 11);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_argv.arg_index = 5;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 12);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_argv.arg_index = 6;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("1");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 13);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_argv.arg_index = 7;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 14);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_argv.arg_index = 8;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("0");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 15);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_argv.arg_index = 9;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("0");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 16);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_argv.arg_index = 10;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 17);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_argv.arg_index = 11;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 18);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_argv.arg_index = 12;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("Valgrind");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 19);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("bad_ctest_memcheck");
+    ev.as.replay_action_add_argv.arg_index = 13;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("0");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, 20);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build = (Test_Semantic_Pipeline_Build_Result){0};
+    ASSERT(test_semantic_pipeline_build_model_from_stream(arena, validate_arena, model_arena, stream, &build));
+    ASSERT(build.builder_ok);
+    ASSERT(!build.validate_ok);
+    ASSERT(!build.freeze_ok);
+
+    arena_destroy(arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
     TEST_PASS();
 }
 
@@ -1323,6 +1533,177 @@ TEST(build_model_replay_actions_accept_c3_opcodes_and_queries) {
     ASSERT(build_model_string_equals_at(bm_query_replay_action_outputs(model, (BM_Replay_Action_Id)2), 0, "ctest_build"));
     ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, (BM_Replay_Action_Id)2), 0, "reports/junit.xml"));
     ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, (BM_Replay_Action_Id)2), 1, "1"));
+
+    arena_destroy(arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
+    TEST_PASS();
+}
+
+TEST(build_model_replay_actions_accept_c5_ctest_coverage_and_memcheck_queries) {
+    Arena *arena = arena_create(2 * 1024 * 1024);
+    Arena *validate_arena = arena_create(512 * 1024);
+    Arena *model_arena = arena_create(2 * 1024 * 1024);
+    Test_Semantic_Pipeline_Build_Result build = {0};
+    Event_Stream *stream = NULL;
+    Event ev = {0};
+    const Build_Model *model = NULL;
+
+    ASSERT(arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
+
+    stream = event_stream_create(arena);
+    ASSERT(stream != NULL);
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 2);
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("ctest_coverage");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_TEST_DRIVER;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_TEST;
+    ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("ctest_build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_INPUT, 3);
+    ev.as.replay_action_add_input.action_key = nob_sv_from_cstr("ctest_coverage");
+    ev.as.replay_action_add_input.path = nob_sv_from_cstr("src/main.c");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 4);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("ctest_coverage");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("ctest_build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 5);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("ctest_coverage");
+    ev.as.replay_action_add_argv.arg_index = 0;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("Experimental");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 6);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("ctest_coverage");
+    ev.as.replay_action_add_argv.arg_index = 1;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("Nightly");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 7);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("ctest_coverage");
+    ev.as.replay_action_add_argv.arg_index = 2;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("1");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 8);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("ctest_coverage");
+    ev.as.replay_action_add_argv.arg_index = 3;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("2");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 9);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("ctest_coverage");
+    ev.as.replay_action_add_argv.arg_index = 4;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("gcov");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 10);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("ctest_coverage");
+    ev.as.replay_action_add_argv.arg_index = 5;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("--json-format");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 11);
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("ctest_memcheck");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_TEST_DRIVER;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_TEST;
+    ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("ctest_build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_INPUT, 12);
+    ev.as.replay_action_add_input.action_key = nob_sv_from_cstr("ctest_memcheck");
+    ev.as.replay_action_add_input.path = nob_sv_from_cstr("ctest-resource.json");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_INPUT, 13);
+    ev.as.replay_action_add_input.action_key = nob_sv_from_cstr("ctest_memcheck");
+    ev.as.replay_action_add_input.path = nob_sv_from_cstr("suppressions.supp");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 14);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("ctest_memcheck");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("ctest_build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 15);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("ctest_memcheck");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("reports/memcheck.junit.xml");
+    ASSERT(event_stream_push(stream, &ev));
+
+    {
+        const String_View mem_argv[] = {
+            nob_sv_from_cstr("Experimental"),
+            nob_sv_from_cstr("Nightly"),
+            nob_sv_from_cstr("0"),
+            nob_sv_from_cstr("1"),
+            nob_sv_from_cstr("2"),
+            nob_sv_from_cstr("1"),
+            nob_sv_from_cstr("3"),
+            nob_sv_from_cstr("23:59:59"),
+            nob_sv_from_cstr("1"),
+            nob_sv_from_cstr("0"),
+            nob_sv_from_cstr("UNTIL_PASS:2"),
+            nob_sv_from_cstr("8"),
+            nob_sv_from_cstr("Valgrind"),
+            nob_sv_from_cstr("2"),
+            nob_sv_from_cstr("valgrind"),
+            nob_sv_from_cstr("--tool=memcheck"),
+        };
+        for (size_t i = 0; i < NOB_ARRAY_LEN(mem_argv); ++i) {
+            build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 16 + (uint64_t)i);
+            ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("ctest_memcheck");
+            ev.as.replay_action_add_argv.arg_index = i;
+            ev.as.replay_action_add_argv.value = mem_argv[i];
+            ASSERT(event_stream_push(stream, &ev));
+        }
+    }
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, 40);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    ASSERT(test_semantic_pipeline_build_model_from_stream(arena, validate_arena, model_arena, stream, &build));
+    ASSERT(build.builder_ok);
+    ASSERT(build.validate_ok);
+    ASSERT(build.freeze_ok);
+    ASSERT(build.model != NULL);
+
+    model = build.model;
+    ASSERT(bm_query_replay_action_count(model) == 2);
+
+    ASSERT(bm_query_replay_action_opcode(model, (BM_Replay_Action_Id)0) == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL);
+    ASSERT(bm_query_replay_action_kind(model, (BM_Replay_Action_Id)0) == BM_REPLAY_ACTION_TEST_DRIVER);
+    ASSERT(bm_query_replay_action_phase(model, (BM_Replay_Action_Id)0) == BM_REPLAY_PHASE_TEST);
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_inputs(model, (BM_Replay_Action_Id)0), 0, "src/main.c"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_outputs(model, (BM_Replay_Action_Id)0), 0, "ctest_build"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, (BM_Replay_Action_Id)0), 0, "Experimental"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, (BM_Replay_Action_Id)0), 3, "2"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, (BM_Replay_Action_Id)0), 4, "gcov"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, (BM_Replay_Action_Id)0), 5, "--json-format"));
+
+    ASSERT(bm_query_replay_action_opcode(model, (BM_Replay_Action_Id)1) == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL);
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_inputs(model, (BM_Replay_Action_Id)1), 0, "ctest-resource.json"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_inputs(model, (BM_Replay_Action_Id)1), 1, "suppressions.supp"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_outputs(model, (BM_Replay_Action_Id)1), 0, "ctest_build"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_outputs(model, (BM_Replay_Action_Id)1), 1, "reports/memcheck.junit.xml"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, (BM_Replay_Action_Id)1), 12, "Valgrind"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, (BM_Replay_Action_Id)1), 13, "2"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, (BM_Replay_Action_Id)1), 14, "valgrind"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, (BM_Replay_Action_Id)1), 15, "--tool=memcheck"));
 
     arena_destroy(arena);
     arena_destroy(validate_arena);
@@ -2614,6 +2995,7 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_replay_actions_reject_invalid_opcode_payload_shapes(passed, failed, skipped);
     test_build_model_tests_freeze_owner_working_dir_expand_lists_and_configurations(passed, failed, skipped);
     test_build_model_replay_actions_accept_c3_opcodes_and_queries(passed, failed, skipped);
+    test_build_model_replay_actions_accept_c5_ctest_coverage_and_memcheck_queries(passed, failed, skipped);
     test_build_model_replay_actions_reject_malformed_ordering(passed, failed, skipped);
     test_build_model_context_aware_queries_expand_usage_requirements_and_target_property_genex(passed, failed, skipped);
     test_build_model_platform_context_and_typed_platform_properties_are_queryable(passed, failed, skipped);

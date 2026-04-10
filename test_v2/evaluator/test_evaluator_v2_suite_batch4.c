@@ -1943,6 +1943,86 @@ TEST(evaluator_ctest_coverage_executes_documented_command_order_and_stages_submi
     ASSERT(strstr(manifest_sb.items, "Coverage.xml") != NULL);
     nob_sb_free(manifest_sb);
 
+    {
+        String_View action_key = {0};
+        size_t declare_count = 0;
+        size_t input_count = 0;
+        size_t output_count = 0;
+        size_t argv_count = 0;
+        bool saw_main_source = false;
+        bool saw_build_output = false;
+        bool saw_model = false;
+        bool saw_track = false;
+        bool saw_append = false;
+        bool saw_argv_count = false;
+        bool saw_command = false;
+        bool saw_flag = false;
+        for (size_t i = 0; i < stream->count; ++i) {
+            const Cmake_Event *ev = &stream->items[i];
+            if (ev->h.kind == EVENT_REPLAY_ACTION_DECLARE &&
+                ev->as.replay_action_declare.opcode == EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL) {
+                declare_count++;
+                action_key = ev->as.replay_action_declare.action_key;
+                ASSERT(ev->as.replay_action_declare.action_kind == EVENT_REPLAY_ACTION_TEST_DRIVER);
+                ASSERT(ev->as.replay_action_declare.phase == EVENT_REPLAY_PHASE_TEST);
+            } else if (ev->h.kind == EVENT_REPLAY_ACTION_ADD_INPUT &&
+                       action_key.count > 0 &&
+                       nob_sv_eq(ev->as.replay_action_add_input.action_key, action_key)) {
+                input_count++;
+                if (sv_contains_sv(ev->as.replay_action_add_input.path, nob_sv_from_cstr("ctest_coverage_exec_src/src/main.c"))) {
+                    saw_main_source = true;
+                }
+            } else if (ev->h.kind == EVENT_REPLAY_ACTION_ADD_OUTPUT &&
+                       action_key.count > 0 &&
+                       nob_sv_eq(ev->as.replay_action_add_output.action_key, action_key)) {
+                output_count++;
+                if (sv_contains_sv(ev->as.replay_action_add_output.path, nob_sv_from_cstr("ctest_coverage_exec_bin"))) {
+                    saw_build_output = true;
+                }
+            } else if (ev->h.kind == EVENT_REPLAY_ACTION_ADD_ARGV &&
+                       action_key.count > 0 &&
+                       nob_sv_eq(ev->as.replay_action_add_argv.action_key, action_key)) {
+                argv_count++;
+                if (ev->as.replay_action_add_argv.arg_index == 0 &&
+                    nob_sv_eq(ev->as.replay_action_add_argv.value, nob_sv_from_cstr("Experimental"))) {
+                    saw_model = true;
+                }
+                if (ev->as.replay_action_add_argv.arg_index == 1 &&
+                    nob_sv_eq(ev->as.replay_action_add_argv.value, nob_sv_from_cstr("Experimental"))) {
+                    saw_track = true;
+                }
+                if (ev->as.replay_action_add_argv.arg_index == 2 &&
+                    nob_sv_eq(ev->as.replay_action_add_argv.value, nob_sv_from_cstr("1"))) {
+                    saw_append = true;
+                }
+                if (ev->as.replay_action_add_argv.arg_index == 3 &&
+                    nob_sv_eq(ev->as.replay_action_add_argv.value, nob_sv_from_cstr("5"))) {
+                    saw_argv_count = true;
+                }
+                if (ev->as.replay_action_add_argv.arg_index == 4 &&
+                    nob_sv_eq(ev->as.replay_action_add_argv.value, nob_sv_from_cstr("coverage-tool"))) {
+                    saw_command = true;
+                }
+                if (ev->as.replay_action_add_argv.arg_index == 5 &&
+                    nob_sv_eq(ev->as.replay_action_add_argv.value, nob_sv_from_cstr("--fast"))) {
+                    saw_flag = true;
+                }
+            }
+        }
+        ASSERT(declare_count == 1);
+        ASSERT(input_count == 1);
+        ASSERT(output_count == 1);
+        ASSERT(argv_count == 9);
+        ASSERT(saw_main_source);
+        ASSERT(saw_build_output);
+        ASSERT(saw_model);
+        ASSERT(saw_track);
+        ASSERT(saw_append);
+        ASSERT(saw_argv_count);
+        ASSERT(saw_command);
+        ASSERT(saw_flag);
+    }
+
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
@@ -2329,6 +2409,79 @@ TEST(evaluator_ctest_memcheck_executes_backend_and_stages_submit_part) {
     ASSERT(strstr(junit_sb.items, "name=\"defect\"") != NULL);
     ASSERT(strstr(junit_sb.items, "<failure") != NULL);
     nob_sb_free(junit_sb);
+
+    {
+        String_View action_key = {0};
+        size_t declare_count = 0;
+        size_t input_count = 0;
+        size_t output_count = 0;
+        size_t argv_count = 0;
+        bool saw_resource = false;
+        bool saw_suppressions = false;
+        bool saw_junit = false;
+        bool saw_backend_type = false;
+        bool saw_prefix_count = false;
+        bool saw_prefix_command = false;
+        bool saw_prefix_option = false;
+        for (size_t i = 0; i < stream->count; ++i) {
+            const Cmake_Event *ev = &stream->items[i];
+            if (ev->h.kind == EVENT_REPLAY_ACTION_DECLARE &&
+                ev->as.replay_action_declare.opcode == EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL) {
+                declare_count++;
+                action_key = ev->as.replay_action_declare.action_key;
+                ASSERT(ev->as.replay_action_declare.action_kind == EVENT_REPLAY_ACTION_TEST_DRIVER);
+                ASSERT(ev->as.replay_action_declare.phase == EVENT_REPLAY_PHASE_TEST);
+            } else if (ev->h.kind == EVENT_REPLAY_ACTION_ADD_INPUT &&
+                       action_key.count > 0 &&
+                       nob_sv_eq(ev->as.replay_action_add_input.action_key, action_key)) {
+                input_count++;
+                if (sv_contains_sv(ev->as.replay_action_add_input.path, nob_sv_from_cstr("ctest-resource.json"))) {
+                    saw_resource = true;
+                }
+                if (sv_contains_sv(ev->as.replay_action_add_input.path, nob_sv_from_cstr("suppressions.supp"))) {
+                    saw_suppressions = true;
+                }
+            } else if (ev->h.kind == EVENT_REPLAY_ACTION_ADD_OUTPUT &&
+                       action_key.count > 0 &&
+                       nob_sv_eq(ev->as.replay_action_add_output.action_key, action_key)) {
+                output_count++;
+                if (sv_contains_sv(ev->as.replay_action_add_output.path, nob_sv_from_cstr("reports/memcheck.xml"))) {
+                    saw_junit = true;
+                }
+            } else if (ev->h.kind == EVENT_REPLAY_ACTION_ADD_ARGV &&
+                       action_key.count > 0 &&
+                       nob_sv_eq(ev->as.replay_action_add_argv.action_key, action_key)) {
+                argv_count++;
+                if (ev->as.replay_action_add_argv.arg_index == 12 &&
+                    nob_sv_eq(ev->as.replay_action_add_argv.value, nob_sv_from_cstr("Valgrind"))) {
+                    saw_backend_type = true;
+                }
+                if (ev->as.replay_action_add_argv.arg_index == 13 &&
+                    nob_sv_eq(ev->as.replay_action_add_argv.value, nob_sv_from_cstr("5"))) {
+                    saw_prefix_count = true;
+                }
+                if (ev->as.replay_action_add_argv.arg_index == 14 &&
+                    nob_sv_eq(ev->as.replay_action_add_argv.value, nob_sv_from_cstr("memcheck-tool"))) {
+                    saw_prefix_command = true;
+                }
+                if (ev->as.replay_action_add_argv.arg_index == 15 &&
+                    nob_sv_eq(ev->as.replay_action_add_argv.value, nob_sv_from_cstr("--xml=yes"))) {
+                    saw_prefix_option = true;
+                }
+            }
+        }
+        ASSERT(declare_count == 1);
+        ASSERT(input_count == 2);
+        ASSERT(output_count == 2);
+        ASSERT(argv_count == 19);
+        ASSERT(saw_resource);
+        ASSERT(saw_suppressions);
+        ASSERT(saw_junit);
+        ASSERT(saw_backend_type);
+        ASSERT(saw_prefix_count);
+        ASSERT(saw_prefix_command);
+        ASSERT(saw_prefix_option);
+    }
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);

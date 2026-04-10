@@ -102,6 +102,8 @@ typedef enum {
     BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF,
     BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST,
     BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP,
+    BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL,
+    BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL,
 } BM_Replay_Opcode;
 ```
 
@@ -256,6 +258,34 @@ Current `C3` additions freeze payloads as follows:
 - `TEST_DRIVER_CTEST_SLEEP`
   `argv[0] = duration text`
 
+Current `C5` additions freeze payloads as follows:
+
+- `TEST_DRIVER_CTEST_COVERAGE_LOCAL`
+  `inputs[] = ordered filtered source paths`, `outputs[0] = build dir`,
+  `argv[0] = model`, `argv[1] = track or ""`, `argv[2] = append flag`,
+  `argv[3] = resolved coverage argv count`, `argv[4..] = ordered resolved
+  coverage command argv`
+- `TEST_DRIVER_CTEST_MEMCHECK_LOCAL`
+  `inputs[0] = resource spec file or ""`,
+  `inputs[1] = suppressions file or ""`,
+  `outputs[0] = build dir`,
+  `outputs[1] = output junit or ""`,
+  `argv[0] = model`,
+  `argv[1] = track or ""`,
+  `argv[2] = append flag`,
+  `argv[3] = start or ""`,
+  `argv[4] = end or ""`,
+  `argv[5] = stride or ""`,
+  `argv[6] = parallel level or ""`,
+  `argv[7] = stop time or ""`,
+  `argv[8] = stop-on-failure flag`,
+  `argv[9] = schedule-random flag`,
+  `argv[10] = repeat text or ""`,
+  `argv[11] = test load or ""`,
+  `argv[12] = backend type or ""`,
+  `argv[13] = resolved memcheck prefix argv count`,
+  `argv[14..] = ordered resolved memcheck backend prefix argv`
+
 In strict local-only `C3`:
 
 - dependency-materialization positive support is limited to saved
@@ -265,6 +295,13 @@ In strict local-only `C3`:
   `ctest_build`, `ctest_test`, and `ctest_sleep`
 - probe opcodes are typed downstream ownership but remain explicit backend
   rejects
+
+In strict local-only `C5`:
+
+- the supported test-driver subset additionally includes local
+  `ctest_coverage` and `ctest_memcheck`
+- remote submit/upload/update, child-script flows, and generic process replay
+  remain explicit rejects
 
 ## 8. Relationship To Existing Domains
 

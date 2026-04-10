@@ -48,6 +48,8 @@ static const char *cg_replay_opcode_name(BM_Replay_Opcode opcode) {
         case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF: return "test_driver_ctest_build_self";
         case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST: return "test_driver_ctest_test";
         case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP: return "test_driver_ctest_sleep";
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL: return "test_driver_ctest_coverage_local";
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL: return "test_driver_ctest_memcheck_local";
     }
     return "unknown";
 }
@@ -232,7 +234,9 @@ bool cg_validate_model_for_backend(CG_Context *ctx) {
                  opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF ||
                  opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF ||
                  opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST ||
-                 opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP);
+                 opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP ||
+                 opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL ||
+                 opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL);
         }
         if (!supported) {
             nob_log(NOB_ERROR,

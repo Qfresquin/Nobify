@@ -123,6 +123,35 @@ TEST(codegen_render_emits_configure_and_build_cli_for_replay_models) {
     TEST_PASS();
 }
 
+TEST(codegen_render_emits_ctest_coverage_and_memcheck_helpers) {
+    Nob_String_Builder sb = {0};
+    ASSERT(codegen_write_text_file("coverage-tool.sh", "#!/bin/sh\nexit 0\n"));
+    ASSERT(codegen_write_text_file("memcheck-tool.sh", "#!/bin/sh\nexit 0\n"));
+    ASSERT(codegen_write_text_file("runner.sh", "#!/bin/sh\nexit 0\n"));
+    ASSERT(codegen_render_script(
+        "project(Test NONE)\n"
+        "enable_testing()\n"
+        "add_test(NAME smoke COMMAND /bin/sh runner.sh)\n"
+        "set(CTEST_COVERAGE_COMMAND \"/bin/sh coverage-tool.sh\")\n"
+        "set(CTEST_MEMORYCHECK_COMMAND /bin/sh)\n"
+        "set(CTEST_MEMORYCHECK_COMMAND_OPTIONS memcheck-tool.sh)\n"
+        "ctest_start(Experimental . .)\n"
+        "ctest_coverage(LABELS core)\n"
+        "ctest_memcheck(OUTPUT_JUNIT reports/memcheck.xml)\n",
+        "CMakeLists.txt",
+        "nob.c",
+        &sb));
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items ? sb.items : "");
+    ASSERT(strstr(output, "ctest_execute_coverage_local(") != NULL);
+    ASSERT(strstr(output, "ctest_execute_memcheck_local(") != NULL);
+    ASSERT(strstr(output, "ctest_write_coverage_reports(") != NULL);
+    ASSERT(strstr(output, "ctest_write_memcheck_reports(") != NULL);
+    ASSERT(strstr(output, "run_cmd_capture_in_dir(") != NULL);
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
 TEST(codegen_export_only_render_does_not_emit_install_only_helpers) {
     Nob_String_Builder sb = {0};
     ASSERT(codegen_render_script(
@@ -266,6 +295,7 @@ void run_codegen_v2_render_tests(int *passed, int *failed, int *skipped) {
     test_codegen_output_properties_shape_artifact_paths(passed, failed, skipped);
     test_codegen_runtime_emits_only_helpers_needed_for_simple_builds(passed, failed, skipped);
     test_codegen_render_emits_configure_and_build_cli_for_replay_models(passed, failed, skipped);
+    test_codegen_render_emits_ctest_coverage_and_memcheck_helpers(passed, failed, skipped);
     test_codegen_export_only_render_does_not_emit_install_only_helpers(passed, failed, skipped);
     test_codegen_generated_nob_compiles_cleanly_with_werror_for_representative_paths(passed, failed, skipped);
     test_codegen_render_multi_config_mixed_language_and_imported_queries_stay_stable(passed, failed, skipped);

@@ -95,6 +95,8 @@ static const char *pipeline_replay_opcode_name(BM_Replay_Opcode opcode) {
         case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF: return "test_driver_ctest_build_self";
         case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST: return "test_driver_ctest_test";
         case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP: return "test_driver_ctest_sleep";
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL: return "test_driver_ctest_coverage_local";
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL: return "test_driver_ctest_memcheck_local";
     }
     return "unknown";
 }
@@ -634,29 +636,58 @@ TEST(pipeline_build_graph_snapshot_surfaces_replay_actions) {
     pipeline_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 4);
     ev.as.replay_action_declare.action_key = nob_sv_from_cstr("snapshot_ctest");
     ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_TEST_DRIVER;
-    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL;
     ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_TEST;
     ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("graph_build");
     ASSERT(event_stream_push(stream, &ev));
 
-    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 5);
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_INPUT, 5);
+    ev.as.replay_action_add_input.action_key = nob_sv_from_cstr("snapshot_ctest");
+    ev.as.replay_action_add_input.path = nob_sv_from_cstr("graph_src/main.c");
+    ASSERT(event_stream_push(stream, &ev));
+
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 6);
     ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("snapshot_ctest");
     ev.as.replay_action_add_output.path = nob_sv_from_cstr("graph_build");
     ASSERT(event_stream_push(stream, &ev));
 
-    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 6);
-    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("snapshot_ctest");
-    ev.as.replay_action_add_argv.arg_index = 0;
-    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("reports/junit.xml");
-    ASSERT(event_stream_push(stream, &ev));
-
     pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 7);
     ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("snapshot_ctest");
+    ev.as.replay_action_add_argv.arg_index = 0;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("Experimental");
+    ASSERT(event_stream_push(stream, &ev));
+
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 8);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("snapshot_ctest");
     ev.as.replay_action_add_argv.arg_index = 1;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("Nightly");
+    ASSERT(event_stream_push(stream, &ev));
+
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 9);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("snapshot_ctest");
+    ev.as.replay_action_add_argv.arg_index = 2;
     ev.as.replay_action_add_argv.value = nob_sv_from_cstr("1");
     ASSERT(event_stream_push(stream, &ev));
 
-    pipeline_init_event(&ev, EVENT_DIRECTORY_LEAVE, 8);
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 10);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("snapshot_ctest");
+    ev.as.replay_action_add_argv.arg_index = 3;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("2");
+    ASSERT(event_stream_push(stream, &ev));
+
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 11);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("snapshot_ctest");
+    ev.as.replay_action_add_argv.arg_index = 4;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("gcov");
+    ASSERT(event_stream_push(stream, &ev));
+
+    pipeline_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 12);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("snapshot_ctest");
+    ev.as.replay_action_add_argv.arg_index = 5;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("--json-format");
+    ASSERT(event_stream_push(stream, &ev));
+
+    pipeline_init_event(&ev, EVENT_DIRECTORY_LEAVE, 13);
     ev.as.directory_leave.source_dir = nob_sv_from_cstr("graph_src");
     ev.as.directory_leave.binary_dir = nob_sv_from_cstr("graph_build");
     ASSERT(event_stream_push(stream, &ev));
@@ -671,8 +702,8 @@ TEST(pipeline_build_graph_snapshot_surfaces_replay_actions) {
     ASSERT(sb.items != NULL);
     ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("BUILD_STEPS count=0")));
     ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("REPLAY_ACTIONS count=1")));
-    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("REPLAY[0] kind=TEST_DRIVER opcode=test_driver_ctest_test phase=TEST")));
-    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("inputs=0 outputs=1 argv=2 env=0")));
+    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("REPLAY[0] kind=TEST_DRIVER opcode=test_driver_ctest_coverage_local phase=TEST")));
+    ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("inputs=1 outputs=1 argv=6 env=0")));
     ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("TESTS count=1")));
     ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("TEST[0] name='smoke'")));
     ASSERT(pipeline_sv_contains(nob_sv_from_parts(sb.items, sb.count), nob_sv_from_cstr("expand_lists=1 configs=1 command='app'")));

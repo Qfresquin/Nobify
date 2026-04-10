@@ -30,6 +30,104 @@ ctest_test(QUIET)
 ctest_sleep(0.01)
 #@@ENDCASE
 
+#@@CASE ctest_local_coverage_memcheck_parity_surface
+#@@MODE SCRIPT
+#@@OUTCOME SUCCESS
+#@@FILE_TEXT source/src/main.c
+int main(void) { return 0; }
+#@@END_FILE_TEXT
+#@@FILE_TEXT source/src/net.c
+int net(void) { return 0; }
+#@@END_FILE_TEXT
+#@@FILE_TEXT source/tools/coverage.sh
+#!/bin/sh
+pwd > coverage.pwd
+printf 'coverage ok\n'
+exit 0
+#@@END_FILE_TEXT
+#@@FILE_TEXT source/tools/test_runner.sh
+#!/bin/sh
+mode="$1"
+pwd > "test-${mode}.pwd"
+printf '%s\n' "$mode"
+exit 0
+#@@END_FILE_TEXT
+#@@FILE_TEXT source/tools/memcheck.sh
+#!/bin/sh
+printf '%s\n' "$*" >> memcheck-args.log
+pwd >> memcheck-cwd.log
+while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done
+if [ "$#" -gt 0 ]; then shift; fi
+"$@"
+exit $?
+#@@END_FILE_TEXT
+#@@QUERY FILE_TEXT build/__oracle/ctest_extended_report.txt
+cmake_minimum_required(VERSION 3.28)
+project(NobDiffCtestExtended NONE)
+enable_testing()
+function(nob_diff_report_reset path)
+  get_filename_component(_nob_diff_dir "${path}" DIRECTORY)
+  if(NOT "${_nob_diff_dir}" STREQUAL "")
+    file(MAKE_DIRECTORY "${_nob_diff_dir}")
+  endif()
+  file(WRITE "${path}" "")
+endfunction()
+function(nob_diff_report_append_kv path key value)
+  file(APPEND "${path}" "${key}=${value}\n")
+endfunction()
+set(CTEST_SOURCE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+set(CTEST_BINARY_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+file(MAKE_DIRECTORY "${CTEST_BINARY_DIRECTORY}")
+file(RELATIVE_PATH _source_from_build "${CTEST_BINARY_DIRECTORY}" "${CTEST_SOURCE_DIRECTORY}")
+file(MAKE_DIRECTORY "${CTEST_SOURCE_DIRECTORY}/memcheck_work")
+set(COVERAGE_COMMAND "/bin/sh;${_source_from_build}/tools/coverage.sh")
+set(CTEST_MEMORYCHECK_COMMAND "/bin/sh")
+set(CTEST_MEMORYCHECK_TYPE Generic)
+set(CTEST_MEMORYCHECK_COMMAND_OPTIONS "${_source_from_build}/tools/memcheck.sh")
+add_test(NAME pass
+  COMMAND /bin/sh "${_source_from_build}/tools/test_runner.sh" pass
+  WORKING_DIRECTORY "${_source_from_build}/memcheck_work")
+set_source_files_properties("${CTEST_SOURCE_DIRECTORY}/src/main.c" PROPERTIES LABELS "core;ui")
+set_source_files_properties("${CTEST_SOURCE_DIRECTORY}/src/net.c" PROPERTIES LABELS infra)
+set(_report "${CTEST_BINARY_DIRECTORY}/__oracle/ctest_extended_report.txt")
+nob_diff_report_reset("${_report}")
+ctest_start(Experimental "${CTEST_SOURCE_DIRECTORY}" "${CTEST_BINARY_DIRECTORY}" QUIET)
+ctest_coverage(LABELS core ui APPEND QUIET)
+ctest_memcheck(APPEND QUIET)
+set(TAG_EXISTS 0)
+set(COVERAGE_XML_EXISTS 0)
+set(MEMCHECK_XML_EXISTS 0)
+if(EXISTS "${CTEST_BINARY_DIRECTORY}/Testing/TAG")
+  set(TAG_EXISTS 1)
+  file(READ "${CTEST_BINARY_DIRECTORY}/Testing/TAG" _tag_text)
+  string(REGEX MATCH "^[^\r\n]+" _tag "${_tag_text}")
+  if(_tag)
+    set(_tag_dir "${CTEST_BINARY_DIRECTORY}/Testing/${_tag}")
+    if(EXISTS "${_tag_dir}/Coverage.xml")
+      set(COVERAGE_XML_EXISTS 1)
+    endif()
+    if(EXISTS "${_tag_dir}/MemCheck.xml")
+      set(MEMCHECK_XML_EXISTS 1)
+    endif()
+  endif()
+endif()
+if(EXISTS "${CTEST_SOURCE_DIRECTORY}/memcheck_work/test-pass.pwd")
+  set(TEST_WORKDIR_EXISTS 1)
+else()
+  set(TEST_WORKDIR_EXISTS 0)
+endif()
+if(EXISTS "${CTEST_SOURCE_DIRECTORY}/memcheck_work/memcheck-args.log")
+  set(MEMCHECK_ARGS_EXISTS 1)
+else()
+  set(MEMCHECK_ARGS_EXISTS 0)
+endif()
+nob_diff_report_append_kv("${_report}" "TAG_EXISTS" "${TAG_EXISTS}")
+nob_diff_report_append_kv("${_report}" "COVERAGE_XML_EXISTS" "${COVERAGE_XML_EXISTS}")
+nob_diff_report_append_kv("${_report}" "MEMCHECK_XML_EXISTS" "${MEMCHECK_XML_EXISTS}")
+nob_diff_report_append_kv("${_report}" "TEST_WORKDIR_EXISTS" "${TEST_WORKDIR_EXISTS}")
+nob_diff_report_append_kv("${_report}" "MEMCHECK_ARGS_EXISTS" "${MEMCHECK_ARGS_EXISTS}")
+#@@ENDCASE
+
 #@@CASE ctest_local_dashboard_surface
 #@@MODE SCRIPT
 #@@OUTCOME SUCCESS

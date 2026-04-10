@@ -86,7 +86,7 @@ from the frozen build model.
 
 ## 5. Auto-Configure Rule
 
-The canonical `C2/C3` rule is:
+The canonical `C2` through `C5` rule is:
 
 - `build`, `test`, `install`, `export`, and `package` must ensure that required
   configure-phase actions are satisfied before their own phase proceeds
@@ -117,7 +117,10 @@ replay:
 
 - it also consumes the frozen build-model test domain
 - it does not auto-build beyond prior explicit `ctest_build` replay
-- in `C3`, only the narrow local dashboard subset is supported
+- in `C3`, the narrow local dashboard subset is supported
+- in `C5`, that local-only subset additionally includes
+  `ctest_coverage` and `ctest_memcheck` replay without adding new CLI
+  subcommands
 
 ## 6. Helper Vocabulary
 
@@ -175,11 +178,13 @@ Required properties:
 
 The generated backend must not silently skip unsupported replay actions.
 
-For `C3`, explicit reject coverage includes at least:
+For `C3` through `C5`, explicit reject coverage includes at least:
 
 - generic process replay such as `execute_process()` and `exec_program()`
 - probe replay such as `try_compile()` and `try_run()`
-- unsupported `ctest_*` dashboard/script/network variants
+- unsupported `ctest_*` dashboard/script/network variants such as
+  `ctest_submit`, `ctest_upload`, `ctest_update`, `ctest_run_script`, and
+  `ctest_read_custom_files`
 - unsupported `FetchContent` provider, VCS, remote, and custom-command flows
 
 ## 9. Legibility Requirement

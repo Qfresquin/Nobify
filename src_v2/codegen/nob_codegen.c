@@ -2505,6 +2505,7 @@ bool nob_codegen_render(const Build_Model *model,
         "#include <stdint.h>\n"
         "#include <stdlib.h>\n"
         "#include <string.h>\n"
+        "#include <time.h>\n"
         "#include <sys/stat.h>\n"
         "#if !defined(_WIN32)\n"
         "#include <fcntl.h>\n"

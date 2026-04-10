@@ -67,6 +67,18 @@ static void bm_validate_contiguous_id(bool matches,
     bm_diag_error(sink, provenance, "build_model_validate", "structural", cause, hint);
 }
 
+static bool bm_validate_parse_count_token(String_View token, size_t *out_value) {
+    size_t value = 0;
+    if (!out_value || token.count == 0) return false;
+    for (size_t i = 0; i < token.count; ++i) {
+        unsigned char ch = (unsigned char)token.data[i];
+        if (ch < '0' || ch > '9') return false;
+        value = value * 10u + (size_t)(ch - '0');
+    }
+    *out_value = value;
+    return true;
+}
+
 static bool bm_validate_replay_opcode_kind(const BM_Replay_Action_Record *action,
                                            Diag_Sink *sink,
                                            bool *had_error) {
@@ -108,7 +120,9 @@ static bool bm_validate_replay_opcode_kind(const BM_Replay_Action_Record *action
          action->opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF ||
          action->opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF ||
          action->opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST ||
-         action->opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP) &&
+         action->opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP ||
+         action->opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL ||
+         action->opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL) &&
         action->kind == BM_REPLAY_ACTION_TEST_DRIVER) {
         return true;
     }
@@ -130,6 +144,7 @@ static bool bm_validate_replay_payload_shape(const BM_Replay_Action_Record *acti
     size_t output_count = 0;
     size_t argv_count = 0;
     size_t env_count = 0;
+    size_t payload_count = 0;
     bool ok = true;
     if (!action) return false;
 
@@ -217,6 +232,22 @@ static bool bm_validate_replay_payload_shape(const BM_Replay_Action_Record *acti
 
         case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP:
             ok = input_count == 0 && output_count == 0 && argv_count == 1 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL:
+            ok = output_count == 1 && argv_count >= 4 && env_count == 0;
+            if (ok) {
+                ok = bm_validate_parse_count_token(action->argv[3], &payload_count) &&
+                     argv_count == 4 + payload_count;
+            }
+            break;
+
+        case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL:
+            ok = input_count == 2 && output_count == 2 && argv_count >= 14 && env_count == 0;
+            if (ok) {
+                ok = bm_validate_parse_count_token(action->argv[13], &payload_count) &&
+                     argv_count == 14 + payload_count;
+            }
             break;
     }
 
@@ -357,7 +388,7 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
                           "replay action kind is invalid",
                           "map every replay action kind to a canonical BM_Replay_Action_Kind");
         }
-        if (action->opcode > BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP) {
+        if (action->opcode > BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL) {
             *had_error = true;
             bm_diag_error(sink,
                           action->provenance,

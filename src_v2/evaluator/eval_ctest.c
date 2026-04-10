@@ -248,6 +248,14 @@ typedef struct {
 
 typedef Ctest_Coverage_Source_Entry *Ctest_Coverage_Source_Entry_List;
 
+static bool ctest_coverage_collect_filtered_sources(EvalExecContext *ctx,
+                                                    String_View requested_labels,
+                                                    Ctest_Coverage_Source_Entry_List *out_entries);
+static String_View ctest_submit_format_size_temp(EvalExecContext *ctx, size_t value);
+static String_View ctest_submit_make_assignment_temp(EvalExecContext *ctx,
+                                                     const char *prefix,
+                                                     String_View value);
+
 typedef struct {
     Ctest_Step_Runtime_Request core;
     String_View start;
@@ -634,6 +642,160 @@ static bool ctest_emit_replay_sleep(EvalExecContext *ctx,
         return false;
     }
     return true;
+}
+
+static bool ctest_emit_replay_argv_items(EvalExecContext *ctx,
+                                         Cmake_Event_Origin origin,
+                                         String_View action_key,
+                                         size_t start_index,
+                                         const String_View *items,
+                                         size_t item_count) {
+    if (!ctx) return false;
+    for (size_t i = 0; i < item_count; ++i) {
+        if (!eval_emit_replay_action_add_argv(ctx, origin, action_key, start_index + i, items[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool ctest_emit_replay_coverage_local(EvalExecContext *ctx,
+                                             Cmake_Event_Origin origin,
+                                             const Ctest_Coverage_Request *req) {
+    Ctest_Coverage_Source_Entry_List filtered_sources = NULL;
+    SV_List command_argv = {0};
+    SV_List replay_argv = {0};
+    String_View action_key = nob_sv_from_cstr("");
+    if (!ctx || !req) return false;
+
+    if (!ctest_coverage_collect_filtered_sources(ctx, req->labels, &filtered_sources)) return false;
+    if (!ctest_append_command_tokens_temp(ctx, req->coverage_command, &command_argv)) return false;
+    if (arena_arr_len(command_argv) == 0) return false;
+    if (!svu_list_push_temp(ctx, &replay_argv, command_argv[0])) return false;
+    if (!ctest_append_command_tokens_temp(ctx, req->coverage_extra_flags, &replay_argv)) return false;
+    for (size_t i = 1; i < arena_arr_len(command_argv); ++i) {
+        if (!svu_list_push_temp(ctx, &replay_argv, command_argv[i])) return false;
+    }
+
+    if (!ctest_begin_test_driver_action(ctx,
+                                        origin,
+                                        EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL,
+                                        req->build_dir,
+                                        &action_key)) {
+        return false;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(filtered_sources); ++i) {
+        if (!eval_emit_replay_action_add_input(ctx, origin, action_key, filtered_sources[i].path)) return false;
+    }
+    if (!eval_emit_replay_action_add_output(ctx, origin, action_key, req->build_dir) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, req->model) ||
+        !eval_emit_replay_action_add_argv(ctx,
+                                          origin,
+                                          action_key,
+                                          1,
+                                          ctest_get_session_field(ctx, "TRACK")) ||
+        !eval_emit_replay_action_add_argv(ctx,
+                                          origin,
+                                          action_key,
+                                          2,
+                                          req->append_mode ? nob_sv_from_cstr("1")
+                                                           : nob_sv_from_cstr("0")) ||
+        !eval_emit_replay_action_add_argv(ctx,
+                                          origin,
+                                          action_key,
+                                          3,
+                                          ctest_submit_format_size_temp(ctx, arena_arr_len(replay_argv)))) {
+        return false;
+    }
+    return ctest_emit_replay_argv_items(ctx,
+                                        origin,
+                                        action_key,
+                                        4,
+                                        replay_argv,
+                                        arena_arr_len(replay_argv));
+}
+
+static bool ctest_emit_replay_memcheck_local(EvalExecContext *ctx,
+                                             Cmake_Event_Origin origin,
+                                             const Ctest_Memcheck_Request *req) {
+    SV_List backend_prefix_argv = {0};
+    String_View action_key = nob_sv_from_cstr("");
+    String_View track = nob_sv_from_cstr("");
+    if (!ctx || !req) return false;
+
+    if (!ctest_append_command_tokens_temp(ctx, req->backend_command, &backend_prefix_argv)) return false;
+    if (!ctest_append_command_tokens_temp(ctx, req->backend_options, &backend_prefix_argv)) return false;
+    if (!ctest_append_command_tokens_temp(ctx, req->backend_sanitizer_options, &backend_prefix_argv)) {
+        return false;
+    }
+    if (req->suppression_file.count > 0 && eval_sv_eq_ci_lit(req->backend_type, "Valgrind")) {
+        if (!svu_list_push_temp(ctx,
+                                &backend_prefix_argv,
+                                ctest_submit_make_assignment_temp(ctx,
+                                                                  "--suppressions",
+                                                                  req->suppression_file))) {
+            return false;
+        }
+    }
+
+    track = ctest_get_session_field(ctx, "TRACK");
+    if (!ctest_begin_test_driver_action(ctx,
+                                        origin,
+                                        EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL,
+                                        req->core.resolved_build,
+                                        &action_key)) {
+        return false;
+    }
+
+    if (!eval_emit_replay_action_add_input(ctx, origin, action_key, req->resource_spec_file) ||
+        !eval_emit_replay_action_add_input(ctx, origin, action_key, req->suppression_file) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, req->core.resolved_build) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, req->output_junit) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, req->core.model) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 1, track) ||
+        !eval_emit_replay_action_add_argv(ctx,
+                                          origin,
+                                          action_key,
+                                          2,
+                                          req->append_mode ? nob_sv_from_cstr("1")
+                                                           : nob_sv_from_cstr("0")) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 3, req->start) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 4, req->end) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 5, req->stride) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 6, req->parallel_level) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 7, req->stop_time) ||
+        !eval_emit_replay_action_add_argv(ctx,
+                                          origin,
+                                          action_key,
+                                          8,
+                                          req->stop_on_failure ? nob_sv_from_cstr("1")
+                                                               : nob_sv_from_cstr("0")) ||
+        !eval_emit_replay_action_add_argv(ctx,
+                                          origin,
+                                          action_key,
+                                          9,
+                                          eval_sv_eq_ci_lit(req->schedule_random, "ON")
+                                              ? nob_sv_from_cstr("1")
+                                              : nob_sv_from_cstr("0")) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 10, req->repeat) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 11, req->test_load) ||
+        !eval_emit_replay_action_add_argv(ctx, origin, action_key, 12, req->backend_type) ||
+        !eval_emit_replay_action_add_argv(ctx,
+                                          origin,
+                                          action_key,
+                                          13,
+                                          ctest_submit_format_size_temp(ctx,
+                                                                        arena_arr_len(backend_prefix_argv)))) {
+        return false;
+    }
+
+    return ctest_emit_replay_argv_items(ctx,
+                                        origin,
+                                        action_key,
+                                        14,
+                                        backend_prefix_argv,
+                                        arena_arr_len(backend_prefix_argv));
 }
 
 static bool ctest_step_kind_requires_submit_files(Eval_Ctest_Step_Kind kind) {
@@ -5681,10 +5843,7 @@ Eval_Result eval_handle_ctest_coverage(EvalExecContext *ctx, const Node *node) {
     Ctest_Coverage_Request req = {0};
     if (!ctest_parse_coverage_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_coverage_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
-    if (!ctest_emit_test_driver_reject_marker(ctx,
-                                              eval_origin_from_node(ctx, node),
-                                              req.build_dir.count > 0 ? req.build_dir
-                                                                      : ctest_current_binary_dir(ctx))) {
+    if (!ctest_emit_replay_coverage_local(ctx, eval_origin_from_node(ctx, node), &req)) {
         return eval_result_from_ctx(ctx);
     }
     return eval_result_from_ctx(ctx);
@@ -5971,9 +6130,7 @@ Eval_Result eval_handle_ctest_memcheck(EvalExecContext *ctx, const Node *node) {
     Ctest_Memcheck_Request req = {0};
     if (!ctest_parse_memcheck_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_memcheck_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
-    if (!ctest_emit_test_driver_reject_marker(ctx,
-                                              eval_origin_from_node(ctx, node),
-                                              req.core.resolved_build)) {
+    if (!ctest_emit_replay_memcheck_local(ctx, eval_origin_from_node(ctx, node), &req)) {
         return eval_result_from_ctx(ctx);
     }
     return eval_result_from_ctx(ctx);

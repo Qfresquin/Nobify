@@ -1214,6 +1214,164 @@ TEST(codegen_ctest_local_dashboard_replay_stages_testing_tree) {
     TEST_PASS();
 }
 
+TEST(codegen_ctest_coverage_and_memcheck_local_replay_stage_reports) {
+    Arena *arena = arena_create(128 * 1024);
+    String_View tag_file = {0};
+    String_View coverage_xml = {0};
+    String_View memcheck_xml = {0};
+    String_View junit_xml = {0};
+    String_View memcheck_args = {0};
+    size_t tag_len = 0;
+    char tag_dir[_TINYDIR_PATH_MAX] = {0};
+    const char *cwd = nob_get_current_dir_temp();
+    const char *test_argv[] = {
+        "-c",
+        "./ctest_c5_nob_gen test; status=$?; [ \"$status\" -eq 1 ]",
+    };
+    const char *script = NULL;
+    Codegen_Test_Config config = {
+        .input_path = "CMakeLists.txt",
+        .output_path = "ctest_c5_nob.c",
+        .source_dir = "ctest_c5_src",
+        .binary_dir = "ctest_c5_build_root",
+    };
+
+    ASSERT(arena != NULL);
+    ASSERT(cwd != NULL);
+    ASSERT(codegen_write_text_file(
+        "ctest_c5_src/src/main.c",
+        "int main(void) { return 0; }\n"));
+    ASSERT(codegen_write_text_file(
+        "ctest_c5_src/src/net.c",
+        "int net(void) { return 0; }\n"));
+    ASSERT(codegen_write_text_file(
+        "ctest_c5_src/resource.json",
+        "{ }\n"));
+    ASSERT(codegen_write_text_file(
+        "ctest_c5_src/suppressions.supp",
+        "leak:ignore\n"));
+    ASSERT(codegen_mkdirs("ctest_c5_src/memcheck_work"));
+    ASSERT(codegen_write_text_file(
+        "ctest_c5_src/tools/coverage.sh",
+        "#!/bin/sh\n"
+        "pwd > coverage.pwd\n"
+        "printf 'coverage ok\\n'\n"
+        "exit 0\n"));
+    ASSERT(codegen_write_text_file(
+        "ctest_c5_src/tools/test_runner.sh",
+        "#!/bin/sh\n"
+        "mode=\"$1\"\n"
+        "pwd > \"test-${mode}.pwd\"\n"
+        "printf '%s\\n' \"$mode\"\n"
+        "if [ \"$mode\" = \"defect\" ]; then exit 7; fi\n"
+        "exit 0\n"));
+    ASSERT(codegen_write_text_file(
+        "ctest_c5_src/tools/memcheck.sh",
+        "#!/bin/sh\n"
+        "printf '%s\\n' \"$*\" >> memcheck-args.log\n"
+        "pwd >> memcheck-cwd.log\n"
+        "while [ \"$#\" -gt 0 ] && [ \"$1\" != \"--\" ]; do shift; done\n"
+        "if [ \"$#\" -gt 0 ]; then shift; fi\n"
+        "\"$@\"\n"
+        "status=$?\n"
+        "if [ \"$status\" -ne 0 ]; then\n"
+        "  printf 'ERROR SUMMARY: 1 errors from 1 contexts\\n' >&2\n"
+        "  exit \"$status\"\n"
+        "fi\n"
+        "exit 0\n"));
+    ASSERT(codegen_test_make_executable("ctest_c5_src/tools/coverage.sh"));
+    ASSERT(codegen_test_make_executable("ctest_c5_src/tools/test_runner.sh"));
+    ASSERT(codegen_test_make_executable("ctest_c5_src/tools/memcheck.sh"));
+    script = nob_temp_sprintf(
+        "project(C5Local NONE)\n"
+        "enable_testing()\n"
+        "set(CTEST_SOURCE_DIRECTORY \"%s/ctest_c5_src\")\n"
+        "set(CTEST_BINARY_DIRECTORY \"%s/ctest_c5_build_root/ctest_c5_build\")\n"
+        "file(MAKE_DIRECTORY \"${CTEST_BINARY_DIRECTORY}\")\n"
+        "set(COVERAGE_COMMAND \"/bin/sh;%s/ctest_c5_src/tools/coverage.sh\")\n"
+        "set(CTEST_MEMORYCHECK_COMMAND \"/bin/sh\")\n"
+        "set(CTEST_MEMORYCHECK_TYPE Generic)\n"
+        "set(CTEST_MEMORYCHECK_COMMAND_OPTIONS \"%s/ctest_c5_src/tools/memcheck.sh\")\n"
+        "set(CTEST_MEMORYCHECK_SUPPRESSIONS_FILE \"%s/ctest_c5_src/suppressions.supp\")\n"
+        "set(CTEST_RESOURCE_SPEC_FILE \"%s/ctest_c5_src/resource.json\")\n"
+        "add_test(NAME pass COMMAND /bin/sh \"%s/ctest_c5_src/tools/test_runner.sh\" pass WORKING_DIRECTORY \"%s/ctest_c5_src/memcheck_work\")\n"
+        "add_test(NAME defect COMMAND /bin/sh \"%s/ctest_c5_src/tools/test_runner.sh\" defect WORKING_DIRECTORY \"%s/ctest_c5_src/memcheck_work\")\n"
+        "set_source_files_properties(\"%s/ctest_c5_src/src/main.c\" PROPERTIES LABELS \"core;ui\")\n"
+        "set_source_files_properties(\"%s/ctest_c5_src/src/net.c\" PROPERTIES LABELS infra)\n"
+        "ctest_start(Experimental \"%s/ctest_c5_src\" \"${CTEST_BINARY_DIRECTORY}\" QUIET)\n"
+        "ctest_coverage(LABELS core ui APPEND QUIET)\n"
+        "ctest_memcheck(START 1 END 2 STRIDE 1 SCHEDULE_RANDOM OFF OUTPUT_JUNIT reports/memcheck.junit.xml APPEND QUIET)\n",
+        cwd,
+        cwd,
+        cwd,
+        cwd,
+        cwd,
+        cwd,
+        cwd,
+        cwd,
+        cwd,
+        cwd,
+        cwd,
+        cwd,
+        cwd);
+    ASSERT(script != NULL);
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("ctest_c5_nob.c", "ctest_c5_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "/bin/sh", test_argv, NOB_ARRAY_LEN(test_argv)));
+    ASSERT(test_ws_host_path_exists("ctest_c5_build_root/ctest_c5_build/coverage.pwd"));
+    ASSERT(test_ws_host_path_exists("ctest_c5_src/memcheck_work/test-pass.pwd"));
+    ASSERT(test_ws_host_path_exists("ctest_c5_src/memcheck_work/test-defect.pwd"));
+    ASSERT(test_ws_host_path_exists("ctest_c5_src/memcheck_work/memcheck-args.log"));
+    ASSERT(test_ws_host_path_exists("ctest_c5_build_root/ctest_c5_build/Testing/TAG"));
+
+    ASSERT(codegen_load_text_file_to_arena(arena, "ctest_c5_build_root/ctest_c5_build/Testing/TAG", &tag_file));
+    while (tag_len < tag_file.count && tag_file.data[tag_len] != '\n' && tag_file.data[tag_len] != '\r') tag_len++;
+    ASSERT(tag_len > 0);
+    ASSERT(snprintf(tag_dir,
+                    sizeof(tag_dir),
+                    "ctest_c5_build_root/ctest_c5_build/Testing/%.*s",
+                    (int)tag_len,
+                    tag_file.data) < (int)sizeof(tag_dir));
+
+    ASSERT(test_ws_host_path_exists(nob_temp_sprintf("%s/Coverage.xml", tag_dir)));
+    ASSERT(test_ws_host_path_exists(nob_temp_sprintf("%s/CoverageManifest.txt", tag_dir)));
+    ASSERT(test_ws_host_path_exists(nob_temp_sprintf("%s/MemCheck.xml", tag_dir)));
+    ASSERT(test_ws_host_path_exists(nob_temp_sprintf("%s/MemCheckManifest.txt", tag_dir)));
+    ASSERT(test_ws_host_path_exists("ctest_c5_build_root/ctest_c5_build/reports/memcheck.junit.xml"));
+
+    ASSERT(codegen_load_text_file_to_arena(arena, nob_temp_sprintf("%s/Coverage.xml", tag_dir), &coverage_xml));
+    ASSERT(codegen_sv_contains(coverage_xml, "<Coverage>"));
+    ASSERT(codegen_sv_contains(coverage_xml, "coverage.sh"));
+    ASSERT(codegen_sv_contains(coverage_xml, "<FilteredSourceCount>1</FilteredSourceCount>"));
+    ASSERT(codegen_sv_contains(coverage_xml, "ctest_c5_src/src/main.c"));
+    ASSERT(!codegen_sv_contains(coverage_xml, "ctest_c5_src/src/net.c"));
+
+    ASSERT(codegen_load_text_file_to_arena(arena, nob_temp_sprintf("%s/MemCheck.xml", tag_dir), &memcheck_xml));
+    ASSERT(codegen_sv_contains(memcheck_xml, "<MemCheck>"));
+    ASSERT(codegen_sv_contains(memcheck_xml, "<BackendType>Generic</BackendType>"));
+    ASSERT(codegen_sv_contains(memcheck_xml, "<DefectCount>1</DefectCount>"));
+    ASSERT(codegen_sv_contains(memcheck_xml, "<FailedTests>1</FailedTests>"));
+    ASSERT(codegen_sv_contains(memcheck_xml, "ctest_c5_src/resource.json"));
+    ASSERT(codegen_sv_contains(memcheck_xml, "ctest_c5_src/suppressions.supp"));
+    ASSERT(codegen_sv_contains(memcheck_xml, "ctest_c5_src/memcheck_work"));
+    ASSERT(codegen_sv_contains(memcheck_xml, "test_runner.sh defect"));
+
+    ASSERT(codegen_load_text_file_to_arena(arena,
+                                           "ctest_c5_build_root/ctest_c5_build/reports/memcheck.junit.xml",
+                                           &junit_xml));
+    ASSERT(codegen_sv_contains(junit_xml, "<testsuite"));
+    ASSERT(codegen_sv_contains(junit_xml, "name=\"pass\""));
+    ASSERT(codegen_sv_contains(junit_xml, "name=\"defect\""));
+    ASSERT(codegen_sv_contains(junit_xml, "<failure"));
+
+    ASSERT(codegen_load_text_file_to_arena(arena, "ctest_c5_src/memcheck_work/memcheck-args.log", &memcheck_args));
+    ASSERT(codegen_sv_contains(memcheck_args, "test_runner.sh defect"));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(codegen_install_export_and_package_auto_configure_from_clean_workspace) {
     const char *install_argv[] = {"install", "--prefix", "cfg_auto_prefix"};
     const char *export_argv[] = {"export"};
@@ -2125,6 +2283,7 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_test_phase_auto_builds_registered_targets_and_honors_config_filters(passed, failed, skipped);
     test_codegen_fetchcontent_local_materialization_replays_from_clean_workspace(passed, failed, skipped);
     test_codegen_ctest_local_dashboard_replay_stages_testing_tree(passed, failed, skipped);
+    test_codegen_ctest_coverage_and_memcheck_local_replay_stage_reports(passed, failed, skipped);
     test_codegen_install_export_and_package_auto_configure_from_clean_workspace(passed, failed, skipped);
     test_codegen_install_full_custom_prefix_preserves_program_mode_and_directory_semantics(passed, failed, skipped);
     test_codegen_install_component_selection_and_default_component_fallback_work(passed, failed, skipped);

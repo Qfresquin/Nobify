@@ -2,7 +2,7 @@
 
 ## Status
 
-This document is the canonical `C4` product claim for the generated backend.
+This document is the canonical `C5` product claim for the generated backend.
 
 It is evidence-backed by:
 
@@ -23,6 +23,7 @@ downstream path:
 - build graph execution for the supported target/build-step subset
 - local-only `test` / baseline `ctest_*` / local `FetchContent_*` ownership
   landed in `C3`
+- local-only `ctest_coverage()` and `ctest_memcheck()` replay landed in `C5`
 - install, export, and archive package execution already proven by the
   explicit parity harness
 
@@ -44,7 +45,7 @@ build/install/consumer proof:
   Imported target expectation: `cjson`
 
 These projects are the current real-project scope of the supported claim.
-Unlisted projects are outside the `C4` product boundary by default.
+Unlisted projects are outside the `C5` product boundary by default.
 
 ## Explicit Boundaries
 
@@ -53,7 +54,9 @@ The supported subset does not currently claim:
 - generic process replay such as `execute_process()` and `exec_program()`
 - positive generated-backend probe execution for `try_compile()` and `try_run()`
 - remote/provider/VCS/custom-command `FetchContent_*`
-- dashboard/script/network `ctest_*` variants outside the local-only subset
+- dashboard/script/network `ctest_*` variants outside the local-only subset,
+  including `ctest_submit`, `ctest_upload`, `ctest_update`,
+  `ctest_run_script`, and `ctest_read_custom_files`
 - installer generators and unsupported component packaging variants
 - the full CMake 3.28 command universe beyond the explicit closure inventory
 

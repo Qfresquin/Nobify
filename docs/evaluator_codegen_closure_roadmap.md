@@ -368,6 +368,40 @@ Dependencies:
 - `C0` through `C3`
 - `C1M`
 
+### C5 Local CTest Coverage And Memcheck Parity
+
+Goal:
+- extend the strict local-only `ctest_*` subset with positive downstream
+  support for `ctest_coverage` and `ctest_memcheck`
+
+Deliverables:
+- append-only replay opcodes for local coverage and local memcheck
+- evaluator projection of resolved coverage and memcheck payloads into the
+  replay domain
+- generated-backend helpers for local coverage and memcheck staging under
+  `Testing/`
+- closure-harness inventory and focused parity cases proving the promoted
+  subset
+
+Non-goals:
+- no submit/upload/update/network support
+- no child-script dashboard flows
+- no generic process replay promotion
+
+Exit criteria:
+- local `ctest_coverage` and `ctest_memcheck` move to `parity-pass`
+- dashboard/network/script variants remain explicit rejects
+
+Evidence:
+- `test-evaluator`
+- `test-build-model`
+- `test-pipeline`
+- `test-codegen`
+- `test-evaluator-codegen-diff`
+
+Dependencies:
+- `C4`
+
 ## 8. Evidence Gates
 
 The minimum evidence gate for each newly supported family is:

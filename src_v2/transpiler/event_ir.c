@@ -131,6 +131,8 @@ static const char *event_replay_opcode_name(Event_Replay_Opcode opcode) {
         case EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF: return "test_driver_ctest_build_self";
         case EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST: return "test_driver_ctest_test";
         case EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP: return "test_driver_ctest_sleep";
+        case EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL: return "test_driver_ctest_coverage_local";
+        case EVENT_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL: return "test_driver_ctest_memcheck_local";
     }
     return "unknown";
 }
