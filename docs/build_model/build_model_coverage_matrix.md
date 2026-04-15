@@ -209,14 +209,14 @@ Control rules:
 | `remove_definitions` | native | `yes` | `directory` | `canonical` | `yes` | `indirect` |
 | `separate_arguments` | native | `no` | `none` | `none` | `n/a` | `none` |
 | `set_directory_properties` | native | `yes` | `directory` | `subset` | `subset` | `indirect` |
-| `set_source_files_properties` | native | `yes` | `build_step` | `subset` | `subset` | `indirect` |
+| `set_source_files_properties` | native | `yes` | `target/build_step` | `canonical` | `yes` | `direct` |
 | `set_tests_properties` | native | `yes` | `test` | `subset` | `subset` | `indirect` |
 | `site_name` | native | `no` | `none` | `none` | `n/a` | `none` |
 | `subdir_depends` | native | `yes` | `none` | `none` | `boundary` | `none` |
 | `subdirs` | native | `yes` | `none` | `none` | `boundary` | `none` |
 | `target_compile_features` | native | `yes` | `target` | `canonical` | `yes` | `indirect` |
 | `target_precompile_headers` | native | `yes` | `target` | `ownership_only` | `boundary` | `indirect` |
-| `target_sources` | native | `yes` | `target` | `canonical` | `yes` | `indirect` |
+| `target_sources` | native | `yes` | `target` | `canonical` | `yes` | `direct` |
 | `try_run` | native | `yes` | `replay` | `ownership_only` | `boundary` | `indirect` |
 | `use_mangled_mesa` | native | `yes` | `none` | `none` | `boundary` | `none` |
 | `utility_source` | native | `yes` | `none` | `none` | `boundary` | `none` |

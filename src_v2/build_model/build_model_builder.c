@@ -55,7 +55,10 @@ static bool bm_is_supported_build_event(Event_Kind kind) {
         case EVENT_GLOBAL_PROPERTY_MUTATE:
         case EVENT_TARGET_DECLARE:
         case EVENT_TARGET_ADD_SOURCE:
+        case EVENT_TARGET_FILE_SET_DECLARE:
+        case EVENT_TARGET_FILE_SET_ADD_BASE_DIR:
         case EVENT_SOURCE_MARK_GENERATED:
+        case EVENT_SOURCE_PROPERTY_MUTATE:
         case EVENT_TARGET_ADD_DEPENDENCY:
         case EVENT_BUILD_STEP_DECLARE:
         case EVENT_BUILD_STEP_ADD_OUTPUT:
@@ -641,7 +644,10 @@ bool bm_builder_apply_event(BM_Builder *builder, const Event *ev) {
 
         case EVENT_TARGET_DECLARE:
         case EVENT_TARGET_ADD_SOURCE:
+        case EVENT_TARGET_FILE_SET_DECLARE:
+        case EVENT_TARGET_FILE_SET_ADD_BASE_DIR:
         case EVENT_SOURCE_MARK_GENERATED:
+        case EVENT_SOURCE_PROPERTY_MUTATE:
         case EVENT_TARGET_ADD_DEPENDENCY:
         case EVENT_BUILD_STEP_DECLARE:
         case EVENT_BUILD_STEP_ADD_OUTPUT:
@@ -656,6 +662,7 @@ bool bm_builder_apply_event(BM_Builder *builder, const Event *ev) {
         case EVENT_TARGET_COMPILE_DEFINITIONS:
         case EVENT_TARGET_COMPILE_OPTIONS:
             if (ev->h.kind == EVENT_SOURCE_MARK_GENERATED ||
+                ev->h.kind == EVENT_SOURCE_PROPERTY_MUTATE ||
                 ev->h.kind == EVENT_BUILD_STEP_DECLARE ||
                 ev->h.kind == EVENT_BUILD_STEP_ADD_OUTPUT ||
                 ev->h.kind == EVENT_BUILD_STEP_ADD_BYPRODUCT ||

@@ -2282,6 +2282,194 @@ TEST(build_model_alias_and_unknown_target_identity_queries_are_canonical) {
     TEST_PASS();
 }
 
+TEST(build_model_source_membership_file_sets_and_source_properties_are_canonical) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_Target_Id core_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id imported_id = BM_TARGET_ID_INVALID;
+    Arena *scratch = arena_create(256 * 1024);
+    size_t main_index = 0;
+    size_t public_index = 0;
+    size_t skip_index = 0;
+    size_t iface_index = 0;
+    size_t header_set_index = 0;
+    size_t iface_header_set_index = 0;
+    size_t module_index = 0;
+    BM_String_Span sources_raw = {0};
+    String_View property_value = {0};
+    ASSERT(scratch != NULL);
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "source_shape_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("source_shape_src");
+    config.binary_dir = nob_sv_from_cstr("source_shape_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C CXX)\n"
+        "set_source_files_properties(main.c PROPERTIES LANGUAGE CXX COMPILE_DEFINITIONS MAIN_LANG_CXX=1 COMPILE_OPTIONS -Wno-unused-parameter INCLUDE_DIRECTORIES local/include)\n"
+        "set_property(SOURCE main.c APPEND PROPERTY COMPILE_DEFINITIONS MAIN_LANG_APPEND=1)\n"
+        "set_property(SOURCE main.c APPEND PROPERTY COMPILE_OPTIONS -Wshadow)\n"
+        "set_property(SOURCE main.c APPEND PROPERTY INCLUDE_DIRECTORIES local/extra)\n"
+        "set_property(SOURCE main.c PROPERTY CUSTOM_SOURCE_TAG alpha)\n"
+        "add_library(core STATIC main.c public.h skip_compile.c)\n"
+        "set_source_files_properties(skip_compile.c PROPERTIES HEADER_FILE_ONLY ON GENERATED ON)\n"
+        "target_sources(core INTERFACE iface.h)\n"
+        "target_sources(core PUBLIC FILE_SET HEADERS BASE_DIRS include FILES include/public.hpp)\n"
+        "target_sources(core INTERFACE FILE_SET api TYPE HEADERS BASE_DIRS api FILES api/iface.hpp)\n"
+        "target_sources(core PUBLIC FILE_SET CXX_MODULES BASE_DIRS modules FILES modules/core.cppm)\n"
+        "add_library(imported_mod STATIC IMPORTED)\n"
+        "target_sources(imported_mod INTERFACE FILE_SET CXX_MODULES BASE_DIRS imported FILES imported/api.cppm)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    core_id = bm_query_target_by_name(model, nob_sv_from_cstr("core"));
+    imported_id = bm_query_target_by_name(model, nob_sv_from_cstr("imported_mod"));
+    ASSERT(core_id != BM_TARGET_ID_INVALID);
+    ASSERT(imported_id != BM_TARGET_ID_INVALID);
+
+    sources_raw = bm_query_target_sources_raw(model, core_id);
+    ASSERT(sources_raw.count == 3);
+    ASSERT(build_model_string_span_contains_substring(sources_raw, "main.c"));
+    ASSERT(build_model_string_span_contains_substring(sources_raw, "public.h"));
+    ASSERT(build_model_string_span_contains_substring(sources_raw, "skip_compile.c"));
+
+    main_index = build_model_find_target_source_index_containing(model, core_id, "main.c");
+    public_index = build_model_find_target_source_index_containing(model, core_id, "public.h");
+    skip_index = build_model_find_target_source_index_containing(model, core_id, "skip_compile.c");
+    iface_index = build_model_find_target_source_index_containing(model, core_id, "iface.h");
+    header_set_index = build_model_find_target_source_index_containing(model, core_id, "include/public.hpp");
+    iface_header_set_index = build_model_find_target_source_index_containing(model, core_id, "api/iface.hpp");
+    module_index = build_model_find_target_source_index_containing(model, core_id, "modules/core.cppm");
+    ASSERT(main_index < bm_query_target_source_count(model, core_id));
+    ASSERT(public_index < bm_query_target_source_count(model, core_id));
+    ASSERT(skip_index < bm_query_target_source_count(model, core_id));
+    ASSERT(iface_index < bm_query_target_source_count(model, core_id));
+    ASSERT(header_set_index < bm_query_target_source_count(model, core_id));
+    ASSERT(iface_header_set_index < bm_query_target_source_count(model, core_id));
+    ASSERT(module_index < bm_query_target_source_count(model, core_id));
+
+    ASSERT(bm_query_target_source_kind(model, core_id, main_index) == BM_TARGET_SOURCE_REGULAR);
+    ASSERT(bm_query_target_source_visibility(model, core_id, main_index) == BM_VISIBILITY_PRIVATE);
+    ASSERT(bm_query_target_source_is_compile_input(model, core_id, main_index));
+    ASSERT(!bm_query_target_source_header_file_only(model, core_id, main_index));
+    ASSERT(nob_sv_eq(bm_query_target_source_language(model, core_id, main_index), nob_sv_from_cstr("CXX")));
+    ASSERT(build_model_string_item_span_contains(bm_query_target_source_compile_definitions(model, core_id, main_index),
+                                                 "MAIN_LANG_CXX=1"));
+    ASSERT(build_model_string_item_span_contains(bm_query_target_source_compile_definitions(model, core_id, main_index),
+                                                 "MAIN_LANG_APPEND=1"));
+    ASSERT(build_model_string_item_span_contains(bm_query_target_source_compile_options(model, core_id, main_index),
+                                                 "-Wno-unused-parameter"));
+    ASSERT(build_model_string_item_span_contains(bm_query_target_source_compile_options(model, core_id, main_index),
+                                                 "-Wshadow"));
+    ASSERT(build_model_string_item_span_contains(bm_query_target_source_include_directories(model, core_id, main_index),
+                                                 "local/include"));
+    ASSERT(build_model_string_item_span_contains(bm_query_target_source_include_directories(model, core_id, main_index),
+                                                 "local/extra"));
+    ASSERT(build_model_string_span_contains(bm_query_target_source_raw_property_items(model,
+                                                                                      core_id,
+                                                                                      main_index,
+                                                                                      nob_sv_from_cstr("COMPILE_DEFINITIONS")),
+                                            "MAIN_LANG_CXX=1"));
+    ASSERT(build_model_string_span_contains(bm_query_target_source_raw_property_items(model,
+                                                                                      core_id,
+                                                                                      main_index,
+                                                                                      nob_sv_from_cstr("CUSTOM_SOURCE_TAG")),
+                                            "alpha"));
+
+    ASSERT(bm_query_target_source_kind(model, core_id, public_index) == BM_TARGET_SOURCE_REGULAR);
+    ASSERT(bm_query_target_source_visibility(model, core_id, public_index) == BM_VISIBILITY_PRIVATE);
+    ASSERT(bm_query_target_source_is_compile_input(model, core_id, public_index));
+
+    ASSERT(bm_query_target_source_kind(model, core_id, skip_index) == BM_TARGET_SOURCE_REGULAR);
+    ASSERT(bm_query_target_source_visibility(model, core_id, skip_index) == BM_VISIBILITY_PRIVATE);
+    ASSERT(!bm_query_target_source_is_compile_input(model, core_id, skip_index));
+    ASSERT(bm_query_target_source_header_file_only(model, core_id, skip_index));
+    ASSERT(bm_query_target_source_generated(model, core_id, skip_index));
+
+    ASSERT(bm_query_target_source_kind(model, core_id, iface_index) == BM_TARGET_SOURCE_REGULAR);
+    ASSERT(bm_query_target_source_visibility(model, core_id, iface_index) == BM_VISIBILITY_INTERFACE);
+    ASSERT(!bm_query_target_source_is_compile_input(model, core_id, iface_index));
+
+    ASSERT(bm_query_target_source_kind(model, core_id, header_set_index) == BM_TARGET_SOURCE_HEADER_FILE_SET);
+    ASSERT(bm_query_target_source_visibility(model, core_id, header_set_index) == BM_VISIBILITY_PUBLIC);
+    ASSERT(nob_sv_eq(bm_query_target_source_file_set_name(model, core_id, header_set_index), nob_sv_from_cstr("HEADERS")));
+    ASSERT(!bm_query_target_source_is_compile_input(model, core_id, header_set_index));
+
+    ASSERT(bm_query_target_source_kind(model, core_id, iface_header_set_index) == BM_TARGET_SOURCE_HEADER_FILE_SET);
+    ASSERT(bm_query_target_source_visibility(model, core_id, iface_header_set_index) == BM_VISIBILITY_INTERFACE);
+    ASSERT(nob_sv_eq(bm_query_target_source_file_set_name(model, core_id, iface_header_set_index), nob_sv_from_cstr("api")));
+    ASSERT(!bm_query_target_source_is_compile_input(model, core_id, iface_header_set_index));
+
+    ASSERT(bm_query_target_source_kind(model, core_id, module_index) == BM_TARGET_SOURCE_CXX_MODULE_FILE_SET);
+    ASSERT(bm_query_target_source_visibility(model, core_id, module_index) == BM_VISIBILITY_PUBLIC);
+    ASSERT(nob_sv_eq(bm_query_target_source_file_set_name(model, core_id, module_index), nob_sv_from_cstr("CXX_MODULES")));
+    ASSERT(!bm_query_target_source_is_compile_input(model, core_id, module_index));
+
+    ASSERT(bm_query_target_file_set_count(model, core_id) == 3);
+    ASSERT(nob_sv_eq(bm_query_target_file_set_name(model, core_id, 0), nob_sv_from_cstr("HEADERS")));
+    ASSERT(bm_query_target_file_set_kind(model, core_id, 0) == BM_TARGET_FILE_SET_HEADERS);
+    ASSERT(bm_query_target_file_set_visibility(model, core_id, 0) == BM_VISIBILITY_PUBLIC);
+    ASSERT(build_model_string_span_contains_substring(bm_query_target_file_set_base_dirs(model, core_id, 0), "include"));
+    ASSERT(build_model_string_span_contains_substring(bm_query_target_file_set_files_raw(model, core_id, 0), "include/public.hpp"));
+    ASSERT(build_model_string_span_contains_substring(bm_query_target_file_set_files_effective(model, core_id, 0), "include/public.hpp"));
+
+    ASSERT(nob_sv_eq(bm_query_target_file_set_name(model, core_id, 1), nob_sv_from_cstr("api")));
+    ASSERT(bm_query_target_file_set_kind(model, core_id, 1) == BM_TARGET_FILE_SET_HEADERS);
+    ASSERT(bm_query_target_file_set_visibility(model, core_id, 1) == BM_VISIBILITY_INTERFACE);
+    ASSERT(build_model_string_span_contains_substring(bm_query_target_file_set_base_dirs(model, core_id, 1), "api"));
+    ASSERT(build_model_string_span_contains_substring(bm_query_target_file_set_files_raw(model, core_id, 1), "api/iface.hpp"));
+
+    ASSERT(nob_sv_eq(bm_query_target_file_set_name(model, core_id, 2), nob_sv_from_cstr("CXX_MODULES")));
+    ASSERT(bm_query_target_file_set_kind(model, core_id, 2) == BM_TARGET_FILE_SET_CXX_MODULES);
+    ASSERT(bm_query_target_file_set_visibility(model, core_id, 2) == BM_VISIBILITY_PUBLIC);
+    ASSERT(build_model_string_span_contains_substring(bm_query_target_file_set_base_dirs(model, core_id, 2), "modules"));
+    ASSERT(build_model_string_span_contains_substring(bm_query_target_file_set_files_raw(model, core_id, 2), "modules/core.cppm"));
+
+    ASSERT(bm_query_target_file_set_count(model, imported_id) == 1);
+    ASSERT(nob_sv_eq(bm_query_target_file_set_name(model, imported_id, 0), nob_sv_from_cstr("CXX_MODULES")));
+    ASSERT(bm_query_target_file_set_kind(model, imported_id, 0) == BM_TARGET_FILE_SET_CXX_MODULES);
+    ASSERT(bm_query_target_file_set_visibility(model, imported_id, 0) == BM_VISIBILITY_INTERFACE);
+    ASSERT(build_model_string_span_contains_substring(bm_query_target_file_set_base_dirs(model, imported_id, 0), "imported"));
+    ASSERT(build_model_string_span_contains_substring(bm_query_target_file_set_files_raw(model, imported_id, 0), "imported/api.cppm"));
+
+    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("SOURCES"), scratch, &property_value));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("main.c")));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("public.h")));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("skip_compile.c")));
+    ASSERT(!build_model_sv_contains(property_value, nob_sv_from_cstr("iface.h")));
+
+    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("INTERFACE_SOURCES"), scratch, &property_value));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("iface.h")));
+
+    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("HEADER_SETS"), scratch, &property_value));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("HEADERS")));
+    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("INTERFACE_HEADER_SETS"), scratch, &property_value));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("api")));
+    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("HEADER_SET"), scratch, &property_value));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("include/public.hpp")));
+    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("HEADER_SET_API"), scratch, &property_value));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("api/iface.hpp")));
+    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("CXX_MODULE_SETS"), scratch, &property_value));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("CXX_MODULES")));
+    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("CXX_MODULE_SET"), scratch, &property_value));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("modules/core.cppm")));
+    ASSERT(bm_query_target_property_value(model,
+                                          imported_id,
+                                          nob_sv_from_cstr("INTERFACE_CXX_MODULE_SETS"),
+                                          scratch,
+                                          &property_value));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("CXX_MODULES")));
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    arena_destroy(scratch);
+    TEST_PASS();
+}
+
 TEST(build_model_query_session_reuses_effective_item_and_value_results) {
     Test_Semantic_Pipeline_Config config = {0};
     Test_Semantic_Pipeline_Fixture fixture = {0};
@@ -3165,6 +3353,7 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_imported_target_queries_resolve_configs_and_mapped_locations(passed, failed, skipped);
     test_build_model_preserves_imported_global_across_property_orderings(passed, failed, skipped);
     test_build_model_alias_and_unknown_target_identity_queries_are_canonical(passed, failed, skipped);
+    test_build_model_source_membership_file_sets_and_source_properties_are_canonical(passed, failed, skipped);
     test_build_model_query_session_reuses_effective_item_and_value_results(passed, failed, skipped);
     test_build_model_query_session_splits_effective_contexts_without_merging_semantics(passed, failed, skipped);
     test_build_model_query_session_memoizes_imported_target_resolution(passed, failed, skipped);

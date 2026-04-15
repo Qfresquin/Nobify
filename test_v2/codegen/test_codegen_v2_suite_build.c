@@ -1957,6 +1957,72 @@ TEST(codegen_mixed_c_and_cxx_compile_contexts_apply_language_options_and_standar
     TEST_PASS();
 }
 
+TEST(codegen_source_local_properties_and_language_overrides_drive_compile_inputs) {
+    Arena *arena = arena_create(512 * 1024);
+    String_View generated = {0};
+    const char *script =
+        "project(Test C CXX)\n"
+        "add_executable(app main.c helper.c skip_compile.c)\n"
+        "set_source_files_properties(main.c PROPERTIES LANGUAGE CXX COMPILE_DEFINITIONS MAIN_LANG_CXX=1 COMPILE_OPTIONS -Wno-unused-parameter INCLUDE_DIRECTORIES cxx_include)\n"
+        "set_property(SOURCE helper.c APPEND PROPERTY COMPILE_DEFINITIONS HELPER_LOCAL=1)\n"
+        "set_property(SOURCE helper.c APPEND PROPERTY COMPILE_OPTIONS -Werror)\n"
+        "set_property(SOURCE helper.c APPEND PROPERTY INCLUDE_DIRECTORIES helper_include)\n"
+        "set_source_files_properties(skip_compile.c PROPERTIES HEADER_FILE_ONLY ON)\n";
+    Codegen_Test_Config config = {
+        .input_path = "source_local_src/CMakeLists.txt",
+        .output_path = "source_local_nob.c",
+        .source_dir = "source_local_src",
+        .binary_dir = "source_local_build",
+    };
+    ASSERT(arena != NULL);
+
+    ASSERT(codegen_write_text_file(
+        "source_local_src/main.c",
+        "#include \"main_local.hpp\"\n"
+        "#ifndef MAIN_LANG_CXX\n"
+        "#error MAIN_LANG_CXX missing\n"
+        "#endif\n"
+        "extern \"C\" int helper_value(void);\n"
+        "int main() {\n"
+        "    auto next = [](int value) { return value + main_local_value(); };\n"
+        "    return next(helper_value()) == 42 ? 0 : 1;\n"
+        "}\n"));
+    ASSERT(codegen_write_text_file(
+        "source_local_src/helper.c",
+        "#include \"helper_local.h\"\n"
+        "#ifndef HELPER_LOCAL\n"
+        "#error HELPER_LOCAL missing\n"
+        "#endif\n"
+        "int helper_value(void) { return helper_local_value(); }\n"));
+    ASSERT(codegen_write_text_file(
+        "source_local_src/skip_compile.c",
+        "#error HEADER_FILE_ONLY source must not compile\n"));
+    ASSERT(codegen_write_text_file(
+        "source_local_src/cxx_include/main_local.hpp",
+        "static inline int main_local_value(void) { return 41; }\n"));
+    ASSERT(codegen_write_text_file(
+        "source_local_src/helper_include/helper_local.h",
+        "static inline int helper_local_value(void) { return 1; }\n"));
+
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_load_text_file_to_arena(arena, "source_local_nob.c", &generated));
+    ASSERT(codegen_sv_contains(generated, "append_toolchain_cmd(&cc_cmd, true);"));
+    ASSERT(codegen_sv_contains(generated, "append_toolchain_cmd(&cc_cmd, false);"));
+    ASSERT(codegen_sv_contains(generated, "\"-DMAIN_LANG_CXX=1\""));
+    ASSERT(codegen_sv_contains(generated, "\"-DHELPER_LOCAL=1\""));
+    ASSERT(codegen_sv_contains(generated, "\"-Wno-unused-parameter\""));
+    ASSERT(codegen_sv_contains(generated, "\"-Werror\""));
+    ASSERT(codegen_sv_contains(generated, "source_local_src/cxx_include"));
+    ASSERT(codegen_sv_contains(generated, "source_local_src/helper_include"));
+    ASSERT(!codegen_sv_contains(generated, "skip_compile.c"));
+    ASSERT(codegen_compile_generated_nob("source_local_nob.c", "source_local_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir(".", "./source_local_nob_gen", "app", NULL));
+    ASSERT(codegen_run_binary_in_dir(".", "source_local_build/app", NULL, NULL));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(codegen_imported_static_unknown_and_interface_targets_build_and_run) {
     const char *script =
         "project(Test C)\n"
@@ -2299,6 +2365,7 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_render_darwin_posix_policy_uses_dylib_and_bundle_rules(passed, failed, skipped);
     test_codegen_render_windows_msvc_policy_plans_dll_import_lib_and_msvc_tools(passed, failed, skipped);
     test_codegen_mixed_c_and_cxx_compile_contexts_apply_language_options_and_standard_flags(passed, failed, skipped);
+    test_codegen_source_local_properties_and_language_overrides_drive_compile_inputs(passed, failed, skipped);
     test_codegen_imported_static_unknown_and_interface_targets_build_and_run(passed, failed, skipped);
     test_codegen_imported_shared_target_links_successfully(passed, failed, skipped);
     test_codegen_debug_and_optimized_link_items_follow_generated_config(passed, failed, skipped);

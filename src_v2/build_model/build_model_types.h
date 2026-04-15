@@ -110,6 +110,17 @@ typedef enum {
 } BM_Target_Kind;
 
 typedef enum {
+    BM_TARGET_SOURCE_REGULAR = 0,
+    BM_TARGET_SOURCE_HEADER_FILE_SET,
+    BM_TARGET_SOURCE_CXX_MODULE_FILE_SET,
+} BM_Target_Source_Kind;
+
+typedef enum {
+    BM_TARGET_FILE_SET_HEADERS = 0,
+    BM_TARGET_FILE_SET_CXX_MODULES,
+} BM_Target_File_Set_Kind;
+
+typedef enum {
     BM_BUILD_STEP_OUTPUT_RULE = 0,
     BM_BUILD_STEP_CUSTOM_TARGET,
     BM_BUILD_STEP_TARGET_PRE_BUILD,

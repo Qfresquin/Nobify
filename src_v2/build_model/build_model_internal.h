@@ -16,13 +16,35 @@ typedef struct {
     uint32_t id;
 } BM_Name_Index_Entry;
 
+typedef struct BM_Raw_Property_Record BM_Raw_Property_Record;
+
 typedef struct {
+    BM_Target_Source_Kind kind;
+    BM_Visibility visibility;
     String_View raw_path;
     String_View effective_path;
+    String_View file_set_name;
     bool generated;
+    bool header_file_only;
+    String_View language;
     BM_Build_Step_Id producer_step_id;
+    BM_String_Item_View *compile_definitions;
+    BM_String_Item_View *compile_options;
+    BM_String_Item_View *include_directories;
+    BM_Raw_Property_Record *raw_properties;
     BM_Provenance provenance;
 } BM_Target_Source_Record;
+
+typedef struct {
+    String_View name;
+    BM_Target_File_Set_Kind kind;
+    BM_Visibility visibility;
+    String_View *base_dirs;
+    size_t *source_indices;
+    String_View *raw_files;
+    String_View *effective_files;
+    BM_Provenance provenance;
+} BM_Target_File_Set_Record;
 
 typedef struct {
     String_View *argv;
@@ -83,12 +105,22 @@ typedef struct {
 } BM_Source_Generated_Mark_Record;
 
 typedef struct {
+    String_View path;
+    String_View directory_source_dir;
+    String_View directory_binary_dir;
+    String_View key;
+    String_View value;
+    Event_Property_Mutate_Op op;
+    BM_Provenance provenance;
+} BM_Source_Property_Mutation_Record;
+
+struct BM_Raw_Property_Record {
     String_View name;
     Event_Property_Mutate_Op op;
     uint32_t flags;
     String_View *items;
     BM_Provenance provenance;
-} BM_Raw_Property_Record;
+};
 
 typedef struct {
     bool present;
@@ -147,6 +179,7 @@ typedef struct {
     BM_Target_Id alias_of_id;
     String_View *sources;
     BM_Target_Source_Record *source_records;
+    BM_Target_File_Set_Record *file_sets;
     String_View *explicit_dependency_names;
     BM_Target_Id *explicit_dependency_ids;
     BM_String_Item_View *link_libraries;
@@ -297,6 +330,7 @@ struct Build_Model_Draft {
     BM_Build_Step_Record *build_steps;
     BM_Replay_Action_Record *replay_actions;
     BM_Source_Generated_Mark_Record *generated_source_marks;
+    BM_Source_Property_Mutation_Record *source_property_mutations;
     BM_Test_Record *tests;
     BM_Install_Rule_Record *install_rules;
     BM_Export_Record *exports;

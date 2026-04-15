@@ -270,7 +270,7 @@ bool cg_validate_model_for_backend(CG_Context *ctx) {
                     if (!cg_collect_compile_args(ctx,
                                                  info->id,
                                                  config,
-                                                 sources[source_index].lang,
+                                                 &sources[source_index],
                                                  &compile_args)) {
                         return false;
                     }

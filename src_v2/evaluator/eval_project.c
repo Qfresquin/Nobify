@@ -939,7 +939,15 @@ Eval_Result eval_handle_add_executable(EvalExecContext *ctx, const Node *node) {
             if (a[i].count == 0) continue;
             String_View path = eval_path_resolve_for_cmake_arg(ctx, a[i], cur_src, true);
             if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-            if (!eval_emit_target_add_source(ctx, o, name, path)) return eval_result_from_ctx(ctx);
+            if (!eval_emit_target_add_source(ctx,
+                                             o,
+                                             name,
+                                             EV_VISIBILITY_PRIVATE,
+                                             path,
+                                             EVENT_TARGET_SOURCE_REGULAR,
+                                             nob_sv_from_cstr(""))) {
+                return eval_result_from_ctx(ctx);
+            }
         }
     }
     return eval_result_from_ctx(ctx);
@@ -1078,7 +1086,15 @@ Eval_Result eval_handle_add_library(EvalExecContext *ctx, const Node *node) {
             if (a[si].count == 0) continue;
             String_View path = eval_path_resolve_for_cmake_arg(ctx, a[si], cur_src, true);
             if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
-            if (!eval_emit_target_add_source(ctx, o, name, path)) return eval_result_from_ctx(ctx);
+            if (!eval_emit_target_add_source(ctx,
+                                             o,
+                                             name,
+                                             EV_VISIBILITY_PRIVATE,
+                                             path,
+                                             EVENT_TARGET_SOURCE_REGULAR,
+                                             nob_sv_from_cstr(""))) {
+                return eval_result_from_ctx(ctx);
+            }
         }
     }
     return eval_result_from_ctx(ctx);

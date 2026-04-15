@@ -1247,6 +1247,26 @@ static inline bool eval_emit_source_mark_generated(EvalExecContext *ctx,
     return emit_event(ctx, ev);
 }
 
+static inline bool eval_emit_source_property_mutate(EvalExecContext *ctx,
+                                                    Event_Origin origin,
+                                                    String_View path,
+                                                    String_View directory_source_dir,
+                                                    String_View directory_binary_dir,
+                                                    String_View key,
+                                                    String_View value,
+                                                    Cmake_Target_Property_Op op) {
+    Event ev = {0};
+    ev.h.kind = EVENT_SOURCE_PROPERTY_MUTATE;
+    ev.h.origin = origin;
+    ev.as.source_property_mutate.path = sv_copy_to_event_arena(ctx, path);
+    ev.as.source_property_mutate.directory_source_dir = sv_copy_to_event_arena(ctx, directory_source_dir);
+    ev.as.source_property_mutate.directory_binary_dir = sv_copy_to_event_arena(ctx, directory_binary_dir);
+    ev.as.source_property_mutate.key = sv_copy_to_event_arena(ctx, key);
+    ev.as.source_property_mutate.value = sv_copy_to_event_arena(ctx, value);
+    ev.as.source_property_mutate.op = op;
+    return emit_event(ctx, ev);
+}
+
 static inline bool eval_emit_build_step_declare(EvalExecContext *ctx,
                                                 Event_Origin origin,
                                                 String_View step_key,
@@ -1481,12 +1501,48 @@ static inline bool eval_emit_target_dependency(EvalExecContext *ctx,
 static inline bool eval_emit_target_add_source(EvalExecContext *ctx,
                                                Event_Origin origin,
                                                String_View target_name,
-                                               String_View path) {
+                                               Cmake_Visibility visibility,
+                                               String_View path,
+                                               Event_Target_Source_Kind source_kind,
+                                               String_View file_set_name) {
     Event ev = {0};
     ev.h.kind = EVENT_TARGET_ADD_SOURCE;
     ev.h.origin = origin;
     ev.as.target_add_source.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_add_source.visibility = visibility;
     ev.as.target_add_source.path = sv_copy_to_event_arena(ctx, path);
+    ev.as.target_add_source.source_kind = source_kind;
+    ev.as.target_add_source.file_set_name = sv_copy_to_event_arena(ctx, file_set_name);
+    return emit_event(ctx, ev);
+}
+
+static inline bool eval_emit_target_file_set_declare(EvalExecContext *ctx,
+                                                     Event_Origin origin,
+                                                     String_View target_name,
+                                                     String_View set_name,
+                                                     Event_Target_File_Set_Kind set_kind,
+                                                     Cmake_Visibility visibility) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TARGET_FILE_SET_DECLARE;
+    ev.h.origin = origin;
+    ev.as.target_file_set_declare.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_file_set_declare.set_name = sv_copy_to_event_arena(ctx, set_name);
+    ev.as.target_file_set_declare.set_kind = set_kind;
+    ev.as.target_file_set_declare.visibility = visibility;
+    return emit_event(ctx, ev);
+}
+
+static inline bool eval_emit_target_file_set_add_base_dir(EvalExecContext *ctx,
+                                                          Event_Origin origin,
+                                                          String_View target_name,
+                                                          String_View set_name,
+                                                          String_View path) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TARGET_FILE_SET_ADD_BASE_DIR;
+    ev.h.origin = origin;
+    ev.as.target_file_set_add_base_dir.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_file_set_add_base_dir.set_name = sv_copy_to_event_arena(ctx, set_name);
+    ev.as.target_file_set_add_base_dir.path = sv_copy_to_event_arena(ctx, path);
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_target_link_libraries(EvalExecContext *ctx,

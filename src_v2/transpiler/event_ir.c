@@ -157,6 +157,33 @@ static const char *event_property_mutate_op_name(Event_Property_Mutate_Op op) {
     return "unknown";
 }
 
+static const char *event_visibility_name(Cmake_Visibility visibility) {
+    switch (visibility) {
+        case EV_VISIBILITY_UNSPECIFIED: return "unspecified";
+        case EV_VISIBILITY_PRIVATE: return "private";
+        case EV_VISIBILITY_PUBLIC: return "public";
+        case EV_VISIBILITY_INTERFACE: return "interface";
+    }
+    return "unknown";
+}
+
+static const char *event_target_source_kind_name(Event_Target_Source_Kind kind) {
+    switch (kind) {
+        case EVENT_TARGET_SOURCE_REGULAR: return "regular";
+        case EVENT_TARGET_SOURCE_FILE_SET_HEADERS: return "file_set_headers";
+        case EVENT_TARGET_SOURCE_FILE_SET_CXX_MODULES: return "file_set_cxx_modules";
+    }
+    return "unknown";
+}
+
+static const char *event_target_file_set_kind_name(Event_Target_File_Set_Kind kind) {
+    switch (kind) {
+        case EVENT_TARGET_FILE_SET_HEADERS: return "headers";
+        case EVENT_TARGET_FILE_SET_CXX_MODULES: return "cxx_modules";
+    }
+    return "unknown";
+}
+
 static bool event_deep_copy_payload(Arena *arena, Event *ev) {
     if (!arena || !ev) return false;
     if (!event_copy_sv_inplace(arena, &ev->h.origin.file_path)) return false;
@@ -485,11 +512,28 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
         case EVENT_TARGET_ADD_SOURCE:
             if (!event_copy_sv_inplace(arena, &ev->as.target_add_source.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_add_source.path)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_add_source.file_set_name)) return false;
+            break;
+        case EVENT_TARGET_FILE_SET_DECLARE:
+            if (!event_copy_sv_inplace(arena, &ev->as.target_file_set_declare.target_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_file_set_declare.set_name)) return false;
+            break;
+        case EVENT_TARGET_FILE_SET_ADD_BASE_DIR:
+            if (!event_copy_sv_inplace(arena, &ev->as.target_file_set_add_base_dir.target_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_file_set_add_base_dir.set_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_file_set_add_base_dir.path)) return false;
             break;
         case EVENT_SOURCE_MARK_GENERATED:
             if (!event_copy_sv_inplace(arena, &ev->as.source_mark_generated.path)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.source_mark_generated.directory_source_dir)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.source_mark_generated.directory_binary_dir)) return false;
+            break;
+        case EVENT_SOURCE_PROPERTY_MUTATE:
+            if (!event_copy_sv_inplace(arena, &ev->as.source_property_mutate.path)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.source_property_mutate.directory_source_dir)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.source_property_mutate.directory_binary_dir)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.source_property_mutate.key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.source_property_mutate.value)) return false;
             break;
         case EVENT_TARGET_ADD_DEPENDENCY:
             if (!event_copy_sv_inplace(arena, &ev->as.target_add_dependency.target_name)) return false;
@@ -841,17 +885,49 @@ static void event_dump_one(const Event *ev) {
                    ev->as.target_declare.name.data ? ev->as.target_declare.name.data : "");
             break;
         case EVENT_TARGET_ADD_SOURCE:
-            printf(" target=%.*s path=%.*s",
+            printf(" target=%.*s path=%.*s visibility=%s source_kind=%s file_set=%.*s",
                    (int)ev->as.target_add_source.target_name.count,
                    ev->as.target_add_source.target_name.data ? ev->as.target_add_source.target_name.data : "",
                    (int)ev->as.target_add_source.path.count,
-                   ev->as.target_add_source.path.data ? ev->as.target_add_source.path.data : "");
+                   ev->as.target_add_source.path.data ? ev->as.target_add_source.path.data : "",
+                   event_visibility_name(ev->as.target_add_source.visibility),
+                   event_target_source_kind_name(ev->as.target_add_source.source_kind),
+                   (int)ev->as.target_add_source.file_set_name.count,
+                   ev->as.target_add_source.file_set_name.data ? ev->as.target_add_source.file_set_name.data : "");
+            break;
+        case EVENT_TARGET_FILE_SET_DECLARE:
+            printf(" target=%.*s set=%.*s kind=%s visibility=%s",
+                   (int)ev->as.target_file_set_declare.target_name.count,
+                   ev->as.target_file_set_declare.target_name.data ? ev->as.target_file_set_declare.target_name.data : "",
+                   (int)ev->as.target_file_set_declare.set_name.count,
+                   ev->as.target_file_set_declare.set_name.data ? ev->as.target_file_set_declare.set_name.data : "",
+                   event_target_file_set_kind_name(ev->as.target_file_set_declare.set_kind),
+                   event_visibility_name(ev->as.target_file_set_declare.visibility));
+            break;
+        case EVENT_TARGET_FILE_SET_ADD_BASE_DIR:
+            printf(" target=%.*s set=%.*s path=%.*s",
+                   (int)ev->as.target_file_set_add_base_dir.target_name.count,
+                   ev->as.target_file_set_add_base_dir.target_name.data ? ev->as.target_file_set_add_base_dir.target_name.data : "",
+                   (int)ev->as.target_file_set_add_base_dir.set_name.count,
+                   ev->as.target_file_set_add_base_dir.set_name.data ? ev->as.target_file_set_add_base_dir.set_name.data : "",
+                   (int)ev->as.target_file_set_add_base_dir.path.count,
+                   ev->as.target_file_set_add_base_dir.path.data ? ev->as.target_file_set_add_base_dir.path.data : "");
             break;
         case EVENT_SOURCE_MARK_GENERATED:
             printf(" path=%.*s generated=%d",
                    (int)ev->as.source_mark_generated.path.count,
                    ev->as.source_mark_generated.path.data ? ev->as.source_mark_generated.path.data : "",
                    (int)ev->as.source_mark_generated.generated);
+            break;
+        case EVENT_SOURCE_PROPERTY_MUTATE:
+            printf(" path=%.*s key=%.*s value=%.*s op=%s",
+                   (int)ev->as.source_property_mutate.path.count,
+                   ev->as.source_property_mutate.path.data ? ev->as.source_property_mutate.path.data : "",
+                   (int)ev->as.source_property_mutate.key.count,
+                   ev->as.source_property_mutate.key.data ? ev->as.source_property_mutate.key.data : "",
+                   (int)ev->as.source_property_mutate.value.count,
+                   ev->as.source_property_mutate.value.data ? ev->as.source_property_mutate.value.data : "",
+                   event_property_mutate_op_name((Event_Property_Mutate_Op)ev->as.source_property_mutate.op));
             break;
         case EVENT_TARGET_ADD_DEPENDENCY:
             printf(" target=%.*s dep=%.*s",

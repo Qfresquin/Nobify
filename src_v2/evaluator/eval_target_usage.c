@@ -41,6 +41,18 @@ typedef enum {
     TARGET_FILE_SET_CXX_MODULES,
 } Target_File_Set_Kind;
 
+static Event_Target_File_Set_Kind target_file_set_kind_to_event(Target_File_Set_Kind kind) {
+    return kind == TARGET_FILE_SET_CXX_MODULES
+        ? EVENT_TARGET_FILE_SET_CXX_MODULES
+        : EVENT_TARGET_FILE_SET_HEADERS;
+}
+
+static Event_Target_Source_Kind target_file_set_kind_to_source_kind(Target_File_Set_Kind kind) {
+    return kind == TARGET_FILE_SET_CXX_MODULES
+        ? EVENT_TARGET_SOURCE_FILE_SET_CXX_MODULES
+        : EVENT_TARGET_SOURCE_FILE_SET_HEADERS;
+}
+
 typedef struct {
     Cmake_Visibility visibility;
     SV_List items;
@@ -1126,6 +1138,14 @@ static bool target_sources_store_file_set(EvalExecContext *ctx,
                                                               dirs_prop_prefix,
                                                               (int)set_name_upper.count,
                                                               set_name_upper.data));
+    if (!eval_emit_target_file_set_declare(ctx,
+                                           origin,
+                                           target_name,
+                                           file_set->name,
+                                           target_file_set_kind_to_event((Target_File_Set_Kind)file_set->kind),
+                                           vis)) {
+        return false;
+    }
     if (vis != EV_VISIBILITY_INTERFACE) {
         if (!target_usage_store_and_emit_target_property(ctx,
                                                          origin,
@@ -1154,6 +1174,13 @@ static bool target_sources_store_file_set(EvalExecContext *ctx,
                                                          dirs_prop,
                                                          file_set->base_dirs[i],
                                                          EV_PROP_APPEND_LIST)) {
+            return false;
+        }
+        if (!eval_emit_target_file_set_add_base_dir(ctx,
+                                                    origin,
+                                                    target_name,
+                                                    file_set->name,
+                                                    file_set->base_dirs[i])) {
             return false;
         }
         if (is_default_set &&
@@ -1198,6 +1225,15 @@ static bool target_sources_store_file_set(EvalExecContext *ctx,
                                                          set_prop,
                                                          file_set->files[i],
                                                          EV_PROP_APPEND_LIST)) {
+            return false;
+        }
+        if (!eval_emit_target_add_source(ctx,
+                                         origin,
+                                         target_name,
+                                         vis,
+                                         file_set->files[i],
+                                         target_file_set_kind_to_source_kind((Target_File_Set_Kind)file_set->kind),
+                                         file_set->name)) {
             return false;
         }
         if (is_default_set &&
@@ -1539,9 +1575,6 @@ Eval_Result eval_handle_target_sources(EvalExecContext *ctx, const Node *node) {
                                                     EV_PROP_APPEND_LIST)) {
                 return eval_result_from_ctx(ctx);
             }
-            if (!eval_emit_target_add_source(ctx, o, req.target_name, entry->item)) {
-                return eval_result_from_ctx(ctx);
-            }
         }
         if (entry->visibility != EV_VISIBILITY_PRIVATE) {
             if (!target_usage_store_and_emit_target_property(ctx,
@@ -1552,6 +1585,15 @@ Eval_Result eval_handle_target_sources(EvalExecContext *ctx, const Node *node) {
                                                              EV_PROP_APPEND_LIST)) {
                 return eval_result_from_ctx(ctx);
             }
+        }
+        if (!eval_emit_target_add_source(ctx,
+                                         o,
+                                         req.target_name,
+                                         entry->visibility,
+                                         entry->item,
+                                         EVENT_TARGET_SOURCE_REGULAR,
+                                         nob_sv_from_cstr(""))) {
+            return eval_result_from_ctx(ctx);
         }
     }
 

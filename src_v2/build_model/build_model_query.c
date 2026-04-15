@@ -626,6 +626,44 @@ static bool bm_query_append_joined_raw_record(Arena *scratch,
     return true;
 }
 
+static void bm_query_join_push_sv(Nob_String_Builder *sb, bool *first, String_View value) {
+    if (!sb || !first || value.count == 0) return;
+    if (!*first) nob_sb_append(sb, ';');
+    nob_sb_append_buf(sb, value.data ? value.data : "", value.count);
+    *first = false;
+}
+
+static bool bm_query_finalize_joined_sv(Arena *scratch, Nob_String_Builder *sb, String_View *out) {
+    char *copy = NULL;
+    if (!scratch || !sb || !out) return false;
+    *out = nob_sv_from_cstr("");
+    if (sb->count == 0) {
+        nob_sb_free(*sb);
+        return true;
+    }
+    copy = arena_strndup(scratch, sb->items ? sb->items : "", sb->count);
+    nob_sb_free(*sb);
+    if (!copy) return false;
+    *out = nob_sv_from_parts(copy, sb->count);
+    return true;
+}
+
+static const BM_Target_Source_Record *bm_query_target_source_record(const Build_Model *model,
+                                                                    BM_Target_Id id,
+                                                                    size_t source_index) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    if (!target || source_index >= arena_arr_len(target->source_records)) return NULL;
+    return &target->source_records[source_index];
+}
+
+static const BM_Target_File_Set_Record *bm_query_target_file_set_record(const Build_Model *model,
+                                                                        BM_Target_Id id,
+                                                                        size_t file_set_index) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    if (!target || file_set_index >= arena_arr_len(target->file_sets)) return NULL;
+    return &target->file_sets[file_set_index];
+}
+
 bool bm_query_target_property_value(const Build_Model *model,
                                     BM_Target_Id id,
                                     String_View property_name,
@@ -639,10 +677,99 @@ bool bm_query_target_property_value(const Build_Model *model,
     *out = nob_sv_from_cstr("");
     if (!target) return true;
 
-    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("SOURCES"))) {
-        return bm_query_append_joined_raw_record(scratch,
-                                                 out,
-                                                 &(BM_Raw_Property_Record){.items = target->sources});
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("SOURCES")) ||
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_SOURCES"))) {
+        Nob_String_Builder sb = {0};
+        bool first = true;
+        bool interface_only = bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_SOURCES"));
+        for (size_t i = 0; i < arena_arr_len(target->source_records); ++i) {
+            const BM_Target_Source_Record *source = &target->source_records[i];
+            if (source->kind != BM_TARGET_SOURCE_REGULAR) continue;
+            if (interface_only) {
+                if (source->visibility == BM_VISIBILITY_PRIVATE) continue;
+            } else if (source->visibility == BM_VISIBILITY_INTERFACE) {
+                continue;
+            }
+            bm_query_join_push_sv(&sb, &first, source->raw_path);
+        }
+        return bm_query_finalize_joined_sv(scratch, &sb, out);
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("HEADER_SETS")) ||
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_HEADER_SETS")) ||
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("CXX_MODULE_SETS")) ||
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_CXX_MODULE_SETS"))) {
+        Nob_String_Builder sb = {0};
+        bool first = true;
+        bool want_headers =
+            bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("HEADER_SETS")) ||
+            bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_HEADER_SETS"));
+        bool interface_only =
+            bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_HEADER_SETS")) ||
+            bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_CXX_MODULE_SETS"));
+        for (size_t i = 0; i < arena_arr_len(target->file_sets); ++i) {
+            const BM_Target_File_Set_Record *file_set = &target->file_sets[i];
+            if ((want_headers && file_set->kind != BM_TARGET_FILE_SET_HEADERS) ||
+                (!want_headers && file_set->kind != BM_TARGET_FILE_SET_CXX_MODULES)) {
+                continue;
+            }
+            if (interface_only) {
+                if (file_set->visibility == BM_VISIBILITY_PRIVATE) continue;
+            } else if (file_set->visibility == BM_VISIBILITY_INTERFACE) {
+                continue;
+            }
+            bm_query_join_push_sv(&sb, &first, file_set->name);
+        }
+        return bm_query_finalize_joined_sv(scratch, &sb, out);
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("HEADER_SET")) ||
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("HEADER_DIRS")) ||
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("CXX_MODULE_SET")) ||
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("CXX_MODULE_DIRS")) ||
+        nob_sv_starts_with(property_name, nob_sv_from_cstr("HEADER_SET_")) ||
+        nob_sv_starts_with(property_name, nob_sv_from_cstr("HEADER_DIRS_")) ||
+        nob_sv_starts_with(property_name, nob_sv_from_cstr("CXX_MODULE_SET_")) ||
+        nob_sv_starts_with(property_name, nob_sv_from_cstr("CXX_MODULE_DIRS_"))) {
+        Nob_String_Builder sb = {0};
+        bool first = true;
+        bool want_headers =
+            bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("HEADER_SET")) ||
+            bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("HEADER_DIRS")) ||
+            nob_sv_starts_with(property_name, nob_sv_from_cstr("HEADER_SET_")) ||
+            nob_sv_starts_with(property_name, nob_sv_from_cstr("HEADER_DIRS_"));
+        bool want_dirs =
+            bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("HEADER_DIRS")) ||
+            bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("CXX_MODULE_DIRS")) ||
+            nob_sv_starts_with(property_name, nob_sv_from_cstr("HEADER_DIRS_")) ||
+            nob_sv_starts_with(property_name, nob_sv_from_cstr("CXX_MODULE_DIRS_"));
+        String_View target_set_name = want_headers ? nob_sv_from_cstr("HEADERS")
+                                                   : nob_sv_from_cstr("CXX_MODULES");
+        if (nob_sv_starts_with(property_name, nob_sv_from_cstr("HEADER_DIRS_"))) {
+            target_set_name = nob_sv_from_parts(property_name.data + strlen("HEADER_DIRS_"),
+                                                property_name.count - strlen("HEADER_DIRS_"));
+        } else if (nob_sv_starts_with(property_name, nob_sv_from_cstr("HEADER_SET_"))) {
+            target_set_name = nob_sv_from_parts(property_name.data + strlen("HEADER_SET_"),
+                                                property_name.count - strlen("HEADER_SET_"));
+        } else if (nob_sv_starts_with(property_name, nob_sv_from_cstr("CXX_MODULE_DIRS_"))) {
+            target_set_name = nob_sv_from_parts(property_name.data + strlen("CXX_MODULE_DIRS_"),
+                                                property_name.count - strlen("CXX_MODULE_DIRS_"));
+        } else if (nob_sv_starts_with(property_name, nob_sv_from_cstr("CXX_MODULE_SET_"))) {
+            target_set_name = nob_sv_from_parts(property_name.data + strlen("CXX_MODULE_SET_"),
+                                                property_name.count - strlen("CXX_MODULE_SET_"));
+        }
+
+        for (size_t i = 0; i < arena_arr_len(target->file_sets); ++i) {
+            const BM_Target_File_Set_Record *file_set = &target->file_sets[i];
+            const String_View *items = want_dirs ? file_set->base_dirs : file_set->raw_files;
+            if ((want_headers && file_set->kind != BM_TARGET_FILE_SET_HEADERS) ||
+                (!want_headers && file_set->kind != BM_TARGET_FILE_SET_CXX_MODULES)) {
+                continue;
+            }
+            if (!bm_sv_eq_ci_query(file_set->name, target_set_name)) continue;
+            for (size_t item_index = 0; item_index < arena_arr_len(items); ++item_index) {
+                bm_query_join_push_sv(&sb, &first, items[item_index]);
+            }
+        }
+        return bm_query_finalize_joined_sv(scratch, &sb, out);
     }
     if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("LINK_LIBRARIES"))) {
         if (!bm_query_append_joined_items(scratch, &structured, target->link_libraries, BM_VISIBILITY_PRIVATE, BM_VISIBILITY_PUBLIC)) {
@@ -978,28 +1105,118 @@ size_t bm_query_target_source_count(const Build_Model *model, BM_Target_Id id) {
     return target ? arena_arr_len(target->source_records) : 0;
 }
 
+BM_Target_Source_Kind bm_query_target_source_kind(const Build_Model *model, BM_Target_Id id, size_t source_index) {
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    return source ? source->kind : BM_TARGET_SOURCE_REGULAR;
+}
+
+BM_Visibility bm_query_target_source_visibility(const Build_Model *model, BM_Target_Id id, size_t source_index) {
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    return source ? source->visibility : BM_VISIBILITY_PRIVATE;
+}
+
 String_View bm_query_target_source_raw(const Build_Model *model, BM_Target_Id id, size_t source_index) {
-    const BM_Target_Record *target = bm_model_target(model, id);
-    if (!target || source_index >= arena_arr_len(target->source_records)) return nob_sv_from_cstr("");
-    return target->source_records[source_index].raw_path;
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    return source ? source->raw_path : nob_sv_from_cstr("");
 }
 
 String_View bm_query_target_source_effective(const Build_Model *model, BM_Target_Id id, size_t source_index) {
-    const BM_Target_Record *target = bm_model_target(model, id);
-    if (!target || source_index >= arena_arr_len(target->source_records)) return nob_sv_from_cstr("");
-    return target->source_records[source_index].effective_path;
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    return source ? source->effective_path : nob_sv_from_cstr("");
 }
 
 bool bm_query_target_source_generated(const Build_Model *model, BM_Target_Id id, size_t source_index) {
-    const BM_Target_Record *target = bm_model_target(model, id);
-    if (!target || source_index >= arena_arr_len(target->source_records)) return false;
-    return target->source_records[source_index].generated;
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    return source ? source->generated : false;
+}
+
+bool bm_query_target_source_is_compile_input(const Build_Model *model, BM_Target_Id id, size_t source_index) {
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    if (!source) return false;
+    return source->visibility != BM_VISIBILITY_INTERFACE &&
+           source->kind == BM_TARGET_SOURCE_REGULAR &&
+           !source->header_file_only;
+}
+
+bool bm_query_target_source_header_file_only(const Build_Model *model, BM_Target_Id id, size_t source_index) {
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    return source ? source->header_file_only : false;
+}
+
+String_View bm_query_target_source_language(const Build_Model *model, BM_Target_Id id, size_t source_index) {
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    return source ? source->language : nob_sv_from_cstr("");
+}
+
+BM_String_Item_Span bm_query_target_source_compile_definitions(const Build_Model *model, BM_Target_Id id, size_t source_index) {
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    return source ? bm_item_span(source->compile_definitions) : (BM_String_Item_Span){0};
+}
+
+BM_String_Item_Span bm_query_target_source_compile_options(const Build_Model *model, BM_Target_Id id, size_t source_index) {
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    return source ? bm_item_span(source->compile_options) : (BM_String_Item_Span){0};
+}
+
+BM_String_Item_Span bm_query_target_source_include_directories(const Build_Model *model, BM_Target_Id id, size_t source_index) {
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    return source ? bm_item_span(source->include_directories) : (BM_String_Item_Span){0};
+}
+
+String_View bm_query_target_source_file_set_name(const Build_Model *model, BM_Target_Id id, size_t source_index) {
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    return source ? source->file_set_name : nob_sv_from_cstr("");
+}
+
+BM_String_Span bm_query_target_source_raw_property_items(const Build_Model *model,
+                                                         BM_Target_Id id,
+                                                         size_t source_index,
+                                                         String_View property_name) {
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    const BM_Raw_Property_Record *record = NULL;
+    if (!source) return (BM_String_Span){0};
+    record = bm_find_raw_property(source->raw_properties, property_name);
+    return record ? bm_string_span(record->items) : (BM_String_Span){0};
 }
 
 BM_Build_Step_Id bm_query_target_source_producer_step(const Build_Model *model, BM_Target_Id id, size_t source_index) {
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    return source ? source->producer_step_id : BM_BUILD_STEP_ID_INVALID;
+}
+
+size_t bm_query_target_file_set_count(const Build_Model *model, BM_Target_Id id) {
     const BM_Target_Record *target = bm_model_target(model, id);
-    if (!target || source_index >= arena_arr_len(target->source_records)) return BM_BUILD_STEP_ID_INVALID;
-    return target->source_records[source_index].producer_step_id;
+    return target ? arena_arr_len(target->file_sets) : 0;
+}
+
+String_View bm_query_target_file_set_name(const Build_Model *model, BM_Target_Id id, size_t file_set_index) {
+    const BM_Target_File_Set_Record *file_set = bm_query_target_file_set_record(model, id, file_set_index);
+    return file_set ? file_set->name : nob_sv_from_cstr("");
+}
+
+BM_Target_File_Set_Kind bm_query_target_file_set_kind(const Build_Model *model, BM_Target_Id id, size_t file_set_index) {
+    const BM_Target_File_Set_Record *file_set = bm_query_target_file_set_record(model, id, file_set_index);
+    return file_set ? file_set->kind : BM_TARGET_FILE_SET_HEADERS;
+}
+
+BM_Visibility bm_query_target_file_set_visibility(const Build_Model *model, BM_Target_Id id, size_t file_set_index) {
+    const BM_Target_File_Set_Record *file_set = bm_query_target_file_set_record(model, id, file_set_index);
+    return file_set ? file_set->visibility : BM_VISIBILITY_PRIVATE;
+}
+
+BM_String_Span bm_query_target_file_set_base_dirs(const Build_Model *model, BM_Target_Id id, size_t file_set_index) {
+    const BM_Target_File_Set_Record *file_set = bm_query_target_file_set_record(model, id, file_set_index);
+    return file_set ? bm_string_span(file_set->base_dirs) : (BM_String_Span){0};
+}
+
+BM_String_Span bm_query_target_file_set_files_raw(const Build_Model *model, BM_Target_Id id, size_t file_set_index) {
+    const BM_Target_File_Set_Record *file_set = bm_query_target_file_set_record(model, id, file_set_index);
+    return file_set ? bm_string_span(file_set->raw_files) : (BM_String_Span){0};
+}
+
+BM_String_Span bm_query_target_file_set_files_effective(const Build_Model *model, BM_Target_Id id, size_t file_set_index) {
+    const BM_Target_File_Set_Record *file_set = bm_query_target_file_set_record(model, id, file_set_index);
+    return file_set ? bm_string_span(file_set->effective_files) : (BM_String_Span){0};
 }
 
 BM_Target_Id_Span bm_query_target_dependencies_explicit(const Build_Model *model, BM_Target_Id id) {

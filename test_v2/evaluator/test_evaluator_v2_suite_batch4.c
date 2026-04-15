@@ -3430,7 +3430,19 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
 
     bool saw_priv_source = false;
     bool saw_pub_source = false;
+    bool saw_iface_source = false;
+    bool saw_header_file_set_source = false;
+    bool saw_interface_header_file_set_source = false;
     bool saw_module_source_event = false;
+    bool saw_imported_module_source_event = false;
+    bool saw_default_headers_set = false;
+    bool saw_api_headers_set = false;
+    bool saw_cxx_modules_set = false;
+    bool saw_imported_cxx_modules_set = false;
+    bool saw_headers_base_dir = false;
+    bool saw_api_base_dir = false;
+    bool saw_cxx_modules_base_dir = false;
+    bool saw_imported_cxx_modules_base_dir = false;
     bool saw_iface_prop = false;
     bool saw_header_set_prop = false;
     bool saw_interface_header_sets_prop = false;
@@ -3455,10 +3467,82 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
         const Cmake_Event *ev = &stream->items[i];
         if (ev->h.kind == EV_TARGET_ADD_SOURCE &&
             nob_sv_eq(ev->as.target_add_source.target_name, nob_sv_from_cstr("real"))) {
-            if (sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("priv.c"))) saw_priv_source = true;
-            if (sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("pub.h"))) saw_pub_source = true;
-            if (sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("core.cppm"))) saw_module_source_event = true;
-            ASSERT(!sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("iface.h")));
+            if (sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("include/public.hpp"))) {
+                saw_header_file_set_source = true;
+                ASSERT(ev->as.target_add_source.visibility == EV_VISIBILITY_PUBLIC);
+                ASSERT(ev->as.target_add_source.source_kind == EVENT_TARGET_SOURCE_FILE_SET_HEADERS);
+                ASSERT(nob_sv_eq(ev->as.target_add_source.file_set_name, nob_sv_from_cstr("HEADERS")));
+            } else if (sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("api/iface.hpp"))) {
+                saw_interface_header_file_set_source = true;
+                ASSERT(ev->as.target_add_source.visibility == EV_VISIBILITY_INTERFACE);
+                ASSERT(ev->as.target_add_source.source_kind == EVENT_TARGET_SOURCE_FILE_SET_HEADERS);
+                ASSERT(nob_sv_eq(ev->as.target_add_source.file_set_name, nob_sv_from_cstr("api")));
+            } else if (sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("core.cppm"))) {
+                saw_module_source_event = true;
+                ASSERT(ev->as.target_add_source.visibility == EV_VISIBILITY_PUBLIC);
+                ASSERT(ev->as.target_add_source.source_kind == EVENT_TARGET_SOURCE_FILE_SET_CXX_MODULES);
+                ASSERT(nob_sv_eq(ev->as.target_add_source.file_set_name, nob_sv_from_cstr("CXX_MODULES")));
+            } else if (sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("priv.c"))) {
+                saw_priv_source = true;
+                ASSERT(ev->as.target_add_source.visibility == EV_VISIBILITY_PRIVATE);
+                ASSERT(ev->as.target_add_source.source_kind == EVENT_TARGET_SOURCE_REGULAR);
+                ASSERT(ev->as.target_add_source.file_set_name.count == 0);
+            } else if (sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("pub.h"))) {
+                saw_pub_source = true;
+                ASSERT(ev->as.target_add_source.visibility == EV_VISIBILITY_PUBLIC);
+                ASSERT(ev->as.target_add_source.source_kind == EVENT_TARGET_SOURCE_REGULAR);
+                ASSERT(ev->as.target_add_source.file_set_name.count == 0);
+            } else if (sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("iface.h"))) {
+                saw_iface_source = true;
+                ASSERT(ev->as.target_add_source.visibility == EV_VISIBILITY_INTERFACE);
+                ASSERT(ev->as.target_add_source.source_kind == EVENT_TARGET_SOURCE_REGULAR);
+                ASSERT(ev->as.target_add_source.file_set_name.count == 0);
+            }
+        } else if (ev->h.kind == EV_TARGET_ADD_SOURCE &&
+                   nob_sv_eq(ev->as.target_add_source.target_name, nob_sv_from_cstr("imported_mod")) &&
+                   sv_contains_sv(ev->as.target_add_source.path, nob_sv_from_cstr("imported/api.cppm"))) {
+            saw_imported_module_source_event = true;
+            ASSERT(ev->as.target_add_source.visibility == EV_VISIBILITY_INTERFACE);
+            ASSERT(ev->as.target_add_source.source_kind == EVENT_TARGET_SOURCE_FILE_SET_CXX_MODULES);
+            ASSERT(nob_sv_eq(ev->as.target_add_source.file_set_name, nob_sv_from_cstr("CXX_MODULES")));
+        } else if (ev->h.kind == EV_TARGET_FILE_SET_DECLARE &&
+                   nob_sv_eq(ev->as.target_file_set_declare.target_name, nob_sv_from_cstr("real"))) {
+            if (nob_sv_eq(ev->as.target_file_set_declare.set_name, nob_sv_from_cstr("HEADERS"))) {
+                saw_default_headers_set = true;
+                ASSERT(ev->as.target_file_set_declare.set_kind == EVENT_TARGET_FILE_SET_HEADERS);
+                ASSERT(ev->as.target_file_set_declare.visibility == EV_VISIBILITY_PUBLIC);
+            } else if (nob_sv_eq(ev->as.target_file_set_declare.set_name, nob_sv_from_cstr("api"))) {
+                saw_api_headers_set = true;
+                ASSERT(ev->as.target_file_set_declare.set_kind == EVENT_TARGET_FILE_SET_HEADERS);
+                ASSERT(ev->as.target_file_set_declare.visibility == EV_VISIBILITY_INTERFACE);
+            } else if (nob_sv_eq(ev->as.target_file_set_declare.set_name, nob_sv_from_cstr("CXX_MODULES"))) {
+                saw_cxx_modules_set = true;
+                ASSERT(ev->as.target_file_set_declare.set_kind == EVENT_TARGET_FILE_SET_CXX_MODULES);
+                ASSERT(ev->as.target_file_set_declare.visibility == EV_VISIBILITY_PUBLIC);
+            }
+        } else if (ev->h.kind == EV_TARGET_FILE_SET_DECLARE &&
+                   nob_sv_eq(ev->as.target_file_set_declare.target_name, nob_sv_from_cstr("imported_mod")) &&
+                   nob_sv_eq(ev->as.target_file_set_declare.set_name, nob_sv_from_cstr("CXX_MODULES"))) {
+            saw_imported_cxx_modules_set = true;
+            ASSERT(ev->as.target_file_set_declare.set_kind == EVENT_TARGET_FILE_SET_CXX_MODULES);
+            ASSERT(ev->as.target_file_set_declare.visibility == EV_VISIBILITY_INTERFACE);
+        } else if (ev->h.kind == EV_TARGET_FILE_SET_ADD_BASE_DIR &&
+                   nob_sv_eq(ev->as.target_file_set_add_base_dir.target_name, nob_sv_from_cstr("real"))) {
+            if (nob_sv_eq(ev->as.target_file_set_add_base_dir.set_name, nob_sv_from_cstr("HEADERS")) &&
+                sv_contains_sv(ev->as.target_file_set_add_base_dir.path, nob_sv_from_cstr("include"))) {
+                saw_headers_base_dir = true;
+            } else if (nob_sv_eq(ev->as.target_file_set_add_base_dir.set_name, nob_sv_from_cstr("api")) &&
+                       sv_contains_sv(ev->as.target_file_set_add_base_dir.path, nob_sv_from_cstr("api"))) {
+                saw_api_base_dir = true;
+            } else if (nob_sv_eq(ev->as.target_file_set_add_base_dir.set_name, nob_sv_from_cstr("CXX_MODULES")) &&
+                       sv_contains_sv(ev->as.target_file_set_add_base_dir.path, nob_sv_from_cstr("modules"))) {
+                saw_cxx_modules_base_dir = true;
+            }
+        } else if (ev->h.kind == EV_TARGET_FILE_SET_ADD_BASE_DIR &&
+                   nob_sv_eq(ev->as.target_file_set_add_base_dir.target_name, nob_sv_from_cstr("imported_mod")) &&
+                   nob_sv_eq(ev->as.target_file_set_add_base_dir.set_name, nob_sv_from_cstr("CXX_MODULES")) &&
+                   sv_contains_sv(ev->as.target_file_set_add_base_dir.path, nob_sv_from_cstr("imported"))) {
+            saw_imported_cxx_modules_base_dir = true;
         } else if (ev->h.kind == EV_TARGET_PROP_SET &&
                    nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("real"))) {
             if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("INTERFACE_SOURCES")) &&
@@ -3542,7 +3626,19 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
 
     ASSERT(saw_priv_source);
     ASSERT(saw_pub_source);
-    ASSERT(!saw_module_source_event);
+    ASSERT(saw_iface_source);
+    ASSERT(saw_header_file_set_source);
+    ASSERT(saw_interface_header_file_set_source);
+    ASSERT(saw_module_source_event);
+    ASSERT(saw_imported_module_source_event);
+    ASSERT(saw_default_headers_set);
+    ASSERT(saw_api_headers_set);
+    ASSERT(saw_cxx_modules_set);
+    ASSERT(saw_imported_cxx_modules_set);
+    ASSERT(saw_headers_base_dir);
+    ASSERT(saw_api_base_dir);
+    ASSERT(saw_cxx_modules_base_dir);
+    ASSERT(saw_imported_cxx_modules_base_dir);
     ASSERT(saw_iface_prop);
     ASSERT(saw_header_set_prop);
     ASSERT(saw_interface_header_sets_prop);

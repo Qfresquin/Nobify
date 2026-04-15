@@ -96,10 +96,30 @@ BM_Target_Id bm_query_target_alias_of(const Build_Model *model, BM_Target_Id id)
 bool bm_query_target_exclude_from_all(const Build_Model *model, BM_Target_Id id);
 BM_String_Span bm_query_target_sources_raw(const Build_Model *model, BM_Target_Id id);
 size_t bm_query_target_source_count(const Build_Model *model, BM_Target_Id id);
+BM_Target_Source_Kind bm_query_target_source_kind(const Build_Model *model, BM_Target_Id id, size_t source_index);
+BM_Visibility bm_query_target_source_visibility(const Build_Model *model, BM_Target_Id id, size_t source_index);
 String_View bm_query_target_source_raw(const Build_Model *model, BM_Target_Id id, size_t source_index);
 String_View bm_query_target_source_effective(const Build_Model *model, BM_Target_Id id, size_t source_index);
 bool bm_query_target_source_generated(const Build_Model *model, BM_Target_Id id, size_t source_index);
+bool bm_query_target_source_is_compile_input(const Build_Model *model, BM_Target_Id id, size_t source_index);
+bool bm_query_target_source_header_file_only(const Build_Model *model, BM_Target_Id id, size_t source_index);
+String_View bm_query_target_source_language(const Build_Model *model, BM_Target_Id id, size_t source_index);
+BM_String_Item_Span bm_query_target_source_compile_definitions(const Build_Model *model, BM_Target_Id id, size_t source_index);
+BM_String_Item_Span bm_query_target_source_compile_options(const Build_Model *model, BM_Target_Id id, size_t source_index);
+BM_String_Item_Span bm_query_target_source_include_directories(const Build_Model *model, BM_Target_Id id, size_t source_index);
+String_View bm_query_target_source_file_set_name(const Build_Model *model, BM_Target_Id id, size_t source_index);
+BM_String_Span bm_query_target_source_raw_property_items(const Build_Model *model,
+                                                         BM_Target_Id id,
+                                                         size_t source_index,
+                                                         String_View property_name);
 BM_Build_Step_Id bm_query_target_source_producer_step(const Build_Model *model, BM_Target_Id id, size_t source_index);
+size_t bm_query_target_file_set_count(const Build_Model *model, BM_Target_Id id);
+String_View bm_query_target_file_set_name(const Build_Model *model, BM_Target_Id id, size_t file_set_index);
+BM_Target_File_Set_Kind bm_query_target_file_set_kind(const Build_Model *model, BM_Target_Id id, size_t file_set_index);
+BM_Visibility bm_query_target_file_set_visibility(const Build_Model *model, BM_Target_Id id, size_t file_set_index);
+BM_String_Span bm_query_target_file_set_base_dirs(const Build_Model *model, BM_Target_Id id, size_t file_set_index);
+BM_String_Span bm_query_target_file_set_files_raw(const Build_Model *model, BM_Target_Id id, size_t file_set_index);
+BM_String_Span bm_query_target_file_set_files_effective(const Build_Model *model, BM_Target_Id id, size_t file_set_index);
 BM_Target_Id_Span bm_query_target_dependencies_explicit(const Build_Model *model, BM_Target_Id id);
 BM_String_Item_Span bm_query_target_link_libraries_raw(const Build_Model *model, BM_Target_Id id);
 BM_String_Item_Span bm_query_target_include_directories_raw(const Build_Model *model, BM_Target_Id id);

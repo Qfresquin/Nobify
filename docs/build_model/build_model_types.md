@@ -112,6 +112,17 @@ typedef enum {
 } BM_Target_Kind;
 
 typedef enum {
+    BM_TARGET_SOURCE_REGULAR = 0,
+    BM_TARGET_SOURCE_HEADER_FILE_SET,
+    BM_TARGET_SOURCE_CXX_MODULE_FILE_SET,
+} BM_Target_Source_Kind;
+
+typedef enum {
+    BM_TARGET_FILE_SET_HEADERS = 0,
+    BM_TARGET_FILE_SET_CXX_MODULES,
+} BM_Target_File_Set_Kind;
+
+typedef enum {
     BM_VISIBILITY_PRIVATE = 0,
     BM_VISIBILITY_PUBLIC,
     BM_VISIBILITY_INTERFACE,
@@ -244,7 +255,15 @@ Every target record contains:
 - flags: `imported`, `imported_global`, `alias`, `alias_global`,
   `exclude_from_all`, `win32_executable`, `macosx_bundle`
 - `alias_of` as a symbolic reference in draft and a typed ID in the frozen model
-- raw sources
+- compatibility `sources` view for regular non-`INTERFACE` membership
+- canonical typed source records carrying:
+  `kind`, `visibility`, `raw_path`, `effective_path`, `generated`,
+  `producer_step_id`, optional `file_set_name`, `header_file_only`, `language`,
+  source-local `compile_definitions`, `compile_options`,
+  `include_directories`, and a source raw-property bag
+- typed file sets carrying:
+  `name`, `kind`, `visibility`, resolved `base_dirs`, and source membership by
+  linkage to the canonical source records
 - raw explicit dependency references
 - raw typed property entries for:
   `link_libraries`, `link_options`, `link_directories`,

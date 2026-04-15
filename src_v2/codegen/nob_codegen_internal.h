@@ -71,6 +71,7 @@ typedef enum {
 typedef struct {
     String_View path;
     CG_Source_Lang lang;
+    size_t source_index;
     BM_Build_Step_Id producer_step_id;
 } CG_Source_Info;
 

@@ -171,9 +171,36 @@ static bool bm_clone_target_source_records(Arena *arena,
     for (size_t i = 0; i < arena_arr_len(src); ++i) {
         BM_Target_Source_Record record = src[i];
         record.generated = src[i].generated;
+        record.header_file_only = src[i].header_file_only;
         record.producer_step_id = BM_BUILD_STEP_ID_INVALID;
         if (!bm_copy_string(arena, src[i].raw_path, &record.raw_path) ||
             !bm_copy_string(arena, src[i].effective_path, &record.effective_path) ||
+            !bm_copy_string(arena, src[i].file_set_name, &record.file_set_name) ||
+            !bm_copy_string(arena, src[i].language, &record.language) ||
+            !bm_clone_item_array(arena, &record.compile_definitions, src[i].compile_definitions) ||
+            !bm_clone_item_array(arena, &record.compile_options, src[i].compile_options) ||
+            !bm_clone_item_array(arena, &record.include_directories, src[i].include_directories) ||
+            !bm_clone_raw_properties(arena, &record.raw_properties, src[i].raw_properties) ||
+            !bm_clone_provenance(arena, &record.provenance, src[i].provenance) ||
+            !arena_arr_push(arena, *dest, record)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool bm_clone_target_file_sets(Arena *arena,
+                                      BM_Target_File_Set_Record **dest,
+                                      const BM_Target_File_Set_Record *src) {
+    if (!dest) return false;
+    *dest = NULL;
+    for (size_t i = 0; i < arena_arr_len(src); ++i) {
+        BM_Target_File_Set_Record record = src[i];
+        record.source_indices = NULL;
+        record.raw_files = NULL;
+        record.effective_files = NULL;
+        if (!bm_copy_string(arena, src[i].name, &record.name) ||
+            !bm_clone_string_array(arena, &record.base_dirs, src[i].base_dirs) ||
             !bm_clone_provenance(arena, &record.provenance, src[i].provenance) ||
             !arena_arr_push(arena, *dest, record)) {
             return false;
@@ -260,6 +287,7 @@ static bool bm_clone_targets(const Build_Model_Draft *draft, Build_Model *model,
             !bm_clone_provenance(arena, &target.provenance, src->provenance) ||
             !bm_clone_string_array(arena, &target.sources, src->sources) ||
             !bm_clone_target_source_records(arena, &target.source_records, src->source_records) ||
+            !bm_clone_target_file_sets(arena, &target.file_sets, src->file_sets) ||
             !bm_clone_string_array(arena, &target.explicit_dependency_names, src->explicit_dependency_names) ||
             !bm_clone_item_array(arena, &target.link_libraries, src->link_libraries) ||
             !bm_clone_item_array(arena, &target.link_options, src->link_options) ||
@@ -609,6 +637,234 @@ static bool bm_apply_generated_source_marks(const Build_Model_Draft *draft, Buil
     return true;
 }
 
+static bool bm_sv_eq_ci_freeze(String_View lhs, String_View rhs) {
+    if (lhs.count != rhs.count) return false;
+    for (size_t i = 0; i < lhs.count; ++i) {
+        if (tolower((unsigned char)lhs.data[i]) != tolower((unsigned char)rhs.data[i])) return false;
+    }
+    return true;
+}
+
+static bool bm_source_candidates_for_target(Arena *arena,
+                                            const BM_Directory_Record *owner_directory,
+                                            const BM_Target_Source_Record *source,
+                                            String_View *direct_effective,
+                                            String_View *source_effective,
+                                            String_View *binary_effective,
+                                            String_View *stripped_effective) {
+    if (!arena || !owner_directory || !source ||
+        !direct_effective || !source_effective || !binary_effective || !stripped_effective) {
+        return false;
+    }
+    if (!bm_normalize_path(arena, source->raw_path, direct_effective) ||
+        !bm_path_rebase_if_needed(arena, owner_directory->source_dir, source->raw_path, source_effective) ||
+        !bm_path_rebase_if_needed(arena, owner_directory->binary_dir, source->raw_path, binary_effective) ||
+        !bm_path_strip_prefix(arena, *source_effective, owner_directory->source_dir, stripped_effective)) {
+        return false;
+    }
+    return true;
+}
+
+static bool bm_source_property_candidates(Arena *arena,
+                                          const BM_Source_Property_Mutation_Record *record,
+                                          String_View *direct_effective,
+                                          String_View *source_effective,
+                                          String_View *binary_effective,
+                                          String_View *stripped_effective) {
+    if (!arena || !record ||
+        !direct_effective || !source_effective || !binary_effective || !stripped_effective) {
+        return false;
+    }
+    if (!bm_normalize_path(arena, record->path, direct_effective) ||
+        !bm_path_rebase_if_needed(arena, record->directory_source_dir, record->path, source_effective) ||
+        !bm_path_rebase_if_needed(arena, record->directory_binary_dir, record->path, binary_effective) ||
+        !bm_path_strip_prefix(arena, *source_effective, record->directory_source_dir, stripped_effective)) {
+        return false;
+    }
+    return true;
+}
+
+static bool bm_source_property_matches_target_source(Arena *arena,
+                                                     const BM_Directory_Record *owner_directory,
+                                                     const BM_Target_Source_Record *source,
+                                                     const BM_Source_Property_Mutation_Record *mutation) {
+    String_View source_direct = {0};
+    String_View source_source = {0};
+    String_View source_binary = {0};
+    String_View source_stripped = {0};
+    String_View mutation_direct = {0};
+    String_View mutation_source = {0};
+    String_View mutation_binary = {0};
+    String_View mutation_stripped = {0};
+    String_View source_candidates[4];
+    String_View mutation_candidates[4];
+    if (!bm_source_candidates_for_target(arena,
+                                         owner_directory,
+                                         source,
+                                         &source_direct,
+                                         &source_source,
+                                         &source_binary,
+                                         &source_stripped) ||
+        !bm_source_property_candidates(arena,
+                                       mutation,
+                                       &mutation_direct,
+                                       &mutation_source,
+                                       &mutation_binary,
+                                       &mutation_stripped)) {
+        return false;
+    }
+
+    source_candidates[0] = source_direct;
+    source_candidates[1] = source_source;
+    source_candidates[2] = source_binary;
+    source_candidates[3] = source_stripped;
+    mutation_candidates[0] = mutation_direct;
+    mutation_candidates[1] = mutation_source;
+    mutation_candidates[2] = mutation_binary;
+    mutation_candidates[3] = mutation_stripped;
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(source_candidates); ++i) {
+        if (bm_string_view_is_empty(source_candidates[i]) ||
+            nob_sv_eq(source_candidates[i], nob_sv_from_cstr("."))) {
+            continue;
+        }
+        for (size_t j = 0; j < NOB_ARRAY_LEN(mutation_candidates); ++j) {
+            if (bm_string_view_is_empty(mutation_candidates[j]) ||
+                nob_sv_eq(mutation_candidates[j], nob_sv_from_cstr("."))) {
+                continue;
+            }
+            if (nob_sv_eq(source_candidates[i], mutation_candidates[j])) return true;
+        }
+    }
+    return false;
+}
+
+static bool bm_source_property_apply_item_mutation(Arena *arena,
+                                                   BM_String_Item_View **dest,
+                                                   const BM_Source_Property_Mutation_Record *mutation,
+                                                   const String_View *values,
+                                                   size_t value_count) {
+    BM_String_Item_View *items = NULL;
+    uint32_t flags = mutation->op == EVENT_PROPERTY_MUTATE_PREPEND_LIST ? BM_ITEM_FLAG_BEFORE : BM_ITEM_FLAG_NONE;
+    if (!arena || !dest || !mutation) return false;
+    for (size_t i = 0; i < value_count; ++i) {
+        BM_String_Item_View item = {0};
+        if (!bm_copy_string(arena, values[i], &item.value)) return false;
+        item.visibility = BM_VISIBILITY_PRIVATE;
+        item.flags = flags;
+        item.provenance = mutation->provenance;
+        if (!arena_arr_push(arena, items, item)) return false;
+    }
+    return bm_apply_item_mutation(arena, dest, items, arena_arr_len(items), mutation->op);
+}
+
+static bool bm_source_property_apply(const BM_Source_Property_Mutation_Record *mutation,
+                                     BM_Target_Source_Record *source,
+                                     Arena *arena) {
+    String_View *values = NULL;
+    String_View single_value[1];
+    size_t value_count = 1;
+    if (!mutation || !source || !arena) return false;
+
+    single_value[0] = mutation->value;
+    if (!bm_record_raw_property(arena,
+                                &source->raw_properties,
+                                mutation->key,
+                                mutation->op,
+                                0,
+                                single_value,
+                                1,
+                                mutation->provenance)) {
+        return false;
+    }
+
+    if (bm_sv_eq_ci_freeze(mutation->key, nob_sv_from_cstr("GENERATED"))) {
+        source->generated = bm_sv_truthy(mutation->value);
+        return true;
+    }
+    if (bm_sv_eq_ci_freeze(mutation->key, nob_sv_from_cstr("HEADER_FILE_ONLY"))) {
+        source->header_file_only = bm_sv_truthy(mutation->value);
+        return true;
+    }
+    if (bm_sv_eq_ci_freeze(mutation->key, nob_sv_from_cstr("LANGUAGE"))) {
+        return bm_copy_string(arena, mutation->value, &source->language);
+    }
+
+    if (mutation->op == EVENT_PROPERTY_MUTATE_APPEND_STRING) {
+        values = single_value;
+        value_count = 1;
+    } else {
+        if (!bm_split_cmake_list(arena, mutation->value, &values)) return false;
+        if (values) {
+            value_count = arena_arr_len(values);
+        } else {
+            value_count = 0;
+        }
+    }
+
+    if (bm_sv_eq_ci_freeze(mutation->key, nob_sv_from_cstr("COMPILE_DEFINITIONS"))) {
+        return bm_source_property_apply_item_mutation(arena,
+                                                      &source->compile_definitions,
+                                                      mutation,
+                                                      values,
+                                                      value_count);
+    }
+    if (bm_sv_eq_ci_freeze(mutation->key, nob_sv_from_cstr("COMPILE_OPTIONS"))) {
+        return bm_source_property_apply_item_mutation(arena,
+                                                      &source->compile_options,
+                                                      mutation,
+                                                      values,
+                                                      value_count);
+    }
+    if (bm_sv_eq_ci_freeze(mutation->key, nob_sv_from_cstr("INCLUDE_DIRECTORIES"))) {
+        return bm_source_property_apply_item_mutation(arena,
+                                                      &source->include_directories,
+                                                      mutation,
+                                                      values,
+                                                      value_count);
+    }
+    return true;
+}
+
+static bool bm_apply_source_property_mutations(const Build_Model_Draft *draft,
+                                               Build_Model *model,
+                                               Arena *arena) {
+    if (!draft || !model || !arena) return false;
+    for (size_t mutation_index = 0; mutation_index < arena_arr_len(draft->source_property_mutations); ++mutation_index) {
+        const BM_Source_Property_Mutation_Record *mutation = &draft->source_property_mutations[mutation_index];
+        for (size_t target_index = 0; target_index < arena_arr_len(model->targets); ++target_index) {
+            BM_Target_Record *target = &model->targets[target_index];
+            const BM_Directory_Record *owner_directory = &model->directories[target->owner_directory_id];
+            for (size_t source_index = 0; source_index < arena_arr_len(target->source_records); ++source_index) {
+                BM_Target_Source_Record *source = &target->source_records[source_index];
+                if (!bm_source_property_matches_target_source(arena, owner_directory, source, mutation)) continue;
+                if (!bm_source_property_apply(mutation, source, arena)) return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool bm_populate_target_file_sets(Build_Model *model, Arena *arena) {
+    if (!model || !arena) return false;
+    for (size_t target_index = 0; target_index < arena_arr_len(model->targets); ++target_index) {
+        BM_Target_Record *target = &model->targets[target_index];
+        for (size_t file_set_index = 0; file_set_index < arena_arr_len(target->file_sets); ++file_set_index) {
+            BM_Target_File_Set_Record *file_set = &target->file_sets[file_set_index];
+            for (size_t source_index = 0; source_index < arena_arr_len(target->source_records); ++source_index) {
+                const BM_Target_Source_Record *source = &target->source_records[source_index];
+                if (!nob_sv_eq(source->file_set_name, file_set->name)) continue;
+                if (!arena_arr_push(arena, file_set->source_indices, source_index) ||
+                    !arena_arr_push(arena, file_set->raw_files, source->raw_path) ||
+                    !arena_arr_push(arena, file_set->effective_files, source->effective_path)) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
 static bool bm_clone_tests(const Build_Model_Draft *draft, Build_Model *model, Arena *arena) {
     for (size_t i = 0; i < arena_arr_len(draft->tests); ++i) {
         BM_Test_Record test = draft->tests[i];
@@ -851,7 +1107,9 @@ const Build_Model *bm_freeze_draft(const Build_Model_Draft *draft,
         !bm_promote_custom_target_kinds(model) ||
         !bm_resolve_build_step_dependencies(draft, model, out_arena) ||
         !bm_resolve_target_source_records(draft, model, out_arena) ||
-        !bm_apply_generated_source_marks(draft, model)) {
+        !bm_apply_generated_source_marks(draft, model) ||
+        !bm_apply_source_property_mutations(draft, model, out_arena) ||
+        !bm_populate_target_file_sets(model, out_arena)) {
         return NULL;
     }
 

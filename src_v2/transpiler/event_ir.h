@@ -130,7 +130,10 @@ typedef enum {
     X(EVENT_PROJECT_MINIMUM_REQUIRED, EVENT_FAMILY_PROJECT, "project_minimum_required", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TARGET_DECLARE, EVENT_FAMILY_TARGET, "target_declare", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TARGET_ADD_SOURCE, EVENT_FAMILY_TARGET, "target_add_source", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TARGET_FILE_SET_DECLARE, EVENT_FAMILY_TARGET, "target_file_set_declare", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TARGET_FILE_SET_ADD_BASE_DIR, EVENT_FAMILY_TARGET, "target_file_set_add_base_dir", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_SOURCE_MARK_GENERATED, EVENT_FAMILY_BUILD_GRAPH, "source_mark_generated", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_SOURCE_PROPERTY_MUTATE, EVENT_FAMILY_BUILD_GRAPH, "source_property_mutate", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TARGET_ADD_DEPENDENCY, EVENT_FAMILY_TARGET, "target_add_dependency", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_BUILD_STEP_DECLARE, EVENT_FAMILY_BUILD_GRAPH, "build_step_declare", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_BUILD_STEP_ADD_OUTPUT, EVENT_FAMILY_BUILD_GRAPH, "build_step_add_output", EVENT_ROLE_BUILD_SEMANTIC) \
@@ -309,6 +312,17 @@ typedef enum {
     EV_TARGET_LIBRARY_OBJECT,
     EV_TARGET_LIBRARY_UNKNOWN,
 } Cmake_Target_Type;
+
+typedef enum {
+    EVENT_TARGET_SOURCE_REGULAR = 0,
+    EVENT_TARGET_SOURCE_FILE_SET_HEADERS,
+    EVENT_TARGET_SOURCE_FILE_SET_CXX_MODULES,
+} Event_Target_Source_Kind;
+
+typedef enum {
+    EVENT_TARGET_FILE_SET_HEADERS = 0,
+    EVENT_TARGET_FILE_SET_CXX_MODULES,
+} Event_Target_File_Set_Kind;
 
 typedef enum {
     EV_INSTALL_RULE_TARGET = 0,
@@ -768,7 +782,23 @@ typedef struct {
 typedef struct {
     String_View target_name;
     String_View path;
+    Cmake_Visibility visibility;
+    Event_Target_Source_Kind source_kind;
+    String_View file_set_name;
 } Event_Target_Add_Source;
+
+typedef struct {
+    String_View target_name;
+    String_View set_name;
+    Event_Target_File_Set_Kind set_kind;
+    Cmake_Visibility visibility;
+} Event_Target_File_Set_Declare;
+
+typedef struct {
+    String_View target_name;
+    String_View set_name;
+    String_View path;
+} Event_Target_File_Set_Add_Base_Dir;
 
 typedef struct {
     String_View path;
@@ -776,6 +806,15 @@ typedef struct {
     String_View directory_binary_dir;
     bool generated;
 } Event_Source_Mark_Generated;
+
+typedef struct {
+    String_View path;
+    String_View directory_source_dir;
+    String_View directory_binary_dir;
+    String_View key;
+    String_View value;
+    Cmake_Target_Property_Op op;
+} Event_Source_Property_Mutate;
 
 typedef struct {
     String_View target_name;
@@ -1034,7 +1073,10 @@ typedef struct {
         Event_Project_Minimum_Required project_minimum_required;
         Event_Target_Declare target_declare;
         Event_Target_Add_Source target_add_source;
+        Event_Target_File_Set_Declare target_file_set_declare;
+        Event_Target_File_Set_Add_Base_Dir target_file_set_add_base_dir;
         Event_Source_Mark_Generated source_mark_generated;
+        Event_Source_Property_Mutate source_property_mutate;
         Event_Target_Add_Dependency target_add_dependency;
         Event_Build_Step_Declare build_step_declare;
         Event_Build_Step_Add_Output build_step_add_output;
@@ -1097,6 +1139,9 @@ typedef Event_Diag_Severity Cmake_Diag_Severity;
 #define EV_SET_CACHE_ENTRY EVENT_VAR_SET
 #define EV_TARGET_DECLARE EVENT_TARGET_DECLARE
 #define EV_TARGET_ADD_SOURCE EVENT_TARGET_ADD_SOURCE
+#define EV_TARGET_FILE_SET_DECLARE EVENT_TARGET_FILE_SET_DECLARE
+#define EV_TARGET_FILE_SET_ADD_BASE_DIR EVENT_TARGET_FILE_SET_ADD_BASE_DIR
+#define EV_SOURCE_PROPERTY_MUTATE EVENT_SOURCE_PROPERTY_MUTATE
 #define EV_TARGET_ADD_DEPENDENCY EVENT_TARGET_ADD_DEPENDENCY
 #define EV_TARGET_PROP_SET EVENT_TARGET_PROP_SET
 #define EV_TARGET_INCLUDE_DIRECTORIES EVENT_TARGET_INCLUDE_DIRECTORIES

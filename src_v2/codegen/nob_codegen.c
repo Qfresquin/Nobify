@@ -589,6 +589,19 @@ static bool cg_classify_source_lang(String_View src, CG_Source_Lang *out_lang) {
     return false;
 }
 
+static bool cg_parse_source_language(String_View language, CG_Source_Lang *out_lang) {
+    if (out_lang) *out_lang = CG_SOURCE_LANG_C;
+    if (cg_sv_eq_ci(language, nob_sv_from_cstr("C"))) {
+        if (out_lang) *out_lang = CG_SOURCE_LANG_C;
+        return true;
+    }
+    if (cg_sv_eq_ci(language, nob_sv_from_cstr("CXX"))) {
+        if (out_lang) *out_lang = CG_SOURCE_LANG_CXX;
+        return true;
+    }
+    return false;
+}
+
 static String_View cg_target_output_directory_property(CG_Context *ctx,
                                                        BM_Target_Id id,
                                                        BM_Target_Kind kind,
@@ -1128,15 +1141,20 @@ static bool cg_collect_standard_arg(CG_Context *ctx,
 }
 
 static bool cg_target_has_cxx_sources(CG_Context *ctx, BM_Target_Id id, bool *out) {
-    BM_String_Span sources = {0};
     if (out) *out = false;
     if (!ctx || !out) return false;
 
-    sources = bm_query_target_sources_raw(ctx->model, id);
-    for (size_t i = 0; i < sources.count; ++i) {
+    for (size_t i = 0; i < bm_query_target_source_count(ctx->model, id); ++i) {
+        String_View source_language = nob_sv_trim(bm_query_target_source_language(ctx->model, id, i));
+        String_View source_path = bm_query_target_source_effective(ctx->model, id, i);
         CG_Source_Lang lang = CG_SOURCE_LANG_C;
-        if (cg_is_header_like(sources.items[i])) continue;
-        if (!cg_classify_source_lang(sources.items[i], &lang)) continue;
+        if (!bm_query_target_source_is_compile_input(ctx->model, id, i)) continue;
+        if (source_language.count > 0) {
+            if (!cg_parse_source_language(source_language, &lang)) continue;
+        } else {
+            if (cg_is_header_like(source_path)) continue;
+            if (!cg_classify_source_lang(source_path, &lang)) continue;
+        }
         if (lang == CG_SOURCE_LANG_CXX) {
             *out = true;
             return true;
@@ -1343,18 +1361,32 @@ static bool cg_collect_compile_sources(CG_Context *ctx, BM_Target_Id id, CG_Sour
 
     for (size_t i = 0; i < source_count; ++i) {
         String_View src = bm_query_target_source_effective(ctx->model, id, i);
+        String_View source_language = nob_sv_trim(bm_query_target_source_language(ctx->model, id, i));
         String_View rebased = {0};
         CG_Source_Lang lang = CG_SOURCE_LANG_C;
         bool dup = false;
 
+        if (!bm_query_target_source_is_compile_input(ctx->model, id, i)) continue;
         if (!cg_check_no_genex("target source", src)) return false;
-        if (cg_is_header_like(src)) continue;
-        if (!cg_classify_source_lang(src, &lang)) {
-            nob_log(NOB_ERROR, "codegen: unsupported source language on target '%.*s': %.*s",
-                    (int)bm_query_target_name(ctx->model, id).count,
-                    bm_query_target_name(ctx->model, id).data ? bm_query_target_name(ctx->model, id).data : "",
-                    (int)src.count, src.data ? src.data : "");
-            return false;
+        if (source_language.count > 0) {
+            if (!cg_parse_source_language(source_language, &lang)) {
+                nob_log(NOB_ERROR,
+                        "codegen: unsupported source LANGUAGE on target '%.*s': %.*s",
+                        (int)bm_query_target_name(ctx->model, id).count,
+                        bm_query_target_name(ctx->model, id).data ? bm_query_target_name(ctx->model, id).data : "",
+                        (int)source_language.count,
+                        source_language.data ? source_language.data : "");
+                return false;
+            }
+        } else {
+            if (cg_is_header_like(src)) continue;
+            if (!cg_classify_source_lang(src, &lang)) {
+                nob_log(NOB_ERROR, "codegen: unsupported source language on target '%.*s': %.*s",
+                        (int)bm_query_target_name(ctx->model, id).count,
+                        bm_query_target_name(ctx->model, id).data ? bm_query_target_name(ctx->model, id).data : "",
+                        (int)src.count, src.data ? src.data : "");
+                return false;
+            }
         }
 
         if (!cg_rebase_path_from_cwd(ctx, src, &rebased)) return false;
@@ -1367,6 +1399,7 @@ static bool cg_collect_compile_sources(CG_Context *ctx, BM_Target_Id id, CG_Sour
         if (!dup && !arena_arr_push(ctx->scratch, *out, ((CG_Source_Info){
                 .path = rebased,
                 .lang = lang,
+                .source_index = i,
                 .producer_step_id = bm_query_target_source_producer_step(ctx->model, id, i),
             }))) {
             return false;
@@ -1376,19 +1409,122 @@ static bool cg_collect_compile_sources(CG_Context *ctx, BM_Target_Id id, CG_Sour
     return true;
 }
 
+static bool cg_append_split_item(Arena *scratch,
+                                 BM_String_Item_View **out,
+                                 BM_String_Item_View item,
+                                 String_View value) {
+    size_t start = 0;
+    if (!scratch || !out) return false;
+    if (value.count == 0) return true;
+    for (size_t i = 0; i <= value.count; ++i) {
+        bool sep = (i == value.count) || (value.data[i] == ';');
+        BM_String_Item_View copy = item;
+        String_View piece = {0};
+        if (!sep) continue;
+        piece = nob_sv_trim(nob_sv_from_parts(value.data + start, i - start));
+        start = i + 1;
+        if (piece.count == 0) continue;
+        copy.value = piece;
+        if (!arena_arr_push(scratch, *out, copy)) return false;
+    }
+    return true;
+}
+
+static bool cg_collect_source_compile_items(CG_Context *ctx,
+                                            BM_Target_Id id,
+                                            String_View config,
+                                            CG_Source_Lang lang,
+                                            BM_String_Item_Span items,
+                                            BM_String_Item_View **out) {
+    for (size_t i = 0; i < items.count; ++i) {
+        String_View value = items.items[i].value;
+        if (cg_is_genex(value) &&
+            !cg_eval_string_for_config(ctx,
+                                       id,
+                                       BM_QUERY_USAGE_COMPILE,
+                                       config,
+                                       cg_compile_language_sv(lang),
+                                       value,
+                                       &value)) {
+            return false;
+        }
+        if (!cg_append_split_item(ctx->scratch, out, items.items[i], value)) return false;
+    }
+    return true;
+}
+
+static bool cg_collect_source_compile_args(CG_Context *ctx,
+                                           BM_Target_Id id,
+                                           String_View config,
+                                           const CG_Source_Info *source,
+                                           String_View **out) {
+    BM_String_Item_Span includes = {0};
+    BM_String_Item_Span defs = {0};
+    BM_String_Item_Span opts = {0};
+    BM_String_Item_View *source_includes = NULL;
+    BM_String_Item_View *source_defs = NULL;
+    BM_String_Item_View *source_opts = NULL;
+    if (!ctx || !source || !out) return false;
+
+    includes = bm_query_target_source_include_directories(ctx->model, id, source->source_index);
+    defs = bm_query_target_source_compile_definitions(ctx->model, id, source->source_index);
+    opts = bm_query_target_source_compile_options(ctx->model, id, source->source_index);
+
+    if (!cg_collect_source_compile_items(ctx, id, config, source->lang, includes, &source_includes) ||
+        !cg_collect_source_compile_items(ctx, id, config, source->lang, defs, &source_defs) ||
+        !cg_collect_source_compile_items(ctx, id, config, source->lang, opts, &source_opts)) {
+        return false;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(source_includes); ++i) {
+        String_View path = {0};
+        char *arg = NULL;
+        if (!cg_rebase_from_provenance(ctx, source_includes[i].value, source_includes[i].provenance, &path)) return false;
+        if (cg_policy_is_windows(ctx)) {
+            arg = cg_arena_sprintf(ctx->scratch, "/I%.*s", (int)path.count, path.data ? path.data : "");
+        } else {
+            arg = cg_arena_sprintf(ctx->scratch, "-I%.*s", (int)path.count, path.data ? path.data : "");
+        }
+        if (!arg || !cg_collect_unique_path(ctx->scratch, out, nob_sv_from_cstr(arg))) return false;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(source_defs); ++i) {
+        String_View item = source_defs[i].value;
+        char *arg = NULL;
+        if (cg_policy_is_windows(ctx)) {
+            if (cg_sv_has_prefix(item, "-D")) item = nob_sv_from_parts(item.data + 2, item.count - 2);
+            arg = cg_arena_sprintf(ctx->scratch, "/D%.*s", (int)item.count, item.data ? item.data : "");
+        } else if (cg_sv_has_prefix(item, "-D")) {
+            arg = arena_strndup(ctx->scratch, item.data, item.count);
+        } else {
+            arg = cg_arena_sprintf(ctx->scratch, "-D%.*s", (int)item.count, item.data ? item.data : "");
+        }
+        if (!arg || !cg_collect_unique_path(ctx->scratch, out, nob_sv_from_cstr(arg))) return false;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(source_opts); ++i) {
+        if (cg_policy_is_windows(ctx) && cg_sv_has_prefix(source_opts[i].value, "-std=")) continue;
+        if (!cg_collect_unique_path(ctx->scratch, out, source_opts[i].value)) return false;
+    }
+
+    return true;
+}
+
 static bool cg_collect_compile_args(CG_Context *ctx,
                                     BM_Target_Id id,
                                     String_View config,
-                                    CG_Source_Lang lang,
+                                    const CG_Source_Info *source,
                                     String_View **out) {
     BM_String_Item_Span includes = {0};
     BM_String_Item_Span defs = {0};
     BM_String_Item_Span opts = {0};
-    BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_COMPILE, config, cg_compile_language_sv(lang));
+    BM_Query_Eval_Context qctx = {0};
+    if (!ctx || !source || !out) return false;
+    qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_COMPILE, config, cg_compile_language_sv(source->lang));
     if (!cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_INCLUDE_DIRECTORIES, &includes) ||
         !cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_COMPILE_DEFINITIONS, &defs) ||
         !cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_COMPILE_OPTIONS, &opts) ||
-        !cg_collect_standard_arg(ctx, id, config, lang, out)) {
+        !cg_collect_standard_arg(ctx, id, config, source->lang, out)) {
         return false;
     }
 
@@ -1430,7 +1566,7 @@ static bool cg_collect_compile_args(CG_Context *ctx,
         if (!cg_collect_unique_path(ctx->scratch, out, opts.items[i].value)) return false;
     }
 
-    return true;
+    return cg_collect_source_compile_args(ctx, id, config, source, out);
 }
 
 static bool cg_collect_link_dir_args(CG_Context *ctx,
@@ -1651,14 +1787,14 @@ static bool cg_emit_runtime_config_branches_suffix(CG_Context *ctx, Nob_String_B
 
 static bool cg_emit_compile_args_runtime(CG_Context *ctx,
                                          BM_Target_Id id,
-                                         CG_Source_Lang lang,
+                                         const CG_Source_Info *source,
                                          const char *cmd_var,
                                          Nob_String_Builder *out) {
     if (!ctx || !cmd_var || !out) return false;
     for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
         String_View *args = NULL;
         String_View config = branch < arena_arr_len(ctx->known_configs) ? ctx->known_configs[branch] : nob_sv_from_cstr("");
-        if (!cg_collect_compile_args(ctx, id, config, lang, &args) ||
+        if (!cg_collect_compile_args(ctx, id, config, source, &args) ||
             !cg_emit_runtime_config_branches_prefix(ctx, out, branch)) {
             return false;
         }
@@ -1995,7 +2131,7 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         nob_sb_append_cstr(out, "}, 2)) {\n");
         nob_sb_append_cstr(out, "        Nob_Cmd cc_cmd = {0};\n");
         if (!cg_emit_cmd_append_toolchain(out, "cc_cmd", sources[i].lang == CG_SOURCE_LANG_CXX)) return false;
-        if (!cg_emit_compile_args_runtime(ctx, info->id, sources[i].lang, "cc_cmd", out)) return false;
+        if (!cg_emit_compile_args_runtime(ctx, info->id, &sources[i], "cc_cmd", out)) return false;
         if (cg_policy_is_windows(ctx)) {
             char *fo_arg = cg_arena_sprintf(ctx->scratch,
                                             "/Fo:%.*s",

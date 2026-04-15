@@ -53,11 +53,22 @@ static bool bm_target_record_raw_set(BM_Builder *builder,
 
 static bool bm_target_append_source_record(BM_Builder *builder,
                                            BM_Target_Record *target,
-                                           const Event *ev,
-                                           String_View raw_path) {
+                                           const Event *ev) {
     BM_Target_Source_Record record = {0};
+    Cmake_Visibility visibility = EV_VISIBILITY_PRIVATE;
     if (!builder || !target || !ev) return false;
-    if (!bm_copy_string(builder->arena, raw_path, &record.raw_path)) {
+    if (ev->as.target_add_source.visibility != EV_VISIBILITY_UNSPECIFIED) {
+        visibility = ev->as.target_add_source.visibility;
+    }
+    record.kind =
+        ev->as.target_add_source.source_kind == EVENT_TARGET_SOURCE_FILE_SET_HEADERS
+            ? BM_TARGET_SOURCE_HEADER_FILE_SET
+            : (ev->as.target_add_source.source_kind == EVENT_TARGET_SOURCE_FILE_SET_CXX_MODULES
+                   ? BM_TARGET_SOURCE_CXX_MODULE_FILE_SET
+                   : BM_TARGET_SOURCE_REGULAR);
+    record.visibility = bm_visibility_from_event(visibility);
+    if (!bm_copy_string(builder->arena, ev->as.target_add_source.path, &record.raw_path) ||
+        !bm_copy_string(builder->arena, ev->as.target_add_source.file_set_name, &record.file_set_name)) {
         return bm_builder_error(builder, ev, "failed to copy target source path", "increase arena capacity");
     }
     record.producer_step_id = BM_BUILD_STEP_ID_INVALID;
@@ -66,6 +77,31 @@ static bool bm_target_append_source_record(BM_Builder *builder,
         return bm_builder_error(builder, ev, "failed to append target source record", "increase arena capacity");
     }
     return true;
+}
+
+static BM_Target_File_Set_Record *bm_target_find_file_set(BM_Target_Record *target, String_View name) {
+    if (!target) return NULL;
+    for (size_t i = 0; i < arena_arr_len(target->file_sets); ++i) {
+        if (nob_sv_eq(target->file_sets[i].name, name)) return &target->file_sets[i];
+    }
+    return NULL;
+}
+
+static BM_Target_File_Set_Record *bm_target_ensure_file_set(BM_Builder *builder,
+                                                            BM_Target_Record *target,
+                                                            const Event *ev,
+                                                            String_View name) {
+    BM_Target_File_Set_Record set = {0};
+    BM_Target_File_Set_Record *existing = bm_target_find_file_set(target, name);
+    if (existing) return existing;
+    if (!builder || !target || !ev) return NULL;
+    set.visibility = BM_VISIBILITY_PRIVATE;
+    set.provenance = bm_provenance_from_event(builder->arena, ev);
+    if (!bm_copy_string(builder->arena, name, &set.name) ||
+        !arena_arr_push(builder->arena, target->file_sets, set)) {
+        return NULL;
+    }
+    return &arena_arr_last(target->file_sets);
 }
 
 static bool bm_build_step_append_string(BM_Builder *builder,
@@ -156,13 +192,59 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
 
         case EVENT_TARGET_ADD_SOURCE: {
             BM_Target_Record *target = bm_draft_find_target(draft, ev->as.target_add_source.target_name);
+            Cmake_Visibility visibility = ev->as.target_add_source.visibility;
             String_View owned = {0};
             if (!target) return bm_builder_error(builder, ev, "target source references an unknown target", "declare the target before adding sources");
-            if (!bm_copy_string(builder->arena, ev->as.target_add_source.path, &owned) ||
-                !arena_arr_push(builder->arena, target->sources, owned)) {
-                return bm_builder_error(builder, ev, "failed to append target source", "increase arena capacity");
+            if (visibility == EV_VISIBILITY_UNSPECIFIED) visibility = EV_VISIBILITY_PRIVATE;
+            if (ev->as.target_add_source.file_set_name.count > 0 &&
+                !bm_target_find_file_set(target, ev->as.target_add_source.file_set_name)) {
+                return bm_builder_error(builder, ev, "target source references an unknown file set", "emit file set declaration before file set members");
             }
-            if (!bm_target_append_source_record(builder, target, ev, ev->as.target_add_source.path)) return false;
+            if (ev->as.target_add_source.source_kind == EVENT_TARGET_SOURCE_REGULAR &&
+                visibility != EV_VISIBILITY_INTERFACE) {
+                if (!bm_copy_string(builder->arena, ev->as.target_add_source.path, &owned) ||
+                    !arena_arr_push(builder->arena, target->sources, owned)) {
+                    return bm_builder_error(builder, ev, "failed to append target source", "increase arena capacity");
+                }
+            }
+            if (!bm_target_append_source_record(builder, target, ev)) return false;
+            return true;
+        }
+
+        case EVENT_TARGET_FILE_SET_DECLARE: {
+            BM_Target_Record *target = bm_draft_find_target(draft, ev->as.target_file_set_declare.target_name);
+            BM_Target_File_Set_Record *file_set = NULL;
+            if (!target) return bm_builder_error(builder, ev, "target file set references an unknown target", "declare the target before file sets");
+            file_set = bm_target_ensure_file_set(builder, target, ev, ev->as.target_file_set_declare.set_name);
+            if (!file_set) return bm_builder_error(builder, ev, "failed to append target file set", "increase arena capacity");
+            if (file_set->name.count > 0 && arena_arr_len(file_set->base_dirs) > 0) {
+                if (file_set->kind != (ev->as.target_file_set_declare.set_kind == EVENT_TARGET_FILE_SET_CXX_MODULES
+                                           ? BM_TARGET_FILE_SET_CXX_MODULES
+                                           : BM_TARGET_FILE_SET_HEADERS) ||
+                    file_set->visibility != bm_visibility_from_event(ev->as.target_file_set_declare.visibility)) {
+                    return bm_builder_error(builder, ev, "target file set declaration conflicts with an existing file set", "keep repeated file set declarations consistent");
+                }
+            }
+            file_set->kind = ev->as.target_file_set_declare.set_kind == EVENT_TARGET_FILE_SET_CXX_MODULES
+                ? BM_TARGET_FILE_SET_CXX_MODULES
+                : BM_TARGET_FILE_SET_HEADERS;
+            file_set->visibility = bm_visibility_from_event(ev->as.target_file_set_declare.visibility == EV_VISIBILITY_UNSPECIFIED
+                ? EV_VISIBILITY_PRIVATE
+                : ev->as.target_file_set_declare.visibility);
+            return true;
+        }
+
+        case EVENT_TARGET_FILE_SET_ADD_BASE_DIR: {
+            BM_Target_Record *target = bm_draft_find_target(draft, ev->as.target_file_set_add_base_dir.target_name);
+            BM_Target_File_Set_Record *file_set = NULL;
+            String_View owned = {0};
+            if (!target) return bm_builder_error(builder, ev, "target file set base dir references an unknown target", "declare the target before file sets");
+            file_set = bm_target_find_file_set(target, ev->as.target_file_set_add_base_dir.set_name);
+            if (!file_set) return bm_builder_error(builder, ev, "target file set base dir references an unknown file set", "emit file set declaration before base dirs");
+            if (!bm_copy_string(builder->arena, ev->as.target_file_set_add_base_dir.path, &owned) ||
+                !arena_arr_push(builder->arena, file_set->base_dirs, owned)) {
+                return bm_builder_error(builder, ev, "failed to append target file set base dir", "increase arena capacity");
+            }
             return true;
         }
 
@@ -314,6 +396,21 @@ bool bm_builder_handle_build_graph_event(BM_Builder *builder, const Event *ev) {
                 !bm_copy_string(builder->arena, ev->as.source_mark_generated.directory_binary_dir, &mark.directory_binary_dir) ||
                 !arena_arr_push(builder->arena, draft->generated_source_marks, mark)) {
                 return bm_builder_error(builder, ev, "failed to append generated source mark", "increase arena capacity");
+            }
+            return true;
+        }
+
+        case EVENT_SOURCE_PROPERTY_MUTATE: {
+            BM_Source_Property_Mutation_Record record = {0};
+            record.op = (Event_Property_Mutate_Op)ev->as.source_property_mutate.op;
+            record.provenance = bm_provenance_from_event(builder->arena, ev);
+            if (!bm_copy_string(builder->arena, ev->as.source_property_mutate.path, &record.path) ||
+                !bm_copy_string(builder->arena, ev->as.source_property_mutate.directory_source_dir, &record.directory_source_dir) ||
+                !bm_copy_string(builder->arena, ev->as.source_property_mutate.directory_binary_dir, &record.directory_binary_dir) ||
+                !bm_copy_string(builder->arena, ev->as.source_property_mutate.key, &record.key) ||
+                !bm_copy_string(builder->arena, ev->as.source_property_mutate.value, &record.value) ||
+                !arena_arr_push(builder->arena, draft->source_property_mutations, record)) {
+                return bm_builder_error(builder, ev, "failed to append source property mutation", "increase arena capacity");
             }
             return true;
         }

@@ -543,6 +543,10 @@ static const char *snapshot_event_kind_name(const Cmake_Event *ev) {
         case EV_VAR_SET: return "EV_VAR_SET";
         case EV_TARGET_DECLARE: return "EV_TARGET_DECLARE";
         case EV_TARGET_ADD_SOURCE: return "EV_TARGET_ADD_SOURCE";
+        case EV_TARGET_FILE_SET_DECLARE: return "EV_TARGET_FILE_SET_DECLARE";
+        case EV_TARGET_FILE_SET_ADD_BASE_DIR: return "EV_TARGET_FILE_SET_ADD_BASE_DIR";
+        case EVENT_SOURCE_MARK_GENERATED: return "EV_SOURCE_MARK_GENERATED";
+        case EV_SOURCE_PROPERTY_MUTATE: return "EV_SOURCE_PROPERTY_MUTATE";
         case EV_TARGET_ADD_DEPENDENCY: return "EV_TARGET_ADD_DEPENDENCY";
         case EV_TARGET_PROP_SET: return "EV_TARGET_PROP_SET";
         case EV_TARGET_INCLUDE_DIRECTORIES: return "EV_TARGET_INCLUDE_DIRECTORIES";
@@ -588,6 +592,10 @@ static bool snapshot_event_is_visible(const Cmake_Event *ev) {
         case EV_VAR_SET:
         case EV_TARGET_DECLARE:
         case EV_TARGET_ADD_SOURCE:
+        case EV_TARGET_FILE_SET_DECLARE:
+        case EV_TARGET_FILE_SET_ADD_BASE_DIR:
+        case EVENT_SOURCE_MARK_GENERATED:
+        case EV_SOURCE_PROPERTY_MUTATE:
         case EV_TARGET_ADD_DEPENDENCY:
         case EV_TARGET_PROP_SET:
         case EV_TARGET_INCLUDE_DIRECTORIES:
@@ -636,6 +644,23 @@ static const char *visibility_name(Cmake_Visibility vis) {
         case EV_VISIBILITY_PRIVATE: return "PRIVATE";
         case EV_VISIBILITY_PUBLIC: return "PUBLIC";
         case EV_VISIBILITY_INTERFACE: return "INTERFACE";
+    }
+    return "UNKNOWN";
+}
+
+static const char *target_source_kind_name(Event_Target_Source_Kind kind) {
+    switch (kind) {
+        case EVENT_TARGET_SOURCE_REGULAR: return "REGULAR";
+        case EVENT_TARGET_SOURCE_FILE_SET_HEADERS: return "FILE_SET_HEADERS";
+        case EVENT_TARGET_SOURCE_FILE_SET_CXX_MODULES: return "FILE_SET_CXX_MODULES";
+    }
+    return "UNKNOWN";
+}
+
+static const char *target_file_set_kind_name(Event_Target_File_Set_Kind kind) {
+    switch (kind) {
+        case EVENT_TARGET_FILE_SET_HEADERS: return "HEADERS";
+        case EVENT_TARGET_FILE_SET_CXX_MODULES: return "CXX_MODULES";
     }
     return "UNKNOWN";
 }
@@ -713,6 +738,59 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
             snapshot_append_escaped_sv(sb, ev->as.target_add_source.target_name);
             nob_sb_append_cstr(sb, " path=");
             snapshot_append_escaped_sv(sb, ev->as.target_add_source.path);
+            nob_sb_append_cstr(sb,
+                               nob_temp_sprintf(" vis=%s kind=%s file_set=",
+                                                visibility_name(ev->as.target_add_source.visibility),
+                                                target_source_kind_name(ev->as.target_add_source.source_kind)));
+            snapshot_append_escaped_sv(sb, ev->as.target_add_source.file_set_name);
+            break;
+
+        case EV_TARGET_FILE_SET_DECLARE:
+            nob_sb_append_cstr(sb, " target=");
+            snapshot_append_escaped_sv(sb, ev->as.target_file_set_declare.target_name);
+            nob_sb_append_cstr(sb, " set=");
+            snapshot_append_escaped_sv(sb, ev->as.target_file_set_declare.set_name);
+            nob_sb_append_cstr(sb,
+                               nob_temp_sprintf(" kind=%s vis=%s",
+                                                target_file_set_kind_name(ev->as.target_file_set_declare.set_kind),
+                                                visibility_name(ev->as.target_file_set_declare.visibility)));
+            break;
+
+        case EV_TARGET_FILE_SET_ADD_BASE_DIR:
+            nob_sb_append_cstr(sb, " target=");
+            snapshot_append_escaped_sv(sb, ev->as.target_file_set_add_base_dir.target_name);
+            nob_sb_append_cstr(sb, " set=");
+            snapshot_append_escaped_sv(sb, ev->as.target_file_set_add_base_dir.set_name);
+            nob_sb_append_cstr(sb, " path=");
+            snapshot_append_escaped_sv(sb, ev->as.target_file_set_add_base_dir.path);
+            break;
+
+        case EVENT_SOURCE_MARK_GENERATED:
+            nob_sb_append_cstr(sb, " path=");
+            snapshot_append_escaped_sv(sb, ev->as.source_mark_generated.path);
+            nob_sb_append_cstr(sb, " source_dir=");
+            snapshot_append_escaped_sv(sb, ev->as.source_mark_generated.directory_source_dir);
+            nob_sb_append_cstr(sb, " binary_dir=");
+            snapshot_append_escaped_sv(sb, ev->as.source_mark_generated.directory_binary_dir);
+            nob_sb_append_cstr(sb,
+                               nob_temp_sprintf(" generated=%d",
+                                                ev->as.source_mark_generated.generated ? 1 : 0));
+            break;
+
+        case EV_SOURCE_PROPERTY_MUTATE:
+            nob_sb_append_cstr(sb, " path=");
+            snapshot_append_escaped_sv(sb, ev->as.source_property_mutate.path);
+            nob_sb_append_cstr(sb, " source_dir=");
+            snapshot_append_escaped_sv(sb, ev->as.source_property_mutate.directory_source_dir);
+            nob_sb_append_cstr(sb, " binary_dir=");
+            snapshot_append_escaped_sv(sb, ev->as.source_property_mutate.directory_binary_dir);
+            nob_sb_append_cstr(sb, " key=");
+            snapshot_append_escaped_sv(sb, ev->as.source_property_mutate.key);
+            nob_sb_append_cstr(sb, " value=");
+            snapshot_append_escaped_sv(sb, ev->as.source_property_mutate.value);
+            nob_sb_append_cstr(sb,
+                               nob_temp_sprintf(" op=%s",
+                                                prop_op_name(ev->as.source_property_mutate.op)));
             break;
 
         case EV_TARGET_ADD_DEPENDENCY:

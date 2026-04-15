@@ -281,6 +281,15 @@ static bool bm_target_has_local_build_flags(const BM_Target_Record *target) {
     return target && (target->exclude_from_all || target->win32_executable || target->macosx_bundle);
 }
 
+static const BM_Target_File_Set_Record *bm_validate_find_target_file_set(const BM_Target_Record *target,
+                                                                         String_View name) {
+    if (!target) return NULL;
+    for (size_t i = 0; i < arena_arr_len(target->file_sets); ++i) {
+        if (nob_sv_eq(target->file_sets[i].name, name)) return &target->file_sets[i];
+    }
+    return NULL;
+}
+
 static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sink *sink, bool *had_error) {
     if (draft->has_semantic_entities && draft->root_directory_id == BM_DIRECTORY_ID_INVALID) {
         *had_error = true;
@@ -337,9 +346,56 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
             *had_error = true;
             bm_diag_error(sink, target->provenance, "build_model_validate", "structural", "target kind is invalid", "map every target type to a canonical BM_Target_Kind");
         }
+        for (size_t source_index = 0; source_index < arena_arr_len(target->source_records); ++source_index) {
+            const BM_Target_Source_Record *source = &target->source_records[source_index];
+            if (source->kind > BM_TARGET_SOURCE_CXX_MODULE_FILE_SET) {
+                *had_error = true;
+                bm_diag_error(sink, source->provenance, "build_model_validate", "structural", "target source kind is invalid", "map every source membership to a canonical BM_Target_Source_Kind");
+            }
+            if (source->visibility > BM_VISIBILITY_INTERFACE) {
+                *had_error = true;
+                bm_diag_error(sink, source->provenance, "build_model_validate", "structural", "target source visibility is invalid", "map every source membership visibility to a canonical BM_Visibility");
+            }
+            if (source->kind == BM_TARGET_SOURCE_REGULAR && !bm_string_view_is_empty(source->file_set_name)) {
+                *had_error = true;
+                bm_diag_error(sink, source->provenance, "build_model_validate", "structural", "regular target source may not reference a file set name", "keep file set references only on file set members");
+            }
+            if (source->kind != BM_TARGET_SOURCE_REGULAR && bm_string_view_is_empty(source->file_set_name)) {
+                *had_error = true;
+                bm_diag_error(sink, source->provenance, "build_model_validate", "structural", "file set member is missing a file set name", "attach file set members to a declared target file set");
+            }
+        }
+        for (size_t file_set_index = 0; file_set_index < arena_arr_len(target->file_sets); ++file_set_index) {
+            const BM_Target_File_Set_Record *file_set = &target->file_sets[file_set_index];
+            if (bm_string_view_is_empty(file_set->name)) {
+                *had_error = true;
+                bm_diag_error(sink, file_set->provenance, "build_model_validate", "structural", "target file set has empty name", "ensure file set declarations carry a stable set name");
+            }
+            if (file_set->kind > BM_TARGET_FILE_SET_CXX_MODULES) {
+                *had_error = true;
+                bm_diag_error(sink, file_set->provenance, "build_model_validate", "structural", "target file set kind is invalid", "map every file set kind to a canonical BM_Target_File_Set_Kind");
+            }
+            if (file_set->visibility > BM_VISIBILITY_INTERFACE) {
+                *had_error = true;
+                bm_diag_error(sink, file_set->provenance, "build_model_validate", "structural", "target file set visibility is invalid", "map every file set visibility to a canonical BM_Visibility");
+            }
+        }
         bm_validate_owner_directory(draft, target->owner_directory_id, target->provenance, "target", sink, had_error);
     }
     bm_validate_duplicate_target_names(draft, sink, had_error);
+
+    for (size_t i = 0; i < arena_arr_len(draft->source_property_mutations); ++i) {
+        const BM_Source_Property_Mutation_Record *mutation = &draft->source_property_mutations[i];
+        if (bm_string_view_is_empty(mutation->path) || bm_string_view_is_empty(mutation->key)) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          mutation->provenance,
+                          "build_model_validate",
+                          "structural",
+                          "source property mutation is missing path or property key",
+                          "emit source property mutations with resolved source path and property key");
+        }
+    }
 
     for (size_t i = 0; i < arena_arr_len(draft->build_steps); ++i) {
         const BM_Build_Step_Record *step = &draft->build_steps[i];
@@ -611,6 +667,23 @@ static bool bm_validate_resolution_pass(const Build_Model_Draft *draft, Diag_Sin
                 bm_diag_error(sink, target->provenance, "build_model_validate", "resolution", "explicit target dependency cannot be resolved", "declare the dependency target before freeze");
             }
         }
+
+        for (size_t source_index = 0; source_index < arena_arr_len(target->source_records); ++source_index) {
+            const BM_Target_Source_Record *source = &target->source_records[source_index];
+            const BM_Target_File_Set_Record *file_set = NULL;
+            if (bm_string_view_is_empty(source->file_set_name)) continue;
+            file_set = bm_validate_find_target_file_set(target, source->file_set_name);
+            if (!file_set) {
+                *had_error = true;
+                bm_diag_error(sink, source->provenance, "build_model_validate", "resolution", "target source file set reference cannot be resolved", "declare the file set before attaching members");
+                continue;
+            }
+            if ((source->kind == BM_TARGET_SOURCE_HEADER_FILE_SET && file_set->kind != BM_TARGET_FILE_SET_HEADERS) ||
+                (source->kind == BM_TARGET_SOURCE_CXX_MODULE_FILE_SET && file_set->kind != BM_TARGET_FILE_SET_CXX_MODULES)) {
+                *had_error = true;
+                bm_diag_error(sink, source->provenance, "build_model_validate", "resolution", "target source file set kind does not match the referenced file set", "keep file set member kinds aligned with the declared file set");
+            }
+        }
     }
 
     for (size_t i = 0; i < arena_arr_len(draft->build_steps); ++i) {
@@ -740,6 +813,8 @@ static bool bm_validate_semantic_pass(const Build_Model_Draft *draft, Diag_Sink 
 
         if (target->alias &&
             (arena_arr_len(target->sources) > 0 ||
+             arena_arr_len(target->source_records) > 0 ||
+             arena_arr_len(target->file_sets) > 0 ||
              arena_arr_len(target->explicit_dependency_names) > 0 ||
              bm_target_has_typed_payload(target) ||
              arena_arr_len(target->raw_properties) > 0 ||
@@ -776,6 +851,14 @@ static bool bm_validate_semantic_pass(const Build_Model_Draft *draft, Diag_Sink 
                     if (nob_sv_eq(target->sources[a], target->sources[b])) {
                         bm_diag_warn(sink, target->provenance, "build_model_validate", "semantic", "duplicate source path inside target", "deduplicate repeated source entries on the same target");
                     }
+                }
+            }
+        }
+        for (size_t a = 0; a < arena_arr_len(target->file_sets); ++a) {
+            for (size_t b = a + 1; b < arena_arr_len(target->file_sets); ++b) {
+                if (nob_sv_eq(target->file_sets[a].name, target->file_sets[b].name)) {
+                    *had_error = true;
+                    bm_diag_error(sink, target->file_sets[b].provenance, "build_model_validate", "semantic", "duplicate file set name inside target", "keep file set names unique per target");
                 }
             }
         }
