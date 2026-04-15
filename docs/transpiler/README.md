@@ -21,9 +21,19 @@ by the normative Event IR spec.
 
 - [Event IR v2 spec](./event_ir_v2_spec.md)
 
+## Control Matrix
+
+- [Event IR coverage matrix](./event_ir_coverage_matrix.md)
+
+## Active Change Roadmap
+
+- [Event IR incremental roadmap](./event_ir_closure_roadmap.md)
+
 ## Dependencies
 
 - Upstream producer contract:
   [`../evaluator/evaluator_event_ir_contract.md`](../evaluator/evaluator_event_ir_contract.md)
 - Downstream consumer contract:
   [`../build_model/README.md`](../build_model/README.md)
+- Separate downstream closure program:
+  [`../evaluator_codegen_closure_roadmap.md`](../evaluator_codegen_closure_roadmap.md)

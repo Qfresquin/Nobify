@@ -27,6 +27,11 @@ typed IDs, validation, freeze-time integrity, and query APIs.
 - [Query](./build_model_query.md)
 - [Replay domain](./build_model_replay.md)
 
+## Control Matrix
+
+- [Build model coverage matrix](./build_model_coverage_matrix.md)
+- [Build model closure matrix](./build_model_closure_matrix.md)
+
 These contracts define active implementation behavior for `src_v2/build_model`.
 
 ## History

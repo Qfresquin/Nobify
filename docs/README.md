@@ -76,6 +76,19 @@ The implementation-level contracts for v2 live in focused docs under `docs/`.
 - `docs/evaluator_codegen_closure_roadmap.md`: canonical post-`P8` multi-wave
   closure roadmap that coordinates the remaining
   `evaluator -> Event IR -> build_model -> codegen` gap.
+- `docs/transpiler/event_ir_closure_roadmap.md`: canonical incremental roadmap
+  for evolving the `evaluator -> Event_Stream` boundary in small,
+  producer-owned tranches.
+- `docs/transpiler/event_ir_coverage_matrix.md`: command-level control matrix
+  for what Event IR already freezes, what is replay-owned, and what still
+  remains trace-only.
+- `docs/build_model/build_model_coverage_matrix.md`: command-level downstream
+  control matrix for what the frozen build model preserves strongly enough for
+  artifact-parity generation, what is only subset-covered, and what remains an
+  explicit boundary.
+- `docs/build_model/build_model_closure_matrix.md`: major-work closure matrix
+  for the build model, intended to answer what still requires structural
+  downstream implementation before only minor fixes should remain.
 - `docs/evaluator/`: active evaluator documentation rewrite.
 - `docs/build_model/`: canonical build-model docs, including the replay-domain
   contract used by codegen.
