@@ -137,7 +137,9 @@ typedef struct {
     BM_Target_Kind kind;
     bool declared;
     bool imported;
+    bool imported_global;
     bool alias;
+    bool alias_global;
     bool exclude_from_all;
     bool win32_executable;
     bool macosx_bundle;

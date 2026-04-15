@@ -108,6 +108,7 @@ typedef enum {
     BM_TARGET_INTERFACE_LIBRARY,
     BM_TARGET_OBJECT_LIBRARY,
     BM_TARGET_UTILITY,
+    BM_TARGET_UNKNOWN_LIBRARY,
 } BM_Target_Kind;
 
 typedef enum {
@@ -144,6 +145,8 @@ typedef enum {
 ```
 
 Imported and alias state are target flags, not separate target kinds.
+`BM_TARGET_UNKNOWN_LIBRARY` preserves `add_library(... UNKNOWN ...)` identity;
+it is not an alias for `BM_TARGET_UTILITY`.
 
 Typed raw property entries use an explicit value-view type:
 
@@ -238,8 +241,8 @@ Every target record contains:
 - `owner_directory_id`
 - declaration `provenance`
 - `kind`
-- flags: `imported`, `alias`, `exclude_from_all`, `win32_executable`,
-  `macosx_bundle`
+- flags: `imported`, `imported_global`, `alias`, `alias_global`,
+  `exclude_from_all`, `win32_executable`, `macosx_bundle`
 - `alias_of` as a symbolic reference in draft and a typed ID in the frozen model
 - raw sources
 - raw explicit dependency references
@@ -251,6 +254,10 @@ Every target record contains:
   `ARCHIVE_OUTPUT_DIRECTORY`, `LIBRARY_OUTPUT_DIRECTORY`,
   `RUNTIME_OUTPUT_DIRECTORY`, `FOLDER`
 - a future-facing raw property bag for unsupported target properties
+
+Alias targets preserve their own identity flags, but their frozen `kind`
+matches the aliased target family. Local custom targets remain
+`BM_TARGET_UTILITY`; they are not reconstructed as `BM_TARGET_UNKNOWN_LIBRARY`.
 
 ### Test
 

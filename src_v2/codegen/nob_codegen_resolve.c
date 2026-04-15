@@ -115,7 +115,9 @@ bool cg_resolve_target_ref(CG_Context *ctx,
         out->effective_file = effective_file;
         out->effective_linker_file = effective_linker_file;
         out->imported_link_languages = imported_langs;
-        if (info->kind == BM_TARGET_STATIC_LIBRARY || info->kind == BM_TARGET_SHARED_LIBRARY) {
+        if (info->kind == BM_TARGET_STATIC_LIBRARY ||
+            info->kind == BM_TARGET_SHARED_LIBRARY ||
+            info->kind == BM_TARGET_UNKNOWN_LIBRARY) {
             out->linkable_artifact = true;
             out->rebuild_input_path = effective_linker_file.count > 0 ? effective_linker_file : effective_file;
         }

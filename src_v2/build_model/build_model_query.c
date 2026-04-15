@@ -924,7 +924,12 @@ String_View bm_query_target_name(const Build_Model *model, BM_Target_Id id) {
 }
 
 BM_Target_Kind bm_query_target_kind(const Build_Model *model, BM_Target_Id id) {
-    const BM_Target_Record *target = bm_model_target(model, id);
+    const BM_Target_Record *target = NULL;
+    if (bm_target_id_is_valid(id)) {
+        BM_Target_Id resolved_id = bm_resolve_alias_target_id(model, id);
+        if (bm_target_id_is_valid(resolved_id)) id = resolved_id;
+    }
+    target = bm_model_target(model, id);
     return target ? target->kind : BM_TARGET_UTILITY;
 }
 
@@ -938,9 +943,19 @@ bool bm_query_target_is_imported(const Build_Model *model, BM_Target_Id id) {
     return target ? target->imported : false;
 }
 
+bool bm_query_target_is_imported_global(const Build_Model *model, BM_Target_Id id) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? target->imported_global : false;
+}
+
 bool bm_query_target_is_alias(const Build_Model *model, BM_Target_Id id) {
     const BM_Target_Record *target = bm_model_target(model, id);
     return target ? target->alias : false;
+}
+
+bool bm_query_target_is_alias_global(const Build_Model *model, BM_Target_Id id) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? target->alias_global : false;
 }
 
 BM_Target_Id bm_query_target_alias_of(const Build_Model *model, BM_Target_Id id) {

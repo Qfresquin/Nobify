@@ -106,6 +106,7 @@ typedef enum {
     BM_TARGET_INTERFACE_LIBRARY,
     BM_TARGET_OBJECT_LIBRARY,
     BM_TARGET_UTILITY,
+    BM_TARGET_UNKNOWN_LIBRARY,
 } BM_Target_Kind;
 
 typedef enum {

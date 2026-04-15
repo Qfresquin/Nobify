@@ -2119,6 +2119,169 @@ TEST(build_model_imported_target_queries_resolve_configs_and_mapped_locations) {
     TEST_PASS();
 }
 
+TEST(build_model_preserves_imported_global_across_property_orderings) {
+    Arena *arena = arena_create(2 * 1024 * 1024);
+    Arena *validate_arena = arena_create(512 * 1024);
+    Arena *model_arena = arena_create(2 * 1024 * 1024);
+    Test_Semantic_Pipeline_Build_Result build = {0};
+    Event_Stream *stream = NULL;
+    Event ev = {0};
+    const Build_Model *model = NULL;
+    BM_Target_Id pre_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id post_id = BM_TARGET_ID_INVALID;
+    ASSERT(arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
+
+    stream = event_stream_create(arena);
+    ASSERT(stream != NULL);
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_TARGET_PROP_SET, 2);
+    ev.as.target_prop_set.target_name = nob_sv_from_cstr("pre");
+    ev.as.target_prop_set.key = nob_sv_from_cstr("IMPORTED");
+    ev.as.target_prop_set.value = nob_sv_from_cstr("1");
+    ev.as.target_prop_set.op = EV_PROP_SET;
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_TARGET_PROP_SET, 3);
+    ev.as.target_prop_set.target_name = nob_sv_from_cstr("pre");
+    ev.as.target_prop_set.key = nob_sv_from_cstr("IMPORTED_GLOBAL");
+    ev.as.target_prop_set.value = nob_sv_from_cstr("1");
+    ev.as.target_prop_set.op = EV_PROP_SET;
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_TARGET_DECLARE, 4);
+    ev.as.target_declare.name = nob_sv_from_cstr("pre");
+    ev.as.target_declare.target_type = EV_TARGET_LIBRARY_STATIC;
+    ev.as.target_declare.imported = true;
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_TARGET_DECLARE, 5);
+    ev.as.target_declare.name = nob_sv_from_cstr("post");
+    ev.as.target_declare.target_type = EV_TARGET_LIBRARY_STATIC;
+    ev.as.target_declare.imported = true;
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_TARGET_PROP_SET, 6);
+    ev.as.target_prop_set.target_name = nob_sv_from_cstr("post");
+    ev.as.target_prop_set.key = nob_sv_from_cstr("IMPORTED_GLOBAL");
+    ev.as.target_prop_set.value = nob_sv_from_cstr("1");
+    ev.as.target_prop_set.op = EV_PROP_SET;
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, 7);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    ASSERT(test_semantic_pipeline_build_model_from_stream(arena,
+                                                          validate_arena,
+                                                          model_arena,
+                                                          stream,
+                                                          &build));
+    ASSERT(build.freeze_ok);
+    ASSERT(build.model != NULL);
+
+    model = build.model;
+    pre_id = bm_query_target_by_name(model, nob_sv_from_cstr("pre"));
+    post_id = bm_query_target_by_name(model, nob_sv_from_cstr("post"));
+    ASSERT(pre_id != BM_TARGET_ID_INVALID);
+    ASSERT(post_id != BM_TARGET_ID_INVALID);
+    ASSERT(bm_query_target_is_imported(model, pre_id));
+    ASSERT(bm_query_target_is_imported(model, post_id));
+    ASSERT(bm_query_target_is_imported_global(model, pre_id));
+    ASSERT(bm_query_target_is_imported_global(model, post_id));
+
+    arena_destroy(arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
+    TEST_PASS();
+}
+
+TEST(build_model_alias_and_unknown_target_identity_queries_are_canonical) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_Target_Id local_real_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id local_alias_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id imported_local_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id imported_local_alias_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id imported_global_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id imported_global_alias_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id imported_unknown_id = BM_TARGET_ID_INVALID;
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "target_identity_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("target_identity_src");
+    config.binary_dir = nob_sv_from_cstr("target_identity_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "add_library(local_real STATIC real.c)\n"
+        "add_library(local_alias ALIAS local_real)\n"
+        "add_library(imported_local STATIC IMPORTED)\n"
+        "set_target_properties(imported_local PROPERTIES IMPORTED_LOCATION imports/liblocal.a)\n"
+        "add_library(imported_local_alias ALIAS imported_local)\n"
+        "add_library(imported_global STATIC IMPORTED GLOBAL)\n"
+        "set_target_properties(imported_global PROPERTIES IMPORTED_LOCATION imports/libglobal.a)\n"
+        "add_library(imported_global_alias ALIAS imported_global)\n"
+        "add_library(imported_unknown UNKNOWN IMPORTED)\n"
+        "set_target_properties(imported_unknown PROPERTIES IMPORTED_LOCATION imports/libunknown.a)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    local_real_id = bm_query_target_by_name(model, nob_sv_from_cstr("local_real"));
+    local_alias_id = bm_query_target_by_name(model, nob_sv_from_cstr("local_alias"));
+    imported_local_id = bm_query_target_by_name(model, nob_sv_from_cstr("imported_local"));
+    imported_local_alias_id = bm_query_target_by_name(model, nob_sv_from_cstr("imported_local_alias"));
+    imported_global_id = bm_query_target_by_name(model, nob_sv_from_cstr("imported_global"));
+    imported_global_alias_id = bm_query_target_by_name(model, nob_sv_from_cstr("imported_global_alias"));
+    imported_unknown_id = bm_query_target_by_name(model, nob_sv_from_cstr("imported_unknown"));
+    ASSERT(local_real_id != BM_TARGET_ID_INVALID);
+    ASSERT(local_alias_id != BM_TARGET_ID_INVALID);
+    ASSERT(imported_local_id != BM_TARGET_ID_INVALID);
+    ASSERT(imported_local_alias_id != BM_TARGET_ID_INVALID);
+    ASSERT(imported_global_id != BM_TARGET_ID_INVALID);
+    ASSERT(imported_global_alias_id != BM_TARGET_ID_INVALID);
+    ASSERT(imported_unknown_id != BM_TARGET_ID_INVALID);
+
+    ASSERT(bm_query_target_kind(model, local_real_id) == BM_TARGET_STATIC_LIBRARY);
+    ASSERT(bm_query_target_kind(model, local_alias_id) == BM_TARGET_STATIC_LIBRARY);
+    ASSERT(bm_query_target_is_alias(model, local_alias_id));
+    ASSERT(bm_query_target_alias_of(model, local_alias_id) == local_real_id);
+    ASSERT(bm_query_target_is_alias_global(model, local_alias_id));
+    ASSERT(!bm_query_target_is_imported(model, local_alias_id));
+
+    ASSERT(bm_query_target_is_imported(model, imported_local_id));
+    ASSERT(!bm_query_target_is_imported_global(model, imported_local_id));
+    ASSERT(bm_query_target_kind(model, imported_local_alias_id) == BM_TARGET_STATIC_LIBRARY);
+    ASSERT(bm_query_target_is_alias(model, imported_local_alias_id));
+    ASSERT(bm_query_target_alias_of(model, imported_local_alias_id) == imported_local_id);
+    ASSERT(!bm_query_target_is_alias_global(model, imported_local_alias_id));
+
+    ASSERT(bm_query_target_is_imported(model, imported_global_id));
+    ASSERT(bm_query_target_is_imported_global(model, imported_global_id));
+    ASSERT(bm_query_target_kind(model, imported_global_alias_id) == BM_TARGET_STATIC_LIBRARY);
+    ASSERT(bm_query_target_is_alias(model, imported_global_alias_id));
+    ASSERT(bm_query_target_alias_of(model, imported_global_alias_id) == imported_global_id);
+    ASSERT(bm_query_target_is_alias_global(model, imported_global_alias_id));
+
+    ASSERT(bm_query_target_is_imported(model, imported_unknown_id));
+    ASSERT(bm_query_target_kind(model, imported_unknown_id) == BM_TARGET_UNKNOWN_LIBRARY);
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 TEST(build_model_query_session_reuses_effective_item_and_value_results) {
     Test_Semantic_Pipeline_Config config = {0};
     Test_Semantic_Pipeline_Fixture fixture = {0};
@@ -3000,6 +3163,8 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_context_aware_queries_expand_usage_requirements_and_target_property_genex(passed, failed, skipped);
     test_build_model_platform_context_and_typed_platform_properties_are_queryable(passed, failed, skipped);
     test_build_model_imported_target_queries_resolve_configs_and_mapped_locations(passed, failed, skipped);
+    test_build_model_preserves_imported_global_across_property_orderings(passed, failed, skipped);
+    test_build_model_alias_and_unknown_target_identity_queries_are_canonical(passed, failed, skipped);
     test_build_model_query_session_reuses_effective_item_and_value_results(passed, failed, skipped);
     test_build_model_query_session_splits_effective_contexts_without_merging_semantics(passed, failed, skipped);
     test_build_model_query_session_memoizes_imported_target_resolution(passed, failed, skipped);

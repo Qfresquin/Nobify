@@ -444,6 +444,7 @@ TEST(evaluator_add_library_imported_alias_and_default_type) {
     bool saw_auto_shared = false;
     bool saw_imported = false;
     bool saw_imported_global = false;
+    bool saw_base_alias_type = false;
     bool saw_iface_exclude = false;
     bool saw_iface_bad_source = false;
     bool saw_bad_alias_err = false;
@@ -455,6 +456,12 @@ TEST(evaluator_add_library_imported_alias_and_default_type) {
             if (nob_sv_eq(ev->as.target_declare.name, nob_sv_from_cstr("auto_lib")) &&
                 ev->as.target_declare.type == EV_TARGET_LIBRARY_SHARED) {
                 saw_auto_shared = true;
+            }
+            if (nob_sv_eq(ev->as.target_declare.name, nob_sv_from_cstr("base_alias")) &&
+                ev->as.target_declare.type == EV_TARGET_LIBRARY_STATIC &&
+                ev->as.target_declare.alias &&
+                nob_sv_eq(ev->as.target_declare.alias_of, nob_sv_from_cstr("base_lib"))) {
+                saw_base_alias_type = true;
             }
         }
         if (ev->h.kind == EV_TARGET_PROP_SET) {
@@ -491,6 +498,7 @@ TEST(evaluator_add_library_imported_alias_and_default_type) {
     ASSERT(saw_auto_shared);
     ASSERT(saw_imported);
     ASSERT(saw_imported_global);
+    ASSERT(saw_base_alias_type);
     ASSERT(saw_iface_exclude);
     ASSERT(!saw_iface_bad_source);
     ASSERT(saw_bad_alias_err);

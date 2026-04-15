@@ -263,7 +263,7 @@ BM_Target_Kind bm_target_kind_from_event(Cmake_Target_Type type) {
         case EV_TARGET_LIBRARY_MODULE: return BM_TARGET_MODULE_LIBRARY;
         case EV_TARGET_LIBRARY_INTERFACE: return BM_TARGET_INTERFACE_LIBRARY;
         case EV_TARGET_LIBRARY_OBJECT: return BM_TARGET_OBJECT_LIBRARY;
-        case EV_TARGET_LIBRARY_UNKNOWN: return BM_TARGET_UTILITY;
+        case EV_TARGET_LIBRARY_UNKNOWN: return BM_TARGET_UNKNOWN_LIBRARY;
     }
     return BM_TARGET_UTILITY;
 }

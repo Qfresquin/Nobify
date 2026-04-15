@@ -109,6 +109,7 @@ static bool cg_install_rule_target_destination_for_kind(CG_Context *ctx,
         case BM_TARGET_INTERFACE_LIBRARY:
         case BM_TARGET_OBJECT_LIBRARY:
         case BM_TARGET_UTILITY:
+        case BM_TARGET_UNKNOWN_LIBRARY:
             return true;
     }
 

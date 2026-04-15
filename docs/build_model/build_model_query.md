@@ -78,7 +78,9 @@ String_View bm_query_target_name(const Build_Model *model, BM_Target_Id id);
 BM_Target_Kind bm_query_target_kind(const Build_Model *model, BM_Target_Id id);
 BM_Directory_Id bm_query_target_owner_directory(const Build_Model *model, BM_Target_Id id);
 bool bm_query_target_is_imported(const Build_Model *model, BM_Target_Id id);
+bool bm_query_target_is_imported_global(const Build_Model *model, BM_Target_Id id);
 bool bm_query_target_is_alias(const Build_Model *model, BM_Target_Id id);
+bool bm_query_target_is_alias_global(const Build_Model *model, BM_Target_Id id);
 BM_Target_Id bm_query_target_alias_of(const Build_Model *model, BM_Target_Id id);
 bool bm_query_target_exclude_from_all(const Build_Model *model, BM_Target_Id id);
 BM_String_Span bm_query_target_sources_raw(const Build_Model *model, BM_Target_Id id);
@@ -107,6 +109,15 @@ keys:
 - `LIBRARY_OUTPUT_DIRECTORY`
 - `RUNTIME_OUTPUT_DIRECTORY`
 - `FOLDER`
+
+Identity rules:
+- `bm_query_target_kind(...)` returns the effective target family for aliases
+- `bm_query_target_is_imported(...)` and `bm_query_target_is_alias(...)`
+  report direct target flags, not resolved alias state
+- `bm_query_target_is_imported_global(...)` and
+  `bm_query_target_is_alias_global(...)` expose frozen visibility scope for
+  imported targets and aliases
+- `BM_TARGET_UNKNOWN_LIBRARY` remains distinct from `BM_TARGET_UTILITY`
 
 ### Effective Target Accessors
 

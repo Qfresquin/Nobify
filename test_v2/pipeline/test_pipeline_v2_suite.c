@@ -32,6 +32,7 @@ static const char *pipeline_target_type_name(BM_Target_Kind type) {
         case BM_TARGET_INTERFACE_LIBRARY: return "INTERFACE_LIB";
         case BM_TARGET_OBJECT_LIBRARY: return "OBJECT_LIB";
         case BM_TARGET_UTILITY: return "UTILITY";
+        case BM_TARGET_UNKNOWN_LIBRARY: return "UNKNOWN_LIB";
     }
     return "UNKNOWN";
 }

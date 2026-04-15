@@ -333,7 +333,7 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
                           "target placeholder was never declared",
                           "ensure target property events do not outlive a missing EVENT_TARGET_DECLARE");
         }
-        if (target->kind > BM_TARGET_UTILITY) {
+        if (target->kind > BM_TARGET_UNKNOWN_LIBRARY) {
             *had_error = true;
             bm_diag_error(sink, target->provenance, "build_model_validate", "structural", "target kind is invalid", "map every target type to a canonical BM_Target_Kind");
         }
@@ -758,6 +758,16 @@ static bool bm_validate_semantic_pass(const Build_Model_Draft *draft, Diag_Sink 
              bm_target_has_local_build_flags(target))) {
             *had_error = true;
             bm_diag_error(sink, target->provenance, "build_model_validate", "semantic", "imported target may not declare local build outputs or build-only flags", "remove local output properties and build-only flags from imported targets");
+        }
+
+        if (target->imported_global && !target->imported) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          target->provenance,
+                          "build_model_validate",
+                          "semantic",
+                          "IMPORTED_GLOBAL may only be set on imported targets",
+                          "remove IMPORTED_GLOBAL or declare the target as imported");
         }
 
         if (target->kind != BM_TARGET_INTERFACE_LIBRARY) {

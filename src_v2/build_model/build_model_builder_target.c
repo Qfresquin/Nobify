@@ -143,7 +143,9 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
             target->provenance = bm_provenance_from_event(builder->arena, ev);
             target->kind = bm_target_kind_from_event(ev->as.target_declare.target_type);
             target->imported = ev->as.target_declare.imported;
+            if (!target->imported) target->imported_global = false;
             target->alias = ev->as.target_declare.alias;
+            target->alias_global = false;
             target->declared = true;
             target->alias_of_id = BM_TARGET_ID_INVALID;
             if (!bm_copy_string(builder->arena, ev->as.target_declare.alias_of, &target->alias_of_name)) {
@@ -203,6 +205,10 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
             }
             if (bm_sv_eq_ci_lit(ev->as.target_prop_set.key, "IMPORTED")) {
                 target->imported = bm_sv_truthy(ev->as.target_prop_set.value);
+                if (!target->imported) target->imported_global = false;
+            }
+            if (bm_sv_eq_ci_lit(ev->as.target_prop_set.key, "IMPORTED_GLOBAL")) {
+                target->imported_global = bm_sv_truthy(ev->as.target_prop_set.value);
             }
 
             if (!bm_target_record_raw_set(builder,

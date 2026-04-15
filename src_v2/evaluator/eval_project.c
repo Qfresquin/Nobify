@@ -958,6 +958,7 @@ Eval_Result eval_handle_add_library(EvalExecContext *ctx, const Node *node) {
     if (!add_target_name_must_be_new(ctx, node->as.cmd.name, o, name)) return eval_result_from_ctx(ctx);
 
     if (arena_arr_len(a) >= 2 && eval_sv_eq_ci_lit(a[1], "ALIAS")) {
+        Cmake_Target_Type alias_type = EV_TARGET_LIBRARY_UNKNOWN;
         if (arena_arr_len(a) != 3) {
             EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("add_library(ALIAS ...) expects exactly alias name and real target"), nob_sv_from_cstr("Usage: add_library(<name> ALIAS <target>)"));
             return eval_result_from_ctx(ctx);
@@ -965,10 +966,13 @@ Eval_Result eval_handle_add_library(EvalExecContext *ctx, const Node *node) {
         if (!add_alias_target_validate(ctx, node->as.cmd.name, o, name, a[2])) {
             return eval_result_from_ctx(ctx);
         }
+        if (!eval_target_get_type(ctx, a[2], &alias_type)) {
+            return eval_result_from_ctx(ctx);
+        }
         if (!eval_emit_target_declare(ctx,
                                       o,
                                       name,
-                                      EV_TARGET_LIBRARY_UNKNOWN,
+                                      alias_type,
                                       false,
                                       true,
                                       a[2])) {

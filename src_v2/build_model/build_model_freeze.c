@@ -277,6 +277,10 @@ static bool bm_clone_targets(const Build_Model_Draft *draft, Build_Model *model,
                 bm_diag_error(sink, src->provenance, "build_model_freeze", "freeze", "alias target could not be resolved during freeze", "fix unresolved alias targets before freeze");
                 return false;
             }
+            target.kind = draft->targets[target.alias_of_id].kind;
+            target.alias_global = draft->targets[target.alias_of_id].imported
+                ? draft->targets[target.alias_of_id].imported_global
+                : true;
         }
 
         for (size_t dep = 0; dep < arena_arr_len(src->explicit_dependency_names); ++dep) {
@@ -384,6 +388,22 @@ static bool bm_resolve_build_step_effective_paths(const Build_Model_Draft *draft
                 !arena_arr_push(arena, step->effective_byproducts, effective)) {
                 return false;
             }
+        }
+    }
+    return true;
+}
+
+static bool bm_promote_custom_target_kinds(Build_Model *model) {
+    if (!model) return false;
+    for (size_t i = 0; i < arena_arr_len(model->build_steps); ++i) {
+        const BM_Build_Step_Record *step = &model->build_steps[i];
+        BM_Target_Record *target = NULL;
+        if (step->kind != BM_BUILD_STEP_CUSTOM_TARGET) continue;
+        if (!bm_target_id_is_valid(step->owner_target_id)) continue;
+        if ((size_t)step->owner_target_id >= arena_arr_len(model->targets)) return false;
+        target = &model->targets[step->owner_target_id];
+        if (!target->alias && !target->imported && target->kind == BM_TARGET_UNKNOWN_LIBRARY) {
+            target->kind = BM_TARGET_UTILITY;
         }
     }
     return true;
@@ -828,6 +848,7 @@ const Build_Model *bm_freeze_draft(const Build_Model_Draft *draft,
     }
 
     if (!bm_resolve_build_step_effective_paths(draft, model, out_arena, sink) ||
+        !bm_promote_custom_target_kinds(model) ||
         !bm_resolve_build_step_dependencies(draft, model, out_arena) ||
         !bm_resolve_target_source_records(draft, model, out_arena) ||
         !bm_apply_generated_source_marks(draft, model)) {
