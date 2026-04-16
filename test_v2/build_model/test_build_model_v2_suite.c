@@ -162,6 +162,24 @@ static bool build_model_string_item_span_equals(BM_String_Item_Span lhs, BM_Stri
     return true;
 }
 
+static size_t build_model_count_string_occurrences(BM_String_Span span, const char *needle) {
+    String_View needle_sv = nob_sv_from_cstr(needle ? needle : "");
+    size_t count = 0;
+    for (size_t i = 0; i < span.count; ++i) {
+        if (nob_sv_eq(span.items[i], needle_sv)) count++;
+    }
+    return count;
+}
+
+static size_t build_model_count_string_item_occurrences(BM_String_Item_Span span, const char *needle) {
+    String_View needle_sv = nob_sv_from_cstr(needle ? needle : "");
+    size_t count = 0;
+    for (size_t i = 0; i < span.count; ++i) {
+        if (nob_sv_eq(span.items[i].value, needle_sv)) count++;
+    }
+    return count;
+}
+
 TEST(build_model_builder_directory_scope_events) {
     Arena *arena = arena_create(2 * 1024 * 1024);
     Arena *validate_arena = arena_create(512 * 1024);
@@ -1968,6 +1986,193 @@ TEST(build_model_context_aware_queries_expand_usage_requirements_and_target_prop
     TEST_PASS();
 }
 
+TEST(build_model_effective_queries_follow_global_directory_and_transitive_link_library_seeds) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    BM_Query_Eval_Context compile_ctx = {0};
+    BM_Query_Eval_Context install_ctx = {0};
+    BM_Query_Eval_Context link_ctx = {0};
+    BM_String_Item_Span include_items = {0};
+    BM_String_Item_Span def_items = {0};
+    BM_String_Item_Span compile_opts = {0};
+    BM_String_Span features = {0};
+    BM_String_Item_Span link_lib_items = {0};
+    BM_String_Item_Span link_opt_items = {0};
+    BM_String_Item_Span link_dir_items = {0};
+
+    ASSERT(query_arena != NULL);
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "seed_query_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("seed_query_src");
+    config.binary_dir = nob_sv_from_cstr("seed_query_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "add_library(imported_iface INTERFACE IMPORTED)\n"
+        "set_target_properties(imported_iface PROPERTIES\n"
+        "  INTERFACE_INCLUDE_DIRECTORIES imported/include\n"
+        "  INTERFACE_COMPILE_DEFINITIONS IMPORTED_DEF=1\n"
+        "  INTERFACE_COMPILE_OPTIONS -DIMPORTED_OPT\n"
+        "  INTERFACE_COMPILE_FEATURES c_std_11\n"
+        "  INTERFACE_LINK_OPTIONS -Wl,--export-dynamic\n"
+        "  INTERFACE_LINK_DIRECTORIES imported/libdirs\n"
+        "  INTERFACE_LINK_LIBRARIES dl)\n"
+        "add_library(real_iface INTERFACE)\n"
+        "add_library(alias_iface ALIAS real_iface)\n"
+        "target_include_directories(real_iface INTERFACE\n"
+        "  \"$<BUILD_INTERFACE:real/build/include>\"\n"
+        "  \"$<INSTALL_INTERFACE:real/install/include>\")\n"
+        "target_compile_definitions(real_iface INTERFACE REAL_DEF=1)\n"
+        "target_compile_options(real_iface INTERFACE \"$<$<COMPILE_LANGUAGE:C>:-DREAL_C_ONLY>\")\n"
+        "target_link_options(real_iface INTERFACE -Wl,--no-undefined)\n"
+        "target_link_directories(real_iface INTERFACE real/libdirs)\n"
+        "target_link_libraries(real_iface INTERFACE imported_iface)\n"
+        "add_library(global_iface INTERFACE)\n"
+        "target_include_directories(global_iface INTERFACE global/include)\n"
+        "target_compile_definitions(global_iface INTERFACE GLOBAL_DEF=1)\n"
+        "target_compile_options(global_iface INTERFACE -DGLOBAL_OPT)\n"
+        "target_compile_features(global_iface INTERFACE c_std_99)\n"
+        "target_link_options(global_iface INTERFACE -Wl,--as-needed)\n"
+        "target_link_directories(global_iface INTERFACE global/libdirs)\n"
+        "target_link_libraries(global_iface INTERFACE alias_iface)\n"
+        "add_library(dir_iface INTERFACE)\n"
+        "target_include_directories(dir_iface INTERFACE dir/include)\n"
+        "target_compile_definitions(dir_iface INTERFACE DIR_DEF=1)\n"
+        "target_compile_options(dir_iface INTERFACE -DDIR_OPT)\n"
+        "target_compile_features(dir_iface INTERFACE c_std_17)\n"
+        "target_link_options(dir_iface INTERFACE -Wl,-z,defs)\n"
+        "target_link_directories(dir_iface INTERFACE dir/libdirs)\n"
+        "target_link_libraries(dir_iface INTERFACE real_iface)\n"
+        "add_library(linkonly_iface INTERFACE)\n"
+        "target_compile_definitions(linkonly_iface INTERFACE LINKONLY_COMPILE_DEF=1)\n"
+        "target_link_libraries(linkonly_iface INTERFACE m m)\n"
+        "set_property(GLOBAL APPEND PROPERTY LINK_LIBRARIES global_iface)\n"
+        "set_property(DIRECTORY APPEND PROPERTY LINK_LIBRARIES dir_iface \"$<LINK_ONLY:linkonly_iface>\")\n"
+        "add_executable(app main.c)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+
+    compile_ctx.current_target_id = app_id;
+    compile_ctx.usage_mode = BM_QUERY_USAGE_COMPILE;
+    compile_ctx.compile_language = nob_sv_from_cstr("C");
+    compile_ctx.build_interface_active = true;
+    compile_ctx.install_interface_active = false;
+
+    install_ctx = compile_ctx;
+    install_ctx.build_interface_active = false;
+    install_ctx.install_interface_active = true;
+
+    link_ctx.current_target_id = app_id;
+    link_ctx.usage_mode = BM_QUERY_USAGE_LINK;
+    link_ctx.build_interface_active = true;
+    link_ctx.install_interface_active = false;
+
+    ASSERT(bm_query_target_effective_include_directories_items_with_context(model,
+                                                                            app_id,
+                                                                            &compile_ctx,
+                                                                            query_arena,
+                                                                            &include_items));
+    ASSERT(build_model_string_item_span_contains_substring(include_items, "global/include"));
+    ASSERT(build_model_string_item_span_contains_substring(include_items, "dir/include"));
+    ASSERT(build_model_string_item_span_contains_substring(include_items, "real/build/include"));
+    ASSERT(build_model_string_item_span_contains_substring(include_items, "imported/include"));
+    ASSERT(!build_model_string_item_span_contains_substring(include_items, "real/install/include"));
+
+    ASSERT(bm_query_target_effective_include_directories_items_with_context(model,
+                                                                            app_id,
+                                                                            &install_ctx,
+                                                                            query_arena,
+                                                                            &include_items));
+    ASSERT(!build_model_string_item_span_contains_substring(include_items, "real/build/include"));
+    ASSERT(build_model_string_item_span_contains_substring(include_items, "real/install/include"));
+
+    ASSERT(bm_query_target_effective_compile_definitions_items_with_context(model,
+                                                                            app_id,
+                                                                            &compile_ctx,
+                                                                            query_arena,
+                                                                            &def_items));
+    ASSERT(build_model_string_item_span_contains(def_items, "GLOBAL_DEF=1"));
+    ASSERT(build_model_string_item_span_contains(def_items, "DIR_DEF=1"));
+    ASSERT(build_model_string_item_span_contains(def_items, "REAL_DEF=1"));
+    ASSERT(build_model_string_item_span_contains(def_items, "IMPORTED_DEF=1"));
+    ASSERT(!build_model_string_item_span_contains(def_items, "LINKONLY_COMPILE_DEF=1"));
+    ASSERT(build_model_count_string_item_occurrences(def_items, "REAL_DEF=1") == 1);
+    ASSERT(build_model_count_string_item_occurrences(def_items, "IMPORTED_DEF=1") == 1);
+
+    ASSERT(bm_query_target_effective_compile_options_items_with_context(model,
+                                                                        app_id,
+                                                                        &compile_ctx,
+                                                                        query_arena,
+                                                                        &compile_opts));
+    ASSERT(build_model_string_item_span_contains(compile_opts, "-DGLOBAL_OPT"));
+    ASSERT(build_model_string_item_span_contains(compile_opts, "-DDIR_OPT"));
+    ASSERT(build_model_string_item_span_contains(compile_opts, "-DREAL_C_ONLY"));
+    ASSERT(build_model_string_item_span_contains(compile_opts, "-DIMPORTED_OPT"));
+
+    ASSERT(bm_query_target_effective_compile_features(model, app_id, &compile_ctx, query_arena, &features));
+    ASSERT(build_model_string_span_contains(features, "c_std_99"));
+    ASSERT(build_model_string_span_contains(features, "c_std_17"));
+    ASSERT(build_model_string_span_contains(features, "c_std_11"));
+    ASSERT(build_model_count_string_occurrences(features, "c_std_11") == 1);
+
+    ASSERT(bm_query_target_effective_link_options_items_with_context(model,
+                                                                     app_id,
+                                                                     &link_ctx,
+                                                                     query_arena,
+                                                                     &link_opt_items));
+    ASSERT(build_model_string_item_span_contains(link_opt_items, "-Wl,--as-needed"));
+    ASSERT(build_model_string_item_span_contains(link_opt_items, "-Wl,-z,defs"));
+    ASSERT(build_model_string_item_span_contains(link_opt_items, "-Wl,--no-undefined"));
+    ASSERT(build_model_string_item_span_contains(link_opt_items, "-Wl,--export-dynamic"));
+
+    ASSERT(bm_query_target_effective_link_directories_items_with_context(model,
+                                                                         app_id,
+                                                                         &link_ctx,
+                                                                         query_arena,
+                                                                         &link_dir_items));
+    ASSERT(build_model_string_item_span_contains_substring(link_dir_items, "global/libdirs"));
+    ASSERT(build_model_string_item_span_contains_substring(link_dir_items, "dir/libdirs"));
+    ASSERT(build_model_string_item_span_contains_substring(link_dir_items, "real/libdirs"));
+    ASSERT(build_model_string_item_span_contains_substring(link_dir_items, "imported/libdirs"));
+
+    ASSERT(bm_query_target_effective_link_libraries_items_with_context(model,
+                                                                       app_id,
+                                                                       &link_ctx,
+                                                                       query_arena,
+                                                                       &link_lib_items));
+    ASSERT(build_model_string_item_span_contains(link_lib_items, "global_iface"));
+    ASSERT(build_model_string_item_span_contains(link_lib_items, "dir_iface"));
+    ASSERT(build_model_string_item_span_contains(link_lib_items, "linkonly_iface"));
+    ASSERT(build_model_string_item_span_contains(link_lib_items, "alias_iface"));
+    ASSERT(build_model_string_item_span_contains(link_lib_items, "imported_iface"));
+    ASSERT(build_model_string_item_span_contains(link_lib_items, "dl"));
+    ASSERT(build_model_string_item_span_contains(link_lib_items, "m"));
+    ASSERT(build_model_count_string_item_occurrences(link_lib_items, "imported_iface") == 1);
+    ASSERT(build_model_count_string_item_occurrences(link_lib_items, "m") == 1);
+
+    ASSERT(bm_query_target_effective_link_libraries_items_with_context(model,
+                                                                       app_id,
+                                                                       &compile_ctx,
+                                                                       query_arena,
+                                                                       &link_lib_items));
+    ASSERT(!build_model_string_item_span_contains(link_lib_items, "linkonly_iface"));
+    ASSERT(!build_model_string_item_span_contains(link_lib_items, "m"));
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 TEST(build_model_platform_context_and_typed_platform_properties_are_queryable) {
     Test_Semantic_Pipeline_Config config = {0};
     Test_Semantic_Pipeline_Fixture fixture = {0};
@@ -2984,6 +3189,83 @@ TEST(build_model_effective_queries_dedup_and_preserve_first_occurrence) {
     TEST_PASS();
 }
 
+TEST(build_model_effective_queries_terminate_interface_cycles_without_duplicate_contributions) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    BM_Query_Eval_Context compile_ctx = {0};
+    BM_Query_Eval_Context link_ctx = {0};
+    BM_String_Item_Span def_items = {0};
+    BM_String_Item_Span link_items = {0};
+
+    ASSERT(query_arena != NULL);
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "cycle_query_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("cycle_query_src");
+    config.binary_dir = nob_sv_from_cstr("cycle_query_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "add_library(a INTERFACE)\n"
+        "add_library(b INTERFACE)\n"
+        "add_library(c INTERFACE IMPORTED)\n"
+        "set_target_properties(c PROPERTIES\n"
+        "  INTERFACE_COMPILE_DEFINITIONS C_DEF=1\n"
+        "  INTERFACE_LINK_LIBRARIES dl)\n"
+        "target_compile_definitions(a INTERFACE A_DEF=1)\n"
+        "target_compile_definitions(b INTERFACE B_DEF=1)\n"
+        "target_link_libraries(a INTERFACE b)\n"
+        "target_link_libraries(b INTERFACE a c)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE a b)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+
+    compile_ctx.current_target_id = app_id;
+    compile_ctx.usage_mode = BM_QUERY_USAGE_COMPILE;
+    compile_ctx.compile_language = nob_sv_from_cstr("C");
+    compile_ctx.build_interface_active = true;
+    compile_ctx.install_interface_active = false;
+
+    link_ctx.current_target_id = app_id;
+    link_ctx.usage_mode = BM_QUERY_USAGE_LINK;
+    link_ctx.build_interface_active = true;
+    link_ctx.install_interface_active = false;
+
+    ASSERT(bm_query_target_effective_compile_definitions_items_with_context(model,
+                                                                            app_id,
+                                                                            &compile_ctx,
+                                                                            query_arena,
+                                                                            &def_items));
+    ASSERT(build_model_count_string_item_occurrences(def_items, "A_DEF=1") == 1);
+    ASSERT(build_model_count_string_item_occurrences(def_items, "B_DEF=1") == 1);
+    ASSERT(build_model_count_string_item_occurrences(def_items, "C_DEF=1") == 1);
+
+    ASSERT(bm_query_target_effective_link_libraries_items_with_context(model,
+                                                                       app_id,
+                                                                       &link_ctx,
+                                                                       query_arena,
+                                                                       &link_items));
+    ASSERT(build_model_count_string_item_occurrences(link_items, "a") == 1);
+    ASSERT(build_model_count_string_item_occurrences(link_items, "b") == 1);
+    ASSERT(build_model_count_string_item_occurrences(link_items, "c") == 1);
+    ASSERT(build_model_count_string_item_occurrences(link_items, "dl") == 1);
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 TEST(build_model_usage_requirement_property_setters_promote_to_canonical_item_storage) {
     Test_Semantic_Pipeline_Config config = {0};
     Test_Semantic_Pipeline_Fixture fixture = {0};
@@ -3531,6 +3813,7 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_replay_actions_accept_c5_ctest_coverage_and_memcheck_queries(passed, failed, skipped);
     test_build_model_replay_actions_reject_malformed_ordering(passed, failed, skipped);
     test_build_model_context_aware_queries_expand_usage_requirements_and_target_property_genex(passed, failed, skipped);
+    test_build_model_effective_queries_follow_global_directory_and_transitive_link_library_seeds(passed, failed, skipped);
     test_build_model_platform_context_and_typed_platform_properties_are_queryable(passed, failed, skipped);
     test_build_model_imported_target_queries_resolve_configs_and_mapped_locations(passed, failed, skipped);
     test_build_model_preserves_imported_global_across_property_orderings(passed, failed, skipped);
@@ -3541,6 +3824,7 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_query_session_memoizes_imported_target_resolution(passed, failed, skipped);
     test_build_model_compile_feature_catalog_and_effective_features_are_shared(passed, failed, skipped);
     test_build_model_effective_queries_dedup_and_preserve_first_occurrence(passed, failed, skipped);
+    test_build_model_effective_queries_terminate_interface_cycles_without_duplicate_contributions(passed, failed, skipped);
     test_build_model_usage_requirement_property_setters_promote_to_canonical_item_storage(passed, failed, skipped);
     test_build_model_install_and_export_queries_surface_typed_metadata(passed, failed, skipped);
     test_build_model_install_queries_materialize_effective_default_components(passed, failed, skipped);

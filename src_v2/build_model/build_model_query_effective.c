@@ -247,6 +247,7 @@ static bool bm_query_target_effective_items_common(const Build_Model *model,
                                                    BM_Effective_Query_Kind kind) {
     const BM_Target_Record *target = bm_model_target(model, id);
     BM_String_Item_View *raw_items = NULL;
+    BM_String_Item_Span dependency_seeds = {0};
     BM_String_Item_Span evaluated = {0};
     uint8_t *visited = NULL;
 
@@ -263,7 +264,20 @@ static bool bm_query_target_effective_items_common(const Build_Model *model,
     if (!visited) return false;
     visited[id] = 1;
 
-    if (!bm_collect_dependency_usage_from_link_items(model, target, ctx, scratch, visited, &raw_items, kind)) return false;
+    if (!bm_collect_evaluated_root_link_library_seeds(model,
+                                                      target,
+                                                      ctx,
+                                                      scratch,
+                                                      &dependency_seeds) ||
+        !bm_collect_dependency_usage_from_evaluated_link_items(model,
+                                                               dependency_seeds,
+                                                               ctx,
+                                                               scratch,
+                                                               visited,
+                                                               &raw_items,
+                                                               kind)) {
+        return false;
+    }
     if (!bm_eval_item_span(model,
                            id,
                            ctx,

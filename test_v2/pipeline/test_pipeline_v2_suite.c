@@ -185,6 +185,7 @@ static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *mod
     BM_String_Item_Span global_compile_opts = bm_query_global_compile_options_raw(model);
     BM_String_Item_Span global_link_opts = bm_query_global_link_options_raw(model);
     BM_String_Item_Span global_link_libs = bm_query_global_link_libraries_raw(model);
+    Arena *scratch = arena_create(128 * 1024);
 
     nob_sb_append_cstr(sb, "MODEL project=");
     test_snapshot_append_escaped_sv(sb, bm_query_project_name(model));
@@ -213,8 +214,8 @@ static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *mod
         global_link_opts.count,
         global_link_libs.count));
 
-    if (target_count > 0) {
-        BM_Target_Id target_id = 0;
+    for (size_t i = 0; i < target_count; ++i) {
+        BM_Target_Id target_id = (BM_Target_Id)i;
         BM_String_Span sources = bm_query_target_sources_raw(model, target_id);
         BM_Target_Id_Span deps = bm_query_target_dependencies_explicit(model, target_id);
         BM_String_Item_Span include_dirs = bm_query_target_include_directories_raw(model, target_id);
@@ -222,8 +223,68 @@ static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *mod
         BM_String_Item_Span link_opts = bm_query_target_link_options_raw(model, target_id);
         BM_String_Item_Span link_dirs = bm_query_target_link_directories_raw(model, target_id);
         BM_String_Item_Span compile_features = bm_query_target_compile_features_raw(model, target_id);
+        BM_Query_Eval_Context compile_ctx = {0};
+        BM_Query_Eval_Context link_ctx = {0};
+        BM_String_Item_Span effective_include_dirs = {0};
+        BM_String_Item_Span effective_compile_defs = {0};
+        BM_String_Item_Span effective_compile_opts = {0};
+        BM_String_Span effective_compile_features = {0};
+        BM_String_Item_Span effective_link_libs = {0};
+        BM_String_Item_Span effective_link_opts = {0};
+        BM_String_Item_Span effective_link_dirs = {0};
 
-        nob_sb_append_cstr(sb, "TARGET0 name=");
+        if (scratch) arena_reset(scratch);
+
+        compile_ctx.current_target_id = target_id;
+        compile_ctx.usage_mode = BM_QUERY_USAGE_COMPILE;
+        compile_ctx.compile_language = nob_sv_from_cstr("C");
+        compile_ctx.build_interface_active = true;
+        compile_ctx.install_interface_active = false;
+
+        link_ctx.current_target_id = target_id;
+        link_ctx.usage_mode = BM_QUERY_USAGE_LINK;
+        link_ctx.build_interface_active = true;
+        link_ctx.install_interface_active = false;
+
+        if (scratch) {
+            (void)bm_query_target_effective_include_directories_items_with_context(model,
+                                                                                   target_id,
+                                                                                   &compile_ctx,
+                                                                                   scratch,
+                                                                                   &effective_include_dirs);
+            (void)bm_query_target_effective_compile_definitions_items_with_context(model,
+                                                                                   target_id,
+                                                                                   &compile_ctx,
+                                                                                   scratch,
+                                                                                   &effective_compile_defs);
+            (void)bm_query_target_effective_compile_options_items_with_context(model,
+                                                                               target_id,
+                                                                               &compile_ctx,
+                                                                               scratch,
+                                                                               &effective_compile_opts);
+            (void)bm_query_target_effective_compile_features(model,
+                                                             target_id,
+                                                             &compile_ctx,
+                                                             scratch,
+                                                             &effective_compile_features);
+            (void)bm_query_target_effective_link_libraries_items_with_context(model,
+                                                                              target_id,
+                                                                              &link_ctx,
+                                                                              scratch,
+                                                                              &effective_link_libs);
+            (void)bm_query_target_effective_link_options_items_with_context(model,
+                                                                            target_id,
+                                                                            &link_ctx,
+                                                                            scratch,
+                                                                            &effective_link_opts);
+            (void)bm_query_target_effective_link_directories_items_with_context(model,
+                                                                                target_id,
+                                                                                &link_ctx,
+                                                                                scratch,
+                                                                                &effective_link_dirs);
+        }
+
+        nob_sb_append_cstr(sb, nob_temp_sprintf("TARGET[%zu] name=", i));
         test_snapshot_append_escaped_sv(sb, bm_query_target_name(model, target_id));
         nob_sb_append_cstr(sb, nob_temp_sprintf(
             " type=%s sources=%zu deps=%zu link_libs=%zu interface_libs=%zu link_opts=%zu link_dirs=%zu compile_features=%zu system_includes=%zu\n",
@@ -236,7 +297,19 @@ static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *mod
             link_dirs.count,
             compile_features.count,
             pipeline_count_items_with_flag(include_dirs, BM_ITEM_FLAG_SYSTEM)));
+        nob_sb_append_cstr(sb, nob_temp_sprintf(
+            "TARGET[%zu]_EFFECTIVE compile_includes=%zu compile_defs=%zu compile_opts=%zu compile_features=%zu link_libs=%zu link_opts=%zu link_dirs=%zu\n",
+            i,
+            effective_include_dirs.count,
+            effective_compile_defs.count,
+            effective_compile_opts.count,
+            effective_compile_features.count,
+            effective_link_libs.count,
+            effective_link_opts.count,
+            effective_link_dirs.count));
     }
+
+    if (scratch) arena_destroy(scratch);
 }
 
 static bool pipeline_snapshot_from_script(const char *script,

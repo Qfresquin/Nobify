@@ -401,10 +401,32 @@ For release-1 effective queries, usage propagation is resolved at query time:
 - global properties contribute first
 - then the full owner-directory chain contributes
 - then target-local properties contribute
-- then transitive usage is discovered from local target references found in
-  `target_link_libraries(...)`
+- then transitive usage is discovered from target-valued link-library seeds
+  collected from:
+  - global `LINK_LIBRARIES`
+  - the full owner-directory `LINK_LIBRARIES` chain
+  - target-local `target_link_libraries(...)`
 
-Alias targets may be resolved during that walk through Query helpers.
+Query-time transitive closure rules are:
+- link-library seeds are evaluated with the caller's
+  `BM_Query_Eval_Context` before dependency traversal
+- context-sensitive operators already supported by Query, including
+  `LINK_ONLY`, `BUILD_INTERFACE`, `INSTALL_INTERFACE`, config, platform, and
+  compile-language filtering, therefore affect both the root target's own
+  values and which transitive edges survive the walk
+- unresolved opaque link items remain normal effective link inputs for link
+  queries, but they are not treated as propagation edges
+- aliases are resolved before visiting dependency targets
+- imported targets participate in the same closure when a link item resolves
+  to an imported target record
+- the root target contributes its local items normally, while transitive
+  dependencies contribute only `PUBLIC` and `INTERFACE` items
+- ordering is stable: global, then directory chain, then target-local values,
+  then first-seen transitive closure, followed by the existing family-specific
+  dedup step
+
+Alias targets may be resolved during that walk through Query helpers, and the
+closure is cycle-safe through first-visit tracking per resolved target.
 `add_dependencies(...)` remains a build-order edge only; it must not be treated
 as compile/link usage inheritance.
 

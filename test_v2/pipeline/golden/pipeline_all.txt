@@ -1,5 +1,5 @@
 MODULE pipeline
-CASES 8
+CASES 9
 
 === CASE pipeline_positive_links_and_dirs ===
 EVAL_OK 1
@@ -10,7 +10,10 @@ EVENTS count=33
 MODEL project='PipeLinks' targets=2 packages=0 tests=0 install_enabled=0 testing_enabled=0 cpack_groups=0 cpack_types=0 cpack_components=0
 DIR include=0 system_include=1 link=1 link_libs=2
 GLOBAL compile_defs=0 compile_opts=0 link_opts=0 link_libs=0
-TARGET0 name='lib' type=STATIC_LIB sources=1 deps=0 link_libs=0 interface_libs=0 link_opts=0 link_dirs=0 compile_features=0 system_includes=0
+TARGET[0] name='lib' type=STATIC_LIB sources=1 deps=0 link_libs=0 interface_libs=0 link_opts=0 link_dirs=0 compile_features=0 system_includes=0
+TARGET[0]_EFFECTIVE compile_includes=1 compile_defs=0 compile_opts=0 compile_features=0 link_libs=2 link_opts=1 link_dirs=1
+TARGET[1] name='app' type=EXECUTABLE sources=1 deps=0 link_libs=1 interface_libs=0 link_opts=1 link_dirs=1 compile_features=0 system_includes=0
+TARGET[1]_EFFECTIVE compile_includes=1 compile_defs=0 compile_opts=0 compile_features=0 link_libs=3 link_opts=2 link_dirs=2
 === END CASE ===
 
 === CASE pipeline_positive_testing_install ===
@@ -22,7 +25,8 @@ EVENTS count=29
 MODEL project='PipeTestInstall' targets=1 packages=0 tests=2 install_enabled=1 testing_enabled=1 cpack_groups=0 cpack_types=0 cpack_components=0
 DIR include=0 system_include=0 link=0 link_libs=0
 GLOBAL compile_defs=0 compile_opts=0 link_opts=0 link_libs=0
-TARGET0 name='app' type=EXECUTABLE sources=1 deps=0 link_libs=0 interface_libs=0 link_opts=0 link_dirs=0 compile_features=0 system_includes=0
+TARGET[0] name='app' type=EXECUTABLE sources=1 deps=0 link_libs=0 interface_libs=0 link_opts=0 link_dirs=0 compile_features=0 system_includes=0
+TARGET[0]_EFFECTIVE compile_includes=0 compile_defs=0 compile_opts=0 compile_features=0 link_libs=0 link_opts=0 link_dirs=0
 === END CASE ===
 
 === CASE pipeline_positive_cpack ===
@@ -45,7 +49,35 @@ EVENTS count=25
 MODEL project='PipeUsage' targets=2 packages=0 tests=0 install_enabled=0 testing_enabled=0 cpack_groups=0 cpack_types=0 cpack_components=0
 DIR include=0 system_include=0 link=0 link_libs=2
 GLOBAL compile_defs=0 compile_opts=0 link_opts=0 link_libs=0
-TARGET0 name='iface' type=INTERFACE_LIB sources=0 deps=0 link_libs=0 interface_libs=0 link_opts=0 link_dirs=0 compile_features=1 system_includes=1
+TARGET[0] name='iface' type=INTERFACE_LIB sources=0 deps=0 link_libs=0 interface_libs=0 link_opts=0 link_dirs=0 compile_features=1 system_includes=1
+TARGET[0]_EFFECTIVE compile_includes=1 compile_defs=0 compile_opts=0 compile_features=1 link_libs=2 link_opts=0 link_dirs=0
+TARGET[1] name='app' type=EXECUTABLE sources=1 deps=0 link_libs=1 interface_libs=0 link_opts=0 link_dirs=0 compile_features=0 system_includes=0
+TARGET[1]_EFFECTIVE compile_includes=1 compile_defs=0 compile_opts=0 compile_features=1 link_libs=3 link_opts=0 link_dirs=0
+=== END CASE ===
+
+=== CASE pipeline_positive_effective_transitive_query_closure ===
+EVAL_OK 1
+BUILDER_OK 1
+FREEZE_OK 1
+DIAG errors=0 warnings=0
+EVENTS count=110
+MODEL project='PipeTransitive' targets=7 packages=0 tests=0 install_enabled=0 testing_enabled=0 cpack_groups=0 cpack_types=0 cpack_components=0
+DIR include=0 system_include=0 link=0 link_libs=2
+GLOBAL compile_defs=0 compile_opts=0 link_opts=0 link_libs=1
+TARGET[0] name='imported_iface' type=INTERFACE_LIB sources=0 deps=0 link_libs=1 interface_libs=1 link_opts=1 link_dirs=1 compile_features=1 system_includes=0
+TARGET[0]_EFFECTIVE compile_includes=4 compile_defs=4 compile_opts=4 compile_features=3 link_libs=8 link_opts=4 link_dirs=4
+TARGET[1] name='real_iface' type=INTERFACE_LIB sources=0 deps=0 link_libs=1 interface_libs=1 link_opts=1 link_dirs=1 compile_features=0 system_includes=0
+TARGET[1]_EFFECTIVE compile_includes=4 compile_defs=4 compile_opts=4 compile_features=3 link_libs=8 link_opts=4 link_dirs=4
+TARGET[2] name='real_alias' type=INTERFACE_LIB sources=0 deps=0 link_libs=0 interface_libs=0 link_opts=0 link_dirs=0 compile_features=0 system_includes=0
+TARGET[2]_EFFECTIVE compile_includes=4 compile_defs=4 compile_opts=4 compile_features=3 link_libs=8 link_opts=4 link_dirs=4
+TARGET[3] name='global_iface' type=INTERFACE_LIB sources=0 deps=0 link_libs=1 interface_libs=1 link_opts=1 link_dirs=1 compile_features=1 system_includes=0
+TARGET[3]_EFFECTIVE compile_includes=4 compile_defs=4 compile_opts=4 compile_features=3 link_libs=8 link_opts=4 link_dirs=4
+TARGET[4] name='dir_iface' type=INTERFACE_LIB sources=0 deps=0 link_libs=1 interface_libs=1 link_opts=1 link_dirs=1 compile_features=1 system_includes=0
+TARGET[4]_EFFECTIVE compile_includes=4 compile_defs=4 compile_opts=4 compile_features=3 link_libs=8 link_opts=4 link_dirs=4
+TARGET[5] name='linkonly_iface' type=INTERFACE_LIB sources=0 deps=0 link_libs=1 interface_libs=1 link_opts=0 link_dirs=0 compile_features=0 system_includes=0
+TARGET[5]_EFFECTIVE compile_includes=4 compile_defs=5 compile_opts=4 compile_features=3 link_libs=8 link_opts=4 link_dirs=4
+TARGET[6] name='app' type=EXECUTABLE sources=1 deps=0 link_libs=0 interface_libs=0 link_opts=0 link_dirs=0 compile_features=0 system_includes=0
+TARGET[6]_EFFECTIVE compile_includes=4 compile_defs=4 compile_opts=4 compile_features=3 link_libs=8 link_opts=4 link_dirs=4
 === END CASE ===
 
 === CASE pipeline_negative_cpack_unknown_group ===

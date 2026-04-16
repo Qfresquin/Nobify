@@ -1668,6 +1668,66 @@ TEST(codegen_dedups_emitted_usage_flags_and_alias_link_inputs) {
     TEST_PASS();
 }
 
+TEST(codegen_transitive_link_library_seeds_drive_compile_and_link_commands) {
+    Arena *arena = arena_create(512 * 1024);
+    String_View generated = {0};
+    const char *script =
+        "project(Test LANGUAGES C)\n"
+        "add_library(base_iface INTERFACE)\n"
+        "target_include_directories(base_iface INTERFACE include)\n"
+        "target_compile_definitions(base_iface INTERFACE EXPECTED_DEF=7)\n"
+        "target_compile_options(base_iface INTERFACE -Winvalid-pch)\n"
+        "target_link_options(base_iface INTERFACE -Wl,--as-needed)\n"
+        "add_library(mid_iface INTERFACE)\n"
+        "target_link_libraries(mid_iface INTERFACE base_iface)\n"
+        "add_library(linkonly_iface INTERFACE)\n"
+        "target_compile_definitions(linkonly_iface INTERFACE SHOULD_NOT_COMPILE=1)\n"
+        "target_link_libraries(linkonly_iface INTERFACE m)\n"
+        "set_property(GLOBAL APPEND PROPERTY LINK_LIBRARIES mid_iface)\n"
+        "set_property(DIRECTORY APPEND PROPERTY LINK_LIBRARIES \"$<LINK_ONLY:linkonly_iface>\")\n"
+        "add_executable(app main.c)\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n";
+    Codegen_Test_Config config = {
+        .input_path = "transitive_seed_src/CMakeLists.txt",
+        .output_path = "transitive_seed_nob.c",
+        .source_dir = "transitive_seed_src",
+        .binary_dir = "transitive_seed_build",
+    };
+
+    ASSERT(arena != NULL);
+    ASSERT(codegen_write_text_file("transitive_seed_src/include/transitive.h",
+                                   "#pragma once\n"
+                                   "#define BASE_VALUE 2\n"));
+    ASSERT(codegen_write_text_file("transitive_seed_src/transitive_seed_src/include/transitive.h",
+                                   "#pragma once\n"
+                                   "#define BASE_VALUE 2\n"));
+    ASSERT(codegen_write_text_file("transitive_seed_src/main.c",
+                                   "#include \"transitive.h\"\n"
+                                   "#include <math.h>\n"
+                                   "#ifdef SHOULD_NOT_COMPILE\n"
+                                   "#error SHOULD_NOT_COMPILE leaked into compile flags\n"
+                                   "#endif\n"
+                                   "#ifndef EXPECTED_DEF\n"
+                                   "#error EXPECTED_DEF missing from transitive usage requirements\n"
+                                   "#endif\n"
+                                   "int main(void) {\n"
+                                   "    return (int)sqrt((double)(EXPECTED_DEF + BASE_VALUE)) == 3 ? 0 : 1;\n"
+                                   "}\n"));
+
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_load_text_file_to_arena(arena, "transitive_seed_nob.c", &generated));
+    ASSERT(codegen_sv_contains(generated, "\"-Winvalid-pch\""));
+    ASSERT(codegen_sv_contains(generated, "\"-lm\""));
+    ASSERT(!codegen_sv_contains(generated, "\"-DSHOULD_NOT_COMPILE=1\""));
+
+    ASSERT(codegen_compile_generated_nob("transitive_seed_nob.c", "transitive_seed_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir(".", "./transitive_seed_nob_gen", "app", NULL));
+    ASSERT(codegen_run_binary_in_dir(".", "transitive_seed_build/artifacts/bin/app", NULL, NULL));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(codegen_suite_reuses_shared_host_env_guard_support) {
     Arena *arena = arena_create(128 * 1024);
     String_View codegen_suite = {0};
@@ -2440,6 +2500,7 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_builds_generated_source_from_output_rule_step(passed, failed, skipped);
     test_codegen_renders_multi_command_steps_with_deduped_rebuild_inputs(passed, failed, skipped);
     test_codegen_dedups_emitted_usage_flags_and_alias_link_inputs(passed, failed, skipped);
+    test_codegen_transitive_link_library_seeds_drive_compile_and_link_commands(passed, failed, skipped);
     test_codegen_suite_reuses_shared_host_env_guard_support(passed, failed, skipped);
     test_codegen_uses_embedded_cmake_for_runtime_steps_without_cmake_on_path(passed, failed, skipped);
     test_codegen_custom_target_dependency_runs_and_clean_removes_step_stamps(passed, failed, skipped);

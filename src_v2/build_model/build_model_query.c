@@ -416,6 +416,51 @@ static bool bm_collect_dependency_interface(const Build_Model *model,
                                             BM_String_Item_View **out,
                                             BM_Effective_Query_Kind kind);
 
+static bool bm_collect_evaluated_root_link_library_seeds(const Build_Model *model,
+                                                         const BM_Target_Record *target,
+                                                         const BM_Query_Eval_Context *ctx,
+                                                         Arena *scratch,
+                                                         BM_String_Item_Span *out) {
+    BM_String_Item_View *raw_items = NULL;
+    if (!out) return false;
+    *out = (BM_String_Item_Span){0};
+    if (!model || !target || !scratch) return false;
+
+    if (!bm_collect_global_effective_items(model, scratch, &raw_items, BM_EFFECTIVE_LINK_LIBRARIES) ||
+        !bm_collect_directory_chain_items(model,
+                                          target->owner_directory_id,
+                                          scratch,
+                                          &raw_items,
+                                          BM_EFFECTIVE_LINK_LIBRARIES) ||
+        !bm_collect_target_items(scratch,
+                                 &raw_items,
+                                 target,
+                                 BM_EFFECTIVE_LINK_LIBRARIES,
+                                 false)) {
+        return false;
+    }
+
+    return bm_eval_item_span(model, target->id, ctx, scratch, bm_item_span(raw_items), out);
+}
+
+static bool bm_collect_dependency_usage_from_evaluated_link_items(const Build_Model *model,
+                                                                  BM_String_Item_Span evaluated,
+                                                                  const BM_Query_Eval_Context *ctx,
+                                                                  Arena *scratch,
+                                                                  uint8_t *visited,
+                                                                  BM_String_Item_View **out,
+                                                                  BM_Effective_Query_Kind kind) {
+    if (!model || !scratch || !visited || !out) return false;
+
+    for (size_t i = 0; i < evaluated.count; ++i) {
+        BM_Target_Id dep_id = BM_TARGET_ID_INVALID;
+        if (!bm_resolve_link_library_target_id(model, evaluated.items[i].value, &dep_id)) continue;
+        if (!bm_collect_dependency_interface(model, dep_id, ctx, scratch, visited, out, kind)) return false;
+    }
+
+    return true;
+}
+
 static bool bm_collect_dependency_usage_from_link_items(const Build_Model *model,
                                                         const BM_Target_Record *target,
                                                         const BM_Query_Eval_Context *ctx,
@@ -435,13 +480,13 @@ static bool bm_collect_dependency_usage_from_link_items(const Build_Model *model
         return false;
     }
 
-    for (size_t i = 0; i < evaluated.count; ++i) {
-        BM_Target_Id dep_id = BM_TARGET_ID_INVALID;
-        if (!bm_resolve_link_library_target_id(model, evaluated.items[i].value, &dep_id)) continue;
-        if (!bm_collect_dependency_interface(model, dep_id, ctx, scratch, visited, out, kind)) return false;
-    }
-
-    return true;
+    return bm_collect_dependency_usage_from_evaluated_link_items(model,
+                                                                 evaluated,
+                                                                 ctx,
+                                                                 scratch,
+                                                                 visited,
+                                                                 out,
+                                                                 kind);
 }
 
 static bool bm_collect_dependency_interface(const Build_Model *model,
