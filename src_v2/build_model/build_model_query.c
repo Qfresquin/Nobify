@@ -14,11 +14,6 @@ static bool bm_append_split_values(Arena *scratch,
                                    BM_String_Item_View **out,
                                    BM_String_Item_View item,
                                    String_View value);
-static bool bm_collect_target_raw_property_items(Arena *scratch,
-                                                 BM_String_Item_View **out,
-                                                 const BM_Target_Record *target,
-                                                 String_View property_name,
-                                                 BM_Visibility visibility);
 
 static const BM_Directory_Record *bm_model_directory(const Build_Model *model, BM_Directory_Id id) {
     if (!model || id == BM_DIRECTORY_ID_INVALID || (size_t)id >= arena_arr_len(model->directories)) return NULL;
@@ -260,23 +255,6 @@ static bool bm_collect_items(Arena *scratch,
     return true;
 }
 
-static bool bm_collect_raw_property_items(Arena *scratch,
-                                          BM_String_Item_View **out,
-                                          const BM_Raw_Property_Record *record) {
-    if (!scratch || !out || !record) return false;
-    for (size_t i = 0; i < arena_arr_len(record->items); ++i) {
-        if (!bm_push_item_copy(scratch, out, (BM_String_Item_View){
-                .value = record->items[i],
-                .visibility = BM_VISIBILITY_PRIVATE,
-                .flags = record->flags,
-                .provenance = record->provenance,
-            })) {
-            return false;
-        }
-    }
-    return true;
-}
-
 static bool bm_collect_global_effective_items(const Build_Model *model,
                                               Arena *scratch,
                                               BM_String_Item_View **out,
@@ -297,12 +275,8 @@ static bool bm_collect_global_effective_items(const Build_Model *model,
         case BM_EFFECTIVE_COMPILE_FEATURES:
             return true;
 
-        case BM_EFFECTIVE_LINK_LIBRARIES: {
-            const BM_Raw_Property_Record *record =
-                bm_find_raw_property(model->global_properties.raw_properties, nob_sv_from_cstr("LINK_LIBRARIES"));
-            if (!record) return true;
-            return bm_collect_raw_property_items(scratch, out, record);
-        }
+        case BM_EFFECTIVE_LINK_LIBRARIES:
+            return bm_collect_items(scratch, out, model->global_properties.link_libraries, false);
 
         case BM_EFFECTIVE_LINK_OPTIONS:
             return bm_collect_items(scratch, out, model->global_properties.link_options, false);
@@ -352,12 +326,9 @@ static bool bm_collect_directory_chain_items(const Build_Model *model,
             case BM_EFFECTIVE_COMPILE_FEATURES:
                 break;
 
-            case BM_EFFECTIVE_LINK_LIBRARIES: {
-                const BM_Raw_Property_Record *record =
-                    bm_find_raw_property(directory->raw_properties, nob_sv_from_cstr("LINK_LIBRARIES"));
-                if (record && !bm_collect_raw_property_items(scratch, out, record)) return false;
+            case BM_EFFECTIVE_LINK_LIBRARIES:
+                if (!bm_collect_items(scratch, out, directory->link_libraries, false)) return false;
                 break;
-            }
 
             case BM_EFFECTIVE_LINK_OPTIONS:
                 if (!bm_collect_items(scratch, out, directory->link_options, false)) return false;
@@ -377,52 +348,29 @@ static bool bm_collect_target_items(Arena *scratch,
                                     const BM_Target_Record *target,
                                     BM_Effective_Query_Kind kind,
                                     bool public_only) {
-    String_View raw_property_name = nob_sv_from_cstr("");
-    BM_Visibility raw_visibility = public_only ? BM_VISIBILITY_INTERFACE : BM_VISIBILITY_PRIVATE;
     if (!scratch || !out || !target) return false;
 
     switch (kind) {
         case BM_EFFECTIVE_INCLUDE_DIRECTORIES:
-            raw_property_name = public_only ? nob_sv_from_cstr("INTERFACE_INCLUDE_DIRECTORIES")
-                                            : nob_sv_from_cstr("INCLUDE_DIRECTORIES");
-            if (!bm_collect_items(scratch, out, target->include_directories, public_only)) return false;
-            return bm_collect_target_raw_property_items(scratch, out, target, raw_property_name, raw_visibility);
+            return bm_collect_items(scratch, out, target->include_directories, public_only);
 
         case BM_EFFECTIVE_COMPILE_DEFINITIONS:
-            raw_property_name = public_only ? nob_sv_from_cstr("INTERFACE_COMPILE_DEFINITIONS")
-                                            : nob_sv_from_cstr("COMPILE_DEFINITIONS");
-            if (!bm_collect_items(scratch, out, target->compile_definitions, public_only)) return false;
-            return bm_collect_target_raw_property_items(scratch, out, target, raw_property_name, raw_visibility);
+            return bm_collect_items(scratch, out, target->compile_definitions, public_only);
 
         case BM_EFFECTIVE_COMPILE_OPTIONS:
-            raw_property_name = public_only ? nob_sv_from_cstr("INTERFACE_COMPILE_OPTIONS")
-                                            : nob_sv_from_cstr("COMPILE_OPTIONS");
-            if (!bm_collect_items(scratch, out, target->compile_options, public_only)) return false;
-            return bm_collect_target_raw_property_items(scratch, out, target, raw_property_name, raw_visibility);
+            return bm_collect_items(scratch, out, target->compile_options, public_only);
 
-        case BM_EFFECTIVE_COMPILE_FEATURES: {
-            raw_property_name = public_only ? nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES")
-                                            : nob_sv_from_cstr("COMPILE_FEATURES");
-            return bm_collect_target_raw_property_items(scratch, out, target, raw_property_name, raw_visibility);
-        }
+        case BM_EFFECTIVE_COMPILE_FEATURES:
+            return bm_collect_items(scratch, out, target->compile_features, public_only);
 
         case BM_EFFECTIVE_LINK_LIBRARIES:
-            raw_property_name = public_only ? nob_sv_from_cstr("INTERFACE_LINK_LIBRARIES")
-                                            : nob_sv_from_cstr("LINK_LIBRARIES");
-            if (!bm_collect_items(scratch, out, target->link_libraries, public_only)) return false;
-            return bm_collect_target_raw_property_items(scratch, out, target, raw_property_name, raw_visibility);
+            return bm_collect_items(scratch, out, target->link_libraries, public_only);
 
         case BM_EFFECTIVE_LINK_OPTIONS:
-            raw_property_name = public_only ? nob_sv_from_cstr("INTERFACE_LINK_OPTIONS")
-                                            : nob_sv_from_cstr("LINK_OPTIONS");
-            if (!bm_collect_items(scratch, out, target->link_options, public_only)) return false;
-            return bm_collect_target_raw_property_items(scratch, out, target, raw_property_name, raw_visibility);
+            return bm_collect_items(scratch, out, target->link_options, public_only);
 
         case BM_EFFECTIVE_LINK_DIRECTORIES:
-            raw_property_name = public_only ? nob_sv_from_cstr("INTERFACE_LINK_DIRECTORIES")
-                                            : nob_sv_from_cstr("LINK_DIRECTORIES");
-            if (!bm_collect_items(scratch, out, target->link_directories, public_only)) return false;
-            return bm_collect_target_raw_property_items(scratch, out, target, raw_property_name, raw_visibility);
+            return bm_collect_items(scratch, out, target->link_directories, public_only);
     }
 
     return true;
@@ -537,26 +485,6 @@ static bool bm_append_split_values(Arena *scratch,
     return true;
 }
 
-static bool bm_collect_target_raw_property_items(Arena *scratch,
-                                                 BM_String_Item_View **out,
-                                                 const BM_Target_Record *target,
-                                                 String_View property_name,
-                                                 BM_Visibility visibility) {
-    const BM_Raw_Property_Record *record = NULL;
-    BM_String_Item_View item = {0};
-    if (!scratch || !out || !target || property_name.count == 0) return false;
-    record = bm_find_raw_property(target->raw_properties, property_name);
-    if (!record) return true;
-
-    item.visibility = visibility;
-    item.flags = record->flags;
-    item.provenance = record->provenance;
-    for (size_t i = 0; i < arena_arr_len(record->items); ++i) {
-        if (!bm_append_split_values(scratch, out, item, record->items[i])) return false;
-    }
-    return true;
-}
-
 static bool bm_query_append_joined_items(Arena *scratch,
                                          String_View *out,
                                          const BM_String_Item_View *items,
@@ -569,6 +497,37 @@ static bool bm_query_append_joined_items(Arena *scratch,
     *out = nob_sv_from_cstr("");
     for (size_t i = 0; i < arena_arr_len(items); ++i) {
         if (items[i].visibility < min_visibility || items[i].visibility > max_visibility) continue;
+        if (!first) nob_sb_append(&sb, ';');
+        nob_sb_append_buf(&sb, items[i].value.data ? items[i].value.data : "", items[i].value.count);
+        first = false;
+    }
+    if (sb.count == 0) {
+        nob_sb_free(sb);
+        return true;
+    }
+    copy = arena_strndup(scratch, sb.items ? sb.items : "", sb.count);
+    nob_sb_free(sb);
+    if (!copy) return false;
+    *out = nob_sv_from_parts(copy, sb.count);
+    return true;
+}
+
+static bool bm_query_append_joined_items_with_flags(Arena *scratch,
+                                                    String_View *out,
+                                                    const BM_String_Item_View *items,
+                                                    BM_Visibility min_visibility,
+                                                    BM_Visibility max_visibility,
+                                                    uint32_t required_flags,
+                                                    uint32_t forbidden_flags) {
+    Nob_String_Builder sb = {0};
+    char *copy = NULL;
+    bool first = true;
+    if (!scratch || !out) return false;
+    *out = nob_sv_from_cstr("");
+    for (size_t i = 0; i < arena_arr_len(items); ++i) {
+        if (items[i].visibility < min_visibility || items[i].visibility > max_visibility) continue;
+        if ((items[i].flags & required_flags) != required_flags) continue;
+        if ((items[i].flags & forbidden_flags) != 0) continue;
         if (!first) nob_sb_append(&sb, ';');
         nob_sb_append_buf(&sb, items[i].value.data ? items[i].value.data : "", items[i].value.count);
         first = false;
@@ -799,6 +758,19 @@ bool bm_query_target_property_value(const Build_Model *model,
         bm_query_target_raw_property_first(model, id, property_name, &raw);
         return bm_query_append_joined_values(scratch, out, structured, raw);
     }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_SYSTEM_INCLUDE_DIRECTORIES"))) {
+        if (!bm_query_append_joined_items_with_flags(scratch,
+                                                     &structured,
+                                                     target->include_directories,
+                                                     BM_VISIBILITY_PUBLIC,
+                                                     BM_VISIBILITY_INTERFACE,
+                                                     BM_ITEM_FLAG_SYSTEM,
+                                                     0)) {
+            return false;
+        }
+        bm_query_target_raw_property_first(model, id, property_name, &raw);
+        return bm_query_append_joined_values(scratch, out, structured, raw);
+    }
     if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("COMPILE_DEFINITIONS"))) {
         if (!bm_query_append_joined_items(scratch, &structured, target->compile_definitions, BM_VISIBILITY_PRIVATE, BM_VISIBILITY_PUBLIC)) {
             return false;
@@ -822,6 +794,20 @@ bool bm_query_target_property_value(const Build_Model *model,
     }
     if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_COMPILE_OPTIONS"))) {
         if (!bm_query_append_joined_items(scratch, &structured, target->compile_options, BM_VISIBILITY_PUBLIC, BM_VISIBILITY_INTERFACE)) {
+            return false;
+        }
+        bm_query_target_raw_property_first(model, id, property_name, &raw);
+        return bm_query_append_joined_values(scratch, out, structured, raw);
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("COMPILE_FEATURES"))) {
+        if (!bm_query_append_joined_items(scratch, &structured, target->compile_features, BM_VISIBILITY_PRIVATE, BM_VISIBILITY_PUBLIC)) {
+            return false;
+        }
+        bm_query_target_raw_property_first(model, id, property_name, &raw);
+        return bm_query_append_joined_values(scratch, out, structured, raw);
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES"))) {
+        if (!bm_query_append_joined_items(scratch, &structured, target->compile_features, BM_VISIBILITY_PUBLIC, BM_VISIBILITY_INTERFACE)) {
             return false;
         }
         bm_query_target_raw_property_first(model, id, property_name, &raw);
@@ -966,6 +952,11 @@ BM_String_Item_Span bm_query_directory_system_include_directories_raw(const Buil
     return directory ? bm_item_span(directory->system_include_directories) : (BM_String_Item_Span){0};
 }
 
+BM_String_Item_Span bm_query_directory_link_libraries_raw(const Build_Model *model, BM_Directory_Id id) {
+    const BM_Directory_Record *directory = bm_model_directory(model, id);
+    return directory ? bm_item_span(directory->link_libraries) : (BM_String_Item_Span){0};
+}
+
 BM_String_Item_Span bm_query_directory_link_directories_raw(const Build_Model *model, BM_Directory_Id id) {
     const BM_Directory_Record *directory = bm_model_directory(model, id);
     return directory ? bm_item_span(directory->link_directories) : (BM_String_Item_Span){0};
@@ -1000,6 +991,10 @@ BM_String_Item_Span bm_query_global_include_directories_raw(const Build_Model *m
 
 BM_String_Item_Span bm_query_global_system_include_directories_raw(const Build_Model *model) {
     return model ? bm_item_span(model->global_properties.system_include_directories) : (BM_String_Item_Span){0};
+}
+
+BM_String_Item_Span bm_query_global_link_libraries_raw(const Build_Model *model) {
+    return model ? bm_item_span(model->global_properties.link_libraries) : (BM_String_Item_Span){0};
 }
 
 BM_String_Item_Span bm_query_global_link_directories_raw(const Build_Model *model) {
@@ -1242,6 +1237,11 @@ BM_String_Item_Span bm_query_target_compile_definitions_raw(const Build_Model *m
 BM_String_Item_Span bm_query_target_compile_options_raw(const Build_Model *model, BM_Target_Id id) {
     const BM_Target_Record *target = bm_model_target(model, id);
     return target ? bm_item_span(target->compile_options) : (BM_String_Item_Span){0};
+}
+
+BM_String_Item_Span bm_query_target_compile_features_raw(const Build_Model *model, BM_Target_Id id) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? bm_item_span(target->compile_features) : (BM_String_Item_Span){0};
 }
 
 BM_String_Item_Span bm_query_target_link_options_raw(const Build_Model *model, BM_Target_Id id) {

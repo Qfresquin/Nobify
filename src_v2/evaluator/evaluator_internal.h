@@ -1631,6 +1631,19 @@ static inline bool eval_emit_target_compile_options(EvalExecContext *ctx,
     ev.as.target_compile_options.is_before = is_before;
     return emit_event(ctx, ev);
 }
+static inline bool eval_emit_target_compile_features(EvalExecContext *ctx,
+                                                     Event_Origin origin,
+                                                     String_View target_name,
+                                                     Cmake_Visibility visibility,
+                                                     String_View item) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TARGET_COMPILE_FEATURES;
+    ev.h.origin = origin;
+    ev.as.target_compile_features.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_compile_features.visibility = visibility;
+    ev.as.target_compile_features.item = sv_copy_to_event_arena(ctx, item);
+    return emit_event(ctx, ev);
+}
 static inline bool eval_emit_var_set_current(EvalExecContext *ctx,
                                              Event_Origin origin,
                                              String_View key,

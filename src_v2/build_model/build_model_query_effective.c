@@ -396,6 +396,15 @@ bool bm_query_target_effective_link_directories_items_with_context(const Build_M
     return bm_query_target_effective_items_common(model, id, ctx, scratch, out, BM_EFFECTIVE_LINK_DIRECTORIES);
 }
 
+bool bm_query_target_effective_compile_features_items(const Build_Model *model,
+                                                      BM_Target_Id id,
+                                                      const BM_Query_Eval_Context *ctx,
+                                                      Arena *scratch,
+                                                      BM_String_Item_Span *out) {
+    BM_Query_Eval_Context normalized = ctx ? *ctx : bm_default_query_eval_context(id, BM_QUERY_USAGE_COMPILE);
+    return bm_query_target_effective_items_common(model, id, &normalized, scratch, out, BM_EFFECTIVE_COMPILE_FEATURES);
+}
+
 bool bm_query_target_effective_include_directories(const Build_Model *model,
                                                    BM_Target_Id id,
                                                    Arena *scratch,

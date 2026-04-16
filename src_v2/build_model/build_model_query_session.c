@@ -268,21 +268,7 @@ static bool bm_query_session_effective_values_cached(BM_Query_Session *session,
     }
 
     if (count_stats) session->stats.effective_value_misses++;
-    if (kind == BM_EFFECTIVE_COMPILE_FEATURES) {
-        Arena *temp = arena_create(64 * 1024);
-        BM_String_Span computed = {0};
-        if (!temp) {
-            nob_sb_free(key);
-            return false;
-        }
-        if (!bm_query_target_effective_values_common(session->model, id, &normalized, temp, &computed, kind) ||
-            !bm_query_session_copy_string_span(session->arena, computed, &cached)) {
-            arena_destroy(temp);
-            nob_sb_free(key);
-            return false;
-        }
-        arena_destroy(temp);
-    } else {
+    {
         BM_String_Item_Span items = {0};
         if (!bm_query_session_effective_items_cached(session, id, &normalized, kind, false, &items) ||
             !bm_query_session_project_values_from_items(session->arena, items, &cached)) {
@@ -490,6 +476,18 @@ bool bm_query_session_target_effective_link_directories_items(BM_Query_Session *
                                                    id,
                                                    ctx,
                                                    BM_EFFECTIVE_LINK_DIRECTORIES,
+                                                   true,
+                                                   out);
+}
+
+bool bm_query_session_target_effective_compile_features_items(BM_Query_Session *session,
+                                                              BM_Target_Id id,
+                                                              const BM_Query_Eval_Context *ctx,
+                                                              BM_String_Item_Span *out) {
+    return bm_query_session_effective_items_cached(session,
+                                                   id,
+                                                   ctx,
+                                                   BM_EFFECTIVE_COMPILE_FEATURES,
                                                    true,
                                                    out);
 }

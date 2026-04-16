@@ -24,6 +24,7 @@ static bool bm_directory_apply_mutation(Arena *arena,
 static bool bm_apply_property_event(Arena *arena,
                                     BM_String_Item_View **include_directories,
                                     BM_String_Item_View **system_include_directories,
+                                    BM_String_Item_View **link_libraries,
                                     BM_String_Item_View **link_directories,
                                     BM_String_Item_View **compile_definitions,
                                     BM_String_Item_View **compile_options,
@@ -40,6 +41,18 @@ static bool bm_apply_property_event(Arena *arena,
 
     if (bm_sv_eq_ci_lit(mut->property_name, "LINK_DIRECTORIES")) {
         return bm_directory_apply_mutation(arena, link_directories, mut, provenance);
+    }
+
+    if (bm_sv_eq_ci_lit(mut->property_name, "LINK_LIBRARIES")) {
+        return bm_directory_apply_mutation(arena, link_libraries, mut, provenance) &&
+               bm_record_raw_property(arena,
+                                      raw_properties,
+                                      mut->property_name,
+                                      mut->op,
+                                      mut->modifier_flags,
+                                      mut->items,
+                                      mut->item_count,
+                                      provenance);
     }
 
     if (bm_sv_eq_ci_lit(mut->property_name, "COMPILE_DEFINITIONS")) {
@@ -110,6 +123,7 @@ bool bm_builder_handle_directory_event(BM_Builder *builder, const Event *ev) {
             if (!bm_apply_property_event(builder->arena,
                                          &directory->include_directories,
                                          &directory->system_include_directories,
+                                         &directory->link_libraries,
                                          &directory->link_directories,
                                          &directory->compile_definitions,
                                          &directory->compile_options,
@@ -126,6 +140,7 @@ bool bm_builder_handle_directory_event(BM_Builder *builder, const Event *ev) {
             if (!bm_apply_property_event(builder->arena,
                                          &draft->global_properties.include_directories,
                                          &draft->global_properties.system_include_directories,
+                                         &draft->global_properties.link_libraries,
                                          &draft->global_properties.link_directories,
                                          &draft->global_properties.compile_definitions,
                                          &draft->global_properties.compile_options,

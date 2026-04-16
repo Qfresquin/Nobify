@@ -127,7 +127,7 @@ static bool cg_collect_known_configs(CG_Context *ctx) {
         !cg_scan_configs_from_items(ctx, bm_query_global_compile_options_raw(ctx->model).items) ||
         !cg_scan_configs_from_items(ctx, bm_query_global_link_options_raw(ctx->model).items) ||
         !cg_scan_configs_from_items(ctx, bm_query_global_link_directories_raw(ctx->model).items) ||
-        !cg_scan_configs_from_span(ctx, bm_query_global_raw_property_items(ctx->model, nob_sv_from_cstr("LINK_LIBRARIES")))) {
+        !cg_scan_configs_from_items(ctx, bm_query_global_link_libraries_raw(ctx->model).items)) {
         return false;
     }
 
@@ -135,11 +135,11 @@ static bool cg_collect_known_configs(CG_Context *ctx) {
         BM_Directory_Id id = (BM_Directory_Id)i;
         if (!cg_scan_configs_from_items(ctx, bm_query_directory_include_directories_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_directory_system_include_directories_raw(ctx->model, id).items) ||
+            !cg_scan_configs_from_items(ctx, bm_query_directory_link_libraries_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_directory_link_directories_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_directory_compile_definitions_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_directory_compile_options_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_items(ctx, bm_query_directory_link_options_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_span(ctx, bm_query_directory_raw_property_items(ctx->model, id, nob_sv_from_cstr("LINK_LIBRARIES")))) {
+            !cg_scan_configs_from_items(ctx, bm_query_directory_link_options_raw(ctx->model, id).items)) {
             return false;
         }
     }
@@ -149,6 +149,7 @@ static bool cg_collect_known_configs(CG_Context *ctx) {
         if (!cg_scan_configs_from_items(ctx, bm_query_target_include_directories_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_target_compile_definitions_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_target_compile_options_raw(ctx->model, id).items) ||
+            !cg_scan_configs_from_items(ctx, bm_query_target_compile_features_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_target_link_libraries_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_target_link_options_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_target_link_directories_raw(ctx->model, id).items)) {

@@ -138,6 +138,7 @@ typedef struct {
 typedef struct {
     BM_String_Item_View *include_directories;
     BM_String_Item_View *system_include_directories;
+    BM_String_Item_View *link_libraries;
     BM_String_Item_View *link_directories;
     BM_String_Item_View *compile_definitions;
     BM_String_Item_View *compile_options;
@@ -154,6 +155,7 @@ typedef struct {
     BM_Provenance provenance;
     BM_String_Item_View *include_directories;
     BM_String_Item_View *system_include_directories;
+    BM_String_Item_View *link_libraries;
     BM_String_Item_View *link_directories;
     BM_String_Item_View *compile_definitions;
     BM_String_Item_View *compile_options;
@@ -188,6 +190,7 @@ typedef struct {
     BM_String_Item_View *include_directories;
     BM_String_Item_View *compile_definitions;
     BM_String_Item_View *compile_options;
+    BM_String_Item_View *compile_features;
     String_View output_name;
     String_View prefix;
     String_View suffix;

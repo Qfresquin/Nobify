@@ -55,6 +55,8 @@ BM_String_Item_Span bm_query_directory_system_include_directories_raw(const Buil
                                                                       BM_Directory_Id id);
 BM_String_Item_Span bm_query_directory_link_directories_raw(const Build_Model *model,
                                                             BM_Directory_Id id);
+BM_String_Item_Span bm_query_directory_link_libraries_raw(const Build_Model *model,
+                                                          BM_Directory_Id id);
 
 BM_String_Item_Span bm_query_global_include_directories_raw(const Build_Model *model);
 BM_String_Item_Span bm_query_global_system_include_directories_raw(const Build_Model *model);
@@ -62,14 +64,16 @@ BM_String_Item_Span bm_query_global_link_directories_raw(const Build_Model *mode
 BM_String_Item_Span bm_query_global_compile_definitions_raw(const Build_Model *model);
 BM_String_Item_Span bm_query_global_compile_options_raw(const Build_Model *model);
 BM_String_Item_Span bm_query_global_link_options_raw(const Build_Model *model);
+BM_String_Item_Span bm_query_global_link_libraries_raw(const Build_Model *model);
 BM_String_Span bm_query_global_raw_property_items(const Build_Model *model,
                                                   String_View property_name);
 ```
 
 `bm_query_global_raw_property_items(...)` is the canonical escape hatch for
 global raw properties that are reconstructed but not yet promoted to dedicated
-named accessors. Codegen and tests may use it for keys such as
-`LINK_LIBRARIES`, while the model remains fully opaque.
+named accessors. Usage-requirement families such as `LINK_LIBRARIES` now have
+typed named accessors; the raw-property query remains for custom and
+unsupported global keys while the model stays opaque.
 
 ### Target Raw Accessors
 
@@ -157,6 +161,8 @@ BM_String_Item_Span bm_query_target_compile_definitions_raw(const Build_Model *m
                                                             BM_Target_Id id);
 BM_String_Item_Span bm_query_target_compile_options_raw(const Build_Model *model,
                                                         BM_Target_Id id);
+BM_String_Item_Span bm_query_target_compile_features_raw(const Build_Model *model,
+                                                         BM_Target_Id id);
 BM_String_Item_Span bm_query_target_link_options_raw(const Build_Model *model,
                                                      BM_Target_Id id);
 BM_String_Item_Span bm_query_target_link_directories_raw(const Build_Model *model,
@@ -208,6 +214,12 @@ bool bm_query_target_effective_compile_options_items(const Build_Model *model,
                                                      Arena *scratch,
                                                      BM_String_Item_Span *out);
 
+bool bm_query_target_effective_compile_features_items(const Build_Model *model,
+                                                      BM_Target_Id id,
+                                                      const BM_Query_Eval_Context *ctx,
+                                                      Arena *scratch,
+                                                      BM_String_Item_Span *out);
+
 bool bm_query_target_effective_link_libraries_items(const Build_Model *model,
                                                     BM_Target_Id id,
                                                     Arena *scratch,
@@ -237,6 +249,12 @@ bool bm_query_target_effective_compile_options(const Build_Model *model,
                                                BM_Target_Id id,
                                                Arena *scratch,
                                                BM_String_Span *out);
+
+bool bm_query_target_effective_compile_features(const Build_Model *model,
+                                                BM_Target_Id id,
+                                                const BM_Query_Eval_Context *ctx,
+                                                Arena *scratch,
+                                                BM_String_Span *out);
 
 bool bm_query_target_effective_link_libraries(const Build_Model *model,
                                               BM_Target_Id id,
@@ -292,7 +310,7 @@ The canonical memoized surface covers:
 
 - effective include directories, compile definitions, compile options, link
   libraries, link options, and link directories in both item and value form
-- effective compile features
+- effective compile features in both item and value form
 - effective imported/local target file and linker file resolution
 - imported link-language lookup
 
@@ -405,7 +423,10 @@ evaluator carry-through:
 - `CXX_MODULE_DIRS[_<name>]`
 
 Effective link-library reconstruction also includes raw `LINK_LIBRARIES`
-properties from global and directory scopes when they exist in the model.
+item spans from global and directory scopes through
+`bm_query_global_link_libraries_raw(...)` and
+`bm_query_directory_link_libraries_raw(...)`; codegen no longer depends on the
+raw property bag for this family.
 
 Effective queries must never mutate the model.
 They also must not persist inferred edges back into `Build_Model`; all such

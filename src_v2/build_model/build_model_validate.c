@@ -784,6 +784,7 @@ static bool bm_target_has_typed_payload(const BM_Target_Record *target) {
            arena_arr_len(target->include_directories) > 0 ||
            arena_arr_len(target->compile_definitions) > 0 ||
            arena_arr_len(target->compile_options) > 0 ||
+           arena_arr_len(target->compile_features) > 0 ||
            !bm_string_view_is_empty(target->output_name) ||
            !bm_string_view_is_empty(target->prefix) ||
            !bm_string_view_is_empty(target->suffix) ||

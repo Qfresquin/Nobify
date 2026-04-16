@@ -147,6 +147,7 @@ typedef enum {
     X(EVENT_TARGET_INCLUDE_DIRECTORIES, EVENT_FAMILY_TARGET, "target_include_directories", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TARGET_COMPILE_DEFINITIONS, EVENT_FAMILY_TARGET, "target_compile_definitions", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TARGET_COMPILE_OPTIONS, EVENT_FAMILY_TARGET, "target_compile_options", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TARGET_COMPILE_FEATURES, EVENT_FAMILY_TARGET, "target_compile_features", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_EXPORT_INSTALL, EVENT_FAMILY_EXPORT, "export_install", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_EXPORT_BUILD_DECLARE, EVENT_FAMILY_EXPORT, "export_build_declare", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_EXPORT_BUILD_ADD_TARGET, EVENT_FAMILY_EXPORT, "export_build_add_target", EVENT_ROLE_BUILD_SEMANTIC) \
@@ -939,6 +940,12 @@ typedef struct {
 } Event_Target_Compile_Options;
 
 typedef struct {
+    String_View target_name;
+    Cmake_Visibility visibility;
+    String_View item;
+} Event_Target_Compile_Features;
+
+typedef struct {
     String_View path;
     bool no_policy_scope;
 } Event_Include_Begin;
@@ -1095,6 +1102,7 @@ typedef struct {
         Event_Target_Include_Directories target_include_directories;
         Event_Target_Compile_Definitions target_compile_definitions;
         Event_Target_Compile_Options target_compile_options;
+        Event_Target_Compile_Features target_compile_features;
         Event_Export_Install export_install;
         Event_Export_Build_Declare export_build_declare;
         Event_Export_Build_Add_Target export_build_add_target;
@@ -1147,6 +1155,7 @@ typedef Event_Diag_Severity Cmake_Diag_Severity;
 #define EV_TARGET_INCLUDE_DIRECTORIES EVENT_TARGET_INCLUDE_DIRECTORIES
 #define EV_TARGET_COMPILE_DEFINITIONS EVENT_TARGET_COMPILE_DEFINITIONS
 #define EV_TARGET_COMPILE_OPTIONS EVENT_TARGET_COMPILE_OPTIONS
+#define EV_TARGET_COMPILE_FEATURES EVENT_TARGET_COMPILE_FEATURES
 #define EV_TARGET_LINK_LIBRARIES EVENT_TARGET_LINK_LIBRARIES
 #define EV_TARGET_LINK_OPTIONS EVENT_TARGET_LINK_OPTIONS
 #define EV_TARGET_LINK_DIRECTORIES EVENT_TARGET_LINK_DIRECTORIES

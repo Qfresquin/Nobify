@@ -77,6 +77,7 @@ static bool bm_is_supported_build_event(Event_Kind kind) {
         case EVENT_TARGET_INCLUDE_DIRECTORIES:
         case EVENT_TARGET_COMPILE_DEFINITIONS:
         case EVENT_TARGET_COMPILE_OPTIONS:
+        case EVENT_TARGET_COMPILE_FEATURES:
         case EVENT_TEST_ENABLE:
         case EVENT_TEST_ADD:
         case EVENT_INSTALL_RULE_ADD:
@@ -661,6 +662,7 @@ bool bm_builder_apply_event(BM_Builder *builder, const Event *ev) {
         case EVENT_TARGET_INCLUDE_DIRECTORIES:
         case EVENT_TARGET_COMPILE_DEFINITIONS:
         case EVENT_TARGET_COMPILE_OPTIONS:
+        case EVENT_TARGET_COMPILE_FEATURES:
             if (ev->h.kind == EVENT_SOURCE_MARK_GENERATED ||
                 ev->h.kind == EVENT_SOURCE_PROPERTY_MUTATE ||
                 ev->h.kind == EVENT_BUILD_STEP_DECLARE ||

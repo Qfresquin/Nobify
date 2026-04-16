@@ -229,6 +229,7 @@ static bool bm_clone_global_state(Arena *arena,
                                   const BM_Global_Property_State *src) {
     return bm_clone_item_array(arena, &dest->include_directories, src->include_directories) &&
            bm_clone_item_array(arena, &dest->system_include_directories, src->system_include_directories) &&
+           bm_clone_item_array(arena, &dest->link_libraries, src->link_libraries) &&
            bm_clone_item_array(arena, &dest->link_directories, src->link_directories) &&
            bm_clone_item_array(arena, &dest->compile_definitions, src->compile_definitions) &&
            bm_clone_item_array(arena, &dest->compile_options, src->compile_options) &&
@@ -256,6 +257,7 @@ static bool bm_clone_directories(const Build_Model_Draft *draft, Build_Model *mo
             !bm_clone_provenance(arena, &record.provenance, draft->directories[i].provenance) ||
             !bm_clone_item_array(arena, &record.include_directories, draft->directories[i].include_directories) ||
             !bm_clone_item_array(arena, &record.system_include_directories, draft->directories[i].system_include_directories) ||
+            !bm_clone_item_array(arena, &record.link_libraries, draft->directories[i].link_libraries) ||
             !bm_clone_item_array(arena, &record.link_directories, draft->directories[i].link_directories) ||
             !bm_clone_item_array(arena, &record.compile_definitions, draft->directories[i].compile_definitions) ||
             !bm_clone_item_array(arena, &record.compile_options, draft->directories[i].compile_options) ||
@@ -295,6 +297,7 @@ static bool bm_clone_targets(const Build_Model_Draft *draft, Build_Model *model,
             !bm_clone_item_array(arena, &target.include_directories, src->include_directories) ||
             !bm_clone_item_array(arena, &target.compile_definitions, src->compile_definitions) ||
             !bm_clone_item_array(arena, &target.compile_options, src->compile_options) ||
+            !bm_clone_item_array(arena, &target.compile_features, src->compile_features) ||
             !bm_clone_raw_properties(arena, &target.raw_properties, src->raw_properties)) {
             return false;
         }

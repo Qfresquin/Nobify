@@ -142,7 +142,7 @@ Control rules:
 | `include_directories` | native | `yes` | `directory` | `canonical` | `yes` | `indirect` |
 | `include_guard` | native | `no` | `none` | `none` | `n/a` | `none` |
 | `link_directories` | native | `yes` | `directory` | `canonical` | `yes` | `indirect` |
-| `link_libraries` | native | `yes` | `target/directory` | `subset` | `subset` | `indirect` |
+| `link_libraries` | native | `yes` | `target/directory` | `subset` | `subset` | `direct` |
 | `macro` | structural | `no` | `none` | `none` | `n/a` | `none` |
 | `mark_as_advanced` | native | `no` | `none` | `none` | `n/a` | `none` |
 | `math` | native | `no` | `none` | `none` | `n/a` | `none` |
@@ -151,8 +151,8 @@ Control rules:
 | `project` | native | `yes` | `project` | `canonical` | `yes` | `indirect` |
 | `return` | native | `no` | `none` | `none` | `n/a` | `none` |
 | `set` | native | `no` | `none` | `none` | `n/a` | `none` |
-| `set_property` | native | `yes` | `target/directory/test` | `subset` | `subset` | `indirect` |
-| `set_target_properties` | native | `yes` | `target` | `subset` | `subset` | `indirect` |
+| `set_property` | native | `yes` | `target/directory/test` | `subset` | `subset` | `direct` |
+| `set_target_properties` | native | `yes` | `target` | `subset` | `subset` | `direct` |
 | `source_group` | native | `no` | `none` | `none` | `n/a` | `none` |
 | `target_compile_definitions` | native | `yes` | `target` | `canonical` | `yes` | `direct` |
 | `target_compile_options` | native | `yes` | `target` | `canonical` | `yes` | `direct` |
@@ -214,7 +214,7 @@ Control rules:
 | `site_name` | native | `no` | `none` | `none` | `n/a` | `none` |
 | `subdir_depends` | native | `yes` | `none` | `none` | `boundary` | `none` |
 | `subdirs` | native | `yes` | `none` | `none` | `boundary` | `none` |
-| `target_compile_features` | native | `yes` | `target` | `canonical` | `yes` | `indirect` |
+| `target_compile_features` | native | `yes` | `target` | `canonical` | `yes` | `direct` |
 | `target_precompile_headers` | native | `yes` | `target` | `ownership_only` | `boundary` | `indirect` |
 | `target_sources` | native | `yes` | `target` | `canonical` | `yes` | `direct` |
 | `try_run` | native | `yes` | `replay` | `ownership_only` | `boundary` | `indirect` |

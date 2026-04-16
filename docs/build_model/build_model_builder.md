@@ -61,6 +61,7 @@ The release-1 supported build-semantic set is:
 - `EVENT_TARGET_INCLUDE_DIRECTORIES`
 - `EVENT_TARGET_COMPILE_DEFINITIONS`
 - `EVENT_TARGET_COMPILE_OPTIONS`
+- `EVENT_TARGET_COMPILE_FEATURES`
 - `EVENT_TEST_ENABLE`
 - `EVENT_TEST_ADD`
 - `EVENT_INSTALL_RULE_ADD`
@@ -110,6 +111,7 @@ Release-1 typed directory/global properties are:
 - `COMPILE_DEFINITIONS`
 - `COMPILE_OPTIONS`
 - `LINK_OPTIONS`
+- `LINK_LIBRARIES`
 
 Other directory/global properties are stored in a raw future-facing property
 bag. They are not dropped silently.
@@ -123,11 +125,18 @@ bag. They are not dropped silently.
 - `EVENT_TARGET_ADD_SOURCE` appends a raw source path without hidden path
   normalization.
 - `EVENT_TARGET_ADD_DEPENDENCY` appends an explicit dependency name reference.
-- `EVENT_TARGET_PROP_SET` updates typed scalar properties when the property name
-  is one of the promoted release-1 keys; otherwise it is recorded in the raw
-  property bag.
+- visibility-aware target events and `EVENT_TARGET_COMPILE_FEATURES` are stored
+  as typed raw item entries without flattening transitive semantics
+- `EVENT_TARGET_PROP_SET` updates typed scalar properties for the promoted
+  scalar keys below and also promotes supported usage-requirement setters into
+  the same typed item families used by the direct target events
+- promoted `SET` operations replace only the matching logical subfamily inside a
+  shared typed array; for example `INTERFACE_INCLUDE_DIRECTORIES` does not wipe
+  `INTERFACE_SYSTEM_INCLUDE_DIRECTORIES`
+- unsupported target properties, custom metadata, and `APPEND_STRING` payloads
+  remain in the raw property bag
 
-Release-1 promoted target property keys are:
+Release-1 promoted scalar target property keys are:
 - `OUTPUT_NAME`
 - `PREFIX`
 - `SUFFIX`
@@ -135,6 +144,23 @@ Release-1 promoted target property keys are:
 - `LIBRARY_OUTPUT_DIRECTORY`
 - `RUNTIME_OUTPUT_DIRECTORY`
 - `FOLDER`
+
+Release-1 promoted usage-requirement target property keys are:
+- `INCLUDE_DIRECTORIES`
+- `INTERFACE_INCLUDE_DIRECTORIES`
+- `INTERFACE_SYSTEM_INCLUDE_DIRECTORIES`
+- `COMPILE_DEFINITIONS`
+- `INTERFACE_COMPILE_DEFINITIONS`
+- `COMPILE_OPTIONS`
+- `INTERFACE_COMPILE_OPTIONS`
+- `COMPILE_FEATURES`
+- `INTERFACE_COMPILE_FEATURES`
+- `LINK_LIBRARIES`
+- `INTERFACE_LINK_LIBRARIES`
+- `LINK_OPTIONS`
+- `INTERFACE_LINK_OPTIONS`
+- `LINK_DIRECTORIES`
+- `INTERFACE_LINK_DIRECTORIES`
 
 Visibility-aware target events are stored as typed raw entries. The builder does
 not flatten visibility or transitive effects during ingest.

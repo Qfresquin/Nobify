@@ -2223,6 +2223,89 @@ TEST(codegen_export_targets_writes_build_tree_exports_without_implicit_build) {
     TEST_PASS();
 }
 
+TEST(codegen_property_setter_usage_requirements_drive_build_and_export_metadata) {
+    const char *install_argv[] = {"install", "--prefix", "prop_item_prefix"};
+    const char *export_argv[] = {"export"};
+    Arena *arena = arena_create(512 * 1024);
+    String_View generated = {0};
+    String_View build_export = {0};
+    String_View install_export = {0};
+    const char *script =
+        "project(Test LANGUAGES C)\n"
+        "add_library(core STATIC core.c)\n"
+        "set_target_properties(core PROPERTIES\n"
+        "  INTERFACE_INCLUDE_DIRECTORIES include\n"
+        "  INTERFACE_SYSTEM_INCLUDE_DIRECTORIES sysinclude\n"
+        "  INTERFACE_COMPILE_DEFINITIONS CORE_IFACE_DEF=1\n"
+        "  INTERFACE_COMPILE_OPTIONS -Winvalid-pch\n"
+        "  INTERFACE_COMPILE_FEATURES c_std_11\n"
+        "  INTERFACE_LINK_OPTIONS -Wl,--as-needed\n"
+        "  INTERFACE_LINK_DIRECTORIES linkdirs\n"
+        "  INTERFACE_LINK_LIBRARIES m\n"
+        "  PUBLIC_HEADER include/core.h)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE core)\n"
+        "install(TARGETS core EXPORT DemoTargets ARCHIVE DESTINATION lib PUBLIC_HEADER DESTINATION include/demo)\n"
+        "install(EXPORT DemoTargets DESTINATION share/cmake/Demo FILE DemoTargets.cmake NAMESPACE Demo::)\n"
+        "export(TARGETS core FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/CoreTargets.cmake NAMESPACE Demo::)\n";
+    Codegen_Test_Config config = {
+        .input_path = "prop_item_src/CMakeLists.txt",
+        .output_path = "prop_item_nob.c",
+        .source_dir = "prop_item_src",
+        .binary_dir = "prop_item_build",
+    };
+
+    ASSERT(arena != NULL);
+    ASSERT(codegen_write_text_file("prop_item_src/core.c", "int core_value(void) { return 42; }\n"));
+    ASSERT(codegen_write_text_file("prop_item_src/include/core.h",
+                                   "#pragma once\n"
+                                   "#include <sys_iface.h>\n"
+                                   "int core_value(void);\n"));
+    ASSERT(codegen_write_text_file("prop_item_src/sysinclude/sys_iface.h",
+                                   "#pragma once\n"
+                                   "#define SYS_IFACE_VALUE 41\n"));
+    ASSERT(codegen_write_text_file("prop_item_src/linkdirs/README.txt", "placeholder\n"));
+    ASSERT(codegen_write_text_file("prop_item_src/main.c",
+                                   "#include \"core.h\"\n"
+                                   "#include <math.h>\n"
+                                   "#ifndef CORE_IFACE_DEF\n"
+                                   "#error CORE_IFACE_DEF missing\n"
+                                   "#endif\n"
+                                   "_Static_assert(SYS_IFACE_VALUE == 41, \"sys include missing\");\n"
+                                   "int main(void) {\n"
+                                   "    return (int)sqrt((double)core_value()) == 6 ? 0 : 1;\n"
+                                   "}\n"));
+
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_load_text_file_to_arena(arena, "prop_item_nob.c", &generated));
+    ASSERT(codegen_sv_contains(generated, "\"-Winvalid-pch\""));
+    ASSERT(codegen_sv_contains(generated, "-isystem"));
+    ASSERT(codegen_sv_contains(generated, "linkdirs"));
+    ASSERT(codegen_sv_contains(generated, "-Wl,--as-needed"));
+
+    ASSERT(codegen_compile_generated_nob("prop_item_nob.c", "prop_item_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir(".", "./prop_item_nob_gen", "app", NULL));
+    ASSERT(codegen_run_binary_in_dir(".", "prop_item_build/app", NULL, NULL));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./prop_item_nob_gen", export_argv, NOB_ARRAY_LEN(export_argv)));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./prop_item_nob_gen", install_argv, NOB_ARRAY_LEN(install_argv)));
+
+    ASSERT(codegen_load_text_file_to_arena(arena,
+                                           "prop_item_build/exports/CoreTargets-noconfig.cmake",
+                                           &build_export));
+    ASSERT(codegen_load_text_file_to_arena(arena,
+                                           "prop_item_prefix/share/cmake/Demo/DemoTargets-noconfig.cmake",
+                                           &install_export));
+    ASSERT(codegen_sv_contains(build_export, "INTERFACE_INCLUDE_DIRECTORIES"));
+    ASSERT(codegen_sv_contains(build_export, "INTERFACE_SYSTEM_INCLUDE_DIRECTORIES"));
+    ASSERT(codegen_sv_contains(build_export, "INTERFACE_COMPILE_FEATURES"));
+    ASSERT(codegen_sv_contains(install_export, "INTERFACE_INCLUDE_DIRECTORIES"));
+    ASSERT(codegen_sv_contains(install_export, "INTERFACE_SYSTEM_INCLUDE_DIRECTORIES"));
+    ASSERT(codegen_sv_contains(install_export, "INTERFACE_COMPILE_FEATURES"));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(codegen_export_export_set_writes_build_tree_exports_from_install_sets) {
     const char *export_argv[] = {"export"};
     const char *script =
@@ -2371,6 +2454,7 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_debug_and_optimized_link_items_follow_generated_config(passed, failed, skipped);
     test_codegen_build_steps_resolve_target_file_and_target_linker_file_genex(passed, failed, skipped);
     test_codegen_export_targets_writes_build_tree_exports_without_implicit_build(passed, failed, skipped);
+    test_codegen_property_setter_usage_requirements_drive_build_and_export_metadata(passed, failed, skipped);
     test_codegen_export_export_set_writes_build_tree_exports_from_install_sets(passed, failed, skipped);
     test_codegen_export_package_writes_registry_and_clean_preserves_it(passed, failed, skipped);
     test_codegen_package_tgz_generator_creates_archive_in_custom_output_dir(passed, failed, skipped);

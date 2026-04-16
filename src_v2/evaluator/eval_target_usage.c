@@ -572,13 +572,13 @@ static bool target_usage_apply_item_entries(EvalExecContext *ctx,
         Cmake_Target_Property_Op prop_op = target_usage_item_property_op(entry);
 
         if (direct_prop.count > 0 && target_usage_visibility_writes_direct(entry->visibility)) {
-            if (!target_usage_store_and_emit_target_property(
+            if (!target_usage_store_target_property(
                     ctx, origin, target_name, direct_prop, entry->item, prop_op)) {
                 return false;
             }
         }
         if (interface_prop.count > 0 && target_usage_visibility_writes_interface(entry->visibility)) {
-            if (!target_usage_store_and_emit_target_property(
+            if (!target_usage_store_target_property(
                     ctx, origin, target_name, interface_prop, entry->item, prop_op)) {
                 return false;
             }
@@ -604,31 +604,31 @@ static bool target_usage_apply_include_directory_entries(EvalExecContext *ctx,
         Cmake_Target_Property_Op prop_op = target_usage_item_property_op(entry);
 
         if (target_usage_visibility_writes_direct(entry->visibility)) {
-            if (!target_usage_store_and_emit_target_property(ctx,
-                                                             origin,
-                                                             target_name,
-                                                             nob_sv_from_cstr("INCLUDE_DIRECTORIES"),
-                                                             entry->item,
-                                                             prop_op)) {
+            if (!target_usage_store_target_property(ctx,
+                                                    origin,
+                                                    target_name,
+                                                    nob_sv_from_cstr("INCLUDE_DIRECTORIES"),
+                                                    entry->item,
+                                                    prop_op)) {
                 return false;
             }
         }
         if (target_usage_visibility_writes_interface(entry->visibility)) {
-            if (!target_usage_store_and_emit_target_property(ctx,
-                                                             origin,
-                                                             target_name,
-                                                             nob_sv_from_cstr("INTERFACE_INCLUDE_DIRECTORIES"),
-                                                             entry->item,
-                                                             prop_op)) {
+            if (!target_usage_store_target_property(ctx,
+                                                    origin,
+                                                    target_name,
+                                                    nob_sv_from_cstr("INTERFACE_INCLUDE_DIRECTORIES"),
+                                                    entry->item,
+                                                    prop_op)) {
                 return false;
             }
             if (entry->is_system &&
-                !target_usage_store_and_emit_target_property(ctx,
-                                                             origin,
-                                                             target_name,
-                                                             nob_sv_from_cstr("INTERFACE_SYSTEM_INCLUDE_DIRECTORIES"),
-                                                             entry->item,
-                                                             prop_op)) {
+                !target_usage_store_target_property(ctx,
+                                                    origin,
+                                                    target_name,
+                                                    nob_sv_from_cstr("INTERFACE_SYSTEM_INCLUDE_DIRECTORIES"),
+                                                    entry->item,
+                                                    prop_op)) {
                 return false;
             }
         }
@@ -690,6 +690,43 @@ static bool target_usage_emit_compile_options_entry(EvalExecContext *ctx,
                                                     const Target_Usage_Item_Entry *entry) {
     return eval_emit_target_compile_options(
         ctx, origin, target_name, entry->visibility, entry->item, entry->is_before);
+}
+
+static bool target_usage_apply_compile_feature_groups(EvalExecContext *ctx,
+                                                      Cmake_Event_Origin origin,
+                                                      String_View target_name,
+                                                      const Target_Usage_Visibility_Group *groups) {
+    if (!ctx) return false;
+
+    for (size_t gi = 0; gi < arena_arr_len(groups); gi++) {
+        const Target_Usage_Visibility_Group *group = &groups[gi];
+        for (size_t ii = 0; ii < arena_arr_len(group->items); ii++) {
+            String_View item = group->items[ii];
+            if (target_usage_visibility_writes_direct(group->visibility) &&
+                !target_usage_store_target_property(ctx,
+                                                    origin,
+                                                    target_name,
+                                                    nob_sv_from_cstr("COMPILE_FEATURES"),
+                                                    item,
+                                                    EV_PROP_APPEND_LIST)) {
+                return false;
+            }
+            if (target_usage_visibility_writes_interface(group->visibility) &&
+                !target_usage_store_target_property(ctx,
+                                                    origin,
+                                                    target_name,
+                                                    nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES"),
+                                                    item,
+                                                    EV_PROP_APPEND_LIST)) {
+                return false;
+            }
+            if (!eval_emit_target_compile_features(ctx, origin, target_name, group->visibility, item)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
 
 static bool target_usage_parse_item_request(EvalExecContext *ctx,
@@ -1613,12 +1650,7 @@ Eval_Result eval_handle_target_compile_features(EvalExecContext *ctx, const Node
         return eval_result_from_ctx(ctx);
     }
 
-    if (!target_usage_apply_visibility_groups(ctx,
-                                              o,
-                                              req.target_name,
-                                              req.groups,
-                                              nob_sv_from_cstr("COMPILE_FEATURES"),
-                                              nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES"))) {
+    if (!target_usage_apply_compile_feature_groups(ctx, o, req.target_name, req.groups)) {
         return eval_result_from_ctx(ctx);
     }
 

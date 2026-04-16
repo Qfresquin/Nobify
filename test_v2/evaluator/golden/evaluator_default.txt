@@ -3,36 +3,29 @@ CASES 103
 
 === CASE golden_core_flow ===
 DIAG errors=0 warnings=0
-EVENTS count=5
+EVENTS count=4
 EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CoreDemo' version='1.0' description='' languages='C;CXX'
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=3 name='core_app' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=3 target='core_app' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=5 col=3 target='core_app' key='COMPILE_DEFINITIONS' value='CORE_OK=1' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=3 target='core_app' item='CORE_OK=1' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=3 target='core_app' item='CORE_OK=1' vis=PRIVATE
 === END CASE ===
 
 === CASE golden_targets_props_events ===
 DIAG errors=0 warnings=0
-EVENTS count=19
+EVENTS count=13
 EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='TargetDemo' version='' description='' languages='C;CXX'
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='app' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='app' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
 EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='app' path='util.c' vis=PRIVATE kind=REGULAR file_set=''
 EV[4] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='lib' type=LIB_STATIC
 EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='lib' path='lib.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[6] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=4 col=1 target='app' key='INCLUDE_DIRECTORIES' value='include' op=APPEND_LIST
-EV[7] kind=EV_TARGET_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=4 col=1 target='app' path='include' vis=PRIVATE is_system=0 is_before=0
-EV[8] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=5 col=1 target='app' key='COMPILE_DEFINITIONS' value='APPDEF=1' op=APPEND_LIST
-EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='app' item='APPDEF=1' vis=PRIVATE
-EV[10] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='app' key='COMPILE_OPTIONS' value='-Wall' op=APPEND_LIST
-EV[11] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=6 col=1 target='app' item='-Wall' vis=PRIVATE is_before=0
-EV[12] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=7 col=1 target='app' key='LINK_OPTIONS' value='-Wl,--as-needed' op=APPEND_LIST
-EV[13] kind=EV_TARGET_LINK_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-Wl,--as-needed' vis=PRIVATE is_before=0
-EV[14] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=8 col=1 target='app' key='LINK_DIRECTORIES' value='lib' op=APPEND_LIST
-EV[15] kind=EV_TARGET_LINK_DIRECTORIES file='CMakeLists.txt' line=8 col=1 target='app' path='lib' vis=PRIVATE
-EV[16] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='app' key='LINK_LIBRARIES' value='lib' op=APPEND_LIST
-EV[17] kind=EV_TARGET_LINK_LIBRARIES file='CMakeLists.txt' line=9 col=1 target='app' item='lib' vis=PRIVATE
-EV[18] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='app' key='OUTPUT_NAME' value='appx' op=SET
+EV[6] kind=EV_TARGET_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=4 col=1 target='app' path='include' vis=PRIVATE is_system=0 is_before=0
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='app' item='APPDEF=1' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=6 col=1 target='app' item='-Wall' vis=PRIVATE is_before=0
+EV[9] kind=EV_TARGET_LINK_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-Wl,--as-needed' vis=PRIVATE is_before=0
+EV[10] kind=EV_TARGET_LINK_DIRECTORIES file='CMakeLists.txt' line=8 col=1 target='app' path='lib' vis=PRIVATE
+EV[11] kind=EV_TARGET_LINK_LIBRARIES file='CMakeLists.txt' line=9 col=1 target='app' item='lib' vis=PRIVATE
+EV[12] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='app' key='OUTPUT_NAME' value='appx' op=SET
 === END CASE ===
 
 === CASE golden_find_package_and_include ===
@@ -46,12 +39,11 @@ EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='fp' p
 
 === CASE golden_file_ops_and_security ===
 DIAG errors=0 warnings=0
-EVENTS count=5
+EVENTS count=4
 EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='FileDemo' version='' description='' languages='C;CXX'
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='file_app' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='file_app' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=5 col=1 target='file_app' key='COMPILE_DEFINITIONS' value='OUT_hello' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_app' item='OUT_hello' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_app' item='OUT_hello' vis=PRIVATE
 === END CASE ===
 
 === CASE golden_cpack_commands ===
@@ -76,52 +68,42 @@ EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='probe
 
 === CASE try_compile_source_from_content_copy_file_and_cache ===
 DIAG errors=0 warnings=0
-EVENTS count=7
+EVENTS count=5
 EV[0] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=1 col=1 key='TC_CONTENT_OK' value='TRUE'
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='tc_content' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='tc_content' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='tc_content' key='COMPILE_DEFINITIONS' value='TC_CONTENT_OK=TRUE' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='tc_content' key='COMPILE_DEFINITIONS' value='TC_FLAG=' op=APPEND_LIST
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='tc_content' item='TC_CONTENT_OK=TRUE' vis=PRIVATE
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='tc_content' item='TC_FLAG=' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='tc_content' item='TC_CONTENT_OK=TRUE' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='tc_content' item='TC_FLAG=' vis=PRIVATE
 === END CASE ===
 
 === CASE try_compile_sources_missing_with_no_cache ===
 DIAG errors=0 warnings=0
-EVENTS count=6
+EVENTS count=4
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='tc_missing' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='tc_missing' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=3 col=1 target='tc_missing' key='COMPILE_DEFINITIONS' value='TC_MISSING=FALSE' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=3 col=1 target='tc_missing' key='COMPILE_DEFINITIONS' value='TC_MISSING_MSG=try_compile source file not found: ./missing_a.c\n' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='tc_missing' item='TC_MISSING=FALSE' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='tc_missing' item='TC_MISSING_MSG=try_compile source file not found: ./missing_a.c\n' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='tc_missing' item='TC_MISSING=FALSE' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='tc_missing' item='TC_MISSING_MSG=try_compile source file not found: ./missing_a.c\n' vis=PRIVATE
 === END CASE ===
 
 === CASE try_compile_source_from_var_and_file_with_log_description ===
 DIAG errors=0 warnings=0
-EVENTS count=6
+EVENTS count=4
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=10 col=1 name='tc_mix' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=10 col=1 target='tc_mix' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=11 col=1 target='tc_mix' key='COMPILE_DEFINITIONS' value='TC_MIX_OK=TRUE' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=11 col=1 target='tc_mix' key='COMPILE_DEFINITIONS' value='TC_COPY_ERR=' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='tc_mix' item='TC_MIX_OK=TRUE' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='tc_mix' item='TC_COPY_ERR=' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='tc_mix' item='TC_MIX_OK=TRUE' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=11 col=1 target='tc_mix' item='TC_COPY_ERR=' vis=PRIVATE
 === END CASE ===
 
 === CASE try_compile_project_signature_success_and_failure ===
 DIAG errors=0 warnings=0
-EVENTS count=11
+EVENTS count=7
 EV[0] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=6 col=1 key='TC_PROJ_OK' value='TRUE'
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=9 col=1 name='tc_proj' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=9 col=1 target='tc_proj' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='tc_proj' key='COMPILE_DEFINITIONS' value='TC_PROJ_OK=TRUE' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='tc_proj' key='COMPILE_DEFINITIONS' value='TC_PROJ_FLAG=' op=APPEND_LIST
-EV[5] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='tc_proj' key='COMPILE_DEFINITIONS' value='TC_PROJ_FAIL=FALSE' op=APPEND_LIST
-EV[6] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='tc_proj' key='COMPILE_DEFINITIONS' value='TC_PROJ_FAIL_MSG=try_compile(PROJECT) source directory is missing CMakeLists.txt: ./tc_proj_fail\n' op=APPEND_LIST
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_OK=TRUE' vis=PRIVATE
-EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_FLAG=' vis=PRIVATE
-EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_FAIL=FALSE' vis=PRIVATE
-EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_FAIL_MSG=try_compile(PROJECT) source directory is missing CMakeLists.txt: ./tc_proj_fail\n' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_OK=TRUE' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_FLAG=' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_FAIL=FALSE' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='tc_proj' item='TC_PROJ_FAIL_MSG=try_compile(PROJECT) source directory is missing CMakeLists.txt: ./tc_proj_fail\n' vis=PRIVATE
 === END CASE ===
 
 === CASE golden_ctest_meta ===
@@ -154,23 +136,17 @@ EV[22] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=20 col=1 rule_type=0 
 
 === CASE golden_misc_path_and_property ===
 DIAG errors=0 warnings=0
-EVENTS count=16
+EVENTS count=10
 EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='MiscDemo' version='' description='' languages='C;CXX'
 EV[1] kind=EV_VAR_SET file='CMakeLists.txt' line=2 col=1 key='NOBIFY_PROPERTY_GLOBAL::USE_FOLDERS' value='ON'
 EV[2] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=13 col=1 name='misc_app' type=EXECUTABLE
 EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=13 col=1 target='misc_app' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=14 col=1 target='misc_app' key='COMPILE_DEFINITIONS' value='P_EXT=.tar.gz' op=APPEND_LIST
-EV[5] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=14 col=1 target='misc_app' key='COMPILE_DEFINITIONS' value='P_STEM_LAST=c.tar' op=APPEND_LIST
-EV[6] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=14 col=1 target='misc_app' key='COMPILE_DEFINITIONS' value='P_DIR=a/c.tar.gz/' op=APPEND_LIST
-EV[7] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=14 col=1 target='misc_app' key='COMPILE_DEFINITIONS' value='P_NORM=a/c.log' op=APPEND_LIST
-EV[8] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=14 col=1 target='misc_app' key='COMPILE_DEFINITIONS' value='P_EQ=ON' op=APPEND_LIST
-EV[9] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=14 col=1 target='misc_app' key='COMPILE_DEFINITIONS' value='P_HAS_EXT=ON' op=APPEND_LIST
-EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_EXT=.tar.gz' vis=PRIVATE
-EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_STEM_LAST=c.tar' vis=PRIVATE
-EV[12] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_DIR=a/c.tar.gz/' vis=PRIVATE
-EV[13] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_NORM=a/c.log' vis=PRIVATE
-EV[14] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_EQ=ON' vis=PRIVATE
-EV[15] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_HAS_EXT=ON' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_EXT=.tar.gz' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_STEM_LAST=c.tar' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_DIR=a/c.tar.gz/' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_NORM=a/c.log' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_EQ=ON' vis=PRIVATE
+EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='misc_app' item='P_HAS_EXT=ON' vis=PRIVATE
 === END CASE ===
 
 === CASE expr_variable_expansion_and_if_ops ===
@@ -185,229 +161,184 @@ EVENTS count=0
 
 === CASE vars_unset_local_and_cache_modes ===
 DIAG errors=0 warnings=0
-EVENTS count=7
+EVENTS count=5
 EV[0] kind=EV_SET_CACHE_ENTRY file='CMakeLists.txt' line=2 col=1 key='U_CACHE' value='cached'
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='unset_local_cache' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='unset_local_cache' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='unset_local_cache' key='COMPILE_DEFINITIONS' value='U_LOCAL=' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='unset_local_cache' key='COMPILE_DEFINITIONS' value='U_CACHE=' op=APPEND_LIST
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='unset_local_cache' item='U_LOCAL=' vis=PRIVATE
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='unset_local_cache' item='U_CACHE=' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='unset_local_cache' item='U_LOCAL=' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='unset_local_cache' item='U_CACHE=' vis=PRIVATE
 === END CASE ===
 
 === CASE vars_unset_parent_scope_mode ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='unset_parent_scope' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='unset_parent_scope' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=8 col=1 target='unset_parent_scope' key='COMPILE_DEFINITIONS' value='UP_OUTER=' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='unset_parent_scope' item='UP_OUTER=' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='unset_parent_scope' item='UP_OUTER=' vis=PRIVATE
 === END CASE ===
 
 === CASE flow_while_simple_counter ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='loop_simple' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='loop_simple' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='loop_simple' key='COMPILE_DEFINITIONS' value='SIMPLE_C=3' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='loop_simple' item='SIMPLE_C=3' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='loop_simple' item='SIMPLE_C=3' vis=PRIVATE
 === END CASE ===
 
 === CASE flow_while_break_and_continue ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=18 col=1 name='loop_flow' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=18 col=1 target='loop_flow' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=19 col=1 target='loop_flow' key='COMPILE_DEFINITIONS' value='LOOP_OUT=0_2' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=19 col=1 target='loop_flow' item='LOOP_OUT=0_2' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=19 col=1 target='loop_flow' item='LOOP_OUT=0_2' vis=PRIVATE
 === END CASE ===
 
 === CASE flow_while_nested_break_continue ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=17 col=1 name='loop_nested' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=17 col=1 target='loop_nested' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='loop_nested' key='COMPILE_DEFINITIONS' value='NESTED_ACC=4' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='loop_nested' item='NESTED_ACC=4' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='loop_nested' item='NESTED_ACC=4' vis=PRIVATE
 === END CASE ===
 
 === CASE flow_block_scope_and_propagate ===
 DIAG errors=0 warnings=0
-EVENTS count=16
+EVENTS count=10
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=9 col=3 name='block_inner' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=9 col=3 target='block_inner' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=3 target='block_inner' key='COMPILE_DEFINITIONS' value='POL_INNER=NEW' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=3 target='block_inner' item='POL_INNER=NEW' vis=PRIVATE
-EV[4] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=13 col=1 name='block_outer' type=EXECUTABLE
-EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=13 col=1 target='block_outer' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[6] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=14 col=1 target='block_outer' key='COMPILE_DEFINITIONS' value='BLK_OUTER=outer' op=APPEND_LIST
-EV[7] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=14 col=1 target='block_outer' key='COMPILE_DEFINITIONS' value='BLK_PROP=propagated' op=APPEND_LIST
-EV[8] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=14 col=1 target='block_outer' key='COMPILE_DEFINITIONS' value='BLK_LOCAL=' op=APPEND_LIST
-EV[9] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=14 col=1 target='block_outer' key='COMPILE_DEFINITIONS' value='POL_BEFORE=' op=APPEND_LIST
-EV[10] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=14 col=1 target='block_outer' key='COMPILE_DEFINITIONS' value='POL_AFTER=' op=APPEND_LIST
-EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='BLK_OUTER=outer' vis=PRIVATE
-EV[12] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='BLK_PROP=propagated' vis=PRIVATE
-EV[13] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='BLK_LOCAL=' vis=PRIVATE
-EV[14] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='POL_BEFORE=' vis=PRIVATE
-EV[15] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='POL_AFTER=' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=3 target='block_inner' item='POL_INNER=NEW' vis=PRIVATE
+EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=13 col=1 name='block_outer' type=EXECUTABLE
+EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=13 col=1 target='block_outer' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='BLK_OUTER=outer' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='BLK_PROP=propagated' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='BLK_LOCAL=' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='POL_BEFORE=' vis=PRIVATE
+EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='block_outer' item='POL_AFTER=' vis=PRIVATE
 === END CASE ===
 
 === CASE usercmd_function_scope_and_parent_scope ===
 DIAG errors=0 warnings=0
-EVENTS count=6
+EVENTS count=4
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='fn_scope' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='fn_scope' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='fn_scope' key='COMPILE_DEFINITIONS' value='FN_GLOBAL=10' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='fn_scope' key='COMPILE_DEFINITIONS' value='FN_PARENT=42' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='fn_scope' item='FN_GLOBAL=10' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='fn_scope' item='FN_PARENT=42' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='fn_scope' item='FN_GLOBAL=10' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='fn_scope' item='FN_PARENT=42' vis=PRIVATE
 === END CASE ===
 
 === CASE usercmd_macro_args_and_caller_scope ===
 DIAG errors=0 warnings=0
-EVENTS count=10
+EVENTS count=6
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='macro_scope' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='macro_scope' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='macro_scope' key='COMPILE_DEFINITIONS' value='MC_OUT=alpha' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='macro_scope' key='COMPILE_DEFINITIONS' value='MC_ARGC=2' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='macro_scope' key='COMPILE_DEFINITIONS' value='MC_ARGV0=alpha' op=APPEND_LIST
-EV[5] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='macro_scope' key='COMPILE_DEFINITIONS' value='MC_ARGV1=beta' op=APPEND_LIST
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='macro_scope' item='MC_OUT=alpha' vis=PRIVATE
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='macro_scope' item='MC_ARGC=2' vis=PRIVATE
-EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='macro_scope' item='MC_ARGV0=alpha' vis=PRIVATE
-EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='macro_scope' item='MC_ARGV1=beta' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='macro_scope' item='MC_OUT=alpha' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='macro_scope' item='MC_ARGC=2' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='macro_scope' item='MC_ARGV0=alpha' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='macro_scope' item='MC_ARGV1=beta' vis=PRIVATE
 === END CASE ===
 
 === CASE usercmd_nested_macro_calls_function ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='nested_usercmd' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='nested_usercmd' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='nested_usercmd' key='COMPILE_DEFINITIONS' value='NESTED_VAL=F_zed' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='nested_usercmd' item='NESTED_VAL=F_zed' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='nested_usercmd' item='NESTED_VAL=F_zed' vis=PRIVATE
 === END CASE ===
 
 === CASE flow_return_propagate_and_block_unwind ===
 DIAG errors=0 warnings=0
-EVENTS count=6
+EVENTS count=4
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=11 col=1 name='ret_flow' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=11 col=1 target='ret_flow' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='ret_flow' key='COMPILE_DEFINITIONS' value='RET_OUTER=from_return' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='ret_flow' key='COMPILE_DEFINITIONS' value='BLK_A=' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='ret_flow' item='RET_OUTER=from_return' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='ret_flow' item='BLK_A=' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='ret_flow' item='RET_OUTER=from_return' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='ret_flow' item='BLK_A=' vis=PRIVATE
 === END CASE ===
 
 === CASE flow_foreach_range_lists_zip ===
 DIAG errors=0 warnings=0
-EVENTS count=12
+EVENTS count=7
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=19 col=1 name='foreach_modes' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=19 col=1 target='foreach_modes' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=20 col=1 target='foreach_modes' key='COMPILE_DEFINITIONS' value='ACC=1_3_5' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=20 col=1 target='foreach_modes' key='COMPILE_DEFINITIONS' value='ZIP_ACC=a' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=20 col=1 target='foreach_modes' key='COMPILE_DEFINITIONS' value='1|b' op=APPEND_LIST
-EV[5] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=20 col=1 target='foreach_modes' key='COMPILE_DEFINITIONS' value='2|' op=APPEND_LIST
-EV[6] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=20 col=1 target='foreach_modes' key='COMPILE_DEFINITIONS' value='3' op=APPEND_LIST
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='ACC=1_3_5' vis=PRIVATE
-EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='ZIP_ACC=a' vis=PRIVATE
-EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='1|b' vis=PRIVATE
-EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='2|' vis=PRIVATE
-EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='3' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='ACC=1_3_5' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='ZIP_ACC=a' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='1|b' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='2|' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=20 col=1 target='foreach_modes' item='3' vis=PRIVATE
 === END CASE ===
 
 === CASE flow_cmp0124_new_restore ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='cmp0124_new' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='cmp0124_new' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='cmp0124_new' key='COMPILE_DEFINITIONS' value='I_FINAL=outer' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='cmp0124_new' item='I_FINAL=outer' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='cmp0124_new' item='I_FINAL=outer' vis=PRIVATE
 === END CASE ===
 
 === CASE expr_test_and_path_predicates ===
 DIAG errors=0 warnings=0
-EVENTS count=9
+EVENTS count=6
 EV[0] kind=EV_TEST_ADD file='CMakeLists.txt' line=3 col=1 name='smoke_expr' command='expr_tool' working_dir='' command_expand_lists=0
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=13 col=1 name='expr_preds' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=13 col=1 target='expr_preds' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=14 col=1 target='expr_preds' key='COMPILE_DEFINITIONS' value='HAS_TEST=1' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=14 col=1 target='expr_preds' key='COMPILE_DEFINITIONS' value='RW_OK=1' op=APPEND_LIST
-EV[5] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=14 col=1 target='expr_preds' key='COMPILE_DEFINITIONS' value='NEWER_OK=' op=APPEND_LIST
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='expr_preds' item='HAS_TEST=1' vis=PRIVATE
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='expr_preds' item='RW_OK=1' vis=PRIVATE
-EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='expr_preds' item='NEWER_OK=' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='expr_preds' item='HAS_TEST=1' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='expr_preds' item='RW_OK=1' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='expr_preds' item='NEWER_OK=' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_list_get_find_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=8
+EVENTS count=5
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='list_ext' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='list_ext' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='list_ext' key='COMPILE_DEFINITIONS' value='PICKS=bb;dd' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='list_ext' key='COMPILE_DEFINITIONS' value='IDX_CC=2' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='list_ext' key='COMPILE_DEFINITIONS' value='IDX_ZZ=-1' op=APPEND_LIST
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_ext' item='PICKS=bb;dd' vis=PRIVATE
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_ext' item='IDX_CC=2' vis=PRIVATE
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_ext' item='IDX_ZZ=-1' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_ext' item='PICKS=bb;dd' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_ext' item='IDX_CC=2' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_ext' item='IDX_ZZ=-1' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_list_mutation_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=10
+EVENTS count=6
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='list_mut' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='list_mut' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='list_mut' key='COMPILE_DEFINITIONS' value='L=y' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='list_mut' key='COMPILE_DEFINITIONS' value='PF0=a' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='list_mut' key='COMPILE_DEFINITIONS' value='PF1=b' op=APPEND_LIST
-EV[5] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='list_mut' key='COMPILE_DEFINITIONS' value='PB0=c' op=APPEND_LIST
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='list_mut' item='L=y' vis=PRIVATE
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='list_mut' item='PF0=a' vis=PRIVATE
-EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='list_mut' item='PF1=b' vis=PRIVATE
-EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='list_mut' item='PB0=c' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='list_mut' item='L=y' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='list_mut' item='PF0=a' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='list_mut' item='PF1=b' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='list_mut' item='PB0=c' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_list_join_sublist_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=8
+EVENTS count=5
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='list_join_sub' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='list_join_sub' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='list_join_sub' key='COMPILE_DEFINITIONS' value='CSV=aa,bb,cc,dd' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='list_join_sub' key='COMPILE_DEFINITIONS' value='MID=bb;cc' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='list_join_sub' key='COMPILE_DEFINITIONS' value='TAIL=cc;dd' op=APPEND_LIST
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_join_sub' item='CSV=aa,bb,cc,dd' vis=PRIVATE
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_join_sub' item='MID=bb;cc' vis=PRIVATE
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_join_sub' item='TAIL=cc;dd' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_join_sub' item='CSV=aa,bb,cc,dd' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_join_sub' item='MID=bb;cc' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_join_sub' item='TAIL=cc;dd' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_list_filter_regex_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=6
+EVENTS count=4
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='list_filter' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='list_filter' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='list_filter' key='COMPILE_DEFINITIONS' value='LF=a1;c3' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='list_filter' key='COMPILE_DEFINITIONS' value='LF2=a1;c3;dd' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_filter' item='LF=a1;c3' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_filter' item='LF2=a1;c3;dd' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_filter' item='LF=a1;c3' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_filter' item='LF2=a1;c3;dd' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_list_transform_actions_selectors_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='list_transform' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='list_transform' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='list_transform' key='COMPILE_DEFINITIONS' value='LT=p_aa;p_bb_z;cc_;dd__z' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='list_transform' item='LT=p_aa;p_bb_z;cc_;dd__z' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='list_transform' item='LT=p_aa;p_bb_z;cc_;dd__z' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_list_sort_advanced_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=6
+EVENTS count=4
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='list_sort' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='list_sort' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='list_sort' key='COMPILE_DEFINITIONS' value='LS=src/A02.c;src/a1.c;src/z10.c;src/Z2.c' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='list_sort' key='COMPILE_DEFINITIONS' value='NS=v10;v2;v01;v1' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_sort' item='LS=src/A02.c;src/a1.c;src/z10.c;src/Z2.c' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_sort' item='NS=v10;v2;v01;v1' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_sort' item='LS=src/A02.c;src/a1.c;src/z10.c;src/Z2.c' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='list_sort' item='NS=v10;v2;v01;v1' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_list_remove_at_invalid_index_error ===
@@ -430,214 +361,157 @@ EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=2 col=1 sev=ERROR component=
 
 === CASE stdlib_string_tolower_substring_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=8
+EVENTS count=5
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='string_ext' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='string_ext' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=5 col=1 target='string_ext' key='COMPILE_DEFINITIONS' value='STR_LOW=abc-xyz' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=5 col=1 target='string_ext' key='COMPILE_DEFINITIONS' value='STR_SUB=c-x' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=5 col=1 target='string_ext' key='COMPILE_DEFINITIONS' value='STR_TAIL=xyz' op=APPEND_LIST
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='string_ext' item='STR_LOW=abc-xyz' vis=PRIVATE
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='string_ext' item='STR_SUB=c-x' vis=PRIVATE
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='string_ext' item='STR_TAIL=xyz' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='string_ext' item='STR_LOW=abc-xyz' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='string_ext' item='STR_SUB=c-x' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='string_ext' item='STR_TAIL=xyz' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_regex_replace_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=6
+EVENTS count=4
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='string_regex_ext' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='string_regex_ext' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=4 col=1 target='string_regex_ext' key='COMPILE_DEFINITIONS' value='STR_RX=vN-vN-vN' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=4 col=1 target='string_regex_ext' key='COMPILE_DEFINITIONS' value='STR_RX_BREF=x7' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_regex_ext' item='STR_RX=vN-vN-vN' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_regex_ext' item='STR_RX_BREF=x7' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_regex_ext' item='STR_RX=vN-vN-vN' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_regex_ext' item='STR_RX_BREF=x7' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_append_prepend_concat_join_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=12
+EVENTS count=7
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='string_append_prepend' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='string_append_prepend' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' key='COMPILE_DEFINITIONS' value='SV=P_mid_A_B' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' key='COMPILE_DEFINITIONS' value='SCON=x-y' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' key='COMPILE_DEFINITIONS' value='SJOIN=aa:bb:cc' op=APPEND_LIST
-EV[5] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' key='COMPILE_DEFINITIONS' value='SREP=ababab' op=APPEND_LIST
-EV[6] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' key='COMPILE_DEFINITIONS' value='SREP0=' op=APPEND_LIST
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' item='SV=P_mid_A_B' vis=PRIVATE
-EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' item='SCON=x-y' vis=PRIVATE
-EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' item='SJOIN=aa:bb:cc' vis=PRIVATE
-EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' item='SREP=ababab' vis=PRIVATE
-EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' item='SREP0=' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' item='SV=P_mid_A_B' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' item='SCON=x-y' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' item='SJOIN=aa:bb:cc' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' item='SREP=ababab' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_append_prepend' item='SREP0=' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_length_strip_find_compare_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=16
+EVENTS count=9
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='string_core_ops' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='string_core_ops' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='string_core_ops' key='COMPILE_DEFINITIONS' value='SLEN=4' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='string_core_ops' key='COMPILE_DEFINITIONS' value='SSTRIP=a b' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='string_core_ops' key='COMPILE_DEFINITIONS' value='SFIND_FWD=0' op=APPEND_LIST
-EV[5] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='string_core_ops' key='COMPILE_DEFINITIONS' value='SFIND_REV=4' op=APPEND_LIST
-EV[6] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='string_core_ops' key='COMPILE_DEFINITIONS' value='SFIND_NONE=-1' op=APPEND_LIST
-EV[7] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='string_core_ops' key='COMPILE_DEFINITIONS' value='SCMP_LESS=1' op=APPEND_LIST
-EV[8] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='string_core_ops' key='COMPILE_DEFINITIONS' value='SCMP_EQ=1' op=APPEND_LIST
-EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SLEN=4' vis=PRIVATE
-EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SSTRIP=a b' vis=PRIVATE
-EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SFIND_FWD=0' vis=PRIVATE
-EV[12] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SFIND_REV=4' vis=PRIVATE
-EV[13] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SFIND_NONE=-1' vis=PRIVATE
-EV[14] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SCMP_LESS=1' vis=PRIVATE
-EV[15] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SCMP_EQ=1' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SLEN=4' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SSTRIP=a b' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SFIND_FWD=0' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SFIND_REV=4' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SFIND_NONE=-1' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SCMP_LESS=1' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='string_core_ops' item='SCMP_EQ=1' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_regex_matchall_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=8
+EVENTS count=5
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='string_matchall' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='string_matchall' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=3 col=1 target='string_matchall' key='COMPILE_DEFINITIONS' value='SM_ALL=1' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=3 col=1 target='string_matchall' key='COMPILE_DEFINITIONS' value='22' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=3 col=1 target='string_matchall' key='COMPILE_DEFINITIONS' value='333' op=APPEND_LIST
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_matchall' item='SM_ALL=1' vis=PRIVATE
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_matchall' item='22' vis=PRIVATE
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_matchall' item='333' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_matchall' item='SM_ALL=1' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_matchall' item='22' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_matchall' item='333' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_hash_md5_sha1_sha256_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=22
+EVENTS count=12
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=11 col=1 name='string_hashes' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=11 col=1 target='string_hashes' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='string_hashes' key='COMPILE_DEFINITIONS' value='H_MD5=900150983cd24fb0d6963f7d28e17f72' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='string_hashes' key='COMPILE_DEFINITIONS' value='H_SHA1=a9993e364706816aba3e25717850c26c9cd0d89d' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='string_hashes' key='COMPILE_DEFINITIONS' value='H_SHA224=23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7' op=APPEND_LIST
-EV[5] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='string_hashes' key='COMPILE_DEFINITIONS' value='H_SHA256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' op=APPEND_LIST
-EV[6] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='string_hashes' key='COMPILE_DEFINITIONS' value='H_SHA384=cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7' op=APPEND_LIST
-EV[7] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='string_hashes' key='COMPILE_DEFINITIONS' value='H_SHA512=ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f' op=APPEND_LIST
-EV[8] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='string_hashes' key='COMPILE_DEFINITIONS' value='H_SHA3_224=e642824c3f8cf24ad09234ee7d3c766fc9a3a5168d0c94ad73b46fdf' op=APPEND_LIST
-EV[9] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='string_hashes' key='COMPILE_DEFINITIONS' value='H_SHA3_256=3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532' op=APPEND_LIST
-EV[10] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='string_hashes' key='COMPILE_DEFINITIONS' value='H_SHA3_384=ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b298d88cea927ac7f539f1edf228376d25' op=APPEND_LIST
-EV[11] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='string_hashes' key='COMPILE_DEFINITIONS' value='H_SHA3_512=b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0' op=APPEND_LIST
-EV[12] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_MD5=900150983cd24fb0d6963f7d28e17f72' vis=PRIVATE
-EV[13] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA1=a9993e364706816aba3e25717850c26c9cd0d89d' vis=PRIVATE
-EV[14] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA224=23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7' vis=PRIVATE
-EV[15] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' vis=PRIVATE
-EV[16] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA384=cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7' vis=PRIVATE
-EV[17] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA512=ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f' vis=PRIVATE
-EV[18] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA3_224=e642824c3f8cf24ad09234ee7d3c766fc9a3a5168d0c94ad73b46fdf' vis=PRIVATE
-EV[19] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA3_256=3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532' vis=PRIVATE
-EV[20] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA3_384=ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b298d88cea927ac7f539f1edf228376d25' vis=PRIVATE
-EV[21] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA3_512=b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_MD5=900150983cd24fb0d6963f7d28e17f72' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA1=a9993e364706816aba3e25717850c26c9cd0d89d' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA224=23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA384=cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA512=ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA3_224=e642824c3f8cf24ad09234ee7d3c766fc9a3a5168d0c94ad73b46fdf' vis=PRIVATE
+EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA3_256=3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532' vis=PRIVATE
+EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA3_384=ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b298d88cea927ac7f539f1edf228376d25' vis=PRIVATE
+EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='string_hashes' item='H_SHA3_512=b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_ascii_hex_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=6
+EVENTS count=4
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='string_ascii_hex' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='string_ascii_hex' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=4 col=1 target='string_ascii_hex' key='COMPILE_DEFINITIONS' value='S_ASCII=ABC' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=4 col=1 target='string_ascii_hex' key='COMPILE_DEFINITIONS' value='S_HEX=4162' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_ascii_hex' item='S_ASCII=ABC' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_ascii_hex' item='S_HEX=4162' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_ascii_hex' item='S_ASCII=ABC' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_ascii_hex' item='S_HEX=4162' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_configure_atonly_escape_quotes_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=8
+EVENTS count=5
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='string_configure' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='string_configure' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='string_configure' key='COMPILE_DEFINITIONS' value='S_CFG1=a=x"y b=\\x"y' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='string_configure' key='COMPILE_DEFINITIONS' value='S_CFG2=a=x"y b=\\x"y' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='string_configure' key='COMPILE_DEFINITIONS' value='S_CFG3=a=x\\"y b=\\x"y' op=APPEND_LIST
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='string_configure' item='S_CFG1=a=x"y b=\\x"y' vis=PRIVATE
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='string_configure' item='S_CFG2=a=x"y b=\\x"y' vis=PRIVATE
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='string_configure' item='S_CFG3=a=x\\"y b=\\x"y' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='string_configure' item='S_CFG1=a=x"y b=\\x"y' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='string_configure' item='S_CFG2=a=x"y b=\\x"y' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='string_configure' item='S_CFG3=a=x\\"y b=\\x"y' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_make_c_identifier_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='string_identifier' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='string_identifier' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=3 col=1 target='string_identifier' key='COMPILE_DEFINITIONS' value='S_ID=_9a_b_c' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_identifier' item='S_ID=_9a_b_c' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_identifier' item='S_ID=_9a_b_c' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_genex_strip_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='string_genex_strip' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='string_genex_strip' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=3 col=1 target='string_genex_strip' key='COMPILE_DEFINITIONS' value='S_GX=AB' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_genex_strip' item='S_GX=AB' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_genex_strip' item='S_GX=AB' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_random_seeded_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=6
+EVENTS count=4
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='string_random' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='string_random' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=4 col=1 target='string_random' key='COMPILE_DEFINITIONS' value='SR1=iEkfsJ69' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=4 col=1 target='string_random' key='COMPILE_DEFINITIONS' value='SR2=iEkfsJ69' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_random' item='SR1=iEkfsJ69' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_random' item='SR2=iEkfsJ69' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_random' item='SR1=iEkfsJ69' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_random' item='SR2=iEkfsJ69' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_timestamp_source_date_epoch_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='string_timestamp' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='string_timestamp' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=3 col=1 target='string_timestamp' key='COMPILE_DEFINITIONS' value='STS=1970-01-01 00:00:00' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_timestamp' item='STS=1970-01-01 00:00:00' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='string_timestamp' item='STS=1970-01-01 00:00:00' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_uuid_name_based_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=6
+EVENTS count=4
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='string_uuid' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='string_uuid' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=4 col=1 target='string_uuid' key='COMPILE_DEFINITIONS' value='SUUID=6cb8e707-0fc5-5f55-88d4-d4fed43e64a8' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=4 col=1 target='string_uuid' key='COMPILE_DEFINITIONS' value='SUUID_UP=6CB8E707-0FC5-5F55-88D4-D4FED43E64A8' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_uuid' item='SUUID=6cb8e707-0fc5-5f55-88d4-d4fed43e64a8' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_uuid' item='SUUID_UP=6CB8E707-0FC5-5F55-88D4-D4FED43E64A8' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_uuid' item='SUUID=6cb8e707-0fc5-5f55-88d4-d4fed43e64a8' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='string_uuid' item='SUUID_UP=6CB8E707-0FC5-5F55-88D4-D4FED43E64A8' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_json_get_type_length_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=32
+EVENTS count=17
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=17 col=1 name='string_json' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=17 col=1 target='string_json' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='string_json' key='COMPILE_DEFINITIONS' value='SJ_TYPE=ARRAY' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='string_json' key='COMPILE_DEFINITIONS' value='SJ_LEN=3' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='string_json' key='COMPILE_DEFINITIONS' value='SJ_GET_NUM=2' op=APPEND_LIST
-EV[5] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='string_json' key='COMPILE_DEFINITIONS' value='SJ_GET_STR=x' op=APPEND_LIST
-EV[6] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='string_json' key='COMPILE_DEFINITIONS' value='SJ_GET_NULL=' op=APPEND_LIST
-EV[7] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='string_json' key='COMPILE_DEFINITIONS' value='SJ_MEMBER=n' op=APPEND_LIST
-EV[8] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='string_json' key='COMPILE_DEFINITIONS' value='SJ_RM_LEN=2' op=APPEND_LIST
-EV[9] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='string_json' key='COMPILE_DEFINITIONS' value='SJ_SET_GET=99' op=APPEND_LIST
-EV[10] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='string_json' key='COMPILE_DEFINITIONS' value='SJ_EQ=ON' op=APPEND_LIST
-EV[11] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='string_json' key='COMPILE_DEFINITIONS' value='SJ_NEQ=OFF' op=APPEND_LIST
-EV[12] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='string_json' key='COMPILE_DEFINITIONS' value='SJ_ERR_OK=NOTFOUND' op=APPEND_LIST
-EV[13] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='string_json' key='COMPILE_DEFINITIONS' value='SJ_E1=missing-NOTFOUND' op=APPEND_LIST
-EV[14] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='string_json' key='COMPILE_DEFINITIONS' value='SJ_ERR1=string(JSON) object member not found: missing' op=APPEND_LIST
-EV[15] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='string_json' key='COMPILE_DEFINITIONS' value='SJ_E2=s-NOTFOUND' op=APPEND_LIST
-EV[16] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=18 col=1 target='string_json' key='COMPILE_DEFINITIONS' value='SJ_ERR2=string(JSON LENGTH) requires ARRAY or OBJECT' op=APPEND_LIST
-EV[17] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_TYPE=ARRAY' vis=PRIVATE
-EV[18] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_LEN=3' vis=PRIVATE
-EV[19] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_GET_NUM=2' vis=PRIVATE
-EV[20] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_GET_STR=x' vis=PRIVATE
-EV[21] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_GET_NULL=' vis=PRIVATE
-EV[22] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_MEMBER=n' vis=PRIVATE
-EV[23] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_RM_LEN=2' vis=PRIVATE
-EV[24] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_SET_GET=99' vis=PRIVATE
-EV[25] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_EQ=ON' vis=PRIVATE
-EV[26] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_NEQ=OFF' vis=PRIVATE
-EV[27] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_ERR_OK=NOTFOUND' vis=PRIVATE
-EV[28] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_E1=missing-NOTFOUND' vis=PRIVATE
-EV[29] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_ERR1=string(JSON) object member not found: missing' vis=PRIVATE
-EV[30] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_E2=s-NOTFOUND' vis=PRIVATE
-EV[31] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_ERR2=string(JSON LENGTH) requires ARRAY or OBJECT' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_TYPE=ARRAY' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_LEN=3' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_GET_NUM=2' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_GET_STR=x' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_GET_NULL=' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_MEMBER=n' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_RM_LEN=2' vis=PRIVATE
+EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_SET_GET=99' vis=PRIVATE
+EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_EQ=ON' vis=PRIVATE
+EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_NEQ=OFF' vis=PRIVATE
+EV[12] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_ERR_OK=NOTFOUND' vis=PRIVATE
+EV[13] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_E1=missing-NOTFOUND' vis=PRIVATE
+EV[14] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_ERR1=string(JSON) object member not found: missing' vis=PRIVATE
+EV[15] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_E2=s-NOTFOUND' vis=PRIVATE
+EV[16] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=18 col=1 target='string_json' item='SJ_ERR2=string(JSON LENGTH) requires ARRAY or OBJECT' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_string_ascii_invalid_code_error ===
@@ -660,29 +534,19 @@ EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component=
 
 === CASE stdlib_math_bitwise_and_precedence ===
 DIAG errors=0 warnings=0
-EVENTS count=22
+EVENTS count=12
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=11 col=1 name='math_ext' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=11 col=1 target='math_ext' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='math_ext' key='COMPILE_DEFINITIONS' value='M_SHL=4' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='math_ext' key='COMPILE_DEFINITIONS' value='M_SHR=4' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='math_ext' key='COMPILE_DEFINITIONS' value='M_AND=1' op=APPEND_LIST
-EV[5] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='math_ext' key='COMPILE_DEFINITIONS' value='M_XOR=5' op=APPEND_LIST
-EV[6] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='math_ext' key='COMPILE_DEFINITIONS' value='M_OR=3' op=APPEND_LIST
-EV[7] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='math_ext' key='COMPILE_DEFINITIONS' value='M_PAREN=9' op=APPEND_LIST
-EV[8] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='math_ext' key='COMPILE_DEFINITIONS' value='M_PREC=15' op=APPEND_LIST
-EV[9] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='math_ext' key='COMPILE_DEFINITIONS' value='M_UNARY=-2' op=APPEND_LIST
-EV[10] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='math_ext' key='COMPILE_DEFINITIONS' value='M_DIV=2' op=APPEND_LIST
-EV[11] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=12 col=1 target='math_ext' key='COMPILE_DEFINITIONS' value='M_MOD=3' op=APPEND_LIST
-EV[12] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_SHL=4' vis=PRIVATE
-EV[13] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_SHR=4' vis=PRIVATE
-EV[14] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_AND=1' vis=PRIVATE
-EV[15] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_XOR=5' vis=PRIVATE
-EV[16] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_OR=3' vis=PRIVATE
-EV[17] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_PAREN=9' vis=PRIVATE
-EV[18] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_PREC=15' vis=PRIVATE
-EV[19] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_UNARY=-2' vis=PRIVATE
-EV[20] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_DIV=2' vis=PRIVATE
-EV[21] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_MOD=3' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_SHL=4' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_SHR=4' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_AND=1' vis=PRIVATE
+EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_XOR=5' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_OR=3' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_PAREN=9' vis=PRIVATE
+EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_PREC=15' vis=PRIVATE
+EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_UNARY=-2' vis=PRIVATE
+EV[10] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_DIV=2' vis=PRIVATE
+EV[11] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=12 col=1 target='math_ext' item='M_MOD=3' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_math_overflow_add_reports_error ===
@@ -705,26 +569,21 @@ EV[0] kind=EV_DIAGNOSTIC file='CMakeLists.txt' line=1 col=1 sev=ERROR component=
 
 === CASE stdlib_math_output_format_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=8
+EVENTS count=5
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='math_format' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='math_format' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=5 col=1 target='math_format' key='COMPILE_DEFINITIONS' value='M_DEC=15' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=5 col=1 target='math_format' key='COMPILE_DEFINITIONS' value='M_HEX=0xf' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=5 col=1 target='math_format' key='COMPILE_DEFINITIONS' value='M_NEG_HEX=0xffffffffffffffff' op=APPEND_LIST
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='math_format' item='M_DEC=15' vis=PRIVATE
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='math_format' item='M_HEX=0xf' vis=PRIVATE
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='math_format' item='M_NEG_HEX=0xffffffffffffffff' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='math_format' item='M_DEC=15' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='math_format' item='M_HEX=0xf' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='math_format' item='M_NEG_HEX=0xffffffffffffffff' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_math_legacy_output_format_extended ===
 DIAG errors=0 warnings=0
-EVENTS count=6
+EVENTS count=4
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='math_format_legacy' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='math_format_legacy' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=4 col=1 target='math_format_legacy' key='COMPILE_DEFINITIONS' value='M_LEG_HEX=0x1a' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=4 col=1 target='math_format_legacy' key='COMPILE_DEFINITIONS' value='M_LEG_DEC=26' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='math_format_legacy' item='M_LEG_HEX=0x1a' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='math_format_legacy' item='M_LEG_DEC=26' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='math_format_legacy' item='M_LEG_HEX=0x1a' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='math_format_legacy' item='M_LEG_DEC=26' vis=PRIVATE
 === END CASE ===
 
 === CASE stdlib_math_invalid_output_format_error ===
@@ -750,18 +609,15 @@ EV[3] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=6 col=1 target='custo
 
 === CASE dispatcher_command_handlers ===
 DIAG errors=0 warnings=0
-EVENTS count=11
+EVENTS count=8
 EV[0] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='app' item='LEGACY=1' vis=PRIVATE
 EV[1] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-fPIC' vis=PRIVATE is_before=0
 EV[2] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='app' item='-Wall' vis=PRIVATE is_before=0
 EV[3] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='app' type=EXECUTABLE
 EV[4] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='app' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[5] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=8 col=1 target='app' key='INCLUDE_DIRECTORIES' value='include' op=APPEND_LIST
-EV[6] kind=EV_TARGET_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=8 col=1 target='app' path='include' vis=PRIVATE is_system=0 is_before=0
-EV[7] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='app' key='COMPILE_DEFINITIONS' value='APPDEF=1' op=APPEND_LIST
-EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='app' item='APPDEF=1' vis=PRIVATE
-EV[9] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='app' key='COMPILE_OPTIONS' value='-Wextra' op=APPEND_LIST
-EV[10] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=10 col=1 target='app' item='-Wextra' vis=PRIVATE is_before=0
+EV[5] kind=EV_TARGET_INCLUDE_DIRECTORIES file='CMakeLists.txt' line=8 col=1 target='app' path='include' vis=PRIVATE is_system=0 is_before=0
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='app' item='APPDEF=1' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=10 col=1 target='app' item='-Wextra' vis=PRIVATE is_before=0
 === END CASE ===
 
 === CASE dispatcher_cmake_minimum_required ===
@@ -776,53 +632,47 @@ EVENTS count=0
 
 === CASE policy_version_cmp0124_default_new ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='policy_cmp0124_default_new' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='policy_cmp0124_default_new' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='policy_cmp0124_default_new' key='COMPILE_DEFINITIONS' value='I_FINAL=outer' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='policy_cmp0124_default_new' item='I_FINAL=outer' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='policy_cmp0124_default_new' item='I_FINAL=outer' vis=PRIVATE
 === END CASE ===
 
 === CASE policy_version_cmp0124_default_old ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='policy_cmp0124_default_old' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='policy_cmp0124_default_old' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=6 col=1 target='policy_cmp0124_default_old' key='COMPILE_DEFINITIONS' value='I_FINAL=outer' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='policy_cmp0124_default_old' item='I_FINAL=outer' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 target='policy_cmp0124_default_old' item='I_FINAL=outer' vis=PRIVATE
 === END CASE ===
 
 === CASE policy_get_cmp0124_from_version_default ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='policy_cmp0124_get_default' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='policy_cmp0124_get_default' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=4 col=1 target='policy_cmp0124_get_default' key='COMPILE_DEFINITIONS' value='OUT_CMP0124=NEW' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='policy_cmp0124_get_default' item='OUT_CMP0124=NEW' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='policy_cmp0124_get_default' item='OUT_CMP0124=NEW' vis=PRIVATE
 === END CASE ===
 
 === CASE policy_unmapped_get_warn_continue ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=2 col=1 name='policy_unmapped_continue' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=2 col=1 target='policy_unmapped_continue' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=3 col=1 target='policy_unmapped_continue' key='COMPILE_DEFINITIONS' value='OUT_UNMAPPED=' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='policy_unmapped_continue' item='OUT_UNMAPPED=' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=3 col=1 target='policy_unmapped_continue' item='OUT_UNMAPPED=' vis=PRIVATE
 === END CASE ===
 
 === CASE policy_include_scope_no_policy_scope_vs_scoped ===
 DIAG errors=0 warnings=0
-EVENTS count=10
+EVENTS count=8
 EV[0] kind=EV_DIR_PUSH file='CMakeLists.txt' line=4 col=1 source_dir='.' binary_dir='.'
 EV[1] kind=EV_DIR_POP file='CMakeLists.txt' line=4 col=1
 EV[2] kind=EV_DIR_PUSH file='CMakeLists.txt' line=7 col=1 source_dir='.' binary_dir='.'
 EV[3] kind=EV_DIR_POP file='CMakeLists.txt' line=7 col=1
 EV[4] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=9 col=1 name='policy_include_scope' type=EXECUTABLE
 EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=9 col=1 target='policy_include_scope' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[6] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='policy_include_scope' key='COMPILE_DEFINITIONS' value='AFTER_NO_SCOPE=OLD' op=APPEND_LIST
-EV[7] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='policy_include_scope' key='COMPILE_DEFINITIONS' value='AFTER_SCOPED=NEW' op=APPEND_LIST
-EV[8] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='policy_include_scope' item='AFTER_NO_SCOPE=OLD' vis=PRIVATE
-EV[9] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='policy_include_scope' item='AFTER_SCOPED=NEW' vis=PRIVATE
+EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='policy_include_scope' item='AFTER_NO_SCOPE=OLD' vis=PRIVATE
+EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='policy_include_scope' item='AFTER_SCOPED=NEW' vis=PRIVATE
 === END CASE ===
 
 === CASE policy_pop_underflow_recovers_permissive ===
@@ -925,7 +775,7 @@ EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=3 col=1 target='t' key=
 
 === CASE dispatcher_set_property_non_target_scopes_apply ===
 DIAG errors=0 warnings=0
-EVENTS count=14
+EVENTS count=13
 EV[0] kind=EV_VAR_SET file='CMakeLists.txt' line=1 col=1 key='NOBIFY_PROPERTY_GLOBAL::USE_FOLDERS' value='ON'
 EV[1] kind=EV_VAR_SET file='CMakeLists.txt' line=2 col=1 key='NOBIFY_PROPERTY_DIRECTORY::.::COMPILE_OPTIONS' value='-Wall'
 EV[2] kind=EV_VAR_SET file='CMakeLists.txt' line=3 col=1 key='NOBIFY_PROPERTY_DIRECTORY::.::COMPILE_OPTIONS' value='-Wall;-Wextra'
@@ -938,8 +788,7 @@ EV[8] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='
 EV[9] kind=EV_TARGET_COMPILE_OPTIONS file='CMakeLists.txt' line=7 col=1 target='non_target_prop' item='-Wextra' vis=PRIVATE is_before=0
 EV[10] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='non_target_prop' type=EXECUTABLE
 EV[11] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='non_target_prop' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[12] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=8 col=1 target='non_target_prop' key='COMPILE_DEFINITIONS' value='CACHED_X=cache_ok' op=APPEND_LIST
-EV[13] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='non_target_prop' item='CACHED_X=cache_ok' vis=PRIVATE
+EV[12] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='non_target_prop' item='CACHED_X=cache_ok' vis=PRIVATE
 === END CASE ===
 
 === CASE file_security_read_rejects_absolute_outside_project_scope ===
@@ -971,119 +820,99 @@ EVENTS count=0
 
 === CASE file_append_preserves_existing_content ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='file_append_case' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='file_append_case' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=5 col=1 target='file_append_case' key='COMPILE_DEFINITIONS' value='APP_TXT=AB' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_append_case' item='APP_TXT=AB' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_append_case' item='APP_TXT=AB' vis=PRIVATE
 === END CASE ===
 
 === CASE file_rename_no_replace_and_result ===
 DIAG errors=0 warnings=0
-EVENTS count=8
+EVENTS count=5
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='file_rename_case' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='file_rename_case' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='file_rename_case' key='COMPILE_DEFINITIONS' value='RN_SRC_TXT=SRC' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='file_rename_case' key='COMPILE_DEFINITIONS' value='RN_DST_TXT=DST' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='file_rename_case' key='COMPILE_DEFINITIONS' value='RN_DST2_TXT=SRC' op=APPEND_LIST
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='file_rename_case' item='RN_SRC_TXT=SRC' vis=PRIVATE
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='file_rename_case' item='RN_DST_TXT=DST' vis=PRIVATE
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='file_rename_case' item='RN_DST2_TXT=SRC' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='file_rename_case' item='RN_SRC_TXT=SRC' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='file_rename_case' item='RN_DST_TXT=DST' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='file_rename_case' item='RN_DST2_TXT=SRC' vis=PRIVATE
 === END CASE ===
 
 === CASE file_remove_and_remove_recurse_non_existing_ok ===
 DIAG errors=0 warnings=0
-EVENTS count=6
+EVENTS count=4
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=14 col=1 name='file_remove_case' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=14 col=1 target='file_remove_case' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=15 col=1 target='file_remove_case' key='COMPILE_DEFINITIONS' value='FILE_REMOVE_OK=1' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=15 col=1 target='file_remove_case' key='COMPILE_DEFINITIONS' value='FILE_REMOVE_RECURSE_OK=1' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=15 col=1 target='file_remove_case' item='FILE_REMOVE_OK=1' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=15 col=1 target='file_remove_case' item='FILE_REMOVE_RECURSE_OK=1' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=15 col=1 target='file_remove_case' item='FILE_REMOVE_OK=1' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=15 col=1 target='file_remove_case' item='FILE_REMOVE_RECURSE_OK=1' vis=PRIVATE
 === END CASE ===
 
 === CASE file_size_and_timestamp_available ===
 DIAG errors=0 warnings=0
-EVENTS count=6
+EVENTS count=4
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=8 col=1 name='file_size_ts_case' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=8 col=1 target='file_size_ts_case' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='file_size_ts_case' key='COMPILE_DEFINITIONS' value='FILE_SIZE_VAL=4' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=9 col=1 target='file_size_ts_case' key='COMPILE_DEFINITIONS' value='FILE_TS_OK=1' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='file_size_ts_case' item='FILE_SIZE_VAL=4' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='file_size_ts_case' item='FILE_TS_OK=1' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='file_size_ts_case' item='FILE_SIZE_VAL=4' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=9 col=1 target='file_size_ts_case' item='FILE_TS_OK=1' vis=PRIVATE
 === END CASE ===
 
 === CASE file_chmod_and_chmod_recurse_runs ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='file_chmod_case' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='file_chmod_case' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=8 col=1 target='file_chmod_case' key='COMPILE_DEFINITIONS' value='FILE_CHMOD_OK=1' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_chmod_case' item='FILE_CHMOD_OK=1' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_chmod_case' item='FILE_CHMOD_OK=1' vis=PRIVATE
 === END CASE ===
 
 === CASE file_real_relative_and_path_conversion ===
 DIAG errors=0 warnings=0
-EVENTS count=8
+EVENTS count=5
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='file_path_case' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='file_path_case' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=8 col=1 target='file_path_case' key='COMPILE_DEFINITIONS' value='FILE_REL_OUT=../temp_file_path/a/f.txt' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=8 col=1 target='file_path_case' key='COMPILE_DEFINITIONS' value='FILE_CMAKE_PATH=a/b/c' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=8 col=1 target='file_path_case' key='COMPILE_DEFINITIONS' value='FILE_NATIVE_PATH=x/y/z' op=APPEND_LIST
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_path_case' item='FILE_REL_OUT=../temp_file_path/a/f.txt' vis=PRIVATE
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_path_case' item='FILE_CMAKE_PATH=a/b/c' vis=PRIVATE
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_path_case' item='FILE_NATIVE_PATH=x/y/z' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_path_case' item='FILE_REL_OUT=../temp_file_path/a/f.txt' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_path_case' item='FILE_CMAKE_PATH=a/b/c' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_path_case' item='FILE_NATIVE_PATH=x/y/z' vis=PRIVATE
 === END CASE ===
 
 === CASE file_download_upload_local_backend ===
 DIAG errors=0 warnings=0
-EVENTS count=6
+EVENTS count=4
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=6 col=1 name='file_transfer_case' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=6 col=1 target='file_transfer_case' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=7 col=1 target='file_transfer_case' key='COMPILE_DEFINITIONS' value='FILE_DL_TXT=2345' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=7 col=1 target='file_transfer_case' key='COMPILE_DEFINITIONS' value='FILE_UL_TXT=2345' op=APPEND_LIST
-EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='file_transfer_case' item='FILE_DL_TXT=2345' vis=PRIVATE
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='file_transfer_case' item='FILE_UL_TXT=2345' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='file_transfer_case' item='FILE_DL_TXT=2345' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=7 col=1 target='file_transfer_case' item='FILE_UL_TXT=2345' vis=PRIVATE
 === END CASE ===
 
 === CASE file_download_remote_url_status_nonfatal ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=3 col=1 name='file_remote_status_case' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=3 col=1 target='file_remote_status_case' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=4 col=1 target='file_remote_status_case' key='COMPILE_DEFINITIONS' value='FILE_REMOTE_STATUS_LEN=2' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='file_remote_status_case' item='FILE_REMOTE_STATUS_LEN=2' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=4 col=1 target='file_remote_status_case' item='FILE_REMOTE_STATUS_LEN=2' vis=PRIVATE
 === END CASE ===
 
 === CASE file_generate_content_input_and_condition ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=9 col=1 name='file_generate_case' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=9 col=1 target='file_generate_case' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=10 col=1 target='file_generate_case' key='COMPILE_DEFINITIONS' value='FILE_GEN_BEFORE_FLUSH=0' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='file_generate_case' item='FILE_GEN_BEFORE_FLUSH=0' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=10 col=1 target='file_generate_case' item='FILE_GEN_BEFORE_FLUSH=0' vis=PRIVATE
 === END CASE ===
 
 === CASE file_lock_acquire_release_reacquire ===
 DIAG errors=0 warnings=0
-EVENTS count=8
+EVENTS count=5
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=4 col=1 name='file_lock_case' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=4 col=1 target='file_lock_case' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=5 col=1 target='file_lock_case' key='COMPILE_DEFINITIONS' value='FILE_LOCK_A=0' op=APPEND_LIST
-EV[3] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=5 col=1 target='file_lock_case' key='COMPILE_DEFINITIONS' value='FILE_LOCK_B=0' op=APPEND_LIST
-EV[4] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=5 col=1 target='file_lock_case' key='COMPILE_DEFINITIONS' value='FILE_LOCK_C=0' op=APPEND_LIST
-EV[5] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_lock_case' item='FILE_LOCK_A=0' vis=PRIVATE
-EV[6] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_lock_case' item='FILE_LOCK_B=0' vis=PRIVATE
-EV[7] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_lock_case' item='FILE_LOCK_C=0' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_lock_case' item='FILE_LOCK_A=0' vis=PRIVATE
+EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_lock_case' item='FILE_LOCK_B=0' vis=PRIVATE
+EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=5 col=1 target='file_lock_case' item='FILE_LOCK_C=0' vis=PRIVATE
 === END CASE ===
 
 === CASE file_archive_create_extract_tar_subset ===
 DIAG errors=0 warnings=0
-EVENTS count=4
+EVENTS count=3
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='file_archive_case' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='file_archive_case' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_PROP_SET file='CMakeLists.txt' line=8 col=1 target='file_archive_case' key='COMPILE_DEFINITIONS' value='FILE_ARCHIVE_TXT=ARCHIVE_OK' op=APPEND_LIST
-EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_archive_case' item='FILE_ARCHIVE_TXT=ARCHIVE_OK' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_archive_case' item='FILE_ARCHIVE_TXT=ARCHIVE_OK' vis=PRIVATE
 === END CASE ===
 
 === CASE file_archive_create_unsupported_compression_error ===

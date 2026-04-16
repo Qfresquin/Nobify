@@ -13,20 +13,161 @@ static bool bm_target_append_item(BM_Builder *builder,
                                   BM_String_Item_View **dest,
                                   String_View value,
                                   Cmake_Visibility visibility,
-                                  bool is_before,
-                                  bool is_system) {
+                                  Event_Property_Mutate_Op op,
+                                  uint32_t flags) {
     BM_String_Item_View item = {0};
     if (!bm_copy_string(builder->arena, value, &item.value)) {
         return bm_builder_error(builder, ev, "failed to copy target property item", "increase arena capacity");
     }
     item.visibility = bm_visibility_from_event(visibility);
-    item.flags = BM_ITEM_FLAG_NONE;
-    if (is_before) item.flags |= BM_ITEM_FLAG_BEFORE;
-    if (is_system) item.flags |= BM_ITEM_FLAG_SYSTEM;
+    item.flags = flags;
     item.provenance = bm_provenance_from_event(builder->arena, ev);
-    if (!bm_append_item(builder->arena, dest, item)) {
-        return bm_builder_error(builder, ev, "failed to append target property item", "increase arena capacity");
+    if (!bm_apply_item_mutation(builder->arena, dest, &item, 1, op)) {
+        return bm_builder_error(builder, ev, "failed to mutate target property item", "increase arena capacity");
     }
+    return true;
+}
+
+static Event_Property_Mutate_Op bm_target_property_op_from_event(Cmake_Target_Property_Op op) {
+    switch (op) {
+        case EV_PROP_SET: return EVENT_PROPERTY_MUTATE_SET;
+        case EV_PROP_PREPEND_LIST: return EVENT_PROPERTY_MUTATE_PREPEND_LIST;
+        case EV_PROP_APPEND_LIST: return EVENT_PROPERTY_MUTATE_APPEND_LIST;
+        case EV_PROP_APPEND_STRING: return EVENT_PROPERTY_MUTATE_APPEND_STRING;
+    }
+    return EVENT_PROPERTY_MUTATE_SET;
+}
+
+static bool bm_target_item_bucket_matches(const BM_String_Item_View *item,
+                                          BM_Visibility visibility,
+                                          uint32_t flags) {
+    if (!item) return false;
+    if (item->visibility != visibility) return false;
+    return (item->flags & BM_ITEM_FLAG_SYSTEM) == (flags & BM_ITEM_FLAG_SYSTEM);
+}
+
+static bool bm_target_apply_promoted_item_mutation(Arena *arena,
+                                                   BM_String_Item_View **dest,
+                                                   const BM_String_Item_View *items,
+                                                   size_t count,
+                                                   Event_Property_Mutate_Op op,
+                                                   BM_Visibility visibility,
+                                                   uint32_t flags) {
+    BM_String_Item_View *merged = NULL;
+    if (!arena || !dest) return false;
+    if (op != EVENT_PROPERTY_MUTATE_SET) {
+        return bm_apply_item_mutation(arena, dest, items, count, op);
+    }
+
+    for (size_t i = 0; i < arena_arr_len(*dest); ++i) {
+        if (bm_target_item_bucket_matches(&(*dest)[i], visibility, flags)) continue;
+        if (!arena_arr_push(arena, merged, (*dest)[i])) return false;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if (!arena_arr_push(arena, merged, items[i])) return false;
+    }
+    *dest = merged;
+    return true;
+}
+
+static bool bm_target_promote_property_set(BM_Builder *builder,
+                                           BM_Target_Record *target,
+                                           const Event *ev,
+                                           bool *promoted) {
+    const Event_Target_Prop_Set *prop = NULL;
+    BM_String_Item_View **dest = NULL;
+    Cmake_Visibility visibility = EV_VISIBILITY_PRIVATE;
+    BM_Visibility item_visibility = BM_VISIBILITY_PRIVATE;
+    uint32_t flags = BM_ITEM_FLAG_NONE;
+    String_View *values = NULL;
+    BM_String_Item_View *items = NULL;
+    Event_Property_Mutate_Op mutation_op = EVENT_PROPERTY_MUTATE_SET;
+    if (promoted) *promoted = false;
+    if (!builder || !target || !ev || ev->h.kind != EVENT_TARGET_PROP_SET) return false;
+
+    prop = &ev->as.target_prop_set;
+    mutation_op = bm_target_property_op_from_event(prop->op);
+    if (mutation_op == EVENT_PROPERTY_MUTATE_APPEND_STRING) return true;
+
+    if (bm_sv_eq_ci_lit(prop->key, "INCLUDE_DIRECTORIES")) {
+        dest = &target->include_directories;
+        visibility = EV_VISIBILITY_PRIVATE;
+    } else if (bm_sv_eq_ci_lit(prop->key, "INTERFACE_INCLUDE_DIRECTORIES")) {
+        dest = &target->include_directories;
+        visibility = EV_VISIBILITY_INTERFACE;
+    } else if (bm_sv_eq_ci_lit(prop->key, "INTERFACE_SYSTEM_INCLUDE_DIRECTORIES")) {
+        dest = &target->include_directories;
+        visibility = EV_VISIBILITY_INTERFACE;
+        flags |= BM_ITEM_FLAG_SYSTEM;
+    } else if (bm_sv_eq_ci_lit(prop->key, "COMPILE_DEFINITIONS")) {
+        dest = &target->compile_definitions;
+        visibility = EV_VISIBILITY_PRIVATE;
+    } else if (bm_sv_eq_ci_lit(prop->key, "INTERFACE_COMPILE_DEFINITIONS")) {
+        dest = &target->compile_definitions;
+        visibility = EV_VISIBILITY_INTERFACE;
+    } else if (bm_sv_eq_ci_lit(prop->key, "COMPILE_OPTIONS")) {
+        dest = &target->compile_options;
+        visibility = EV_VISIBILITY_PRIVATE;
+    } else if (bm_sv_eq_ci_lit(prop->key, "INTERFACE_COMPILE_OPTIONS")) {
+        dest = &target->compile_options;
+        visibility = EV_VISIBILITY_INTERFACE;
+    } else if (bm_sv_eq_ci_lit(prop->key, "COMPILE_FEATURES")) {
+        dest = &target->compile_features;
+        visibility = EV_VISIBILITY_PRIVATE;
+    } else if (bm_sv_eq_ci_lit(prop->key, "INTERFACE_COMPILE_FEATURES")) {
+        dest = &target->compile_features;
+        visibility = EV_VISIBILITY_INTERFACE;
+    } else if (bm_sv_eq_ci_lit(prop->key, "LINK_LIBRARIES")) {
+        dest = &target->link_libraries;
+        visibility = EV_VISIBILITY_PRIVATE;
+    } else if (bm_sv_eq_ci_lit(prop->key, "INTERFACE_LINK_LIBRARIES")) {
+        dest = &target->link_libraries;
+        visibility = EV_VISIBILITY_INTERFACE;
+    } else if (bm_sv_eq_ci_lit(prop->key, "LINK_OPTIONS")) {
+        dest = &target->link_options;
+        visibility = EV_VISIBILITY_PRIVATE;
+    } else if (bm_sv_eq_ci_lit(prop->key, "INTERFACE_LINK_OPTIONS")) {
+        dest = &target->link_options;
+        visibility = EV_VISIBILITY_INTERFACE;
+    } else if (bm_sv_eq_ci_lit(prop->key, "LINK_DIRECTORIES")) {
+        dest = &target->link_directories;
+        visibility = EV_VISIBILITY_PRIVATE;
+    } else if (bm_sv_eq_ci_lit(prop->key, "INTERFACE_LINK_DIRECTORIES")) {
+        dest = &target->link_directories;
+        visibility = EV_VISIBILITY_INTERFACE;
+    } else {
+        return true;
+    }
+    item_visibility = bm_visibility_from_event(visibility);
+
+    if (!bm_split_cmake_list(builder->arena, prop->value, &values)) {
+        return bm_builder_error(builder, ev, "failed to split promoted target property items", "increase arena capacity");
+    }
+
+    for (size_t i = 0; i < arena_arr_len(values); ++i) {
+        BM_String_Item_View item = {0};
+        if (!bm_copy_string(builder->arena, values[i], &item.value)) {
+            return bm_builder_error(builder, ev, "failed to copy promoted target property item", "increase arena capacity");
+        }
+        item.visibility = item_visibility;
+        item.flags = flags;
+        item.provenance = bm_provenance_from_event(builder->arena, ev);
+        if (!arena_arr_push(builder->arena, items, item)) {
+            return bm_builder_error(builder, ev, "failed to append promoted target property item", "increase arena capacity");
+        }
+    }
+
+    if (!bm_target_apply_promoted_item_mutation(builder->arena,
+                                                dest,
+                                                items,
+                                                arena_arr_len(items),
+                                                mutation_op,
+                                                item_visibility,
+                                                flags)) {
+        return bm_builder_error(builder, ev, "failed to mutate promoted target property items", "increase arena capacity");
+    }
+
+    if (promoted) *promoted = true;
     return true;
 }
 
@@ -261,6 +402,7 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
 
         case EVENT_TARGET_PROP_SET: {
             BM_Target_Record *target = bm_draft_find_target(draft, ev->as.target_prop_set.target_name);
+            bool promoted = false;
             if (!target) {
                 target = bm_target_ensure_placeholder(builder, ev, ev->as.target_prop_set.target_name);
             }
@@ -293,6 +435,12 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
                 target->imported_global = bm_sv_truthy(ev->as.target_prop_set.value);
             }
 
+            if (!bm_target_promote_property_set(builder, target, ev, &promoted)) {
+                return false;
+            }
+
+            if (promoted) return true;
+
             if (!bm_target_record_raw_set(builder,
                                           target,
                                           ev,
@@ -312,8 +460,8 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
                                          &target->link_libraries,
                                          ev->as.target_link_libraries.item,
                                          ev->as.target_link_libraries.visibility,
-                                         false,
-                                         false);
+                                         EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                         BM_ITEM_FLAG_NONE);
         }
 
         case EVENT_TARGET_LINK_OPTIONS: {
@@ -324,8 +472,10 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
                                          &target->link_options,
                                          ev->as.target_link_options.item,
                                          ev->as.target_link_options.visibility,
-                                         ev->as.target_link_options.is_before,
-                                         false);
+                                         ev->as.target_link_options.is_before
+                                             ? EVENT_PROPERTY_MUTATE_PREPEND_LIST
+                                             : EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                         ev->as.target_link_options.is_before ? BM_ITEM_FLAG_BEFORE : BM_ITEM_FLAG_NONE);
         }
 
         case EVENT_TARGET_LINK_DIRECTORIES: {
@@ -336,8 +486,8 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
                                          &target->link_directories,
                                          ev->as.target_link_directories.path,
                                          ev->as.target_link_directories.visibility,
-                                         false,
-                                         false);
+                                         EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                         BM_ITEM_FLAG_NONE);
         }
 
         case EVENT_TARGET_INCLUDE_DIRECTORIES: {
@@ -348,8 +498,11 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
                                          &target->include_directories,
                                          ev->as.target_include_directories.path,
                                          ev->as.target_include_directories.visibility,
-                                         ev->as.target_include_directories.is_before,
-                                         ev->as.target_include_directories.is_system);
+                                         ev->as.target_include_directories.is_before
+                                             ? EVENT_PROPERTY_MUTATE_PREPEND_LIST
+                                             : EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                         (ev->as.target_include_directories.is_before ? BM_ITEM_FLAG_BEFORE : BM_ITEM_FLAG_NONE) |
+                                             (ev->as.target_include_directories.is_system ? BM_ITEM_FLAG_SYSTEM : BM_ITEM_FLAG_NONE));
         }
 
         case EVENT_TARGET_COMPILE_DEFINITIONS: {
@@ -360,8 +513,8 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
                                          &target->compile_definitions,
                                          ev->as.target_compile_definitions.item,
                                          ev->as.target_compile_definitions.visibility,
-                                         false,
-                                         false);
+                                         EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                         BM_ITEM_FLAG_NONE);
         }
 
         case EVENT_TARGET_COMPILE_OPTIONS: {
@@ -372,8 +525,22 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
                                          &target->compile_options,
                                          ev->as.target_compile_options.item,
                                          ev->as.target_compile_options.visibility,
-                                         ev->as.target_compile_options.is_before,
-                                         false);
+                                         ev->as.target_compile_options.is_before
+                                             ? EVENT_PROPERTY_MUTATE_PREPEND_LIST
+                                             : EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                         ev->as.target_compile_options.is_before ? BM_ITEM_FLAG_BEFORE : BM_ITEM_FLAG_NONE);
+        }
+
+        case EVENT_TARGET_COMPILE_FEATURES: {
+            BM_Target_Record *target = bm_draft_find_target(draft, ev->as.target_compile_features.target_name);
+            if (!target) return bm_builder_error(builder, ev, "target compile features references an unknown target", "declare the target first");
+            return bm_target_append_item(builder,
+                                         ev,
+                                         &target->compile_features,
+                                         ev->as.target_compile_features.item,
+                                         ev->as.target_compile_features.visibility,
+                                         EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                         BM_ITEM_FLAG_NONE);
         }
 
         case EVENT_KIND_COUNT:

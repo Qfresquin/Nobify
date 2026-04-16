@@ -31,6 +31,18 @@ cpack_add_component_group(base DISPLAY_NAME "Base" DESCRIPTION "Base Group")
 cpack_add_component(core DISPLAY_NAME "Core" GROUP base INSTALL_TYPES Full REQUIRED)
 #@@ENDCASE
 
+#@@CASE pipeline_positive_usage_requirement_item_model
+project(PipeUsage LANGUAGES C)
+link_libraries(global_dep)
+set_property(DIRECTORY APPEND PROPERTY LINK_LIBRARIES dir_dep)
+add_library(iface INTERFACE)
+set_target_properties(iface PROPERTIES
+  INTERFACE_SYSTEM_INCLUDE_DIRECTORIES iface_sys
+  INTERFACE_COMPILE_FEATURES c_std_11)
+add_executable(app main.c)
+target_link_libraries(app PRIVATE iface)
+#@@ENDCASE
+
 #@@CASE pipeline_negative_cpack_unknown_group
 project(BadPackGroup)
 include(CPackComponent)

@@ -129,6 +129,14 @@ static size_t pipeline_count_non_private_items(BM_String_Item_Span items) {
     return count;
 }
 
+static size_t pipeline_count_items_with_flag(BM_String_Item_Span items, BM_Item_Flags flag) {
+    size_t count = 0;
+    for (size_t i = 0; i < items.count; ++i) {
+        if ((items.items[i].flags & flag) != 0) count++;
+    }
+    return count;
+}
+
 static bool pipeline_sv_contains(String_View haystack, String_View needle) {
     if (needle.count == 0 || haystack.count < needle.count) return false;
     for (size_t i = 0; i + needle.count <= haystack.count; ++i) {
@@ -172,10 +180,11 @@ static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *mod
     BM_String_Item_Span root_include_dirs = bm_query_directory_include_directories_raw(model, root_directory);
     BM_String_Item_Span root_system_include_dirs = bm_query_directory_system_include_directories_raw(model, root_directory);
     BM_String_Item_Span root_link_dirs = bm_query_directory_link_directories_raw(model, root_directory);
+    BM_String_Item_Span root_link_libs = bm_query_directory_link_libraries_raw(model, root_directory);
     BM_String_Item_Span global_compile_defs = bm_query_global_compile_definitions_raw(model);
     BM_String_Item_Span global_compile_opts = bm_query_global_compile_options_raw(model);
     BM_String_Item_Span global_link_opts = bm_query_global_link_options_raw(model);
-    BM_String_Span global_link_libs = bm_query_global_raw_property_items(model, nob_sv_from_cstr("LINK_LIBRARIES"));
+    BM_String_Item_Span global_link_libs = bm_query_global_link_libraries_raw(model);
 
     nob_sb_append_cstr(sb, "MODEL project=");
     test_snapshot_append_escaped_sv(sb, bm_query_project_name(model));
@@ -191,10 +200,11 @@ static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *mod
         cpack_component_count));
 
     nob_sb_append_cstr(sb, nob_temp_sprintf(
-        "DIR include=%zu system_include=%zu link=%zu\n",
+        "DIR include=%zu system_include=%zu link=%zu link_libs=%zu\n",
         root_include_dirs.count,
         root_system_include_dirs.count,
-        root_link_dirs.count));
+        root_link_dirs.count,
+        root_link_libs.count));
 
     nob_sb_append_cstr(sb, nob_temp_sprintf(
         "GLOBAL compile_defs=%zu compile_opts=%zu link_opts=%zu link_libs=%zu\n",
@@ -207,21 +217,25 @@ static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *mod
         BM_Target_Id target_id = 0;
         BM_String_Span sources = bm_query_target_sources_raw(model, target_id);
         BM_Target_Id_Span deps = bm_query_target_dependencies_explicit(model, target_id);
+        BM_String_Item_Span include_dirs = bm_query_target_include_directories_raw(model, target_id);
         BM_String_Item_Span link_libs = bm_query_target_link_libraries_raw(model, target_id);
         BM_String_Item_Span link_opts = bm_query_target_link_options_raw(model, target_id);
         BM_String_Item_Span link_dirs = bm_query_target_link_directories_raw(model, target_id);
+        BM_String_Item_Span compile_features = bm_query_target_compile_features_raw(model, target_id);
 
         nob_sb_append_cstr(sb, "TARGET0 name=");
         test_snapshot_append_escaped_sv(sb, bm_query_target_name(model, target_id));
         nob_sb_append_cstr(sb, nob_temp_sprintf(
-            " type=%s sources=%zu deps=%zu link_libs=%zu interface_libs=%zu link_opts=%zu link_dirs=%zu\n",
+            " type=%s sources=%zu deps=%zu link_libs=%zu interface_libs=%zu link_opts=%zu link_dirs=%zu compile_features=%zu system_includes=%zu\n",
             pipeline_target_type_name(bm_query_target_kind(model, target_id)),
             sources.count,
             deps.count,
             link_libs.count,
             pipeline_count_non_private_items(link_libs),
             link_opts.count,
-            link_dirs.count));
+            link_dirs.count,
+            compile_features.count,
+            pipeline_count_items_with_flag(include_dirs, BM_ITEM_FLAG_SYSTEM)));
     }
 }
 

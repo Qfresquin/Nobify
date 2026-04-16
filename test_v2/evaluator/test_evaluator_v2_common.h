@@ -552,6 +552,7 @@ static const char *snapshot_event_kind_name(const Cmake_Event *ev) {
         case EV_TARGET_INCLUDE_DIRECTORIES: return "EV_TARGET_INCLUDE_DIRECTORIES";
         case EV_TARGET_COMPILE_DEFINITIONS: return "EV_TARGET_COMPILE_DEFINITIONS";
         case EV_TARGET_COMPILE_OPTIONS: return "EV_TARGET_COMPILE_OPTIONS";
+        case EV_TARGET_COMPILE_FEATURES: return "EV_TARGET_COMPILE_FEATURES";
         case EV_TARGET_LINK_LIBRARIES: return "EV_TARGET_LINK_LIBRARIES";
         case EV_TARGET_LINK_OPTIONS: return "EV_TARGET_LINK_OPTIONS";
         case EV_TARGET_LINK_DIRECTORIES: return "EV_TARGET_LINK_DIRECTORIES";
@@ -601,6 +602,7 @@ static bool snapshot_event_is_visible(const Cmake_Event *ev) {
         case EV_TARGET_INCLUDE_DIRECTORIES:
         case EV_TARGET_COMPILE_DEFINITIONS:
         case EV_TARGET_COMPILE_OPTIONS:
+        case EV_TARGET_COMPILE_FEATURES:
         case EV_TARGET_LINK_LIBRARIES:
         case EV_TARGET_LINK_OPTIONS:
         case EV_TARGET_LINK_DIRECTORIES:
@@ -837,6 +839,14 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
             nob_sb_append_cstr(sb, nob_temp_sprintf(" vis=%s is_before=%d",
                 visibility_name(ev->as.target_compile_options.visibility),
                 ev->as.target_compile_options.is_before ? 1 : 0));
+            break;
+
+        case EV_TARGET_COMPILE_FEATURES:
+            nob_sb_append_cstr(sb, " target=");
+            snapshot_append_escaped_sv(sb, ev->as.target_compile_features.target_name);
+            nob_sb_append_cstr(sb, " item=");
+            snapshot_append_escaped_sv(sb, ev->as.target_compile_features.item);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" vis=%s", visibility_name(ev->as.target_compile_features.visibility)));
             break;
 
         case EV_TARGET_LINK_LIBRARIES:

@@ -3569,14 +3569,6 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
                 sv_contains_sv(ev->as.target_prop_set.value, nob_sv_from_cstr("modules"))) {
                 saw_cxx_module_dirs_prop = true;
             }
-            if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("COMPILE_FEATURES")) &&
-                nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("cxx_std_20"))) {
-                saw_compile_feature_local = true;
-            }
-            if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES")) &&
-                nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("c_std_11"))) {
-                saw_compile_feature_iface = true;
-            }
             if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("PRECOMPILE_HEADERS")) &&
                 sv_contains_sv(ev->as.target_prop_set.value, nob_sv_from_cstr("pch.h"))) {
                 saw_pch_local = true;
@@ -3591,6 +3583,16 @@ TEST(evaluator_target_sources_compile_features_and_precompile_headers_model_usag
             if (nob_sv_eq(ev->as.target_prop_set.key, nob_sv_from_cstr("INTERFACE_CXX_MODULE_SETS")) &&
                 nob_sv_eq(ev->as.target_prop_set.value, nob_sv_from_cstr("CXX_MODULES"))) {
                 saw_imported_cxx_module_sets_prop = true;
+            }
+        } else if (ev->h.kind == EV_TARGET_COMPILE_FEATURES &&
+                   nob_sv_eq(ev->as.target_compile_features.target_name, nob_sv_from_cstr("real"))) {
+            if (nob_sv_eq(ev->as.target_compile_features.item, nob_sv_from_cstr("cxx_std_20")) &&
+                ev->as.target_compile_features.visibility == EV_VISIBILITY_PRIVATE) {
+                saw_compile_feature_local = true;
+            }
+            if (nob_sv_eq(ev->as.target_compile_features.item, nob_sv_from_cstr("c_std_11")) &&
+                ev->as.target_compile_features.visibility == EV_VISIBILITY_INTERFACE) {
+                saw_compile_feature_iface = true;
             }
         } else if (ev->h.kind == EV_TARGET_PROP_SET &&
                    nob_sv_eq(ev->as.target_prop_set.target_name, nob_sv_from_cstr("app")) &&

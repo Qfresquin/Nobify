@@ -240,7 +240,7 @@ Every directory record contains:
 - `binary_dir`
 - `provenance`
 - typed raw property families for include dirs, system include dirs, link dirs,
-  compile definitions, compile options, and link options
+  compile definitions, compile options, link options, and link libraries
 - a future-facing raw property bag for additional promoted directory/global
   properties
 
@@ -267,12 +267,15 @@ Every target record contains:
 - raw explicit dependency references
 - raw typed property entries for:
   `link_libraries`, `link_options`, `link_directories`,
-  `include_directories`, `compile_definitions`, `compile_options`
+  `include_directories`, `compile_definitions`, `compile_options`,
+  `compile_features`
 - typed scalar properties promoted from `EVENT_TARGET_PROP_SET`:
   `OUTPUT_NAME`, `PREFIX`, `SUFFIX`,
   `ARCHIVE_OUTPUT_DIRECTORY`, `LIBRARY_OUTPUT_DIRECTORY`,
   `RUNTIME_OUTPUT_DIRECTORY`, `FOLDER`
-- a future-facing raw property bag for unsupported target properties
+- a future-facing raw property bag for unsupported target properties,
+  custom metadata, imported-config scalars, and `APPEND_STRING` setter
+  payloads that intentionally remain outside the canonical item model
 
 Alias targets preserve their own identity flags, but their frozen `kind`
 matches the aliased target family. Local custom targets remain

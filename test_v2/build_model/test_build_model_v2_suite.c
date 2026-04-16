@@ -133,6 +133,15 @@ static bool build_model_string_item_contains_at(BM_String_Item_Span span, size_t
     return index < span.count && build_model_sv_contains(span.items[index].value, nob_sv_from_cstr(needle ? needle : ""));
 }
 
+static bool build_model_string_item_has_flag(BM_String_Item_Span span, const char *needle, BM_Item_Flags flag) {
+    String_View needle_sv = nob_sv_from_cstr(needle ? needle : "");
+    for (size_t i = 0; i < span.count; ++i) {
+        if (!nob_sv_eq(span.items[i].value, needle_sv)) continue;
+        if ((span.items[i].flags & flag) != 0) return true;
+    }
+    return false;
+}
+
 static bool build_model_string_span_equals(BM_String_Span lhs, BM_String_Span rhs) {
     if (lhs.count != rhs.count) return false;
     for (size_t i = 0; i < lhs.count; ++i) {
@@ -2975,6 +2984,179 @@ TEST(build_model_effective_queries_dedup_and_preserve_first_occurrence) {
     TEST_PASS();
 }
 
+TEST(build_model_usage_requirement_property_setters_promote_to_canonical_item_storage) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Directory_Id root_directory = BM_DIRECTORY_ID_INVALID;
+    BM_Target_Id iface_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    BM_Query_Eval_Context compile_ctx = {0};
+    BM_Query_Eval_Context link_ctx = {0};
+    BM_String_Item_Span global_link_libs = {0};
+    BM_String_Item_Span directory_link_libs = {0};
+    BM_String_Item_Span include_items = {0};
+    BM_String_Item_Span compile_opts = {0};
+    BM_String_Item_Span compile_features = {0};
+    BM_String_Item_Span link_dirs = {0};
+    BM_String_Item_Span link_opts = {0};
+    BM_String_Item_Span link_lib_items = {0};
+    BM_String_Item_Span raw_compile_features = {0};
+    BM_String_Item_Span raw_include_items = {0};
+    BM_String_Item_Span raw_compile_options = {0};
+    BM_String_Span raw_compile_options_prop = {0};
+    String_View property_value = {0};
+
+    ASSERT(query_arena != NULL);
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "usage_item_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("usage_item_src");
+    config.binary_dir = nob_sv_from_cstr("usage_item_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "set_property(GLOBAL APPEND PROPERTY LINK_LIBRARIES global_dep)\n"
+        "set_property(DIRECTORY APPEND PROPERTY LINK_LIBRARIES dir_dep)\n"
+        "add_library(iface INTERFACE)\n"
+        "set_target_properties(iface PROPERTIES\n"
+        "  INTERFACE_INCLUDE_DIRECTORIES iface/include\n"
+        "  INTERFACE_SYSTEM_INCLUDE_DIRECTORIES iface/sys\n"
+        "  INTERFACE_COMPILE_DEFINITIONS IFACE_DEF=1\n"
+        "  INTERFACE_COMPILE_OPTIONS -Wall\n"
+        "  INTERFACE_COMPILE_FEATURES c_std_99\n"
+        "  CUSTOM_META keepme)\n"
+        "set_property(TARGET iface APPEND PROPERTY INTERFACE_COMPILE_FEATURES c_std_11)\n"
+        "set_property(TARGET iface APPEND PROPERTY INTERFACE_LINK_OPTIONS -Wl,--as-needed)\n"
+        "set_property(TARGET iface APPEND PROPERTY INTERFACE_LINK_DIRECTORIES iface/lib)\n"
+        "set_property(TARGET iface APPEND PROPERTY INTERFACE_LINK_LIBRARIES m)\n"
+        "set_property(TARGET iface APPEND_STRING PROPERTY INTERFACE_COMPILE_OPTIONS -Wraw)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE iface)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    root_directory = bm_query_root_directory(model);
+    iface_id = bm_query_target_by_name(model, nob_sv_from_cstr("iface"));
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    ASSERT(root_directory != BM_DIRECTORY_ID_INVALID);
+    ASSERT(iface_id != BM_TARGET_ID_INVALID);
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+
+    global_link_libs = bm_query_global_link_libraries_raw(model);
+    directory_link_libs = bm_query_directory_link_libraries_raw(model, root_directory);
+    ASSERT(global_link_libs.count == 1);
+    ASSERT(build_model_string_item_equals_at(global_link_libs, 0, "global_dep"));
+    ASSERT(directory_link_libs.count == 1);
+    ASSERT(build_model_string_item_equals_at(directory_link_libs, 0, "dir_dep"));
+
+    raw_compile_features = bm_query_target_compile_features_raw(model, iface_id);
+    raw_include_items = bm_query_target_include_directories_raw(model, iface_id);
+    raw_compile_options = bm_query_target_compile_options_raw(model, iface_id);
+    ASSERT(raw_compile_features.count == 2);
+    ASSERT(build_model_string_item_equals_at(raw_compile_features, 0, "c_std_99"));
+    ASSERT(build_model_string_item_equals_at(raw_compile_features, 1, "c_std_11"));
+    ASSERT(raw_include_items.count == 2);
+    ASSERT(build_model_string_item_span_contains(raw_include_items, "iface/include"));
+    ASSERT(build_model_string_item_span_contains(raw_include_items, "iface/sys"));
+    ASSERT(build_model_string_item_has_flag(raw_include_items, "iface/sys", BM_ITEM_FLAG_SYSTEM));
+    ASSERT(raw_compile_options.count == 1);
+    ASSERT(build_model_string_item_equals_at(raw_compile_options, 0, "-Wall"));
+
+    ASSERT(bm_query_target_property_value(model,
+                                          iface_id,
+                                          nob_sv_from_cstr("INTERFACE_SYSTEM_INCLUDE_DIRECTORIES"),
+                                          query_arena,
+                                          &property_value));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("iface/sys")));
+    ASSERT(bm_query_target_property_value(model,
+                                          iface_id,
+                                          nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES"),
+                                          query_arena,
+                                          &property_value));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("c_std_99")));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("c_std_11")));
+
+    raw_compile_options_prop = bm_query_target_raw_property_items(model,
+                                                                  iface_id,
+                                                                  nob_sv_from_cstr("INTERFACE_COMPILE_OPTIONS"));
+    ASSERT(raw_compile_options_prop.count == 1);
+    ASSERT(build_model_string_equals_at(raw_compile_options_prop, 0, "-Wraw"));
+    ASSERT(bm_query_target_raw_property_items(model, iface_id, nob_sv_from_cstr("CUSTOM_META")).count == 1);
+
+    compile_ctx.current_target_id = app_id;
+    compile_ctx.usage_mode = BM_QUERY_USAGE_COMPILE;
+    compile_ctx.compile_language = nob_sv_from_cstr("C");
+    compile_ctx.build_interface_active = true;
+    compile_ctx.install_interface_active = false;
+
+    link_ctx.current_target_id = app_id;
+    link_ctx.usage_mode = BM_QUERY_USAGE_LINK;
+    link_ctx.build_interface_active = true;
+    link_ctx.install_interface_active = false;
+
+    ASSERT(bm_query_target_effective_include_directories_items_with_context(model,
+                                                                            app_id,
+                                                                            &compile_ctx,
+                                                                            query_arena,
+                                                                            &include_items));
+    ASSERT(include_items.count == 2);
+    ASSERT(build_model_string_item_span_contains(include_items, "iface/include"));
+    ASSERT(build_model_string_item_span_contains(include_items, "iface/sys"));
+    ASSERT(build_model_string_item_has_flag(include_items, "iface/sys", BM_ITEM_FLAG_SYSTEM));
+
+    ASSERT(bm_query_target_effective_compile_options_items_with_context(model,
+                                                                        app_id,
+                                                                        &compile_ctx,
+                                                                        query_arena,
+                                                                        &compile_opts));
+    ASSERT(compile_opts.count == 1);
+    ASSERT(build_model_string_item_equals_at(compile_opts, 0, "-Wall"));
+    ASSERT(!build_model_string_item_span_contains(compile_opts, "-Wraw"));
+
+    ASSERT(bm_query_target_effective_compile_features_items(model,
+                                                            app_id,
+                                                            &compile_ctx,
+                                                            query_arena,
+                                                            &compile_features));
+    ASSERT(compile_features.count == 2);
+    ASSERT(build_model_string_item_equals_at(compile_features, 0, "c_std_99"));
+    ASSERT(build_model_string_item_equals_at(compile_features, 1, "c_std_11"));
+
+    ASSERT(bm_query_target_effective_link_directories_items_with_context(model,
+                                                                         app_id,
+                                                                         &link_ctx,
+                                                                         query_arena,
+                                                                         &link_dirs));
+    ASSERT(link_dirs.count == 1);
+    ASSERT(build_model_string_item_contains_at(link_dirs, 0, "iface/lib"));
+
+    ASSERT(bm_query_target_effective_link_options_items_with_context(model,
+                                                                     app_id,
+                                                                     &link_ctx,
+                                                                     query_arena,
+                                                                     &link_opts));
+    ASSERT(link_opts.count == 1);
+    ASSERT(build_model_string_item_equals_at(link_opts, 0, "-Wl,--as-needed"));
+
+    ASSERT(bm_query_target_effective_link_libraries_items_with_context(model,
+                                                                       app_id,
+                                                                       &link_ctx,
+                                                                       query_arena,
+                                                                       &link_lib_items));
+    ASSERT(build_model_string_item_span_contains(link_lib_items, "iface"));
+    ASSERT(build_model_string_item_span_contains(link_lib_items, "m"));
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 TEST(build_model_install_and_export_queries_surface_typed_metadata) {
     Test_Semantic_Pipeline_Config config = {0};
     Test_Semantic_Pipeline_Fixture fixture = {0};
@@ -3359,6 +3541,7 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_query_session_memoizes_imported_target_resolution(passed, failed, skipped);
     test_build_model_compile_feature_catalog_and_effective_features_are_shared(passed, failed, skipped);
     test_build_model_effective_queries_dedup_and_preserve_first_occurrence(passed, failed, skipped);
+    test_build_model_usage_requirement_property_setters_promote_to_canonical_item_storage(passed, failed, skipped);
     test_build_model_install_and_export_queries_surface_typed_metadata(passed, failed, skipped);
     test_build_model_install_queries_materialize_effective_default_components(passed, failed, skipped);
     test_build_model_standalone_export_queries_cover_build_tree_and_package_registry(passed, failed, skipped);

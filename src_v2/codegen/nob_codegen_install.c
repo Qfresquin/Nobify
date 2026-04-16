@@ -191,8 +191,9 @@ static bool cg_export_collect_interface_includes(CG_Context *ctx,
                                                  BM_Export_Id export_id,
                                                  BM_Install_Rule_Id rule_id,
                                                  BM_Target_Id target_id,
+                                                 bool want_system,
                                                  String_View **out) {
-    BM_String_Span includes = {0};
+    BM_String_Item_Span includes = {0};
     BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx,
                                                    target_id,
                                                    BM_QUERY_USAGE_COMPILE,
@@ -202,12 +203,14 @@ static bool cg_export_collect_interface_includes(CG_Context *ctx,
     String_View export_dir = bm_query_export_destination(ctx->model, export_id);
     qctx.build_interface_active = false;
     qctx.install_interface_active = true;
-    if (!cg_query_effective_values_cached(ctx, target_id, &qctx, CG_EFFECTIVE_INCLUDE_DIRECTORIES, &includes)) {
+    if (!cg_query_effective_items_cached(ctx, target_id, &qctx, CG_EFFECTIVE_INCLUDE_DIRECTORIES, &includes)) {
         return false;
     }
     for (size_t i = 0; i < includes.count; ++i) {
-        String_View item = includes.items[i];
+        String_View item = includes.items[i].value;
         String_View expr = {0};
+        bool is_system = (includes.items[i].flags & BM_ITEM_FLAG_SYSTEM) != 0;
+        if (is_system != want_system) continue;
         if (item.count == 0) continue;
         if (!cg_path_is_abs(item)) {
             if (!cg_relative_install_expr(ctx, export_dir, item, &expr)) return false;
@@ -215,7 +218,7 @@ static bool cg_export_collect_interface_includes(CG_Context *ctx,
         }
         if (!cg_collect_unique_path(ctx->scratch, out, item)) return false;
     }
-    if (install_dest.count > 0) {
+    if (!want_system && install_dest.count > 0) {
         String_View expr = {0};
         if (!cg_relative_install_expr(ctx, export_dir, install_dest, &expr) ||
             !cg_collect_unique_path(ctx->scratch, out, expr)) {
@@ -293,6 +296,7 @@ static bool cg_export_emit_target_properties(CG_Context *ctx,
     String_View runtime_rel = {0};
     String_View runtime_expr = {0};
     String_View includes_joined = {0};
+    String_View system_includes_joined = {0};
     String_View compile_defs_joined = {0};
     String_View compile_opts_joined = {0};
     String_View compile_features_joined = {0};
@@ -300,6 +304,7 @@ static bool cg_export_emit_target_properties(CG_Context *ctx,
     String_View link_dirs_joined = {0};
     String_View link_libs_joined = {0};
     String_View *include_items = NULL;
+    String_View *system_include_items = NULL;
     String_View *compile_defs = NULL;
     String_View *compile_opts = NULL;
     String_View *compile_features = NULL;
@@ -311,7 +316,8 @@ static bool cg_export_emit_target_properties(CG_Context *ctx,
     if (!ctx || !info || !sb) return false;
     rule_id = bm_query_install_rule_for_export_target(ctx->model, export_id, target_id);
 
-    if (!cg_export_collect_interface_includes(ctx, export_id, rule_id, target_id, &include_items) ||
+    if (!cg_export_collect_interface_includes(ctx, export_id, rule_id, target_id, false, &include_items) ||
+        !cg_export_collect_interface_includes(ctx, export_id, rule_id, target_id, true, &system_include_items) ||
         !cg_export_collect_effective_values(ctx, target_id, BM_QUERY_USAGE_COMPILE, CG_EFFECTIVE_COMPILE_DEFINITIONS, &compile_defs) ||
         !cg_export_collect_effective_values(ctx, target_id, BM_QUERY_USAGE_COMPILE, CG_EFFECTIVE_COMPILE_OPTIONS, &compile_opts) ||
         !cg_export_collect_effective_values(ctx, target_id, BM_QUERY_USAGE_COMPILE, CG_EFFECTIVE_COMPILE_FEATURES, &compile_features) ||
@@ -319,6 +325,7 @@ static bool cg_export_emit_target_properties(CG_Context *ctx,
         !cg_export_collect_effective_values(ctx, target_id, BM_QUERY_USAGE_LINK, CG_EFFECTIVE_LINK_DIRECTORIES, &link_dirs) ||
         !cg_export_collect_link_libraries(ctx, export_id, target_id, export_namespace, &link_libs) ||
         !cg_join_sv_list(ctx->scratch, include_items, &includes_joined) ||
+        !cg_join_sv_list(ctx->scratch, system_include_items, &system_includes_joined) ||
         !cg_join_sv_list(ctx->scratch, compile_defs, &compile_defs_joined) ||
         !cg_join_sv_list(ctx->scratch, compile_opts, &compile_opts_joined) ||
         !cg_join_sv_list(ctx->scratch, compile_features, &compile_features_joined) ||
@@ -350,6 +357,11 @@ static bool cg_export_emit_target_properties(CG_Context *ctx,
     if (includes_joined.count > 0) {
         nob_sb_append_cstr(sb, "  INTERFACE_INCLUDE_DIRECTORIES \"");
         if (!cg_cmake_append_escaped(sb, includes_joined)) return false;
+        nob_sb_append_cstr(sb, "\"\n");
+    }
+    if (system_includes_joined.count > 0) {
+        nob_sb_append_cstr(sb, "  INTERFACE_SYSTEM_INCLUDE_DIRECTORIES \"");
+        if (!cg_cmake_append_escaped(sb, system_includes_joined)) return false;
         nob_sb_append_cstr(sb, "\"\n");
     }
     if (compile_defs_joined.count > 0) {

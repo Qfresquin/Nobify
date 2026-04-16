@@ -619,6 +619,10 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_options.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_options.item)) return false;
             break;
+        case EVENT_TARGET_COMPILE_FEATURES:
+            if (!event_copy_sv_inplace(arena, &ev->as.target_compile_features.target_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_compile_features.item)) return false;
+            break;
         case EVENT_KIND_COUNT:
             return false;
     }
@@ -1070,6 +1074,13 @@ static void event_dump_one(const Event *ev) {
                    ev->as.target_compile_options.target_name.data ? ev->as.target_compile_options.target_name.data : "",
                    (int)ev->as.target_compile_options.item.count,
                    ev->as.target_compile_options.item.data ? ev->as.target_compile_options.item.data : "");
+            break;
+        case EVENT_TARGET_COMPILE_FEATURES:
+            printf(" target=%.*s item=%.*s",
+                   (int)ev->as.target_compile_features.target_name.count,
+                   ev->as.target_compile_features.target_name.data ? ev->as.target_compile_features.target_name.data : "",
+                   (int)ev->as.target_compile_features.item.count,
+                   ev->as.target_compile_features.item.data ? ev->as.target_compile_features.item.data : "");
             break;
 
         default:
