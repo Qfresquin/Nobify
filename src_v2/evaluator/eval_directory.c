@@ -957,18 +957,6 @@ static bool emit_compile_option_to_current_file_targets(EvalExecContext *ctx,
     return true;
 }
 
-static String_View wrap_link_item_with_config_genex_temp(EvalExecContext *ctx,
-                                                         String_View item,
-                                                         String_View cond_prefix) {
-    if (!ctx || item.count == 0 || cond_prefix.count == 0) return item;
-    String_View parts[3] = {
-        cond_prefix,
-        item,
-        nob_sv_from_cstr(">")
-    };
-    return svu_join_no_sep_temp(ctx, parts, 3);
-}
-
 static bool split_comma_list_temp(EvalExecContext *ctx, String_View input, SV_List *out) {
     if (!ctx || !out) return false;
     if (input.count == 0) return true;
@@ -1372,16 +1360,6 @@ static bool directory_parse_link_libraries_request(EvalExecContext *ctx,
         }
 
         String_View item = args[i];
-        if (eval_sv_eq_ci_lit(qualifier, "DEBUG")) {
-            item = wrap_link_item_with_config_genex_temp(ctx,
-                                                         item,
-                                                         nob_sv_from_cstr("$<$<CONFIG:Debug>:"));
-        } else if (eval_sv_eq_ci_lit(qualifier, "OPTIMIZED")) {
-            item = wrap_link_item_with_config_genex_temp(ctx,
-                                                         item,
-                                                         nob_sv_from_cstr("$<$<NOT:$<CONFIG:Debug>>:"));
-        }
-
         if (!svu_list_push_temp(ctx, &req.items, item)) return false;
         qualifier = nob_sv_from_cstr("");
     }

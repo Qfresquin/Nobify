@@ -1,7 +1,7 @@
 # Nobify
 
 ## Status
-Canonical overview. Transition contract for the `CMake 3.8 parity total -> Nob`
+Canonical overview. Transition contract for the `CMake 3.28 parity total -> Nob`
 documentation reset.
 
 ## Role
@@ -9,18 +9,19 @@ This file states the product direction and points to the only active documents
 that define the project today.
 
 ## Product direction
-Nobify is documented as a transpiler from `CMake 3.8` to Nob with the same
+Nobify is documented as a transpiler from `CMake 3.28` to Nob with the same
 observable artifacts. Internal simplification is allowed only when generated
 build outputs, test behavior, install results, and package-visible artifacts
 stay equivalent to the source project.
 
 ## Current gap
-The codebase, tests, and older documents still contain `CMake 3.28` and
-`supported subset` language. Those references describe current incompleteness
-and migration debt, not the official product contract.
+The codebase, tests, and older documents still contain some mistaken
+`CMake 3.8` references and `supported subset` language. Those references
+describe documentation drift and transition debt, not the official product
+contract.
 
 ## Guarantees
-- Active docs describe the `CMake 3.8` parity target first.
+- Active docs describe the `CMake 3.28` parity target first.
 - Known implementation gaps are called out explicitly as short transition notes.
 - `docs/archive/` preserves history but does not define current behavior.
 

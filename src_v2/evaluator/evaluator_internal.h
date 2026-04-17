@@ -1180,6 +1180,21 @@ SV_List eval_resolve_args_literal(EvalExecContext *ctx, const Args *raw_args);
 // ---- diagnostics / events ----
 bool eval_emit_event(EvalExecContext *ctx, Event ev);
 bool eval_emit_event_allow_stopped(EvalExecContext *ctx, Event ev);
+String_View eval_link_item_apply_config_filter_temp(EvalExecContext *ctx,
+                                                    String_View item,
+                                                    Event_Link_Item_Config_Filter filter);
+bool eval_link_item_metadata_from_raw(EvalExecContext *ctx,
+                                      String_View raw_item,
+                                      Event_Link_Item_Config_Filter filter,
+                                      Event_Link_Item_Metadata *out);
+bool eval_parse_link_libraries_items_semantics(EvalExecContext *ctx,
+                                               const String_View *tokens,
+                                               size_t token_count,
+                                               String_View **out_items,
+                                               Event_Link_Item_Metadata **out_semantics);
+bool eval_populate_property_mutate_semantics(EvalExecContext *ctx, Event_Directory_Property_Mutate *mut);
+bool eval_populate_target_prop_set_semantics(EvalExecContext *ctx, Event_Target_Prop_Set *prop);
+bool eval_populate_build_step_dependency_semantics(EvalExecContext *ctx, Event_Build_Step_Add_Dependency *dep);
 static inline bool emit_event(EvalExecContext *ctx, Event ev) {
     return eval_emit_event(ctx, ev);
 }
@@ -1193,6 +1208,35 @@ static inline String_View *eval_sv_list_copy_to_event_arena(EvalExecContext *ctx
         if (eval_should_stop(ctx)) return NULL;
     }
     return items;
+}
+
+static inline String_View *eval_sv_array_copy_to_event_arena(EvalExecContext *ctx,
+                                                             const String_View *items,
+                                                             size_t count) {
+    if (!ctx || !items || count == 0) return NULL;
+    String_View *copy = arena_alloc_array(eval_event_arena(ctx), String_View, count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, copy, NULL);
+    for (size_t i = 0; i < count; ++i) {
+        copy[i] = sv_copy_to_event_arena(ctx, items[i]);
+        if (eval_should_stop(ctx)) return NULL;
+    }
+    return copy;
+}
+
+static inline Event_Link_Item_Metadata *eval_link_item_metadata_array_copy_to_event_arena(
+    EvalExecContext *ctx,
+    const Event_Link_Item_Metadata *items,
+    size_t count) {
+    if (!ctx || !items || count == 0) return NULL;
+    Event_Link_Item_Metadata *copy =
+        arena_alloc_array(eval_event_arena(ctx), Event_Link_Item_Metadata, count);
+    EVAL_OOM_RETURN_IF_NULL(ctx, copy, NULL);
+    for (size_t i = 0; i < count; ++i) {
+        copy[i] = items[i];
+        copy[i].target_name = sv_copy_to_event_arena(ctx, items[i].target_name);
+        if (eval_should_stop(ctx)) return NULL;
+    }
+    return copy;
 }
 
 static inline String_View eval_alloc_build_step_key(EvalExecContext *ctx) {
@@ -1338,6 +1382,10 @@ static inline bool eval_emit_build_step_add_dependency(EvalExecContext *ctx,
     ev.h.origin = origin;
     ev.as.build_step_add_dependency.step_key = sv_copy_to_event_arena(ctx, step_key);
     ev.as.build_step_add_dependency.item = sv_copy_to_event_arena(ctx, item);
+    if (!eval_populate_build_step_dependency_semantics(ctx, &ev.as.build_step_add_dependency)) return false;
+    ev.as.build_step_add_dependency.target_name =
+        sv_copy_to_event_arena(ctx, ev.as.build_step_add_dependency.target_name);
+    if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
 }
 
@@ -1468,6 +1516,17 @@ static inline bool eval_emit_target_prop_set(EvalExecContext *ctx,
     ev.as.target_prop_set.key = sv_copy_to_event_arena(ctx, key);
     ev.as.target_prop_set.value = sv_copy_to_event_arena(ctx, value);
     ev.as.target_prop_set.op = op;
+    if (!eval_populate_target_prop_set_semantics(ctx, &ev.as.target_prop_set)) return false;
+    ev.as.target_prop_set.typed_items =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_prop_set.typed_items,
+                                          ev.as.target_prop_set.typed_item_count);
+    if (eval_should_stop(ctx)) return false;
+    ev.as.target_prop_set.typed_link_item_semantics =
+        eval_link_item_metadata_array_copy_to_event_arena(ctx,
+                                                          ev.as.target_prop_set.typed_link_item_semantics,
+                                                          ev.as.target_prop_set.typed_item_count);
+    if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_target_declare(EvalExecContext *ctx,
@@ -1549,13 +1608,18 @@ static inline bool eval_emit_target_link_libraries(EvalExecContext *ctx,
                                                    Event_Origin origin,
                                                    String_View target_name,
                                                    Cmake_Visibility visibility,
-                                                   String_View item) {
+                                                   String_View item,
+                                                   Event_Link_Item_Metadata semantic) {
     Event ev = {0};
     ev.h.kind = EVENT_TARGET_LINK_LIBRARIES;
     ev.h.origin = origin;
     ev.as.target_link_libraries.target_name = sv_copy_to_event_arena(ctx, target_name);
     ev.as.target_link_libraries.visibility = visibility;
     ev.as.target_link_libraries.item = sv_copy_to_event_arena(ctx, item);
+    ev.as.target_link_libraries.semantic = semantic;
+    ev.as.target_link_libraries.semantic.target_name =
+        sv_copy_to_event_arena(ctx, ev.as.target_link_libraries.semantic.target_name);
+    if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_target_link_options(EvalExecContext *ctx,
@@ -2017,6 +2081,12 @@ static inline bool eval_emit_directory_property_mutate(EvalExecContext *ctx,
     ev.as.directory_property_mutate.modifier_flags = modifier_flags;
     ev.as.directory_property_mutate.items = items;
     ev.as.directory_property_mutate.item_count = item_count;
+    if (!eval_populate_property_mutate_semantics(ctx, &ev.as.directory_property_mutate)) return false;
+    ev.as.directory_property_mutate.link_item_semantics =
+        eval_link_item_metadata_array_copy_to_event_arena(ctx,
+                                                          ev.as.directory_property_mutate.link_item_semantics,
+                                                          ev.as.directory_property_mutate.item_count);
+    if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_global_property_mutate(EvalExecContext *ctx,
@@ -2034,6 +2104,12 @@ static inline bool eval_emit_global_property_mutate(EvalExecContext *ctx,
     ev.as.global_property_mutate.modifier_flags = modifier_flags;
     ev.as.global_property_mutate.items = items;
     ev.as.global_property_mutate.item_count = item_count;
+    if (!eval_populate_property_mutate_semantics(ctx, &ev.as.global_property_mutate)) return false;
+    ev.as.global_property_mutate.link_item_semantics =
+        eval_link_item_metadata_array_copy_to_event_arena(ctx,
+                                                          ev.as.global_property_mutate.link_item_semantics,
+                                                          ev.as.global_property_mutate.item_count);
+    if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_dir_push(EvalExecContext *ctx,

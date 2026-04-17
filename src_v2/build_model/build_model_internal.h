@@ -50,6 +50,32 @@ typedef struct {
     String_View *argv;
 } BM_Build_Step_Command_Record;
 
+typedef enum {
+    BM_BUILD_STEP_DEP_PATH_TOKEN = 0,
+    BM_BUILD_STEP_DEP_TARGET_REF,
+} BM_Build_Step_Dependency_Kind;
+
+typedef struct {
+    BM_Build_Step_Dependency_Kind kind;
+    String_View raw_token;
+    String_View target_name;
+    BM_Target_Id target_id;
+    BM_Build_Step_Id producer_step_id;
+    String_View file_dependency;
+} BM_Build_Step_Dependency_Record;
+
+typedef struct {
+    String_View config;
+    String_View *mapped_configs;
+} BM_Imported_Config_Map_Record;
+
+typedef struct {
+    String_View config;
+    String_View effective_file;
+    String_View effective_linker_file;
+    String_View *link_languages;
+} BM_Imported_Config_Record;
+
 typedef struct {
     BM_Build_Step_Id id;
     String_View step_key;
@@ -75,6 +101,7 @@ typedef struct {
     String_View *raw_byproducts;
     String_View *effective_byproducts;
     String_View *raw_dependency_tokens;
+    BM_Build_Step_Dependency_Record *dependencies;
     BM_Target_Id *resolved_target_dependencies;
     BM_Build_Step_Id *resolved_producer_dependencies;
     String_View *resolved_file_dependencies;
@@ -138,7 +165,7 @@ typedef struct {
 typedef struct {
     BM_String_Item_View *include_directories;
     BM_String_Item_View *system_include_directories;
-    BM_String_Item_View *link_libraries;
+    BM_Link_Item_View *link_libraries;
     BM_String_Item_View *link_directories;
     BM_String_Item_View *compile_definitions;
     BM_String_Item_View *compile_options;
@@ -155,7 +182,7 @@ typedef struct {
     BM_Provenance provenance;
     BM_String_Item_View *include_directories;
     BM_String_Item_View *system_include_directories;
-    BM_String_Item_View *link_libraries;
+    BM_Link_Item_View *link_libraries;
     BM_String_Item_View *link_directories;
     BM_String_Item_View *compile_definitions;
     BM_String_Item_View *compile_options;
@@ -184,7 +211,7 @@ typedef struct {
     BM_Target_File_Set_Record *file_sets;
     String_View *explicit_dependency_names;
     BM_Target_Id *explicit_dependency_ids;
-    BM_String_Item_View *link_libraries;
+    BM_Link_Item_View *link_libraries;
     BM_String_Item_View *link_options;
     BM_String_Item_View *link_directories;
     BM_String_Item_View *include_directories;
@@ -198,6 +225,8 @@ typedef struct {
     String_View library_output_directory;
     String_View runtime_output_directory;
     String_View folder;
+    BM_Imported_Config_Map_Record *imported_config_maps;
+    BM_Imported_Config_Record *imported_configs;
     BM_Raw_Property_Record *raw_properties;
 } BM_Target_Record;
 
@@ -429,11 +458,17 @@ void bm_diag_warn(Diag_Sink *sink,
                   const char *hint);
 bool bm_append_string(Arena *arena, String_View **items, String_View item);
 bool bm_append_item(Arena *arena, BM_String_Item_View **items, BM_String_Item_View item);
+bool bm_append_link_item(Arena *arena, BM_Link_Item_View **items, BM_Link_Item_View item);
 bool bm_apply_item_mutation(Arena *arena,
                             BM_String_Item_View **dest,
                             const BM_String_Item_View *items,
                             size_t count,
                             Event_Property_Mutate_Op op);
+bool bm_apply_link_item_mutation(Arena *arena,
+                                 BM_Link_Item_View **dest,
+                                 const BM_Link_Item_View *items,
+                                 size_t count,
+                                 Event_Property_Mutate_Op op);
 bool bm_record_raw_property(Arena *arena,
                             BM_Raw_Property_Record **records,
                             String_View name,

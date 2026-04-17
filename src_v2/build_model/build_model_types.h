@@ -205,6 +205,17 @@ typedef enum {
     BM_ITEM_FLAG_SYSTEM = 1u << 1,
 } BM_Item_Flags;
 
+typedef enum {
+    BM_LINK_ITEM_CONFIG_ALL = 0,
+    BM_LINK_ITEM_CONFIG_DEBUG_ONLY,
+    BM_LINK_ITEM_CONFIG_NONDEBUG_ONLY,
+} BM_Link_Item_Config_Filter;
+
+typedef enum {
+    BM_LINK_ITEM_RAW_VALUE = 0,
+    BM_LINK_ITEM_TARGET_REF,
+} BM_Link_Item_Kind;
+
 typedef struct {
     String_View value;
     BM_Visibility visibility;
@@ -216,6 +227,22 @@ typedef struct {
     const BM_String_Item_View *items;
     size_t count;
 } BM_String_Item_Span;
+
+typedef struct {
+    String_View value;
+    BM_Visibility visibility;
+    uint32_t flags;
+    BM_Provenance provenance;
+    BM_Link_Item_Config_Filter config_filter;
+    String_View target_name;
+    BM_Target_Id target_id;
+    BM_Link_Item_Kind kind;
+} BM_Link_Item_View;
+
+typedef struct {
+    const BM_Link_Item_View *items;
+    size_t count;
+} BM_Link_Item_Span;
 
 Diag_Sink *bm_diag_sink_create(Arena *arena, Diag_Sink_Emit_Fn emit, void *userdata);
 Diag_Sink *bm_diag_sink_create_default(Arena *arena);

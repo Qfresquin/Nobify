@@ -191,6 +191,10 @@ bool cg_query_effective_items_cached(CG_Context *ctx,
                                      const BM_Query_Eval_Context *qctx,
                                      CG_Effective_Query_Family family,
                                      BM_String_Item_Span *out);
+bool cg_query_effective_link_items_cached(CG_Context *ctx,
+                                          BM_Target_Id id,
+                                          const BM_Query_Eval_Context *qctx,
+                                          BM_Link_Item_Span *out);
 bool cg_query_effective_values_cached(CG_Context *ctx,
                                       BM_Target_Id id,
                                       const BM_Query_Eval_Context *qctx,
@@ -205,6 +209,10 @@ bool cg_query_imported_link_languages_cached(CG_Context *ctx,
                                              BM_Target_Id id,
                                              const BM_Query_Eval_Context *qctx,
                                              BM_String_Span *out);
+bool cg_resolve_link_item_ref(CG_Context *ctx,
+                              const BM_Query_Eval_Context *qctx,
+                              BM_Link_Item_View item,
+                              CG_Resolved_Target_Ref *out);
 bool cg_resolve_target_ref(CG_Context *ctx,
                            const BM_Query_Eval_Context *qctx,
                            String_View item,

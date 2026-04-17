@@ -8,13 +8,14 @@ The evaluator executes CMake input and freezes artifact-relevant semantics
 before downstream stages build the Nob output.
 
 ## Product direction
-The evaluator targets total parity with `CMake 3.8` as part of an end-to-end
+The evaluator targets total parity with `CMake 3.28` as part of an end-to-end
 pipeline that must reproduce the same observable artifacts.
 
 ## Current gap
 The current implementation and supporting evidence still reflect a
-`CMake 3.28`-first closure program. Some surfaces still project artifact-relevant
-meaning through generic string payloads that downstream code later reconstructs.
+subset-first closure program within the `CMake 3.28` surface. Some surfaces
+still project artifact-relevant meaning through generic string payloads that
+downstream code later reconstructs.
 
 ## Guarantees
 - Evaluation order is preserved in the projected event stream.

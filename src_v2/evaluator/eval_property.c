@@ -11,6 +11,150 @@ static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
 static const char *k_global_link_opts_var = "NOBIFY_GLOBAL_LINK_OPTIONS";
 
+static bool eval_try_extract_simple_link_target_name(String_View item, String_View *out_target_name) {
+    static const struct {
+        const char *prefix;
+        size_t prefix_len;
+    } wrappers[] = {
+        { "$<LINK_ONLY:", 12 },
+        { "$<BUILD_INTERFACE:", 18 },
+        { "$<INSTALL_INTERFACE:", 20 },
+        { "$<TARGET_NAME_IF_EXISTS:", 24 },
+    };
+    if (out_target_name) *out_target_name = nob_sv_from_cstr("");
+    if (!out_target_name || item.count == 0) return false;
+
+    for (size_t i = 0; i < sizeof(wrappers) / sizeof(wrappers[0]); ++i) {
+        if (item.count <= wrappers[i].prefix_len + 1) continue;
+        if (memcmp(item.data, wrappers[i].prefix, wrappers[i].prefix_len) != 0) continue;
+        if (item.data[item.count - 1] != '>') continue;
+        *out_target_name = nob_sv_from_parts(item.data + wrappers[i].prefix_len,
+                                             item.count - wrappers[i].prefix_len - 1);
+        return out_target_name->count > 0;
+    }
+
+    return false;
+}
+
+String_View eval_link_item_apply_config_filter_temp(EvalExecContext *ctx,
+                                                    String_View item,
+                                                    Event_Link_Item_Config_Filter filter) {
+    String_View parts[3] = {0};
+    if (!ctx || item.count == 0) return item;
+
+    switch (filter) {
+        case EVENT_LINK_ITEM_CONFIG_DEBUG_ONLY:
+            parts[0] = nob_sv_from_cstr("$<$<CONFIG:Debug>:");
+            parts[1] = item;
+            parts[2] = nob_sv_from_cstr(">");
+            return svu_join_no_sep_temp(ctx, parts, 3);
+        case EVENT_LINK_ITEM_CONFIG_NONDEBUG_ONLY:
+            parts[0] = nob_sv_from_cstr("$<$<NOT:$<CONFIG:Debug>>:");
+            parts[1] = item;
+            parts[2] = nob_sv_from_cstr(">");
+            return svu_join_no_sep_temp(ctx, parts, 3);
+        case EVENT_LINK_ITEM_CONFIG_ALL:
+        default:
+            return item;
+    }
+}
+
+bool eval_link_item_metadata_from_raw(EvalExecContext *ctx,
+                                      String_View raw_item,
+                                      Event_Link_Item_Config_Filter filter,
+                                      Event_Link_Item_Metadata *out) {
+    String_View candidate = nob_sv_trim(raw_item);
+    if (out) *out = (Event_Link_Item_Metadata){0};
+    if (!ctx || !out) return false;
+
+    out->config_filter = filter;
+    out->kind = EVENT_LINK_ITEM_RAW_VALUE;
+    out->target_name = nob_sv_from_cstr("");
+
+    if (candidate.count == 0) return true;
+    if (!eval_try_extract_simple_link_target_name(candidate, &candidate)) {
+        candidate = nob_sv_trim(raw_item);
+    }
+
+    if (candidate.count > 0 && eval_target_known(ctx, candidate)) {
+        out->kind = EVENT_LINK_ITEM_TARGET_REF;
+        out->target_name = candidate;
+    }
+
+    return true;
+}
+
+bool eval_parse_link_libraries_items_semantics(EvalExecContext *ctx,
+                                               const String_View *tokens,
+                                               size_t token_count,
+                                               String_View **out_items,
+                                               Event_Link_Item_Metadata **out_semantics) {
+    String_View *items = NULL;
+    Event_Link_Item_Metadata *semantics = NULL;
+    Event_Link_Item_Config_Filter filter = EVENT_LINK_ITEM_CONFIG_ALL;
+    if (out_items) *out_items = NULL;
+    if (out_semantics) *out_semantics = NULL;
+    if (!ctx || (!out_items && !out_semantics)) return false;
+
+    for (size_t i = 0; i < token_count; ++i) {
+        String_View token = nob_sv_trim(tokens[i]);
+        Event_Link_Item_Metadata semantic = {0};
+        String_View stored_item = token;
+        if (token.count == 0) continue;
+
+        if (eval_sv_eq_ci_lit(token, "DEBUG")) {
+            filter = EVENT_LINK_ITEM_CONFIG_DEBUG_ONLY;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(token, "OPTIMIZED")) {
+            filter = EVENT_LINK_ITEM_CONFIG_NONDEBUG_ONLY;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(token, "GENERAL")) {
+            filter = EVENT_LINK_ITEM_CONFIG_ALL;
+            continue;
+        }
+
+        stored_item = eval_link_item_apply_config_filter_temp(ctx, token, filter);
+        if (eval_should_stop(ctx) ||
+            !eval_link_item_metadata_from_raw(ctx, token, filter, &semantic) ||
+            !arena_arr_push(eval_temp_arena(ctx), items, stored_item) ||
+            !arena_arr_push(eval_temp_arena(ctx), semantics, semantic)) {
+            return false;
+        }
+        filter = EVENT_LINK_ITEM_CONFIG_ALL;
+    }
+
+    if (out_items) *out_items = items;
+    if (out_semantics) *out_semantics = semantics;
+    return true;
+}
+
+static bool eval_target_property_supports_typed_items(String_View property_upper, bool *out_is_link_family) {
+    if (out_is_link_family) *out_is_link_family = false;
+    if (eval_sv_eq_ci_lit(property_upper, "LINK_LIBRARIES") ||
+        eval_sv_eq_ci_lit(property_upper, "INTERFACE_LINK_LIBRARIES")) {
+        if (out_is_link_family) *out_is_link_family = true;
+        return true;
+    }
+    if (eval_sv_eq_ci_lit(property_upper, "INCLUDE_DIRECTORIES") ||
+        eval_sv_eq_ci_lit(property_upper, "INTERFACE_INCLUDE_DIRECTORIES") ||
+        eval_sv_eq_ci_lit(property_upper, "INTERFACE_SYSTEM_INCLUDE_DIRECTORIES") ||
+        eval_sv_eq_ci_lit(property_upper, "COMPILE_DEFINITIONS") ||
+        eval_sv_eq_ci_lit(property_upper, "INTERFACE_COMPILE_DEFINITIONS") ||
+        eval_sv_eq_ci_lit(property_upper, "COMPILE_OPTIONS") ||
+        eval_sv_eq_ci_lit(property_upper, "INTERFACE_COMPILE_OPTIONS") ||
+        eval_sv_eq_ci_lit(property_upper, "COMPILE_FEATURES") ||
+        eval_sv_eq_ci_lit(property_upper, "INTERFACE_COMPILE_FEATURES") ||
+        eval_sv_eq_ci_lit(property_upper, "LINK_OPTIONS") ||
+        eval_sv_eq_ci_lit(property_upper, "INTERFACE_LINK_OPTIONS") ||
+        eval_sv_eq_ci_lit(property_upper, "LINK_DIRECTORIES") ||
+        eval_sv_eq_ci_lit(property_upper, "INTERFACE_LINK_DIRECTORIES")) {
+        return true;
+    }
+    return false;
+}
+
 static String_View merge_property_value_temp(EvalExecContext *ctx,
                                              String_View current,
                                              String_View incoming,
@@ -91,6 +235,70 @@ static Event_Property_Mutate_Op property_mutate_op_from_legacy(Cmake_Target_Prop
         case EV_PROP_PREPEND_LIST: return EVENT_PROPERTY_MUTATE_PREPEND_LIST;
     }
     return EVENT_PROPERTY_MUTATE_SET;
+}
+
+bool eval_populate_property_mutate_semantics(EvalExecContext *ctx, Event_Directory_Property_Mutate *mut) {
+    String_View *typed_items = NULL;
+    Event_Link_Item_Metadata *semantics = NULL;
+    if (!ctx || !mut) return false;
+    mut->link_item_semantics = NULL;
+
+    if (!eval_sv_eq_ci_lit(mut->property_name, "LINK_LIBRARIES")) return true;
+    if (mut->item_count == 0 || !mut->items) return true;
+
+    if (!eval_parse_link_libraries_items_semantics(ctx,
+                                                   mut->items,
+                                                   mut->item_count,
+                                                   &typed_items,
+                                                   &semantics)) {
+        return false;
+    }
+
+    mut->items = typed_items;
+    mut->item_count = arena_arr_len(typed_items);
+    mut->link_item_semantics = semantics;
+    return true;
+}
+
+bool eval_populate_target_prop_set_semantics(EvalExecContext *ctx, Event_Target_Prop_Set *prop) {
+    bool is_link_family = false;
+    SV_List tokens = NULL;
+    if (!ctx || !prop) return false;
+    prop->typed_items = NULL;
+    prop->typed_item_count = 0;
+    prop->typed_link_item_semantics = NULL;
+
+    if (prop->op == EV_PROP_APPEND_STRING) return true;
+    if (!eval_target_property_supports_typed_items(prop->key, &is_link_family)) return true;
+    if (prop->value.count == 0) return true;
+
+    if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), prop->value, &tokens)) return false;
+    if (is_link_family) {
+        if (!eval_parse_link_libraries_items_semantics(ctx,
+                                                       tokens,
+                                                       arena_arr_len(tokens),
+                                                       &prop->typed_items,
+                                                       &prop->typed_link_item_semantics)) {
+            return false;
+        }
+        prop->typed_item_count = arena_arr_len(prop->typed_items);
+        return true;
+    }
+
+    prop->typed_items = tokens;
+    prop->typed_item_count = arena_arr_len(tokens);
+    return true;
+}
+
+bool eval_populate_build_step_dependency_semantics(EvalExecContext *ctx, Event_Build_Step_Add_Dependency *dep) {
+    if (!ctx || !dep) return false;
+    dep->kind = EVENT_BUILD_STEP_DEP_PATH_TOKEN;
+    dep->target_name = nob_sv_from_cstr("");
+    if (dep->item.count == 0) return true;
+    if (!eval_target_known(ctx, dep->item)) return true;
+    dep->kind = EVENT_BUILD_STEP_DEP_TARGET_REF;
+    dep->target_name = dep->item;
+    return true;
 }
 
 static bool emit_property_write_semantic_event(EvalExecContext *ctx,

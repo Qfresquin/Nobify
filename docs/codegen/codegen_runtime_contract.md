@@ -8,7 +8,7 @@ Codegen turns the frozen build model into a Nob program and helper runtime that
 reproduce source-project artifacts.
 
 ## Product direction
-The generated backend exists to achieve `CMake 3.8` artifact parity. Internal
+The generated backend exists to achieve `CMake 3.28` artifact parity. Internal
 implementation differences are acceptable only when observable outputs remain
 equivalent.
 

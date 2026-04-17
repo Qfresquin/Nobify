@@ -9,12 +9,12 @@ must reproduce later without re-evaluating the original CMake project.
 
 ## Product direction
 Replay data must be explicit enough that generated Nob can materialize the same
-observable artifacts expected from `CMake 3.8` input.
+observable artifacts expected from `CMake 3.28` input.
 
 ## Current gap
 Replay coverage is still shaped by backend-closure work and by tests written
-around the older `3.28/subset` framing. Some surfaces still need better typing
-and stronger evidence.
+around subset-closure framing. Some surfaces still need better typing and
+stronger evidence.
 
 ## Guarantees
 - Replay entities are frozen with the rest of the build model.

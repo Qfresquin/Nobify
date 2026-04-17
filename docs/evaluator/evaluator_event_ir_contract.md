@@ -8,7 +8,7 @@ This document defines what the evaluator must preserve when projecting its
 results into Event IR.
 
 ## Product direction
-Event IR must carry enough typed, ordered semantics to support `CMake 3.8`
+Event IR must carry enough typed, ordered semantics to support `CMake 3.28`
 artifact parity without forcing the build model or codegen to rediscover
 meaning from raw strings.
 

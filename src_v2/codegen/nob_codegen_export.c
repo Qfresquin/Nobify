@@ -160,7 +160,7 @@ static bool cg_export_collect_build_link_libraries(CG_Context *ctx,
                                                    String_View export_namespace,
                                                    String_View config,
                                                    String_View **out) {
-    BM_String_Item_Span libs = {0};
+    BM_Link_Item_Span libs = {0};
     BM_Target_Id_Span exported_targets = bm_query_export_targets(ctx->model, export_id);
     BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx,
                                                    target_id,
@@ -169,12 +169,12 @@ static bool cg_export_collect_build_link_libraries(CG_Context *ctx,
                                                    nob_sv_from_cstr(""));
     qctx.build_interface_active = true;
     qctx.install_interface_active = false;
-    if (!cg_query_effective_items_cached(ctx, target_id, &qctx, CG_EFFECTIVE_LINK_LIBRARIES, &libs)) return false;
+    if (!cg_query_effective_link_items_cached(ctx, target_id, &qctx, &libs)) return false;
 
     for (size_t i = 0; i < libs.count; ++i) {
         CG_Resolved_Target_Ref dep = {0};
         String_View value = libs.items[i].value;
-        if (cg_resolve_target_ref(ctx, &qctx, value, &dep)) {
+        if (cg_resolve_link_item_ref(ctx, &qctx, libs.items[i], &dep)) {
             String_View exported_name = {0};
             if (cg_export_target_in_span(exported_targets, dep.target_id)) {
                 if (!cg_target_exported_name(ctx, dep.target_id, export_namespace, &exported_name) ||

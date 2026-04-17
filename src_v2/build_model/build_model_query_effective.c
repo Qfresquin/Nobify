@@ -95,6 +95,58 @@ static bool bm_eval_item_span(const Build_Model *model,
     return true;
 }
 
+static bool bm_eval_link_item_span(const Build_Model *model,
+                                   BM_Target_Id owner_target_id,
+                                   const BM_Query_Eval_Context *ctx,
+                                   Arena *scratch,
+                                   BM_Link_Item_Span raw_items,
+                                   BM_Link_Item_Span *out) {
+    BM_Link_Item_View *items = NULL;
+    BM_Query_Genex_Context gx_userdata = {0};
+    BM_Query_Eval_Context default_ctx = {0};
+    if (!out) return false;
+    out->items = NULL;
+    out->count = 0;
+    if (!scratch) return false;
+
+    default_ctx = ctx ? *ctx : bm_default_query_eval_context(owner_target_id, BM_QUERY_USAGE_LINK);
+    gx_userdata.model = model;
+    gx_userdata.eval_ctx = &default_ctx;
+    gx_userdata.scratch = scratch;
+    gx_userdata.consumer_target_id = owner_target_id;
+    gx_userdata.current_target_id = bm_target_id_is_valid(default_ctx.current_target_id)
+        ? default_ctx.current_target_id
+        : owner_target_id;
+
+    for (size_t i = 0; i < raw_items.count; ++i) {
+        Genex_Context gx = {0};
+        Genex_Result gx_result = {0};
+        gx.arena = scratch;
+        gx.config = default_ctx.config;
+        gx.platform_id = default_ctx.platform_id;
+        gx.compile_language = default_ctx.compile_language;
+        gx.current_target_name = bm_query_target_name(model, gx_userdata.current_target_id);
+        gx.link_only_active = default_ctx.usage_mode == BM_QUERY_USAGE_LINK;
+        gx.build_interface_active = default_ctx.build_interface_active;
+        gx.install_interface_active = default_ctx.install_interface_active;
+        gx.target_name_case_insensitive = false;
+        gx.max_depth = 128;
+        gx.max_target_property_depth = 64;
+        gx.read_target_property = bm_query_genex_target_property_cb;
+        gx.read_target_file = bm_query_genex_target_file_cb;
+        gx.read_target_linker_file = bm_query_genex_target_linker_file_cb;
+        gx.userdata = &gx_userdata;
+
+        gx_result = genex_eval(&gx, raw_items.items[i].value);
+        if (gx_result.status != GENEX_OK) return false;
+        if (!bm_append_split_link_values(scratch, &items, raw_items.items[i], gx_result.value)) return false;
+    }
+
+    out->items = items;
+    out->count = arena_arr_len(items);
+    return true;
+}
+
 static String_View bm_query_dirname_sv(String_View path) {
     if (path.count == 0) return nob_sv_from_cstr("");
     for (size_t i = path.count; i-- > 0;) {
@@ -239,6 +291,43 @@ static bool bm_query_dedup_effective_items(Arena *scratch,
     return true;
 }
 
+static bool bm_query_dedup_effective_link_items(Arena *scratch,
+                                                BM_Link_Item_Span in,
+                                                BM_Link_Item_Span *out) {
+    BM_Link_Item_View *items = NULL;
+    String_View *seen_keys = NULL;
+    if (!out) return false;
+    out->items = NULL;
+    out->count = 0;
+    if (!scratch) return false;
+
+    for (size_t i = 0; i < in.count; ++i) {
+        BM_String_Item_View key_item = {
+            .value = in.items[i].value,
+            .visibility = in.items[i].visibility,
+            .flags = in.items[i].flags,
+            .provenance = in.items[i].provenance,
+        };
+        String_View key = {0};
+        bool duplicate = false;
+        if (!bm_query_effective_item_key(scratch, BM_EFFECTIVE_LINK_LIBRARIES, key_item, &key)) return false;
+        for (size_t j = 0; j < arena_arr_len(seen_keys); ++j) {
+            if (!nob_sv_eq(seen_keys[j], key)) continue;
+            duplicate = true;
+            break;
+        }
+        if (duplicate) continue;
+        if (!arena_arr_push(scratch, seen_keys, key) ||
+            !arena_arr_push(scratch, items, in.items[i])) {
+            return false;
+        }
+    }
+
+    out->items = items;
+    out->count = arena_arr_len(items);
+    return true;
+}
+
 static bool bm_query_target_effective_items_common(const Build_Model *model,
                                                    BM_Target_Id id,
                                                    const BM_Query_Eval_Context *ctx,
@@ -247,7 +336,7 @@ static bool bm_query_target_effective_items_common(const Build_Model *model,
                                                    BM_Effective_Query_Kind kind) {
     const BM_Target_Record *target = bm_model_target(model, id);
     BM_String_Item_View *raw_items = NULL;
-    BM_String_Item_Span dependency_seeds = {0};
+    BM_Link_Item_Span dependency_seeds = {0};
     BM_String_Item_Span evaluated = {0};
     uint8_t *visited = NULL;
 
@@ -288,6 +377,53 @@ static bool bm_query_target_effective_items_common(const Build_Model *model,
     }
 
     return bm_query_dedup_effective_items(scratch, kind, evaluated, out);
+}
+
+static bool bm_query_target_effective_link_items_common(const Build_Model *model,
+                                                        BM_Target_Id id,
+                                                        const BM_Query_Eval_Context *ctx,
+                                                        Arena *scratch,
+                                                        BM_Link_Item_Span *out) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    BM_Link_Item_View *raw_items = NULL;
+    BM_Link_Item_Span dependency_seeds = {0};
+    BM_Link_Item_Span evaluated = {0};
+    uint8_t *visited = NULL;
+
+    if (!out) return false;
+    out->items = NULL;
+    out->count = 0;
+    if (!model || !target || !scratch) return false;
+
+    if (!bm_collect_global_effective_link_items(model, scratch, &raw_items) ||
+        !bm_collect_directory_chain_link_items(model, target->owner_directory_id, scratch, &raw_items) ||
+        !bm_collect_target_link_items(scratch, &raw_items, target, false)) {
+        return false;
+    }
+
+    visited = arena_alloc_array_zero(scratch, uint8_t, arena_arr_len(model->targets));
+    if (!visited) return false;
+    visited[id] = 1;
+
+    if (!bm_collect_evaluated_root_link_library_seeds(model, target, ctx, scratch, &dependency_seeds) ||
+        !bm_collect_link_dependency_usage_from_evaluated_link_items(model,
+                                                                    dependency_seeds,
+                                                                    ctx,
+                                                                    scratch,
+                                                                    visited,
+                                                                    &raw_items)) {
+        return false;
+    }
+    if (!bm_eval_link_item_span(model,
+                                id,
+                                ctx,
+                                scratch,
+                                (BM_Link_Item_Span){.items = raw_items, .count = arena_arr_len(raw_items)},
+                                &evaluated)) {
+        return false;
+    }
+
+    return bm_query_dedup_effective_link_items(scratch, evaluated, out);
 }
 
 static bool bm_query_target_effective_values_common(const Build_Model *model,
@@ -365,7 +501,7 @@ bool bm_query_target_effective_compile_options_items_with_context(const Build_Mo
 bool bm_query_target_effective_link_libraries_items(const Build_Model *model,
                                                     BM_Target_Id id,
                                                     Arena *scratch,
-                                                    BM_String_Item_Span *out) {
+                                                    BM_Link_Item_Span *out) {
     BM_Query_Eval_Context ctx = bm_default_query_eval_context(id, BM_QUERY_USAGE_LINK);
     return bm_query_target_effective_link_libraries_items_with_context(model, id, &ctx, scratch, out);
 }
@@ -374,8 +510,8 @@ bool bm_query_target_effective_link_libraries_items_with_context(const Build_Mod
                                                                  BM_Target_Id id,
                                                                  const BM_Query_Eval_Context *ctx,
                                                                  Arena *scratch,
-                                                                 BM_String_Item_Span *out) {
-    return bm_query_target_effective_items_common(model, id, ctx, scratch, out, BM_EFFECTIVE_LINK_LIBRARIES);
+                                                                 BM_Link_Item_Span *out) {
+    return bm_query_target_effective_link_items_common(model, id, ctx, scratch, out);
 }
 
 bool bm_query_target_effective_link_options_items(const Build_Model *model,
@@ -480,7 +616,18 @@ bool bm_query_target_effective_link_libraries_with_context(const Build_Model *mo
                                                            const BM_Query_Eval_Context *ctx,
                                                            Arena *scratch,
                                                            BM_String_Span *out) {
-    return bm_query_target_effective_values_common(model, id, ctx, scratch, out, BM_EFFECTIVE_LINK_LIBRARIES);
+    BM_Link_Item_Span item_span = {0};
+    String_View *values = NULL;
+    if (!out) return false;
+    out->items = NULL;
+    out->count = 0;
+    if (!bm_query_target_effective_link_items_common(model, id, ctx, scratch, &item_span)) return false;
+    for (size_t i = 0; i < item_span.count; ++i) {
+        if (!arena_arr_push(scratch, values, item_span.items[i].value)) return false;
+    }
+    out->items = values;
+    out->count = arena_arr_len(values);
+    return true;
 }
 
 bool bm_query_target_effective_link_options(const Build_Model *model,

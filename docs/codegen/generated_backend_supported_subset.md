@@ -1,4 +1,4 @@
-# Current Backend Closure Within The `CMake 3.8` Parity Goal
+# Current Backend Closure Within The `CMake 3.28` Parity Goal
 
 ## Status
 Canonical transition report for backend closure. This file describes the
@@ -9,7 +9,7 @@ This document records which backend areas are currently closed enough to use
 and which ones remain open on the way to full parity.
 
 ## Product direction
-The official product target is total parity with `CMake 3.8` and the same
+The official product target is total parity with `CMake 3.28` and the same
 observable artifacts. Any current subset language is transition-only.
 
 ## Current gap
@@ -42,5 +42,5 @@ overall system should not be described as a final supported subset.
 | Build graph emission | Core build/codegen suites exercise the main path | Still inherits subset-era rejection and missing edge typing |
 | Target usage and dependencies | Partially reconstructed through build-model effective queries | Needs more typed upstream semantics and less late inference |
 | Replay, install, export, package | Present as explicit domains and runtime surfaces | Evidence is thinner than the final parity target |
-| Test and CTest-like behavior | Dedicated evaluator and codegen coverage exists | Harness and naming still carry `3.28` baseline debt |
+| Test and CTest-like behavior | Dedicated evaluator and codegen coverage exists | Harness and naming still carry subset-era debt |
 | Real-project parity | Artifact-parity corpus exists | Corpus breadth is still smaller than the final claim |

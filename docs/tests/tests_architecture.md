@@ -4,7 +4,7 @@
 Canonical transition contract for the test stack.
 
 ## Role
-The test system provides evidence that Nobify is converging toward `CMake 3.8`
+The test system provides evidence that Nobify is converging toward `CMake 3.28`
 artifact parity and makes ownership of regressions explicit.
 
 ## Product direction
@@ -13,9 +13,10 @@ generated Nob output produces the same observable artifacts as the source
 project.
 
 ## Current gap
-Many fixtures, helpers, and suite names still assume a real `cmake 3.28.x`
-oracle and a supported-subset closure program. That harness remains useful, but
-it is transitional and must be migrated toward the new parity framing.
+Many fixtures, helpers, and suite names still frame evidence around a
+supported-subset closure program. The real `cmake 3.28.x` oracle remains
+aligned with the official baseline, but the surrounding narratives still need
+migration toward total-parity wording.
 
 ## Guarantees
 - Suites are organized by pipeline stage and evidence type.
@@ -24,7 +25,7 @@ it is transitional and must be migrated toward the new parity framing.
 - Real-project and diff-based suites are the main evidence for parity claims.
 
 ## Non-goals
-- Treating the current `3.28` oracle harness as the final product baseline.
+- Treating subset-style suite framing as the final product boundary.
 - Using unit coverage alone as proof of artifact parity.
 
 ## Primary code
@@ -51,7 +52,8 @@ it is transitional and must be migrated toward the new parity framing.
 - Artifact-parity suites: prove end-to-end behavior on curated projects.
 
 ## Migration fronts
-- Remove `3.28` baseline language from suite purpose statements.
+- Remove the stale `3.8` typo and subset-closure wording from suite purpose
+  statements.
 - Promote parity-oriented cases over subset-closure narratives.
 - Expand artifact-parity coverage where diff suites still stand in as the only
   proof.

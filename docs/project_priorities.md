@@ -8,15 +8,15 @@ This file defines what success means for Nobify and how conflicting local goals
 must be resolved.
 
 ## Product direction
-The official goal is total parity with `CMake 3.8` when transpiling to Nob.
+The official goal is total parity with `CMake 3.28` when transpiling to Nob.
 Success is measured by the same observable artifacts, not by approximate
 semantic similarity or by preserving CMake internals one-for-one.
 
 ## Current gap
-Current implementation evidence still clusters around a `CMake 3.28` baseline
-and a supported-subset framing. That language remains useful only as a
-description of the gap between the target product and the code that exists
-today.
+Current implementation evidence still clusters around a supported-subset
+framing, and some documents still carry the mistaken `CMake 3.8` baseline.
+That language remains useful only as a description of the gap between the
+target product and the code that exists today.
 
 ## Guarantees
 - Artifact equivalence is the top-level definition of correctness.
@@ -27,7 +27,7 @@ today.
 
 ## Non-goals
 - Treating `supported subset` as the final product identity.
-- Preserving `3.28` as the official baseline for docs, contracts, or tests.
+- Preserving the mistaken `3.8` baseline in docs, contracts, or tests.
 
 ## Primary code
 - `src_v2/evaluator/`
@@ -42,15 +42,16 @@ today.
 - `test_v2/codegen/`
 
 ## Priority order
-1. Reach `CMake 3.8` artifact parity for the generated Nob output.
+1. Reach `CMake 3.28` artifact parity for the generated Nob output.
 2. Freeze enough typed semantics upstream to avoid downstream reconstruction by
    string heuristics.
 3. Keep the generated Nob side deterministic, debuggable, and faithful to the
    frozen model.
-4. Demote all `3.28/subset` wording to transition debt only.
+4. Demote subset-era wording and stale `3.8` references to transition debt
+   only.
 
 ## Alignment backlog
-- Remove `3.28` as a hardcoded baseline from active docs and parity-oriented
+- Remove the stale `3.8` baseline typo from active docs and parity-oriented
   test narratives.
 - Reclassify subset-style suites as progress indicators toward full parity,
   not as the final product boundary.

@@ -68,6 +68,7 @@ typedef struct {
     String_View item;
     bool is_before;
     bool is_system;
+    Event_Link_Item_Metadata semantic;
 } Target_Usage_Item_Entry;
 
 typedef struct {
@@ -466,7 +467,8 @@ static bool target_usage_append_item_entry(EvalExecContext *ctx,
                                            Cmake_Visibility visibility,
                                            String_View item,
                                            bool is_before,
-                                           bool is_system) {
+                                           bool is_system,
+                                           const Event_Link_Item_Metadata *semantic) {
     if (!ctx || !entries) return false;
     if (item.count == 0) return true;
 
@@ -476,6 +478,7 @@ static bool target_usage_append_item_entry(EvalExecContext *ctx,
         .is_before = is_before,
         .is_system = is_system,
     };
+    if (semantic) entry.semantic = *semantic;
     return arena_arr_push(eval_temp_arena(ctx), *entries, entry);
 }
 
@@ -646,7 +649,8 @@ static bool target_usage_emit_link_libraries_entry(EvalExecContext *ctx,
                                                    Cmake_Event_Origin origin,
                                                    String_View target_name,
                                                    const Target_Usage_Item_Entry *entry) {
-    return eval_emit_target_link_libraries(ctx, origin, target_name, entry->visibility, entry->item);
+    return eval_emit_target_link_libraries(
+        ctx, origin, target_name, entry->visibility, entry->item, entry->semantic);
 }
 
 static bool target_usage_emit_link_options_entry(EvalExecContext *ctx,
@@ -782,7 +786,7 @@ static bool target_usage_parse_item_request(EvalExecContext *ctx,
         String_View item = normalize ? normalize(ctx, args[i]) : args[i];
         if (eval_should_stop(ctx)) return false;
         if (!target_usage_append_item_entry(
-                ctx, &out_req->items, visibility, item, is_before, is_system)) {
+                ctx, &out_req->items, visibility, item, is_before, is_system, NULL)) {
             return false;
         }
     }
@@ -890,6 +894,8 @@ static bool target_link_libraries_parse_request(EvalExecContext *ctx,
     Cmake_Visibility visibility = EV_VISIBILITY_UNSPECIFIED;
     String_View qualifier = nob_sv_from_cstr("");
     for (size_t i = 1; i < arena_arr_len(args); i++) {
+        Event_Link_Item_Config_Filter filter = EVENT_LINK_ITEM_CONFIG_ALL;
+        Event_Link_Item_Metadata semantic = {0};
         if (target_usage_parse_visibility(args[i], &visibility)) continue;
         if (eval_sv_eq_ci_lit(args[i], "DEBUG") ||
             eval_sv_eq_ci_lit(args[i], "OPTIMIZED") ||
@@ -900,16 +906,16 @@ static bool target_link_libraries_parse_request(EvalExecContext *ctx,
 
         String_View item = args[i];
         if (eval_sv_eq_ci_lit(qualifier, "DEBUG")) {
-            item = wrap_link_item_with_config_genex_temp(
-                ctx, item, nob_sv_from_cstr("$<$<CONFIG:Debug>:"));
+            filter = EVENT_LINK_ITEM_CONFIG_DEBUG_ONLY;
         } else if (eval_sv_eq_ci_lit(qualifier, "OPTIMIZED")) {
-            item = wrap_link_item_with_config_genex_temp(
-                ctx, item, nob_sv_from_cstr("$<$<NOT:$<CONFIG:Debug>>:"));
+            filter = EVENT_LINK_ITEM_CONFIG_NONDEBUG_ONLY;
         }
+        item = eval_link_item_apply_config_filter_temp(ctx, item, filter);
+        if (!eval_link_item_metadata_from_raw(ctx, args[i], filter, &semantic)) return false;
         if (eval_should_stop(ctx)) return false;
 
         if (!target_usage_append_item_entry(
-                ctx, &out_req->items, visibility, item, false, false)) {
+                ctx, &out_req->items, visibility, item, false, false, &semantic)) {
             return false;
         }
         qualifier = nob_sv_from_cstr("");

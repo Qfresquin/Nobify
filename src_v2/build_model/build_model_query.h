@@ -67,7 +67,7 @@ String_View bm_query_directory_source_dir(const Build_Model *model, BM_Directory
 String_View bm_query_directory_binary_dir(const Build_Model *model, BM_Directory_Id id);
 BM_String_Item_Span bm_query_directory_include_directories_raw(const Build_Model *model, BM_Directory_Id id);
 BM_String_Item_Span bm_query_directory_system_include_directories_raw(const Build_Model *model, BM_Directory_Id id);
-BM_String_Item_Span bm_query_directory_link_libraries_raw(const Build_Model *model, BM_Directory_Id id);
+BM_Link_Item_Span bm_query_directory_link_libraries_raw(const Build_Model *model, BM_Directory_Id id);
 BM_String_Item_Span bm_query_directory_link_directories_raw(const Build_Model *model, BM_Directory_Id id);
 BM_String_Item_Span bm_query_directory_compile_definitions_raw(const Build_Model *model, BM_Directory_Id id);
 BM_String_Item_Span bm_query_directory_compile_options_raw(const Build_Model *model, BM_Directory_Id id);
@@ -80,7 +80,7 @@ BM_Package_Id bm_query_package_by_name(const Build_Model *model, String_View nam
 
 BM_String_Item_Span bm_query_global_include_directories_raw(const Build_Model *model);
 BM_String_Item_Span bm_query_global_system_include_directories_raw(const Build_Model *model);
-BM_String_Item_Span bm_query_global_link_libraries_raw(const Build_Model *model);
+BM_Link_Item_Span bm_query_global_link_libraries_raw(const Build_Model *model);
 BM_String_Item_Span bm_query_global_link_directories_raw(const Build_Model *model);
 BM_String_Item_Span bm_query_global_compile_definitions_raw(const Build_Model *model);
 BM_String_Item_Span bm_query_global_compile_options_raw(const Build_Model *model);
@@ -123,7 +123,7 @@ BM_String_Span bm_query_target_file_set_base_dirs(const Build_Model *model, BM_T
 BM_String_Span bm_query_target_file_set_files_raw(const Build_Model *model, BM_Target_Id id, size_t file_set_index);
 BM_String_Span bm_query_target_file_set_files_effective(const Build_Model *model, BM_Target_Id id, size_t file_set_index);
 BM_Target_Id_Span bm_query_target_dependencies_explicit(const Build_Model *model, BM_Target_Id id);
-BM_String_Item_Span bm_query_target_link_libraries_raw(const Build_Model *model, BM_Target_Id id);
+BM_Link_Item_Span bm_query_target_link_libraries_raw(const Build_Model *model, BM_Target_Id id);
 BM_String_Item_Span bm_query_target_include_directories_raw(const Build_Model *model, BM_Target_Id id);
 BM_String_Item_Span bm_query_target_compile_definitions_raw(const Build_Model *model, BM_Target_Id id);
 BM_String_Item_Span bm_query_target_compile_options_raw(const Build_Model *model, BM_Target_Id id);
@@ -220,12 +220,12 @@ bool bm_query_target_effective_compile_options_items_with_context(const Build_Mo
 bool bm_query_target_effective_link_libraries_items(const Build_Model *model,
                                                     BM_Target_Id id,
                                                     Arena *scratch,
-                                                    BM_String_Item_Span *out);
+                                                    BM_Link_Item_Span *out);
 bool bm_query_target_effective_link_libraries_items_with_context(const Build_Model *model,
                                                                  BM_Target_Id id,
                                                                  const BM_Query_Eval_Context *ctx,
                                                                  Arena *scratch,
-                                                                 BM_String_Item_Span *out);
+                                                                 BM_Link_Item_Span *out);
 bool bm_query_target_effective_link_options_items(const Build_Model *model,
                                                   BM_Target_Id id,
                                                   Arena *scratch,
@@ -323,7 +323,7 @@ bool bm_query_session_target_effective_compile_options_items(BM_Query_Session *s
 bool bm_query_session_target_effective_link_libraries_items(BM_Query_Session *session,
                                                             BM_Target_Id id,
                                                             const BM_Query_Eval_Context *ctx,
-                                                            BM_String_Item_Span *out);
+                                                            BM_Link_Item_Span *out);
 bool bm_query_session_target_effective_link_options_items(BM_Query_Session *session,
                                                           BM_Target_Id id,
                                                           const BM_Query_Eval_Context *ctx,

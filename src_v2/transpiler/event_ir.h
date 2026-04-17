@@ -224,6 +224,28 @@ typedef enum {
 } Event_Build_Step_Kind;
 
 typedef enum {
+    EVENT_LINK_ITEM_CONFIG_ALL = 0,
+    EVENT_LINK_ITEM_CONFIG_DEBUG_ONLY,
+    EVENT_LINK_ITEM_CONFIG_NONDEBUG_ONLY,
+} Event_Link_Item_Config_Filter;
+
+typedef enum {
+    EVENT_LINK_ITEM_RAW_VALUE = 0,
+    EVENT_LINK_ITEM_TARGET_REF,
+} Event_Link_Item_Kind;
+
+typedef struct {
+    Event_Link_Item_Config_Filter config_filter;
+    Event_Link_Item_Kind kind;
+    String_View target_name;
+} Event_Link_Item_Metadata;
+
+typedef enum {
+    EVENT_BUILD_STEP_DEP_PATH_TOKEN = 0,
+    EVENT_BUILD_STEP_DEP_TARGET_REF,
+} Event_Build_Step_Dependency_Kind;
+
+typedef enum {
     EVENT_REPLAY_PHASE_CONFIGURE = 0,
     EVENT_REPLAY_PHASE_BUILD,
     EVENT_REPLAY_PHASE_TEST,
@@ -385,6 +407,7 @@ typedef struct {
     uint32_t modifier_flags;
     String_View *items;
     size_t item_count;
+    Event_Link_Item_Metadata *link_item_semantics;
 } Event_Directory_Property_Mutate;
 
 typedef Event_Directory_Property_Mutate Event_Global_Property_Mutate;
@@ -853,6 +876,8 @@ typedef struct {
 typedef struct {
     String_View step_key;
     String_View item;
+    Event_Build_Step_Dependency_Kind kind;
+    String_View target_name;
 } Event_Build_Step_Add_Dependency;
 
 typedef struct {
@@ -897,12 +922,16 @@ typedef struct {
     String_View key;
     String_View value;
     Cmake_Target_Property_Op op;
+    String_View *typed_items;
+    size_t typed_item_count;
+    Event_Link_Item_Metadata *typed_link_item_semantics;
 } Event_Target_Prop_Set;
 
 typedef struct {
     String_View target_name;
     Cmake_Visibility visibility;
     String_View item;
+    Event_Link_Item_Metadata semantic;
 } Event_Target_Link_Libraries;
 
 typedef struct {

@@ -7,6 +7,11 @@ typedef struct {
 
 typedef struct {
     char *key;
+    BM_Link_Item_Span value;
+} BM_Query_Session_Effective_Link_Item_Entry;
+
+typedef struct {
+    char *key;
     BM_String_Span value;
 } BM_Query_Session_Effective_Value_Entry;
 
@@ -25,6 +30,7 @@ struct BM_Query_Session {
     const Build_Model *model;
     BM_Query_Session_Stats stats;
     BM_Query_Session_Effective_Item_Entry *effective_item_cache;
+    BM_Query_Session_Effective_Link_Item_Entry *effective_link_item_cache;
     BM_Query_Session_Effective_Value_Entry *effective_value_cache;
     BM_Query_Session_Target_File_Entry *target_file_cache;
     BM_Query_Session_Imported_Link_Lang_Entry *imported_link_lang_cache;
@@ -49,6 +55,7 @@ static void bm_query_session_cleanup(void *userdata) {
     BM_Query_Session *session = (BM_Query_Session*)userdata;
     if (!session) return;
     stbds_shfree(session->effective_item_cache);
+    stbds_shfree(session->effective_link_item_cache);
     stbds_shfree(session->effective_value_cache);
     stbds_shfree(session->target_file_cache);
     stbds_shfree(session->imported_link_lang_cache);
@@ -102,9 +109,41 @@ static bool bm_query_session_copy_item_span(Arena *arena, BM_String_Item_Span in
     return true;
 }
 
+static bool bm_query_session_copy_link_item_span(Arena *arena, BM_Link_Item_Span in, BM_Link_Item_Span *out) {
+    BM_Link_Item_View *items = NULL;
+    if (!out) return false;
+    *out = (BM_Link_Item_Span){0};
+    if (!arena) return false;
+    for (size_t i = 0; i < in.count; ++i) {
+        BM_Link_Item_View copy = in.items[i];
+        if (!bm_query_copy_sv(arena, in.items[i].value, &copy.value) ||
+            !bm_query_copy_sv(arena, in.items[i].target_name, &copy.target_name) ||
+            !arena_arr_push(arena, items, copy)) {
+            return false;
+        }
+    }
+    out->items = items;
+    out->count = arena_arr_len(items);
+    return true;
+}
+
 static bool bm_query_session_project_values_from_items(Arena *arena,
                                                        BM_String_Item_Span items,
                                                        BM_String_Span *out) {
+    String_View *values = NULL;
+    if (!out) return false;
+    *out = (BM_String_Span){0};
+    if (!arena) return false;
+    for (size_t i = 0; i < items.count; ++i) {
+        if (!arena_arr_push(arena, values, items.items[i].value)) return false;
+    }
+    *out = bm_string_span(values);
+    return true;
+}
+
+static bool bm_query_session_project_values_from_link_items(Arena *arena,
+                                                            BM_Link_Item_Span items,
+                                                            BM_String_Span *out) {
     String_View *values = NULL;
     if (!out) return false;
     *out = (BM_String_Span){0};
@@ -236,6 +275,56 @@ static bool bm_query_session_effective_items_cached(BM_Query_Session *session,
     return true;
 }
 
+static bool bm_query_session_effective_link_items_cached(BM_Query_Session *session,
+                                                         BM_Target_Id id,
+                                                         const BM_Query_Eval_Context *ctx,
+                                                         bool count_stats,
+                                                         BM_Link_Item_Span *out) {
+    BM_Query_Session_Effective_Link_Item_Entry *entry = NULL;
+    BM_Query_Eval_Context normalized = {0};
+    Arena *temp = NULL;
+    BM_Link_Item_Span computed = {0};
+    BM_Link_Item_Span cached = {0};
+    Nob_String_Builder key = {0};
+    if (!session || !out) return false;
+    *out = (BM_Link_Item_Span){0};
+
+    normalized = bm_query_session_normalize_effective_ctx(id, BM_QUERY_USAGE_LINK, ctx);
+    if (!bm_query_session_build_effective_key(id, BM_EFFECTIVE_LINK_LIBRARIES, &normalized, &key)) return false;
+
+    entry = stbds_shgetp_null(session->effective_link_item_cache, key.items ? key.items : "");
+    if (entry) {
+        if (count_stats) session->stats.effective_item_hits++;
+        *out = entry->value;
+        nob_sb_free(key);
+        return true;
+    }
+
+    if (count_stats) session->stats.effective_item_misses++;
+    temp = arena_create(64 * 1024);
+    if (!temp) {
+        nob_sb_free(key);
+        return false;
+    }
+
+    if (!bm_query_target_effective_link_items_common(session->model, id, &normalized, temp, &computed) ||
+        !bm_query_session_copy_link_item_span(session->arena, computed, &cached)) {
+        arena_destroy(temp);
+        nob_sb_free(key);
+        return false;
+    }
+
+    stbds_shput(session->effective_link_item_cache,
+                key.items ? key.items : "",
+                cached);
+    entry = stbds_shgetp_null(session->effective_link_item_cache, key.items ? key.items : "");
+    arena_destroy(temp);
+    nob_sb_free(key);
+    if (!entry) return false;
+    *out = entry->value;
+    return true;
+}
+
 static bool bm_query_session_effective_values_cached(BM_Query_Session *session,
                                                      BM_Target_Id id,
                                                      const BM_Query_Eval_Context *ctx,
@@ -269,11 +358,20 @@ static bool bm_query_session_effective_values_cached(BM_Query_Session *session,
 
     if (count_stats) session->stats.effective_value_misses++;
     {
-        BM_String_Item_Span items = {0};
-        if (!bm_query_session_effective_items_cached(session, id, &normalized, kind, false, &items) ||
-            !bm_query_session_project_values_from_items(session->arena, items, &cached)) {
-            nob_sb_free(key);
-            return false;
+        if (kind == BM_EFFECTIVE_LINK_LIBRARIES) {
+            BM_Link_Item_Span link_items = {0};
+            if (!bm_query_session_effective_link_items_cached(session, id, &normalized, false, &link_items) ||
+                !bm_query_session_project_values_from_link_items(session->arena, link_items, &cached)) {
+                nob_sb_free(key);
+                return false;
+            }
+        } else {
+            BM_String_Item_Span items = {0};
+            if (!bm_query_session_effective_items_cached(session, id, &normalized, kind, false, &items) ||
+                !bm_query_session_project_values_from_items(session->arena, items, &cached)) {
+                nob_sb_free(key);
+                return false;
+            }
         }
     }
 
@@ -398,6 +496,7 @@ BM_Query_Session *bm_query_session_create(Arena *arena, const Build_Model *model
     session->model = model;
     if (!arena_on_destroy(arena, bm_query_session_cleanup, session)) return NULL;
     stbds_sh_new_arena(session->effective_item_cache);
+    stbds_sh_new_arena(session->effective_link_item_cache);
     stbds_sh_new_arena(session->effective_value_cache);
     stbds_sh_new_arena(session->target_file_cache);
     stbds_sh_new_arena(session->imported_link_lang_cache);
@@ -447,13 +546,8 @@ bool bm_query_session_target_effective_compile_options_items(BM_Query_Session *s
 bool bm_query_session_target_effective_link_libraries_items(BM_Query_Session *session,
                                                             BM_Target_Id id,
                                                             const BM_Query_Eval_Context *ctx,
-                                                            BM_String_Item_Span *out) {
-    return bm_query_session_effective_items_cached(session,
-                                                   id,
-                                                   ctx,
-                                                   BM_EFFECTIVE_LINK_LIBRARIES,
-                                                   true,
-                                                   out);
+                                                            BM_Link_Item_Span *out) {
+    return bm_query_session_effective_link_items_cached(session, id, ctx, true, out);
 }
 
 bool bm_query_session_target_effective_link_options_items(BM_Query_Session *session,

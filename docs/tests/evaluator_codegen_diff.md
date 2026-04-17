@@ -8,11 +8,11 @@ This suite checks whether evaluator output, Event IR, build-model projection,
 and generated code stay aligned enough to preserve artifact-relevant behavior.
 
 ## Product direction
-The suite exists to measure progress toward `CMake 3.8` artifact parity, not to
+The suite exists to measure progress toward `CMake 3.28` artifact parity, not to
 freeze an older supported-subset target.
 
 ## Current gap
-The current inventory and naming still come from the `3.28` closure era, and
+The current inventory and naming still come from the subset-closure era, and
 some cases prove downstream consistency without yet proving complete artifact
 equivalence on their own.
 

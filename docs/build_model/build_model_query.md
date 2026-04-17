@@ -8,7 +8,7 @@ The query layer exposes frozen build-model facts to codegen and test tools.
 
 ## Product direction
 Queries should be simple readers over a graph that already carries enough
-semantics for `CMake 3.8` artifact parity.
+semantics for `CMake 3.28` artifact parity.
 
 ## Current gap
 Some effective accessors still compensate for missing typed edges or for list

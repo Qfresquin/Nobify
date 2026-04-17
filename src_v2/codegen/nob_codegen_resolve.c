@@ -20,12 +20,21 @@ bool cg_query_effective_items_cached(CG_Context *ctx,
         case CG_EFFECTIVE_LINK_OPTIONS:
             return bm_query_session_target_effective_link_options_items(ctx->query_session, id, qctx, out);
         case CG_EFFECTIVE_LINK_LIBRARIES:
-            return bm_query_session_target_effective_link_libraries_items(ctx->query_session, id, qctx, out);
+            return false;
         case CG_EFFECTIVE_COMPILE_FEATURES:
             return false;
     }
 
     return false;
+}
+
+bool cg_query_effective_link_items_cached(CG_Context *ctx,
+                                          BM_Target_Id id,
+                                          const BM_Query_Eval_Context *qctx,
+                                          BM_Link_Item_Span *out) {
+    if (!ctx || !qctx || !out || !ctx->query_session) return false;
+    *out = (BM_Link_Item_Span){0};
+    return bm_query_session_target_effective_link_libraries_items(ctx->query_session, id, qctx, out);
 }
 
 bool cg_query_effective_values_cached(CG_Context *ctx,

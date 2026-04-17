@@ -37,10 +37,32 @@ static bool event_copy_sv_array_inplace(Arena *arena, String_View **items, size_
     return true;
 }
 
+static bool event_copy_link_item_metadata_array_inplace(Arena *arena,
+                                                        Event_Link_Item_Metadata **items,
+                                                        size_t count) {
+    if (!arena || !items) return false;
+    if (!*items || count == 0) {
+        *items = NULL;
+        return true;
+    }
+
+    Event_Link_Item_Metadata *copy = arena_alloc_array(arena, Event_Link_Item_Metadata, count);
+    if (!copy) return false;
+
+    for (size_t i = 0; i < count; ++i) {
+        copy[i] = (*items)[i];
+        if (!event_copy_sv_inplace(arena, &copy[i].target_name)) return false;
+    }
+
+    *items = copy;
+    return true;
+}
+
 static bool event_copy_property_mutate_inplace(Arena *arena, Event_Directory_Property_Mutate *mut) {
     if (!arena || !mut) return false;
     if (!event_copy_sv_inplace(arena, &mut->property_name)) return false;
     if (!event_copy_sv_array_inplace(arena, &mut->items, mut->item_count)) return false;
+    if (!event_copy_link_item_metadata_array_inplace(arena, &mut->link_item_semantics, mut->item_count)) return false;
     return true;
 }
 
@@ -560,6 +582,7 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
         case EVENT_BUILD_STEP_ADD_DEPENDENCY:
             if (!event_copy_sv_inplace(arena, &ev->as.build_step_add_dependency.step_key)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.build_step_add_dependency.item)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.build_step_add_dependency.target_name)) return false;
             break;
         case EVENT_BUILD_STEP_ADD_COMMAND:
             if (!event_copy_sv_inplace(arena, &ev->as.build_step_add_command.step_key)) return false;
@@ -594,10 +617,21 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.target_prop_set.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_prop_set.key)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_prop_set.value)) return false;
+            if (!event_copy_sv_array_inplace(arena,
+                                             &ev->as.target_prop_set.typed_items,
+                                             ev->as.target_prop_set.typed_item_count)) {
+                return false;
+            }
+            if (!event_copy_link_item_metadata_array_inplace(arena,
+                                                             &ev->as.target_prop_set.typed_link_item_semantics,
+                                                             ev->as.target_prop_set.typed_item_count)) {
+                return false;
+            }
             break;
         case EVENT_TARGET_LINK_LIBRARIES:
             if (!event_copy_sv_inplace(arena, &ev->as.target_link_libraries.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_link_libraries.item)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.target_link_libraries.semantic.target_name)) return false;
             break;
         case EVENT_TARGET_LINK_OPTIONS:
             if (!event_copy_sv_inplace(arena, &ev->as.target_link_options.target_name)) return false;

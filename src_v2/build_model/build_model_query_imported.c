@@ -1,94 +1,47 @@
 #include "build_model_query_internal.h"
 
-static bool bm_query_platform_eq(String_View platform_id, const char *name) {
-    return bm_sv_eq_ci_query(nob_sv_trim(platform_id), nob_sv_from_cstr(name ? name : ""));
+static const BM_Imported_Config_Record *bm_find_imported_config_record(const BM_Target_Record *target,
+                                                                       String_View config) {
+    if (!target) return NULL;
+    for (size_t i = 0; i < arena_arr_len(target->imported_configs); ++i) {
+        if (bm_sv_eq_ci_query(target->imported_configs[i].config, config)) {
+            return &target->imported_configs[i];
+        }
+    }
+    return NULL;
 }
 
-static bool bm_query_platform_is_windows(const BM_Query_Eval_Context *ctx) {
-    return ctx && bm_query_platform_eq(ctx->platform_id, "Windows");
+static const BM_Imported_Config_Map_Record *bm_find_imported_config_map_record(const BM_Target_Record *target,
+                                                                               String_View config) {
+    if (!target) return NULL;
+    for (size_t i = 0; i < arena_arr_len(target->imported_config_maps); ++i) {
+        if (bm_sv_eq_ci_query(target->imported_config_maps[i].config, config)) {
+            return &target->imported_config_maps[i];
+        }
+    }
+    return NULL;
 }
 
-static bool bm_query_platform_is_darwin(const BM_Query_Eval_Context *ctx) {
-    return ctx && bm_query_platform_eq(ctx->platform_id, "Darwin");
-}
-
-static String_View bm_uppercase_copy_query(Arena *scratch, String_View value) {
-    char *copy = NULL;
-    if (!scratch || value.count == 0) return nob_sv_from_cstr("");
-    copy = arena_strndup(scratch, value.data ? value.data : "", value.count);
-    if (!copy) return nob_sv_from_cstr("");
-    for (size_t i = 0; i < value.count; ++i) copy[i] = (char)toupper((unsigned char)copy[i]);
-    return nob_sv_from_parts(copy, value.count);
-}
-
-static String_View bm_property_name_with_config_prefix(Arena *scratch,
-                                                       const char *prefix,
-                                                       String_View config) {
-    Nob_String_Builder sb = {0};
-    char *copy = NULL;
-    if (!scratch || !prefix || config.count == 0) return nob_sv_from_cstr("");
-    nob_sb_append_cstr(&sb, prefix);
-    nob_sb_append_buf(&sb, config.data ? config.data : "", config.count);
-    copy = arena_strndup(scratch, sb.items ? sb.items : "", sb.count);
-    nob_sb_free(sb);
-    return copy ? nob_sv_from_parts(copy, sb.count) : nob_sv_from_cstr("");
-}
-
-static bool bm_query_target_raw_property_first(const Build_Model *model,
-                                               BM_Target_Id id,
-                                               String_View property_name,
-                                               String_View *out) {
-    BM_String_Span span = bm_query_target_raw_property_items(model, id, property_name);
-    if (out) *out = span.count > 0 ? span.items[0] : nob_sv_from_cstr("");
-    return true;
-}
-
-static bool bm_query_target_imported_property_for_config(const Build_Model *model,
-                                                         BM_Target_Id id,
-                                                         String_View active_config,
-                                                         const char *config_prefix,
-                                                         const char *base_name,
-                                                         Arena *scratch,
-                                                         String_View *out) {
-    String_View upper_cfg = nob_sv_from_cstr("");
-    String_View config_name = {0};
-    String_View property_name = {0};
-    String_View mapped_property = {0};
-    if (!scratch || !out || !base_name || !config_prefix) return false;
-    *out = nob_sv_from_cstr("");
+static const BM_Imported_Config_Record *bm_select_imported_config_record(const BM_Target_Record *target,
+                                                                         String_View active_config) {
+    const BM_Imported_Config_Record *record = NULL;
+    const BM_Imported_Config_Map_Record *map_record = NULL;
+    if (!target) return NULL;
 
     if (active_config.count > 0) {
-        upper_cfg = bm_uppercase_copy_query(scratch, active_config);
-        property_name = bm_property_name_with_config_prefix(scratch, config_prefix, upper_cfg);
-        if (property_name.count > 0) {
-            bm_query_target_raw_property_first(model, id, property_name, out);
-            if (out->count > 0) return true;
-        }
+        record = bm_find_imported_config_record(target, active_config);
+        if (record) return record;
 
-        mapped_property = bm_property_name_with_config_prefix(scratch, "MAP_IMPORTED_CONFIG_", upper_cfg);
-        if (mapped_property.count > 0) {
-            BM_String_Span mapped = bm_query_target_raw_property_items(model, id, mapped_property);
-            for (size_t i = 0; i < mapped.count; ++i) {
-                size_t start = 0;
-                for (size_t k = 0; k <= mapped.items[i].count; ++k) {
-                    bool sep = (k == mapped.items[i].count) || (mapped.items[i].data[k] == ';');
-                    if (!sep) continue;
-                    config_name = nob_sv_trim(nob_sv_from_parts(mapped.items[i].data + start, k - start));
-                    start = k + 1;
-                    if (config_name.count == 0) continue;
-                    property_name = bm_property_name_with_config_prefix(
-                        scratch,
-                        config_prefix,
-                        bm_uppercase_copy_query(scratch, config_name));
-                    if (property_name.count == 0) continue;
-                    bm_query_target_raw_property_first(model, id, property_name, out);
-                    if (out->count > 0) return true;
-                }
+        map_record = bm_find_imported_config_map_record(target, active_config);
+        if (map_record) {
+            for (size_t i = 0; i < arena_arr_len(map_record->mapped_configs); ++i) {
+                record = bm_find_imported_config_record(target, map_record->mapped_configs[i]);
+                if (record) return record;
             }
         }
     }
 
-    return bm_query_target_raw_property_first(model, id, nob_sv_from_cstr(base_name), out);
+    return bm_find_imported_config_record(target, nob_sv_from_cstr(""));
 }
 
 static bool bm_query_target_local_file_internal(const Build_Model *model,
@@ -178,8 +131,7 @@ static bool bm_query_target_effective_file_internal(const Build_Model *model,
                                                     String_View *out) {
     BM_Target_Id resolved_id = bm_resolve_alias_target_id(model, id);
     const BM_Target_Record *target = bm_model_target(model, resolved_id);
-    String_View property_value = nob_sv_from_cstr("");
-    String_View source_base = {0};
+    const BM_Imported_Config_Record *config_record = NULL;
     if (!scratch || !out || !target) return false;
     *out = nob_sv_from_cstr("");
 
@@ -187,39 +139,19 @@ static bool bm_query_target_effective_file_internal(const Build_Model *model,
         return bm_query_target_local_file_internal(model, resolved_id, ctx, linker_file, scratch, out);
     }
 
+    config_record = bm_select_imported_config_record(target, ctx ? ctx->config : nob_sv_from_cstr(""));
+    if (!config_record) return true;
+
     if (linker_file) {
-        if (!bm_query_target_imported_property_for_config(model,
-                                                          resolved_id,
-                                                          ctx ? ctx->config : nob_sv_from_cstr(""),
-                                                          "IMPORTED_IMPLIB_",
-                                                          "IMPORTED_IMPLIB",
-                                                          scratch,
-                                                          &property_value)) {
-            return false;
+        if (config_record->effective_linker_file.count > 0) {
+            *out = config_record->effective_linker_file;
+            return true;
         }
-        if (property_value.count == 0 &&
-            !bm_query_target_imported_property_for_config(model,
-                                                          resolved_id,
-                                                          ctx ? ctx->config : nob_sv_from_cstr(""),
-                                                          "IMPORTED_LOCATION_",
-                                                          "IMPORTED_LOCATION",
-                                                          scratch,
-                                                          &property_value)) {
-            return false;
-        }
-    } else if (!bm_query_target_imported_property_for_config(model,
-                                                             resolved_id,
-                                                             ctx ? ctx->config : nob_sv_from_cstr(""),
-                                                             "IMPORTED_LOCATION_",
-                                                             "IMPORTED_LOCATION",
-                                                             scratch,
-                                                             &property_value)) {
-        return false;
+        *out = config_record->effective_file;
+        return true;
     }
 
-    if (property_value.count == 0) return true;
-    source_base = bm_query_directory_source_dir(model, bm_query_target_owner_directory(model, resolved_id));
-    *out = bm_join_relative_path_query(scratch, source_base, property_value);
+    *out = config_record->effective_file;
     return true;
 }
 
@@ -244,32 +176,19 @@ bool bm_query_target_imported_link_languages(const Build_Model *model,
                                              const BM_Query_Eval_Context *ctx,
                                              Arena *scratch,
                                              BM_String_Span *out) {
-    String_View property_value = nob_sv_from_cstr("");
-    String_View *values = NULL;
+    BM_Target_Id resolved_id = bm_resolve_alias_target_id(model, id);
+    const BM_Target_Record *target = bm_model_target(model, resolved_id);
+    const BM_Imported_Config_Record *config_record = NULL;
+    String_View *copy = NULL;
     if (!out) return false;
-    out->items = NULL;
-    out->count = 0;
-    if (!scratch) return false;
-    if (!bm_query_target_imported_property_for_config(model,
-                                                      id,
-                                                      ctx ? ctx->config : nob_sv_from_cstr(""),
-                                                      "IMPORTED_LINK_INTERFACE_LANGUAGES_",
-                                                      "IMPORTED_LINK_INTERFACE_LANGUAGES",
-                                                      scratch,
-                                                      &property_value)) {
-        return false;
+    *out = (BM_String_Span){0};
+    if (!scratch || !target) return false;
+
+    config_record = bm_select_imported_config_record(target, ctx ? ctx->config : nob_sv_from_cstr(""));
+    if (!config_record) return true;
+    for (size_t i = 0; i < arena_arr_len(config_record->link_languages); ++i) {
+        if (!arena_arr_push(scratch, copy, config_record->link_languages[i])) return false;
     }
-    if (property_value.count == 0) return true;
-    for (size_t i = 0, start = 0; i <= property_value.count; ++i) {
-        bool sep = (i == property_value.count) || (property_value.data[i] == ';');
-        String_View piece = {0};
-        if (!sep) continue;
-        piece = nob_sv_trim(nob_sv_from_parts(property_value.data + start, i - start));
-        start = i + 1;
-        if (piece.count == 0) continue;
-        if (!bm_append_string_copy(scratch, &values, piece)) return false;
-    }
-    out->items = values;
-    out->count = arena_arr_len(values);
+    *out = bm_string_span(copy);
     return true;
 }

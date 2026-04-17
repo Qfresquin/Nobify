@@ -28,6 +28,48 @@ static bool bm_target_append_item(BM_Builder *builder,
     return true;
 }
 
+static BM_Link_Item_Config_Filter bm_link_item_config_from_event(Event_Link_Item_Config_Filter filter) {
+    switch (filter) {
+        case EVENT_LINK_ITEM_CONFIG_DEBUG_ONLY: return BM_LINK_ITEM_CONFIG_DEBUG_ONLY;
+        case EVENT_LINK_ITEM_CONFIG_NONDEBUG_ONLY: return BM_LINK_ITEM_CONFIG_NONDEBUG_ONLY;
+        case EVENT_LINK_ITEM_CONFIG_ALL:
+        default:
+            return BM_LINK_ITEM_CONFIG_ALL;
+    }
+}
+
+static BM_Link_Item_Kind bm_link_item_kind_from_event(Event_Link_Item_Kind kind) {
+    return kind == EVENT_LINK_ITEM_TARGET_REF ? BM_LINK_ITEM_TARGET_REF : BM_LINK_ITEM_RAW_VALUE;
+}
+
+static bool bm_target_append_link_item(BM_Builder *builder,
+                                       const Event *ev,
+                                       BM_Link_Item_View **dest,
+                                       String_View value,
+                                       Cmake_Visibility visibility,
+                                       Event_Property_Mutate_Op op,
+                                       uint32_t flags,
+                                       const Event_Link_Item_Metadata *semantic) {
+    BM_Link_Item_View item = {0};
+    if (!bm_copy_string(builder->arena, value, &item.value)) {
+        return bm_builder_error(builder, ev, "failed to copy target link item", "increase arena capacity");
+    }
+    item.visibility = bm_visibility_from_event(visibility);
+    item.flags = flags;
+    item.provenance = bm_provenance_from_event(builder->arena, ev);
+    item.config_filter = semantic ? bm_link_item_config_from_event(semantic->config_filter)
+                                  : BM_LINK_ITEM_CONFIG_ALL;
+    item.kind = semantic ? bm_link_item_kind_from_event(semantic->kind) : BM_LINK_ITEM_RAW_VALUE;
+    item.target_id = BM_TARGET_ID_INVALID;
+    if (semantic && !bm_copy_string(builder->arena, semantic->target_name, &item.target_name)) {
+        return bm_builder_error(builder, ev, "failed to copy target link item metadata", "increase arena capacity");
+    }
+    if (!bm_apply_link_item_mutation(builder->arena, dest, &item, 1, op)) {
+        return bm_builder_error(builder, ev, "failed to mutate target link item", "increase arena capacity");
+    }
+    return true;
+}
+
 static Event_Property_Mutate_Op bm_target_property_op_from_event(Cmake_Target_Property_Op op) {
     switch (op) {
         case EV_PROP_SET: return EVENT_PROPERTY_MUTATE_SET;
@@ -70,17 +112,50 @@ static bool bm_target_apply_promoted_item_mutation(Arena *arena,
     return true;
 }
 
+static bool bm_target_link_item_bucket_matches(const BM_Link_Item_View *item,
+                                               BM_Visibility visibility,
+                                               uint32_t flags) {
+    if (!item) return false;
+    if (item->visibility != visibility) return false;
+    return (item->flags & BM_ITEM_FLAG_SYSTEM) == (flags & BM_ITEM_FLAG_SYSTEM);
+}
+
+static bool bm_target_apply_promoted_link_item_mutation(Arena *arena,
+                                                        BM_Link_Item_View **dest,
+                                                        const BM_Link_Item_View *items,
+                                                        size_t count,
+                                                        Event_Property_Mutate_Op op,
+                                                        BM_Visibility visibility,
+                                                        uint32_t flags) {
+    BM_Link_Item_View *merged = NULL;
+    if (!arena || !dest) return false;
+    if (op != EVENT_PROPERTY_MUTATE_SET) {
+        return bm_apply_link_item_mutation(arena, dest, items, count, op);
+    }
+
+    for (size_t i = 0; i < arena_arr_len(*dest); ++i) {
+        if (bm_target_link_item_bucket_matches(&(*dest)[i], visibility, flags)) continue;
+        if (!arena_arr_push(arena, merged, (*dest)[i])) return false;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if (!arena_arr_push(arena, merged, items[i])) return false;
+    }
+    *dest = merged;
+    return true;
+}
+
 static bool bm_target_promote_property_set(BM_Builder *builder,
                                            BM_Target_Record *target,
                                            const Event *ev,
                                            bool *promoted) {
     const Event_Target_Prop_Set *prop = NULL;
     BM_String_Item_View **dest = NULL;
+    BM_Link_Item_View **link_dest = NULL;
     Cmake_Visibility visibility = EV_VISIBILITY_PRIVATE;
     BM_Visibility item_visibility = BM_VISIBILITY_PRIVATE;
     uint32_t flags = BM_ITEM_FLAG_NONE;
-    String_View *values = NULL;
     BM_String_Item_View *items = NULL;
+    BM_Link_Item_View *link_items = NULL;
     Event_Property_Mutate_Op mutation_op = EVENT_PROPERTY_MUTATE_SET;
     if (promoted) *promoted = false;
     if (!builder || !target || !ev || ev->h.kind != EVENT_TARGET_PROP_SET) return false;
@@ -118,10 +193,10 @@ static bool bm_target_promote_property_set(BM_Builder *builder,
         dest = &target->compile_features;
         visibility = EV_VISIBILITY_INTERFACE;
     } else if (bm_sv_eq_ci_lit(prop->key, "LINK_LIBRARIES")) {
-        dest = &target->link_libraries;
+        link_dest = &target->link_libraries;
         visibility = EV_VISIBILITY_PRIVATE;
     } else if (bm_sv_eq_ci_lit(prop->key, "INTERFACE_LINK_LIBRARIES")) {
-        dest = &target->link_libraries;
+        link_dest = &target->link_libraries;
         visibility = EV_VISIBILITY_INTERFACE;
     } else if (bm_sv_eq_ci_lit(prop->key, "LINK_OPTIONS")) {
         dest = &target->link_options;
@@ -140,31 +215,60 @@ static bool bm_target_promote_property_set(BM_Builder *builder,
     }
     item_visibility = bm_visibility_from_event(visibility);
 
-    if (!bm_split_cmake_list(builder->arena, prop->value, &values)) {
-        return bm_builder_error(builder, ev, "failed to split promoted target property items", "increase arena capacity");
-    }
-
-    for (size_t i = 0; i < arena_arr_len(values); ++i) {
-        BM_String_Item_View item = {0};
-        if (!bm_copy_string(builder->arena, values[i], &item.value)) {
-            return bm_builder_error(builder, ev, "failed to copy promoted target property item", "increase arena capacity");
+    if (link_dest) {
+        for (size_t i = 0; i < prop->typed_item_count; ++i) {
+            BM_Link_Item_View item = {0};
+            Event_Link_Item_Metadata semantic = {0};
+            if (!bm_copy_string(builder->arena, prop->typed_items[i], &item.value)) {
+                return bm_builder_error(builder, ev, "failed to copy promoted link property item", "increase arena capacity");
+            }
+            if (prop->typed_link_item_semantics && i < prop->typed_item_count) {
+                semantic = prop->typed_link_item_semantics[i];
+            }
+            item.visibility = item_visibility;
+            item.flags = flags;
+            item.provenance = bm_provenance_from_event(builder->arena, ev);
+            item.config_filter = bm_link_item_config_from_event(semantic.config_filter);
+            item.kind = bm_link_item_kind_from_event(semantic.kind);
+            item.target_id = BM_TARGET_ID_INVALID;
+            if (!bm_copy_string(builder->arena, semantic.target_name, &item.target_name) ||
+                !arena_arr_push(builder->arena, link_items, item)) {
+                return bm_builder_error(builder, ev, "failed to append promoted link property item", "increase arena capacity");
+            }
         }
-        item.visibility = item_visibility;
-        item.flags = flags;
-        item.provenance = bm_provenance_from_event(builder->arena, ev);
-        if (!arena_arr_push(builder->arena, items, item)) {
-            return bm_builder_error(builder, ev, "failed to append promoted target property item", "increase arena capacity");
-        }
-    }
 
-    if (!bm_target_apply_promoted_item_mutation(builder->arena,
-                                                dest,
-                                                items,
-                                                arena_arr_len(items),
-                                                mutation_op,
-                                                item_visibility,
-                                                flags)) {
-        return bm_builder_error(builder, ev, "failed to mutate promoted target property items", "increase arena capacity");
+        if (!bm_target_apply_promoted_link_item_mutation(builder->arena,
+                                                         link_dest,
+                                                         link_items,
+                                                         arena_arr_len(link_items),
+                                                         mutation_op,
+                                                         item_visibility,
+                                                         flags)) {
+            return bm_builder_error(builder, ev, "failed to mutate promoted link property items", "increase arena capacity");
+        }
+    } else {
+        for (size_t i = 0; i < prop->typed_item_count; ++i) {
+            BM_String_Item_View item = {0};
+            if (!bm_copy_string(builder->arena, prop->typed_items[i], &item.value)) {
+                return bm_builder_error(builder, ev, "failed to copy promoted target property item", "increase arena capacity");
+            }
+            item.visibility = item_visibility;
+            item.flags = flags;
+            item.provenance = bm_provenance_from_event(builder->arena, ev);
+            if (!arena_arr_push(builder->arena, items, item)) {
+                return bm_builder_error(builder, ev, "failed to append promoted target property item", "increase arena capacity");
+            }
+        }
+
+        if (!bm_target_apply_promoted_item_mutation(builder->arena,
+                                                    dest,
+                                                    items,
+                                                    arena_arr_len(items),
+                                                    mutation_op,
+                                                    item_visibility,
+                                                    flags)) {
+            return bm_builder_error(builder, ev, "failed to mutate promoted target property items", "increase arena capacity");
+        }
     }
 
     if (promoted) *promoted = true;
@@ -455,13 +559,14 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
         case EVENT_TARGET_LINK_LIBRARIES: {
             BM_Target_Record *target = bm_draft_find_target(draft, ev->as.target_link_libraries.target_name);
             if (!target) return bm_builder_error(builder, ev, "target link libraries references an unknown target", "declare the target first");
-            return bm_target_append_item(builder,
-                                         ev,
-                                         &target->link_libraries,
-                                         ev->as.target_link_libraries.item,
-                                         ev->as.target_link_libraries.visibility,
-                                         EVENT_PROPERTY_MUTATE_APPEND_LIST,
-                                         BM_ITEM_FLAG_NONE);
+            return bm_target_append_link_item(builder,
+                                              ev,
+                                              &target->link_libraries,
+                                              ev->as.target_link_libraries.item,
+                                              ev->as.target_link_libraries.visibility,
+                                              EVENT_PROPERTY_MUTATE_APPEND_LIST,
+                                              BM_ITEM_FLAG_NONE,
+                                              &ev->as.target_link_libraries.semantic);
         }
 
         case EVENT_TARGET_LINK_OPTIONS: {
@@ -636,7 +741,19 @@ bool bm_builder_handle_build_graph_event(BM_Builder *builder, const Event *ev) {
                 return bm_build_step_append_string(builder, ev, &step->raw_byproducts, ev->as.build_step_add_byproduct.path);
             }
             if (ev->h.kind == EVENT_BUILD_STEP_ADD_DEPENDENCY) {
-                return bm_build_step_append_string(builder, ev, &step->raw_dependency_tokens, ev->as.build_step_add_dependency.item);
+                BM_Build_Step_Dependency_Record dep = {0};
+                dep.kind = ev->as.build_step_add_dependency.kind == EVENT_BUILD_STEP_DEP_TARGET_REF
+                    ? BM_BUILD_STEP_DEP_TARGET_REF
+                    : BM_BUILD_STEP_DEP_PATH_TOKEN;
+                dep.target_id = BM_TARGET_ID_INVALID;
+                dep.producer_step_id = BM_BUILD_STEP_ID_INVALID;
+                if (!bm_build_step_append_string(builder, ev, &step->raw_dependency_tokens, ev->as.build_step_add_dependency.item) ||
+                    !bm_copy_string(builder->arena, ev->as.build_step_add_dependency.item, &dep.raw_token) ||
+                    !bm_copy_string(builder->arena, ev->as.build_step_add_dependency.target_name, &dep.target_name) ||
+                    !arena_arr_push(builder->arena, step->dependencies, dep)) {
+                    return bm_builder_error(builder, ev, "failed to append build step dependency", "increase arena capacity");
+                }
+                return true;
             }
             return bm_build_step_append_command(builder,
                                                 ev,

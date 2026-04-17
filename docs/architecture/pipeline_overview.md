@@ -1,20 +1,21 @@
 # Pipeline Overview
 
 ## Status
-Canonical transition contract for the end-to-end `CMake 3.8 -> Nob` pipeline.
+Canonical transition contract for the end-to-end `CMake 3.28 -> Nob` pipeline.
 
 ## Role
 This document defines the product pipeline and the ownership boundary between
 its major stages.
 
 ## Product direction
-The pipeline exists to preserve enough `CMake 3.8` semantics that the generated
+The pipeline exists to preserve enough `CMake 3.28` semantics that the
+generated
 Nob program produces the same observable artifacts as the input project.
 
 ## Current gap
 Some downstream stages still compensate for incomplete upstream typing, and
-parts of the evidence stack are still named and scoped around `3.28/subset`
-closure work.
+parts of the evidence stack are still named and scoped around subset-closure
+work instead of total `3.28` parity.
 
 ## Guarantees
 - `evaluator` executes and freezes artifact-relevant semantics before codegen.

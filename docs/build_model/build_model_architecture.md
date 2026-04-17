@@ -8,14 +8,14 @@ The build model turns Event IR into a validated, frozen, queryable graph that
 codegen can use to reproduce source-project artifacts.
 
 ## Product direction
-Within the `CMake 3.8 -> Nob` pipeline, the build model exists to preserve
+Within the `CMake 3.28 -> Nob` pipeline, the build model exists to preserve
 artifact-relevant semantics in explicit data structures rather than in late
 heuristics.
 
 ## Current gap
 Some effective-query paths still reconstruct dependency or usage meaning from
 evaluated strings. That behavior is migration debt left over from the old
-`3.28/subset` closure shape, not the target architecture.
+subset-first closure shape, not the target architecture.
 
 ## Guarantees
 - `builder` records upstream facts and domain entities.

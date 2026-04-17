@@ -121,7 +121,7 @@ static const char *pipeline_export_source_kind_name(BM_Export_Source_Kind kind) 
     return "UNKNOWN";
 }
 
-static size_t pipeline_count_non_private_items(BM_String_Item_Span items) {
+static size_t pipeline_count_non_private_link_items(BM_Link_Item_Span items) {
     size_t count = 0;
     for (size_t i = 0; i < items.count; ++i) {
         if (items.items[i].visibility != BM_VISIBILITY_PRIVATE) count++;
@@ -180,11 +180,11 @@ static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *mod
     BM_String_Item_Span root_include_dirs = bm_query_directory_include_directories_raw(model, root_directory);
     BM_String_Item_Span root_system_include_dirs = bm_query_directory_system_include_directories_raw(model, root_directory);
     BM_String_Item_Span root_link_dirs = bm_query_directory_link_directories_raw(model, root_directory);
-    BM_String_Item_Span root_link_libs = bm_query_directory_link_libraries_raw(model, root_directory);
+    BM_Link_Item_Span root_link_libs = bm_query_directory_link_libraries_raw(model, root_directory);
     BM_String_Item_Span global_compile_defs = bm_query_global_compile_definitions_raw(model);
     BM_String_Item_Span global_compile_opts = bm_query_global_compile_options_raw(model);
     BM_String_Item_Span global_link_opts = bm_query_global_link_options_raw(model);
-    BM_String_Item_Span global_link_libs = bm_query_global_link_libraries_raw(model);
+    BM_Link_Item_Span global_link_libs = bm_query_global_link_libraries_raw(model);
     Arena *scratch = arena_create(128 * 1024);
 
     nob_sb_append_cstr(sb, "MODEL project=");
@@ -219,7 +219,7 @@ static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *mod
         BM_String_Span sources = bm_query_target_sources_raw(model, target_id);
         BM_Target_Id_Span deps = bm_query_target_dependencies_explicit(model, target_id);
         BM_String_Item_Span include_dirs = bm_query_target_include_directories_raw(model, target_id);
-        BM_String_Item_Span link_libs = bm_query_target_link_libraries_raw(model, target_id);
+        BM_Link_Item_Span link_libs = bm_query_target_link_libraries_raw(model, target_id);
         BM_String_Item_Span link_opts = bm_query_target_link_options_raw(model, target_id);
         BM_String_Item_Span link_dirs = bm_query_target_link_directories_raw(model, target_id);
         BM_String_Item_Span compile_features = bm_query_target_compile_features_raw(model, target_id);
@@ -229,7 +229,7 @@ static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *mod
         BM_String_Item_Span effective_compile_defs = {0};
         BM_String_Item_Span effective_compile_opts = {0};
         BM_String_Span effective_compile_features = {0};
-        BM_String_Item_Span effective_link_libs = {0};
+        BM_Link_Item_Span effective_link_libs = {0};
         BM_String_Item_Span effective_link_opts = {0};
         BM_String_Item_Span effective_link_dirs = {0};
 
@@ -292,7 +292,7 @@ static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *mod
             sources.count,
             deps.count,
             link_libs.count,
-            pipeline_count_non_private_items(link_libs),
+            pipeline_count_non_private_link_items(link_libs),
             link_opts.count,
             link_dirs.count,
             compile_features.count,

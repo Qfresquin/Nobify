@@ -1,6 +1,6 @@
 # Historical
 
-Superseded by the active `CMake 3.8 parity total -> Nob` documentation reset.
+Superseded by the active `CMake 3.28 parity total -> Nob` documentation reset.
 Not canonical.
 
 # Build Model Closure Matrix

@@ -540,6 +540,11 @@ bool bm_append_item(Arena *arena, BM_String_Item_View **items, BM_String_Item_Vi
     return arena_arr_push(arena, *items, item);
 }
 
+bool bm_append_link_item(Arena *arena, BM_Link_Item_View **items, BM_Link_Item_View item) {
+    if (!arena || !items) return false;
+    return arena_arr_push(arena, *items, item);
+}
+
 bool bm_apply_item_mutation(Arena *arena,
                             BM_String_Item_View **dest,
                             const BM_String_Item_View *items,
@@ -559,6 +564,46 @@ bool bm_apply_item_mutation(Arena *arena,
 
         case EVENT_PROPERTY_MUTATE_PREPEND_LIST: {
             BM_String_Item_View *merged = NULL;
+            for (size_t i = 0; i < count; ++i) {
+                if (!arena_arr_push(arena, merged, items[i])) return false;
+            }
+            for (size_t i = 0; i < arena_arr_len(*dest); ++i) {
+                if (!arena_arr_push(arena, merged, (*dest)[i])) return false;
+            }
+            *dest = merged;
+            return true;
+        }
+
+        case EVENT_PROPERTY_MUTATE_APPEND_LIST:
+        case EVENT_PROPERTY_MUTATE_APPEND_STRING:
+            for (size_t i = 0; i < count; ++i) {
+                if (!arena_arr_push(arena, *dest, items[i])) return false;
+            }
+            return true;
+    }
+
+    return false;
+}
+
+bool bm_apply_link_item_mutation(Arena *arena,
+                                 BM_Link_Item_View **dest,
+                                 const BM_Link_Item_View *items,
+                                 size_t count,
+                                 Event_Property_Mutate_Op op) {
+    if (!arena || !dest) return false;
+
+    switch (op) {
+        case EVENT_PROPERTY_MUTATE_SET: {
+            BM_Link_Item_View *replaced = NULL;
+            for (size_t i = 0; i < count; ++i) {
+                if (!arena_arr_push(arena, replaced, items[i])) return false;
+            }
+            *dest = replaced;
+            return true;
+        }
+
+        case EVENT_PROPERTY_MUTATE_PREPEND_LIST: {
+            BM_Link_Item_View *merged = NULL;
             for (size_t i = 0; i < count; ++i) {
                 if (!arena_arr_push(arena, merged, items[i])) return false;
             }

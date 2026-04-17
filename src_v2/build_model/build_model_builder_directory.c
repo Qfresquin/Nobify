@@ -21,10 +21,55 @@ static bool bm_directory_apply_mutation(Arena *arena,
     return bm_apply_item_mutation(arena, dest, items, arena_arr_len(items), mut->op);
 }
 
+static BM_Link_Item_Config_Filter bm_link_item_config_from_event(Event_Link_Item_Config_Filter filter) {
+    switch (filter) {
+        case EVENT_LINK_ITEM_CONFIG_DEBUG_ONLY: return BM_LINK_ITEM_CONFIG_DEBUG_ONLY;
+        case EVENT_LINK_ITEM_CONFIG_NONDEBUG_ONLY: return BM_LINK_ITEM_CONFIG_NONDEBUG_ONLY;
+        case EVENT_LINK_ITEM_CONFIG_ALL:
+        default:
+            return BM_LINK_ITEM_CONFIG_ALL;
+    }
+}
+
+static BM_Link_Item_Kind bm_link_item_kind_from_event(Event_Link_Item_Kind kind) {
+    return kind == EVENT_LINK_ITEM_TARGET_REF ? BM_LINK_ITEM_TARGET_REF : BM_LINK_ITEM_RAW_VALUE;
+}
+
+static bool bm_directory_apply_link_mutation(Arena *arena,
+                                             BM_Link_Item_View **dest,
+                                             const Event_Directory_Property_Mutate *mut,
+                                             BM_Provenance provenance) {
+    BM_Link_Item_View *items = NULL;
+    uint32_t flags = 0;
+    if (!arena || !dest || !mut) return false;
+    if (mut->modifier_flags & EVENT_PROPERTY_MODIFIER_BEFORE) flags |= BM_ITEM_FLAG_BEFORE;
+    if (mut->modifier_flags & EVENT_PROPERTY_MODIFIER_SYSTEM) flags |= BM_ITEM_FLAG_SYSTEM;
+    if (mut->op == EVENT_PROPERTY_MUTATE_PREPEND_LIST) flags |= BM_ITEM_FLAG_BEFORE;
+
+    for (size_t i = 0; i < mut->item_count; ++i) {
+        BM_Link_Item_View item = {0};
+        Event_Link_Item_Metadata semantic = {0};
+        if (!bm_copy_string(arena, mut->items[i], &item.value)) return false;
+        if (mut->link_item_semantics && i < mut->item_count) semantic = mut->link_item_semantics[i];
+        item.visibility = BM_VISIBILITY_PRIVATE;
+        item.flags = flags;
+        item.provenance = provenance;
+        item.config_filter = bm_link_item_config_from_event(semantic.config_filter);
+        item.kind = bm_link_item_kind_from_event(semantic.kind);
+        item.target_id = BM_TARGET_ID_INVALID;
+        if (!bm_copy_string(arena, semantic.target_name, &item.target_name) ||
+            !arena_arr_push(arena, items, item)) {
+            return false;
+        }
+    }
+
+    return bm_apply_link_item_mutation(arena, dest, items, arena_arr_len(items), mut->op);
+}
+
 static bool bm_apply_property_event(Arena *arena,
                                     BM_String_Item_View **include_directories,
                                     BM_String_Item_View **system_include_directories,
-                                    BM_String_Item_View **link_libraries,
+                                    BM_Link_Item_View **link_libraries,
                                     BM_String_Item_View **link_directories,
                                     BM_String_Item_View **compile_definitions,
                                     BM_String_Item_View **compile_options,
@@ -44,7 +89,7 @@ static bool bm_apply_property_event(Arena *arena,
     }
 
     if (bm_sv_eq_ci_lit(mut->property_name, "LINK_LIBRARIES")) {
-        return bm_directory_apply_mutation(arena, link_libraries, mut, provenance) &&
+        return bm_directory_apply_link_mutation(arena, link_libraries, mut, provenance) &&
                bm_record_raw_property(arena,
                                       raw_properties,
                                       mut->property_name,

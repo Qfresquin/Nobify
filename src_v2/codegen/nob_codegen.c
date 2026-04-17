@@ -111,6 +111,14 @@ static bool cg_scan_configs_from_items(CG_Context *ctx, const BM_String_Item_Vie
     return true;
 }
 
+static bool cg_scan_configs_from_link_items(CG_Context *ctx, const BM_Link_Item_View *items) {
+    if (!ctx) return false;
+    for (size_t i = 0; i < arena_arr_len(items); ++i) {
+        if (!cg_scan_configs_from_string(ctx, items[i].value)) return false;
+    }
+    return true;
+}
+
 static bool cg_scan_configs_from_span(CG_Context *ctx, BM_String_Span values) {
     if (!ctx) return false;
     for (size_t i = 0; i < values.count; ++i) {
@@ -127,7 +135,7 @@ static bool cg_collect_known_configs(CG_Context *ctx) {
         !cg_scan_configs_from_items(ctx, bm_query_global_compile_options_raw(ctx->model).items) ||
         !cg_scan_configs_from_items(ctx, bm_query_global_link_options_raw(ctx->model).items) ||
         !cg_scan_configs_from_items(ctx, bm_query_global_link_directories_raw(ctx->model).items) ||
-        !cg_scan_configs_from_items(ctx, bm_query_global_link_libraries_raw(ctx->model).items)) {
+        !cg_scan_configs_from_link_items(ctx, bm_query_global_link_libraries_raw(ctx->model).items)) {
         return false;
     }
 
@@ -135,7 +143,7 @@ static bool cg_collect_known_configs(CG_Context *ctx) {
         BM_Directory_Id id = (BM_Directory_Id)i;
         if (!cg_scan_configs_from_items(ctx, bm_query_directory_include_directories_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_directory_system_include_directories_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_items(ctx, bm_query_directory_link_libraries_raw(ctx->model, id).items) ||
+            !cg_scan_configs_from_link_items(ctx, bm_query_directory_link_libraries_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_directory_link_directories_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_directory_compile_definitions_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_directory_compile_options_raw(ctx->model, id).items) ||
@@ -150,7 +158,7 @@ static bool cg_collect_known_configs(CG_Context *ctx) {
             !cg_scan_configs_from_items(ctx, bm_query_target_compile_definitions_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_target_compile_options_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_target_compile_features_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_items(ctx, bm_query_target_link_libraries_raw(ctx->model, id).items) ||
+            !cg_scan_configs_from_link_items(ctx, bm_query_target_link_libraries_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_target_link_options_raw(ctx->model, id).items) ||
             !cg_scan_configs_from_items(ctx, bm_query_target_link_directories_raw(ctx->model, id).items)) {
             return false;
@@ -829,6 +837,67 @@ static bool cg_resolve_link_item_target(CG_Context *ctx, String_View item, BM_Ta
     return true;
 }
 
+static bool cg_resolve_link_item_target_view(CG_Context *ctx, BM_Link_Item_View item, BM_Target_Id *out) {
+    if (out) *out = BM_TARGET_ID_INVALID;
+    if (!ctx || !out) return false;
+    if (bm_target_id_is_valid(item.target_id)) {
+        *out = cg_resolve_alias_target(ctx, item.target_id);
+        return bm_target_id_is_valid(*out);
+    }
+    return cg_resolve_link_item_target(ctx, item.value, out);
+}
+
+bool cg_resolve_link_item_ref(CG_Context *ctx,
+                              const BM_Query_Eval_Context *qctx,
+                              BM_Link_Item_View item,
+                              CG_Resolved_Target_Ref *out) {
+    if (!ctx || !qctx || !out) return false;
+    if (bm_target_id_is_valid(item.target_id)) {
+        BM_Target_Id target_id = cg_resolve_alias_target(ctx, item.target_id);
+        const CG_Target_Info *info = NULL;
+        BM_String_Span imported_langs = {0};
+        String_View effective_file = {0};
+        String_View effective_linker_file = {0};
+        if (!bm_target_id_is_valid(target_id)) return false;
+        info = cg_target_info(ctx, target_id);
+        if (!info) return false;
+        *out = (CG_Resolved_Target_Ref){0};
+        out->original_item = item.value;
+        out->target_id = target_id;
+        out->resolved_target_id = info->resolved_id;
+        out->kind = info->imported ? CG_RESOLVED_TARGET_IMPORTED : CG_RESOLVED_TARGET_LOCAL;
+        out->target_kind = info->kind;
+        out->imported = info->imported;
+        out->usage_only = info->kind == BM_TARGET_INTERFACE_LIBRARY;
+        if (info->imported) {
+            if (!cg_query_target_file_cached(ctx, target_id, qctx, false, &effective_file) ||
+                !cg_query_target_file_cached(ctx, target_id, qctx, true, &effective_linker_file) ||
+                !cg_query_imported_link_languages_cached(ctx, target_id, qctx, &imported_langs)) {
+                return false;
+            }
+            out->effective_file = effective_file;
+            out->effective_linker_file = effective_linker_file;
+            out->imported_link_languages = imported_langs;
+            out->linkable_artifact =
+                info->kind == BM_TARGET_STATIC_LIBRARY ||
+                info->kind == BM_TARGET_SHARED_LIBRARY ||
+                info->kind == BM_TARGET_UNKNOWN_LIBRARY;
+            out->rebuild_input_path = effective_linker_file.count > 0 ? effective_linker_file : effective_file;
+            return true;
+        }
+        out->effective_file = info->artifact_path;
+        out->effective_linker_file = info->has_distinct_linker_artifact
+            ? info->linker_artifact_path
+            : info->artifact_path;
+        out->rebuild_input_path = out->effective_linker_file.count > 0
+            ? out->effective_linker_file
+            : out->effective_file;
+        out->linkable_artifact = cg_target_kind_is_linkable_artifact(info->kind);
+        return true;
+    }
+    return cg_resolve_target_ref(ctx, qctx, item.value, out);
+}
+
 const CG_Build_Step_Info *cg_build_step_info(const CG_Context *ctx, BM_Build_Step_Id id) {
     if (!ctx || !bm_build_step_id_is_valid(id) || (size_t)id >= ctx->build_step_count) return NULL;
     return &ctx->build_steps[id];
@@ -886,15 +955,15 @@ static bool cg_target_link_closure_has_interface_pch(CG_Context *ctx,
     visited[id] = 1;
 
     for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
-        BM_String_Item_Span libs = {0};
+        BM_Link_Item_Span libs = {0};
         String_View config = branch < arena_arr_len(ctx->known_configs) ? ctx->known_configs[branch] : nob_sv_from_cstr("");
         BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
-        if (!cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_LINK_LIBRARIES, &libs)) {
+        if (!cg_query_effective_link_items_cached(ctx, id, &qctx, &libs)) {
             return false;
         }
         for (size_t i = 0; i < libs.count; ++i) {
             CG_Resolved_Target_Ref dep = {0};
-            if (!cg_resolve_target_ref(ctx, &qctx, libs.items[i].value, &dep)) continue;
+            if (!cg_resolve_link_item_ref(ctx, &qctx, libs.items[i], &dep)) continue;
             if (!bm_target_id_is_valid(dep.target_id)) continue;
             if (cg_target_raw_property_nonempty(ctx->model, dep.target_id, "INTERFACE_PRECOMPILE_HEADERS")) {
                 if (out_offender) *out_offender = dep.target_id;
@@ -1167,7 +1236,7 @@ static bool cg_target_has_cxx_sources(CG_Context *ctx, BM_Target_Id id, bool *ou
 
 static bool cg_target_needs_cxx_linker_recursive(CG_Context *ctx, BM_Target_Id id, bool *out) {
     const CG_Target_Info *info = NULL;
-    BM_String_Item_Span libs = {0};
+    BM_Link_Item_Span libs = {0};
     if (out) *out = false;
     if (!ctx || !out) return false;
 
@@ -1202,7 +1271,7 @@ static bool cg_target_needs_cxx_linker_recursive(CG_Context *ctx, BM_Target_Id i
     for (size_t i = 0; i < libs.count; ++i) {
         BM_Target_Id dep_id = BM_TARGET_ID_INVALID;
         bool dep_needs_cxx = false;
-        if (!cg_resolve_link_item_target(ctx, libs.items[i].value, &dep_id)) continue;
+        if (!cg_resolve_link_item_target_view(ctx, libs.items[i], &dep_id)) continue;
         if (!cg_target_needs_cxx_linker_recursive(ctx, dep_id, &dep_needs_cxx)) return false;
         if (dep_needs_cxx) {
             ctx->targets[id].needs_cxx_linker = true;
@@ -1229,7 +1298,7 @@ static bool cg_target_needs_cxx_linker_for_config_impl(CG_Context *ctx,
                                                        uint8_t *visiting,
                                                        bool *out) {
     BM_Query_Eval_Context qctx = {0};
-    BM_String_Item_Span libs = {0};
+    BM_Link_Item_Span libs = {0};
     const CG_Target_Info *info = NULL;
     if (out) *out = false;
     if (!ctx || !out || !visiting || !bm_target_id_is_valid(id)) return false;
@@ -1261,14 +1330,14 @@ static bool cg_target_needs_cxx_linker_for_config_impl(CG_Context *ctx,
     }
 
     qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
-    if (!cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_LINK_LIBRARIES, &libs)) {
+    if (!cg_query_effective_link_items_cached(ctx, id, &qctx, &libs)) {
         visiting[id] = 0;
         return false;
     }
     for (size_t i = 0; i < libs.count; ++i) {
         CG_Resolved_Target_Ref dep = {0};
         bool dep_needs_cxx = false;
-        if (!cg_resolve_target_ref(ctx, &qctx, libs.items[i].value, &dep)) continue;
+        if (!cg_resolve_link_item_ref(ctx, &qctx, libs.items[i], &dep)) continue;
         if (!cg_target_needs_cxx_linker_for_config_impl(ctx, dep.target_id, config, visiting, &dep_needs_cxx)) {
             visiting[id] = 0;
             return false;
@@ -1308,15 +1377,15 @@ static bool cg_collect_build_dependencies(CG_Context *ctx, BM_Target_Id id, BM_T
     }
 
     for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
-        BM_String_Item_Span libs = {0};
+        BM_Link_Item_Span libs = {0};
         String_View config = branch < arena_arr_len(ctx->known_configs) ? ctx->known_configs[branch] : nob_sv_from_cstr("");
         BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
-        if (!cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_LINK_LIBRARIES, &libs)) {
+        if (!cg_query_effective_link_items_cached(ctx, id, &qctx, &libs)) {
             return false;
         }
         for (size_t i = 0; i < libs.count; ++i) {
             CG_Resolved_Target_Ref dep = {0};
-            if (!cg_resolve_target_ref(ctx, &qctx, libs.items[i].value, &dep)) continue;
+            if (!cg_resolve_link_item_ref(ctx, &qctx, libs.items[i], &dep)) continue;
             if (dep.imported) continue;
             if (!cg_collect_unique_target(ctx->scratch, out, dep.target_id)) return false;
         }
@@ -1621,16 +1690,16 @@ static bool cg_collect_link_library_args(CG_Context *ctx,
                                          String_View config,
                                          String_View **out_args,
                                          String_View **out_rebuild_inputs) {
-    BM_String_Item_Span libs = {0};
+    BM_Link_Item_Span libs = {0};
     BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
     BM_Target_Id *seen_targets = NULL;
-    if (!cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_LINK_LIBRARIES, &libs)) return false;
+    if (!cg_query_effective_link_items_cached(ctx, id, &qctx, &libs)) return false;
 
     for (size_t i = 0; i < libs.count; ++i) {
         CG_Resolved_Target_Ref dep = {0};
         String_View item = libs.items[i].value;
 
-        if (cg_resolve_target_ref(ctx, &qctx, item, &dep)) {
+        if (cg_resolve_link_item_ref(ctx, &qctx, libs.items[i], &dep)) {
             String_View dep_path = {0};
             if (dep.usage_only) continue;
             if (dep.target_kind == BM_TARGET_MODULE_LIBRARY) {

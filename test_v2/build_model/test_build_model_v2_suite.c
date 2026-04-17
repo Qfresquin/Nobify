@@ -180,6 +180,27 @@ static size_t build_model_count_string_item_occurrences(BM_String_Item_Span span
     return count;
 }
 
+static bool build_model_link_item_span_contains(BM_Link_Item_Span span, const char *needle) {
+    String_View needle_sv = nob_sv_from_cstr(needle ? needle : "");
+    for (size_t i = 0; i < span.count; ++i) {
+        if (nob_sv_eq(span.items[i].value, needle_sv)) return true;
+    }
+    return false;
+}
+
+static bool build_model_link_item_equals_at(BM_Link_Item_Span span, size_t index, const char *expected) {
+    return index < span.count && nob_sv_eq(span.items[index].value, nob_sv_from_cstr(expected ? expected : ""));
+}
+
+static size_t build_model_count_link_item_occurrences(BM_Link_Item_Span span, const char *needle) {
+    String_View needle_sv = nob_sv_from_cstr(needle ? needle : "");
+    size_t count = 0;
+    for (size_t i = 0; i < span.count; ++i) {
+        if (nob_sv_eq(span.items[i].value, needle_sv)) count++;
+    }
+    return count;
+}
+
 TEST(build_model_builder_directory_scope_events) {
     Arena *arena = arena_create(2 * 1024 * 1024);
     Arena *validate_arena = arena_create(512 * 1024);
@@ -294,7 +315,7 @@ TEST(build_model_validate_does_not_infer_link_library_targets) {
     ASSERT(app_id != BM_TARGET_ID_INVALID);
 
     BM_Target_Id_Span explicit_deps = bm_query_target_dependencies_explicit(model, app_id);
-    BM_String_Item_Span raw_link_libs = bm_query_target_link_libraries_raw(model, app_id);
+    BM_Link_Item_Span raw_link_libs = bm_query_target_link_libraries_raw(model, app_id);
     ASSERT(explicit_deps.count == 0);
     ASSERT(raw_link_libs.count == 1);
     ASSERT(nob_sv_eq(raw_link_libs.items[0].value, nob_sv_from_cstr("MissingTargetLikeName")));
@@ -853,8 +874,8 @@ TEST(build_model_freeze_rejects_duplicate_effective_producers_and_execution_cycl
     ASSERT(test_semantic_pipeline_fixture_from_script(
         &cycle_fixture,
         "project(Test C)\n"
-        "add_custom_target(prepare DEPENDS app)\n"
         "add_executable(app main.c)\n"
+        "add_custom_target(prepare DEPENDS app)\n"
         "add_dependencies(app prepare)\n",
         &cycle_config));
     ASSERT(cycle_fixture.eval_ok);
@@ -1831,7 +1852,7 @@ TEST(build_model_context_aware_queries_expand_usage_requirements_and_target_prop
     BM_Query_Eval_Context debug_compile = {0};
     BM_String_Item_Span include_items = {0};
     BM_String_Item_Span compile_opts = {0};
-    BM_String_Item_Span link_items = {0};
+    BM_Link_Item_Span link_items = {0};
     BM_String_Span defs = {0};
     String_View property_value = {0};
     String_View raw_property_value = {0};
@@ -1932,14 +1953,14 @@ TEST(build_model_context_aware_queries_expand_usage_requirements_and_target_prop
                                                                        &link_ctx,
                                                                        query_arena,
                                                                        &link_items));
-    ASSERT(build_model_string_item_span_contains(link_items, "m"));
+    ASSERT(build_model_link_item_span_contains(link_items, "m"));
 
     ASSERT(bm_query_target_effective_link_libraries_items_with_context(model,
                                                                        app_id,
                                                                        &compile_c,
                                                                        query_arena,
                                                                        &link_items));
-    ASSERT(!build_model_string_item_span_contains(link_items, "m"));
+    ASSERT(!build_model_link_item_span_contains(link_items, "m"));
 
     ASSERT(bm_query_target_effective_compile_definitions_with_context(model,
                                                                       app_id,
@@ -1999,7 +2020,7 @@ TEST(build_model_effective_queries_follow_global_directory_and_transitive_link_l
     BM_String_Item_Span def_items = {0};
     BM_String_Item_Span compile_opts = {0};
     BM_String_Span features = {0};
-    BM_String_Item_Span link_lib_items = {0};
+    BM_Link_Item_Span link_lib_items = {0};
     BM_String_Item_Span link_opt_items = {0};
     BM_String_Item_Span link_dir_items = {0};
 
@@ -2150,23 +2171,23 @@ TEST(build_model_effective_queries_follow_global_directory_and_transitive_link_l
                                                                        &link_ctx,
                                                                        query_arena,
                                                                        &link_lib_items));
-    ASSERT(build_model_string_item_span_contains(link_lib_items, "global_iface"));
-    ASSERT(build_model_string_item_span_contains(link_lib_items, "dir_iface"));
-    ASSERT(build_model_string_item_span_contains(link_lib_items, "linkonly_iface"));
-    ASSERT(build_model_string_item_span_contains(link_lib_items, "alias_iface"));
-    ASSERT(build_model_string_item_span_contains(link_lib_items, "imported_iface"));
-    ASSERT(build_model_string_item_span_contains(link_lib_items, "dl"));
-    ASSERT(build_model_string_item_span_contains(link_lib_items, "m"));
-    ASSERT(build_model_count_string_item_occurrences(link_lib_items, "imported_iface") == 1);
-    ASSERT(build_model_count_string_item_occurrences(link_lib_items, "m") == 1);
+    ASSERT(build_model_link_item_span_contains(link_lib_items, "global_iface"));
+    ASSERT(build_model_link_item_span_contains(link_lib_items, "dir_iface"));
+    ASSERT(build_model_link_item_span_contains(link_lib_items, "linkonly_iface"));
+    ASSERT(build_model_link_item_span_contains(link_lib_items, "alias_iface"));
+    ASSERT(build_model_link_item_span_contains(link_lib_items, "imported_iface"));
+    ASSERT(build_model_link_item_span_contains(link_lib_items, "dl"));
+    ASSERT(build_model_link_item_span_contains(link_lib_items, "m"));
+    ASSERT(build_model_count_link_item_occurrences(link_lib_items, "imported_iface") == 1);
+    ASSERT(build_model_count_link_item_occurrences(link_lib_items, "m") == 1);
 
     ASSERT(bm_query_target_effective_link_libraries_items_with_context(model,
                                                                        app_id,
                                                                        &compile_ctx,
                                                                        query_arena,
                                                                        &link_lib_items));
-    ASSERT(!build_model_string_item_span_contains(link_lib_items, "linkonly_iface"));
-    ASSERT(!build_model_string_item_span_contains(link_lib_items, "m"));
+    ASSERT(!build_model_link_item_span_contains(link_lib_items, "linkonly_iface"));
+    ASSERT(!build_model_link_item_span_contains(link_lib_items, "m"));
 
     arena_destroy(query_arena);
     test_semantic_pipeline_fixture_destroy(&fixture);
@@ -3083,7 +3104,7 @@ TEST(build_model_effective_queries_dedup_and_preserve_first_occurrence) {
     BM_String_Item_Span opt_items = {0};
     BM_String_Item_Span link_dir_items = {0};
     BM_String_Item_Span link_opt_items = {0};
-    BM_String_Item_Span link_lib_items = {0};
+    BM_Link_Item_Span link_lib_items = {0};
     BM_String_Span feature_items = {0};
     ASSERT(query_arena != NULL);
 
@@ -3180,9 +3201,9 @@ TEST(build_model_effective_queries_dedup_and_preserve_first_occurrence) {
                                                                        query_arena,
                                                                        &link_lib_items));
     ASSERT(link_lib_items.count == 3);
-    ASSERT(build_model_string_item_equals_at(link_lib_items, 0, "iface"));
-    ASSERT(build_model_string_item_equals_at(link_lib_items, 1, "m"));
-    ASSERT(build_model_string_item_equals_at(link_lib_items, 2, "pthread"));
+    ASSERT(build_model_link_item_equals_at(link_lib_items, 0, "iface"));
+    ASSERT(build_model_link_item_equals_at(link_lib_items, 1, "m"));
+    ASSERT(build_model_link_item_equals_at(link_lib_items, 2, "pthread"));
 
     arena_destroy(query_arena);
     test_semantic_pipeline_fixture_destroy(&fixture);
@@ -3198,7 +3219,7 @@ TEST(build_model_effective_queries_terminate_interface_cycles_without_duplicate_
     BM_Query_Eval_Context compile_ctx = {0};
     BM_Query_Eval_Context link_ctx = {0};
     BM_String_Item_Span def_items = {0};
-    BM_String_Item_Span link_items = {0};
+    BM_Link_Item_Span link_items = {0};
 
     ASSERT(query_arena != NULL);
 
@@ -3256,10 +3277,10 @@ TEST(build_model_effective_queries_terminate_interface_cycles_without_duplicate_
                                                                        &link_ctx,
                                                                        query_arena,
                                                                        &link_items));
-    ASSERT(build_model_count_string_item_occurrences(link_items, "a") == 1);
-    ASSERT(build_model_count_string_item_occurrences(link_items, "b") == 1);
-    ASSERT(build_model_count_string_item_occurrences(link_items, "c") == 1);
-    ASSERT(build_model_count_string_item_occurrences(link_items, "dl") == 1);
+    ASSERT(build_model_count_link_item_occurrences(link_items, "a") == 1);
+    ASSERT(build_model_count_link_item_occurrences(link_items, "b") == 1);
+    ASSERT(build_model_count_link_item_occurrences(link_items, "c") == 1);
+    ASSERT(build_model_count_link_item_occurrences(link_items, "dl") == 1);
 
     arena_destroy(query_arena);
     test_semantic_pipeline_fixture_destroy(&fixture);
@@ -3276,14 +3297,14 @@ TEST(build_model_usage_requirement_property_setters_promote_to_canonical_item_st
     BM_Target_Id app_id = BM_TARGET_ID_INVALID;
     BM_Query_Eval_Context compile_ctx = {0};
     BM_Query_Eval_Context link_ctx = {0};
-    BM_String_Item_Span global_link_libs = {0};
-    BM_String_Item_Span directory_link_libs = {0};
+    BM_Link_Item_Span global_link_libs = {0};
+    BM_Link_Item_Span directory_link_libs = {0};
     BM_String_Item_Span include_items = {0};
     BM_String_Item_Span compile_opts = {0};
     BM_String_Item_Span compile_features = {0};
     BM_String_Item_Span link_dirs = {0};
     BM_String_Item_Span link_opts = {0};
-    BM_String_Item_Span link_lib_items = {0};
+    BM_Link_Item_Span link_lib_items = {0};
     BM_String_Item_Span raw_compile_features = {0};
     BM_String_Item_Span raw_include_items = {0};
     BM_String_Item_Span raw_compile_options = {0};
@@ -3333,9 +3354,9 @@ TEST(build_model_usage_requirement_property_setters_promote_to_canonical_item_st
     global_link_libs = bm_query_global_link_libraries_raw(model);
     directory_link_libs = bm_query_directory_link_libraries_raw(model, root_directory);
     ASSERT(global_link_libs.count == 1);
-    ASSERT(build_model_string_item_equals_at(global_link_libs, 0, "global_dep"));
+    ASSERT(build_model_link_item_equals_at(global_link_libs, 0, "global_dep"));
     ASSERT(directory_link_libs.count == 1);
-    ASSERT(build_model_string_item_equals_at(directory_link_libs, 0, "dir_dep"));
+    ASSERT(build_model_link_item_equals_at(directory_link_libs, 0, "dir_dep"));
 
     raw_compile_features = bm_query_target_compile_features_raw(model, iface_id);
     raw_include_items = bm_query_target_include_directories_raw(model, iface_id);
@@ -3431,8 +3452,8 @@ TEST(build_model_usage_requirement_property_setters_promote_to_canonical_item_st
                                                                        &link_ctx,
                                                                        query_arena,
                                                                        &link_lib_items));
-    ASSERT(build_model_string_item_span_contains(link_lib_items, "iface"));
-    ASSERT(build_model_string_item_span_contains(link_lib_items, "m"));
+    ASSERT(build_model_link_item_span_contains(link_lib_items, "iface"));
+    ASSERT(build_model_link_item_span_contains(link_lib_items, "m"));
 
     arena_destroy(query_arena);
     test_semantic_pipeline_fixture_destroy(&fixture);
