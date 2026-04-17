@@ -1,64 +1,62 @@
 # Project Priorities
 
-Status: Canonical project-level direction for Nobify documentation.
+## Status
+Canonical product direction. Target state with an explicit transition backlog.
 
-## 1. Priority Order
+## Role
+This file defines what success means for Nobify and how conflicting local goals
+must be resolved.
 
-Nobify follows this priority order:
+## Product direction
+The official goal is total parity with `CMake 3.8` when transpiling to Nob.
+Success is measured by the same observable artifacts, not by approximate
+semantic similarity or by preserving CMake internals one-for-one.
 
-1. **Primary: CMake 3.28 semantic compatibility**
-   - The official comparison target is CMake 3.28.
-   - Success means reproducing the CMake 3.28 behavior that affects real
-     projects, generated artifacts, dependency structure, and script-visible
-     outcomes.
+## Current gap
+Current implementation evidence still clusters around a `CMake 3.28` baseline
+and a supported-subset framing. That language remains useful only as a
+description of the gap between the target product and the code that exists
+today.
 
-2. **Secondary: historical CMake behavior**
-   - Historical policies, wrappers, and legacy quirks matter when they are
-     needed to keep real projects compatible with the CMake 3.28 baseline.
-   - Historical parity is important, but it does not outrank the CMake 3.28
-     compatibility target.
+## Guarantees
+- Artifact equivalence is the top-level definition of correctness.
+- Evaluator, Event IR, build model, and codegen are judged by whether they
+  preserve artifact-relevant semantics without downstream guesswork.
+- Internal simplifications are acceptable when they do not change observable
+  outputs.
 
-3. **Tertiary: Nob backend optimization**
-   - Optimization work happens after semantic parity is stable enough to trust
-     the reconstructed build model.
-   - Optimizations must preserve validated CMake 3.28 behavior.
+## Non-goals
+- Treating `supported subset` as the final product identity.
+- Preserving `3.28` as the official baseline for docs, contracts, or tests.
 
-## 2. What "Compatibility" Means Here
+## Primary code
+- `src_v2/evaluator/`
+- `src_v2/transpiler/event_ir.h`
+- `src_v2/build_model/`
+- `src_v2/codegen/`
 
-Compatibility in this project is primarily about observable build semantics:
+## Primary tests
+- `test_v2/artifact_parity/`
+- `test_v2/evaluator_codegen_diff/`
+- `test_v2/build_model/`
+- `test_v2/codegen/`
 
-- command and control-flow behavior,
-- variables, cache, properties, and policy-visible outcomes,
-- generated files and declared targets,
-- dependency and usage-requirement reconstruction,
-- script-visible results that influence later evaluation.
+## Priority order
+1. Reach `CMake 3.8` artifact parity for the generated Nob output.
+2. Freeze enough typed semantics upstream to avoid downstream reconstruction by
+   string heuristics.
+3. Keep the generated Nob side deterministic, debuggable, and faithful to the
+   frozen model.
+4. Demote all `3.28/subset` wording to transition debt only.
 
-This project is not trying to be a multi-version clone of every historical
-CMake release at the same priority level. The baseline is one version first:
-CMake 3.28.
-
-## 3. Architectural Consequences
-
-The current v2 architecture exists to support that priority order:
-
-- `lexer` and `parser` recover syntax into AST,
-- `evaluator` recovers CMake 3.28 semantics into canonical Event IR,
-- `build_model` reconstructs a stable semantic model,
-- `codegen` targets Nob,
-- future optimization work should act on the stable model, not bypass semantic
-  recovery inside the evaluator.
-
-In short:
-
-`CMake 3.28 parity -> stable semantic model -> Nob optimization`
-
-## 4. Documentation Guidance
-
-When writing or updating docs in this repository:
-
-- state clearly when a contract targets CMake 3.28 behavior,
-- label historical behavior as secondary unless it is required for that target,
-- avoid phrasing that suggests "good enough for some libraries" is the top
-  project goal,
-- describe optimization work as downstream of semantic correctness, not as a
-  competing priority.
+## Alignment backlog
+- Remove `3.28` as a hardcoded baseline from active docs and parity-oriented
+  test narratives.
+- Reclassify subset-style suites as progress indicators toward full parity,
+  not as the final product boundary.
+- Tighten the evaluator to Event IR contract wherever artifact-relevant
+  semantics still collapse into plain strings.
+- Tighten the build-model query layer wherever effective accessors still infer
+  dependencies or usage meaning late.
+- Reframe backend closure docs and rejection behavior around transition status
+  inside a full-parity goal.

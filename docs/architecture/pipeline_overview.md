@@ -1,73 +1,49 @@
 # Pipeline Overview
 
 ## Status
-
-Canonical high-level architecture map for the active Nobify product pipeline.
+Canonical transition contract for the end-to-end `CMake 3.8 -> Nob` pipeline.
 
 ## Role
+This document defines the product pipeline and the ownership boundary between
+its major stages.
 
-Explain how semantic recovery and backend generation connect end-to-end for
-implementers and reviewers.
+## Product direction
+The pipeline exists to preserve enough `CMake 3.8` semantics that the generated
+Nob program produces the same observable artifacts as the input project.
 
-## Boundary
+## Current gap
+Some downstream stages still compensate for incomplete upstream typing, and
+parts of the evidence stack are still named and scoped around `3.28/subset`
+closure work.
 
-Nobify preserves this boundary:
+## Guarantees
+- `evaluator` executes and freezes artifact-relevant semantics before codegen.
+- `Event IR` carries ordered, consumer-safe information out of evaluation.
+- `build_model` converts that stream into a frozen graph that codegen can query
+  without re-running CMake logic.
+- `codegen` emits Nob using only the frozen model and replay data.
 
-`AST -> evaluator -> Event IR -> build_model -> codegen -> generated nob.c runtime`
+## Non-goals
+- Treating late string inference as a permanent design feature.
+- Using the generated backend as a second evaluator.
 
-No layer may bypass the next contract boundary for feature delivery.
+## Primary code
+- `src_v2/evaluator/evaluator.c`
+- `src_v2/transpiler/event_ir.h`
+- `src_v2/build_model/build_model_builder.c`
+- `src_v2/build_model/build_model_freeze.c`
+- `src_v2/codegen/nob_codegen.c`
 
-## Data Flow
+## Primary tests
+- `test_v2/pipeline/`
+- `test_v2/evaluator_codegen_diff/`
+- `test_v2/build_model/`
+- `test_v2/codegen/`
+- `test_v2/artifact_parity/`
 
-1. `lexer` and `parser` convert CMake input into AST.
-2. `evaluator` executes AST semantics against session state and optionally
-   projects `Event_Stream`.
-3. `build_model` ingests build-semantic events, validates draft state, freezes
-   immutable model state, and exposes query APIs.
-4. `codegen` consumes query APIs and emits readable `nob.c` with phase-aware
-   helpers.
-5. generated backend executes phase commands (`configure/build/test/install/export/package`)
-   and emits observable artifacts.
-
-## Inputs
-
-- `CMakeLists.txt` and included CMake scripts
-- CLI generation options (`source_root`, `binary_root`, platform/backend policy)
-- host tool availability used by explicit parity suites and generated runtime
-
-## Outputs
-
-- `Event_Stream` (optional per evaluator run)
-- frozen `Build_Model`
-- generated `nob.c`
-- runtime build/install/export/package artifacts
-- diagnostics and structured test evidence
-
-## Who Consumes
-
-- Feature implementers across evaluator/build-model/codegen
-- Test suite maintainers (`pipeline`, `build-model`, `codegen`,
-  `artifact-parity`, `evaluator-codegen-diff`)
-- Reviewers validating boundary ownership
-
-## Key Source Regions
-
-- `src_v2/app/nobify.c` (orchestrates parse -> evaluate -> model -> codegen)
-- `src_v2/parser/*`
-- `src_v2/evaluator/*`
-- `src_v2/transpiler/event_ir.*`
-- `src_v2/build_model/*`
-- `src_v2/codegen/*`
-- `src_v2/build/nob.c`
-- `src_v2/build/nob_testd.c`
-- `src_v2/build/test_runner_*`
-- `test_v2/*`
-
-## Failure Ownership
-
-- Parse/token errors: lexer/parser boundary
-- Semantic command or compatibility errors: evaluator boundary
-- Unsupported build-semantic ingest or integrity failures: build-model
-  builder/validate/freeze
-- Unsupported generated backend behavior: codegen validation/runtime rejection
-- Cross-layer parity drift: explicit parity and closure suites
+## Flow
+1. Parse and evaluate the input project.
+2. Project ordered evaluation facts into Event IR.
+3. Build, validate, and freeze the build model.
+4. Generate Nob code and runtime helpers from the frozen model.
+5. Compare generated behavior and artifacts against the source project.

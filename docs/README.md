@@ -1,126 +1,57 @@
 # Nobify
 
-**CMake Frontend. Nob Backend. Zero Runtime Dependencies.**
+## Status
+Canonical overview. Transition contract for the `CMake 3.8 parity total -> Nob`
+documentation reset.
 
-> "The language of the library should be sufficient to compile it. The build shouldn't require installing a second language just to exist."
+## Role
+This file states the product direction and points to the only active documents
+that define the project today.
 
-Nobify converts projects written in CMake into a standalone **Nob** build system (C source), allowing you to compile C/C++ libraries **without requiring CMake in the final build environment**.
+## Product direction
+Nobify is documented as a transpiler from `CMake 3.8` to Nob with the same
+observable artifacts. Internal simplification is allowed only when generated
+build outputs, test behavior, install results, and package-visible artifacts
+stay equivalent to the source project.
 
----
+## Current gap
+The codebase, tests, and older documents still contain `CMake 3.28` and
+`supported subset` language. Those references describe current incompleteness
+and migration debt, not the official product contract.
 
-## The Philosophy: Recreational Programming
+## Guarantees
+- Active docs describe the `CMake 3.8` parity target first.
+- Known implementation gaps are called out explicitly as short transition notes.
+- `docs/archive/` preserves history but does not define current behavior.
 
-This project is, at its core, a **Recreational Programming** endeavor.
+## Non-goals
+- Claiming that the current implementation already achieves full parity.
+- Keeping legacy planning, historical analysis, and tracking-matrix material in
+  the active reading path.
 
-I started Nobify with a simple frustration: to compile a medium-to-large C/C++ project today, you practically have to learn two programming languages—C++ and CMake. CMake is powerful and standardized, but it is also bloated. It introduces a massive structural dependency (the CMake runtime, version policies, generators) just to invoke a compiler.
+## Primary code
+- `src_v2/evaluator/`
+- `src_v2/transpiler/event_ir.h`
+- `src_v2/build_model/`
+- `src_v2/codegen/`
 
-I am building this to prove a point to myself: **I can do better.**
+## Primary tests
+- `test_v2/evaluator/`
+- `test_v2/evaluator_codegen_diff/`
+- `test_v2/build_model/`
+- `test_v2/codegen/`
+- `test_v2/artifact_parity/`
 
-The scope of replicating CMake is immense for a single person. I know that. But I am having fun.
-
-## Current State: The "Magic" vs. The Craft
-
-### Version 1 (Legacy)
-The initial version of Nobify works. It has successfully compiled complex projects like **libcurl** and handles small header-only libraries well. The Lexer and Parser are solid.
-
-However, the Transpiler and Build Model in v1 were built with a lot of "IA slop" and trial-and-error. While it works, the code behaves like magic—I don't fully understand or own the logic behind it. It is a complex workaround rather than a system.
-
-### Version 2 (In Progress)
-I am currently rewriting the core **Transpiler** and **Build Model** from scratch (v2).
-
-**Why?**
-I don't want magic. I want engineering.
-I am aiming for a clean, deterministic, and well-thought-out architecture (likely ~7000 lines of focused C code in one file at most :) that I can maintain, understand, and be proud of.
-
-*   **Goal:** Strict separation of concerns (AST -> Event Stream -> Build Model -> Codegen).
-*   **Status:** The v2 architecture is currently being specified and implemented. You can read the rigorous engineering contracts in the `docs/` folder.
-
-## Priority Order
-
-The current project direction is:
-
-1. **Primary:** achieve semantic compatibility with **CMake 3.28**.
-2. **Secondary:** preserve historical CMake behavior when it is needed to keep
-   real projects compatible with that 3.28 baseline.
-3. **Tertiary:** optimize the generated **Nob** backend once semantic parity is
-   trustworthy.
-
-The canonical project-level statement of that order lives in
-[`project_priorities.md`](./project_priorities.md).
-
----
-
-## How It Works
-
-Nobify treats CMake as an input DSL and Nob (C) as the execution backend.
-
-1.  **Lexer/Parser:** Reads `CMakeLists.txt` and builds an AST.
-2.  **Build Model (The Brain):** Evaluates variables, targets, and dependencies without executing CMake.
-3.  **Transpiler:** Generates a `nob.c` file.
-
-**The Result:**
-*   You get a `nob.c` file.
-*   You run it with a C compiler.
-*   Your project builds.
-*   **No CMake installation required.**
-
----
-
-## Reference Specs
-
-The implementation-level contracts for v2 live in focused docs under `docs/`.
-
-- `docs/project_priorities.md`: canonical project direction and priority order.
-- `docs/cmake_artifact_parity_roadmap.md`: historical parity summary plus
-  handoff to the active closure program.
-- `docs/evaluator_codegen_closure_roadmap.md`: canonical post-`P8` multi-wave
-  closure roadmap that coordinates the remaining
-  `evaluator -> Event IR -> build_model -> codegen` gap.
-- `docs/transpiler/event_ir_closure_roadmap.md`: canonical incremental roadmap
-  for evolving the `evaluator -> Event_Stream` boundary in small,
-  producer-owned tranches.
-- `docs/transpiler/event_ir_coverage_matrix.md`: command-level control matrix
-  for what Event IR already freezes, what is replay-owned, and what still
-  remains trace-only.
-- `docs/build_model/build_model_coverage_matrix.md`: command-level downstream
-  control matrix for what the frozen build model preserves strongly enough for
-  artifact-parity generation, what is only subset-covered, and what remains an
-  explicit boundary.
-- `docs/build_model/build_model_closure_matrix.md`: major-work closure matrix
-  for the build model, intended to answer what still requires structural
-  downstream implementation before only minor fixes should remain.
-- `docs/evaluator/`: active evaluator documentation rewrite.
-- `docs/build_model/`: canonical build-model docs, including the replay-domain
-  contract used by codegen.
-- `docs/codegen/`: canonical generated-backend runtime contract and CLI
-  documentation.
-- `docs/transpiler/`: Event IR boundary documentation between evaluator and
-  build model.
-- `docs/diagnostics/`: shared diagnostic logging, counters, and telemetry contract.
-- `docs/lexer/`: lexer tokenization and source-position contract.
-- `docs/parser/`: parser AST, grammar, and recovery contract.
-- `docs/arena/`: arena allocator and `arena_dyn.h` memory helper contract.
-- `docs/tests/`: test architecture baseline, suite taxonomy, and structural refactor roadmap for the v2 test stack.
-  This area now also owns the explicit `evaluator -> codegen` diff harness
-  contract under `docs/tests/evaluator_codegen_diff.md`, while the build-model
-  and codegen directories own the normative downstream and runtime contracts
-  that the harness proves. The active Linux-only daemon rewrite for test
-  ergonomics also lives here under `docs/tests/test_daemon_roadmap.md`.
-- `docs/archive/`: historical migration records and delivered detailed wave logs.
-
----
-
-## Disclaimer
-
-Nobify now treats **CMake 3.28** as its primary semantic baseline.
-
-It is not trying to give every historical CMake release equal priority.
-Older policies, wrappers, and quirks matter, but they are a **secondary**
-compatibility target behind the CMake 3.28 baseline.
-
-Backend-specific optimization is also important, but it comes **after**
-semantic correctness and parity.
-
----
-
-*Est. 2026. Built with hate for bloat and love for C.*
+## Canonical docs
+- [Project priorities](project_priorities.md)
+- [Pipeline overview](architecture/pipeline_overview.md)
+- [Evaluator v2 spec](evaluator/evaluator_v2_spec.md)
+- [Evaluator to Event IR contract](evaluator/evaluator_event_ir_contract.md)
+- [Build model architecture](build_model/build_model_architecture.md)
+- [Build model query](build_model/build_model_query.md)
+- [Build model replay](build_model/build_model_replay.md)
+- [Codegen runtime contract](codegen/codegen_runtime_contract.md)
+- [Current backend closure within the parity goal](codegen/generated_backend_supported_subset.md)
+- [Tests architecture](tests/tests_architecture.md)
+- [Evaluator to codegen diff](tests/evaluator_codegen_diff.md)
+- [Archive policy](archive/README.md)

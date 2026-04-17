@@ -1,36 +1,38 @@
 # Documentation Archive
 
+## Status
+Canonical archive policy. Active support document.
+
 ## Role
+This file explains how historical documentation is stored and how it should be
+read after the `CMake 3.8 parity total -> Nob` reset.
 
-This directory stores historical documentation that remains useful for context
-and traceability but is no longer part of the canonical implementation path.
+## Product direction
+The active documentation now describes Nobify as a `CMake 3.8` parity project.
+Archive material exists to preserve design history and implementation context,
+not to compete with that direction.
 
-Use this archive for migration history, delivered wave detail, and superseded
-specs. Use the main `docs/` tree for active contracts.
+## Current gap
+Many archived documents still reflect `CMake 3.28`, `supported subset`,
+coverage-matrix, or roadmap-era framing. That is expected and intentionally
+preserved as history.
 
-## Contents
+## Guarantees
+- Files under `docs/archive/` are historical or superseded.
+- Archive material may explain why the code looks the way it does.
+- Archive material is never the canonical product contract.
 
-### Roadmaps
+## Non-goals
+- Keeping historical docs fully synchronized with the new active contract.
+- Using archived roadmap language as the current project baseline.
 
-- [`roadmaps/cmake_artifact_parity_p0_p8_history.md`](./roadmaps/cmake_artifact_parity_p0_p8_history.md)
-  Delivered detailed record of parity waves `P0` through `P8`.
+## Primary code
+- None. Archive policy is documentation-only.
 
-### Build Model Historical Records
+## Primary tests
+- None. Archive policy is validated by tree structure and active-doc coherence.
 
-- [`build_model/build_model_migration.md`](./build_model/build_model_migration.md)
-- [`build_model/build_model_architecture_v2.md`](./build_model/build_model_architecture_v2.md)
-- [`build_model/build_model_builder_v2_spec.md`](./build_model/build_model_builder_v2_spec.md)
-- [`build_model/build_model_validate_v2_spec.md`](./build_model/build_model_validate_v2_spec.md)
-- [`build_model/build_model_freeze_v2_spec.md`](./build_model/build_model_freeze_v2_spec.md)
-- [`build_model/build_model_query_v2_spec.md`](./build_model/build_model_query_v2_spec.md)
-- [`build_model/build_model_v2_benchmark_notes.md`](./build_model/build_model_v2_benchmark_notes.md)
-
-### Evaluator Historical Records
-
-- [`evaluator/evaluator_structural_refactor_closure.md`](./evaluator/evaluator_structural_refactor_closure.md)
-
-## Canonical Active Entrypoints
-
-- [`../README.md`](../README.md)
-- [`../evaluator_codegen_closure_roadmap.md`](../evaluator_codegen_closure_roadmap.md)
-- [`../tests/evaluator_codegen_diff.md`](../tests/evaluator_codegen_diff.md)
+## Reading rule
+Start in `docs/README.md`. Only enter `docs/archive/` when you need historical
+context, migration rationale, or older terminology that still appears in the
+code.
