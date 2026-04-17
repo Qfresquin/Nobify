@@ -754,6 +754,28 @@ static bool preserve_env_for_restore(const char *name, char **prev_value, bool *
     return true;
 }
 
+static bool parity_module_requires_cmake_3_28(const Test_Runner_Module_Internal *module) {
+    if (!module) return false;
+    return cstr_equals(module->def.name, "artifact-parity") ||
+           cstr_equals(module->def.name, "artifact-parity-corpus") ||
+           cstr_equals(module->def.name, "evaluator-codegen-diff");
+}
+
+static bool resolve_local_cmake_3_28_6(char out_path[_TINYDIR_PATH_MAX]) {
+    const char *home = getenv("HOME");
+    if (!out_path) return false;
+    out_path[0] = '\0';
+    if (!home || home[0] == '\0') return false;
+    if (snprintf(out_path,
+                 _TINYDIR_PATH_MAX,
+                 "%s/.local/opt/cmake-3.28.6/bin/cmake",
+                 home) >= _TINYDIR_PATH_MAX) {
+        out_path[0] = '\0';
+        return false;
+    }
+    return nob_file_exists(out_path);
+}
+
 static bool prepare_test_run_workspace(Test_Run_Workspace *ws,
                                        const Test_Runner_Module_Internal *module,
                                        const Test_Runner_Profile_Internal *profile) {
@@ -1094,10 +1116,12 @@ static bool run_binary_in_workspace(Test_Runner_Context *ctx,
     char case_match_abs[_TINYDIR_PATH_MAX] = {0};
     char failure_summary_abs[_TINYDIR_PATH_MAX] = {0};
     char nobify_tool_abs[_TINYDIR_PATH_MAX] = {0};
+    char parity_cmake_bin_abs[_TINYDIR_PATH_MAX] = {0};
     char *prev_runner = NULL;
     char *prev_reuse_cwd = NULL;
     char *prev_repo_root = NULL;
     char *prev_nobify_bin = NULL;
+    char *prev_cmake_bin = NULL;
     char *prev_case_filter = NULL;
     char *prev_case_match_path = NULL;
     char *prev_failure_summary_path = NULL;
@@ -1109,6 +1133,7 @@ static bool run_binary_in_workspace(Test_Runner_Context *ctx,
     bool had_prev_reuse_cwd = false;
     bool had_prev_repo_root = false;
     bool had_prev_nobify_bin = false;
+    bool had_prev_cmake_bin = false;
     bool had_prev_case_filter = false;
     bool had_prev_case_match_path = false;
     bool had_prev_failure_summary_path = false;
@@ -1137,6 +1162,7 @@ static bool run_binary_in_workspace(Test_Runner_Context *ctx,
     if (!preserve_env_for_restore(CMK2NOB_TEST_WS_REUSE_CWD_ENV, &prev_reuse_cwd, &had_prev_reuse_cwd)) goto defer;
     if (!preserve_env_for_restore(CMK2NOB_TEST_REPO_ROOT_ENV, &prev_repo_root, &had_prev_repo_root)) goto defer;
     if (!preserve_env_for_restore(CMK2NOB_TEST_NOBIFY_BIN_ENV, &prev_nobify_bin, &had_prev_nobify_bin)) goto defer;
+    if (!preserve_env_for_restore(CMK2NOB_TEST_CMAKE_BIN_ENV, &prev_cmake_bin, &had_prev_cmake_bin)) goto defer;
     if (!preserve_env_for_restore(CMK2NOB_TEST_CASE_FILTER_ENV, &prev_case_filter, &had_prev_case_filter)) goto defer;
     if (!preserve_env_for_restore(CMK2NOB_TEST_CASE_MATCH_PATH_ENV,
                                   &prev_case_match_path,
@@ -1156,6 +1182,7 @@ static bool run_binary_in_workspace(Test_Runner_Context *ctx,
     (void)had_prev_reuse_cwd;
     (void)had_prev_repo_root;
     (void)had_prev_nobify_bin;
+    (void)had_prev_cmake_bin;
 
     if (module &&
         (cstr_equals(module->def.name, "artifact-parity") ||
@@ -1170,12 +1197,18 @@ static bool run_binary_in_workspace(Test_Runner_Context *ctx,
         if (!build_abs_path(cwd, nobify_rel_path, nobify_tool_abs)) goto defer;
     }
 
+    if (module && parity_module_requires_cmake_3_28(module)) {
+        (void)resolve_local_cmake_3_28_6(parity_cmake_bin_abs);
+    }
+
     if (!nob_set_current_dir(workspace.root)) goto defer;
     set_env_or_unset(CMK2NOB_TEST_RUNNER_ENV, "1");
     set_env_or_unset(CMK2NOB_TEST_WS_REUSE_CWD_ENV, "1");
     set_env_or_unset(CMK2NOB_TEST_REPO_ROOT_ENV, cwd);
     set_env_or_unset(CMK2NOB_TEST_NOBIFY_BIN_ENV,
                      nobify_tool_abs[0] != '\0' ? nobify_tool_abs : NULL);
+    set_env_or_unset(CMK2NOB_TEST_CMAKE_BIN_ENV,
+                     parity_cmake_bin_abs[0] != '\0' ? parity_cmake_bin_abs : NULL);
     set_env_or_unset(CMK2NOB_TEST_CASE_FILTER_ENV,
                      ctx && ctx->request && ctx->request->case_name[0] != '\0'
                          ? ctx->request->case_name
@@ -1268,6 +1301,7 @@ defer:
     set_env_or_unset(CMK2NOB_TEST_WS_REUSE_CWD_ENV, prev_reuse_cwd);
     set_env_or_unset(CMK2NOB_TEST_REPO_ROOT_ENV, prev_repo_root);
     set_env_or_unset(CMK2NOB_TEST_NOBIFY_BIN_ENV, had_prev_nobify_bin ? prev_nobify_bin : NULL);
+    set_env_or_unset(CMK2NOB_TEST_CMAKE_BIN_ENV, had_prev_cmake_bin ? prev_cmake_bin : NULL);
     set_env_or_unset(CMK2NOB_TEST_CASE_FILTER_ENV, had_prev_case_filter ? prev_case_filter : NULL);
     set_env_or_unset(CMK2NOB_TEST_CASE_MATCH_PATH_ENV,
                      had_prev_case_match_path ? prev_case_match_path : NULL);
@@ -1289,6 +1323,7 @@ defer:
     free(prev_reuse_cwd);
     free(prev_repo_root);
     free(prev_nobify_bin);
+    free(prev_cmake_bin);
     free(prev_case_filter);
     free(prev_case_match_path);
     free(prev_failure_summary_path);
