@@ -388,8 +388,9 @@ static bool try_compile_basename_matches_named_artifact(const char *base, const 
 }
 
 typedef struct {
+    EvalExecContext *ctx;
     const char *target_name;
-    const char *best_path;
+    String_View best_path;
     size_t best_len;
 } Try_Compile_Project_Artifact_Search;
 
@@ -401,7 +402,7 @@ typedef struct {
 
 static bool try_compile_project_artifact_visit(Nob_Walk_Entry entry) {
     Try_Compile_Project_Artifact_Search *search = (Try_Compile_Project_Artifact_Search *)entry.data;
-    if (!search || !entry.path) return false;
+    if (!search || !search->ctx || !entry.path) return false;
     if (entry.type != NOB_FILE_REGULAR) return true;
     if (try_compile_path_contains_internal_build_dir(entry.path)) return true;
 
@@ -413,9 +414,11 @@ static bool try_compile_project_artifact_visit(Nob_Walk_Entry entry) {
     if (!try_compile_basename_matches_named_artifact(base, search->target_name)) return true;
 
     size_t path_len = strlen(entry.path);
-    if (!search->best_path || path_len < search->best_len) {
-        search->best_path = entry.path;
-        search->best_len = path_len;
+    if (!search->best_path.data || path_len < search->best_len) {
+        String_View stable_path = sv_copy_to_arena(eval_temp_arena(search->ctx), nob_sv_from_cstr(entry.path));
+        if (path_len > 0 && stable_path.count == 0) return false;
+        search->best_path = stable_path;
+        search->best_len = stable_path.count;
     }
     return true;
 }
@@ -430,15 +433,16 @@ static String_View try_compile_project_find_named_artifact(EvalExecContext *ctx,
     EVAL_OOM_RETURN_IF_NULL(ctx, target_name_c, nob_sv_from_cstr(""));
 
     Try_Compile_Project_Artifact_Search search = {
+        .ctx = ctx,
         .target_name = target_name_c,
-        .best_path = NULL,
+        .best_path = {0},
         .best_len = 0,
     };
     if (!nob_walk_dir(binary_dir_c, try_compile_project_artifact_visit, .data = &search)) {
         return nob_sv_from_cstr("");
     }
-    if (!search.best_path) return nob_sv_from_cstr("");
-    return sv_copy_to_arena(eval_temp_arena(ctx), nob_sv_from_cstr(search.best_path));
+    if (!search.best_path.data || search.best_path.count == 0) return nob_sv_from_cstr("");
+    return search.best_path;
 }
 
 static bool try_compile_path_has_dir_prefix(const char *path, const char *prefix) {

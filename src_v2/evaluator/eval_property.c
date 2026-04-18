@@ -1,5 +1,6 @@
 #include "evaluator_internal.h"
 #include "eval_expr.h"
+#include "../genex/genex_internal.h"
 
 #include "stb_ds.h"
 #include "sv_utils.h"
@@ -10,6 +11,272 @@
 static const char *k_global_defs_var = "NOBIFY_GLOBAL_COMPILE_DEFINITIONS";
 static const char *k_global_opts_var = "NOBIFY_GLOBAL_COMPILE_OPTIONS";
 static const char *k_global_link_opts_var = "NOBIFY_GLOBAL_LINK_OPTIONS";
+
+static bool usage_emit_semantic_error(EvalExecContext *ctx,
+                                      Cmake_Event_Origin origin,
+                                      String_View property_name,
+                                      String_View cause,
+                                      String_View hint) {
+    if (!ctx) return false;
+    (void)EVAL_DIAG_EMIT_SEV(ctx,
+                             EV_DIAG_ERROR,
+                             EVAL_DIAG_UNSUPPORTED_OPERATION,
+                             nob_sv_from_cstr("evaluator"),
+                             property_name,
+                             origin,
+                             cause,
+                             hint);
+    return false;
+}
+
+static bool usage_expr_is_full_genex(String_View expr) {
+    size_t end = 0;
+    String_View trimmed = nob_sv_trim(expr);
+    if (trimmed.count < 4) return false;
+    if (trimmed.data[0] != '$' || trimmed.data[1] != '<' || trimmed.data[trimmed.count - 1] != '>') return false;
+    if (!gx_find_matching_genex_end(trimmed, 0, &end)) return false;
+    return end + 1 == trimmed.count;
+}
+
+static bool usage_parse_genex_head(String_View expr, String_View *out_op, String_View *out_args) {
+    size_t colon = 0;
+    String_View trimmed = nob_sv_trim(expr);
+    String_View body = {0};
+    if (out_op) *out_op = nob_sv_from_cstr("");
+    if (out_args) *out_args = nob_sv_from_cstr("");
+    if (!out_op || !out_args) return false;
+    if (!usage_expr_is_full_genex(trimmed)) return false;
+
+    body = nob_sv_from_parts(trimmed.data + 2, trimmed.count - 3);
+    if (gx_find_top_level_colon(body, &colon)) {
+        *out_op = nob_sv_trim(nob_sv_from_parts(body.data, colon));
+        *out_args = nob_sv_trim(nob_sv_from_parts(body.data + colon + 1, body.count - (colon + 1)));
+    } else {
+        *out_op = nob_sv_trim(body);
+        *out_args = nob_sv_from_cstr("");
+    }
+    return true;
+}
+
+static bool usage_copy_gx_items(EvalExecContext *ctx,
+                                const Gx_Sv_List *items,
+                                String_View **out,
+                                size_t *out_count) {
+    if (out) *out = NULL;
+    if (out_count) *out_count = 0;
+    if (!ctx || !items || !out || !out_count) return false;
+    for (size_t i = 0; i < items->count; ++i) {
+        if (!arena_arr_push(eval_temp_arena(ctx), *out, nob_sv_trim(items->items[i]))) return false;
+    }
+    *out_count = arena_arr_len(*out);
+    return true;
+}
+
+static bool usage_parse_condition_expr(EvalExecContext *ctx,
+                                       Cmake_Event_Origin origin,
+                                       String_View property_name,
+                                       String_View cond_expr,
+                                       Event_Link_Item_Metadata *io) {
+    String_View op = {0};
+    String_View args_expr = {0};
+    Genex_Context gx = {0};
+    Gx_Sv_List args = {0};
+    if (!ctx || !io) return false;
+    if (!usage_parse_genex_head(cond_expr, &op, &args_expr)) {
+        return usage_emit_semantic_error(ctx,
+                                         origin,
+                                         property_name,
+                                         nob_sv_from_cstr("unsupported conditional generator expression in target-usage item"),
+                                         cond_expr);
+    }
+
+    gx.arena = eval_temp_arena(ctx);
+    args = gx_split_top_level_alloc(&gx, args_expr, ',');
+    if (args_expr.count > 0 && args.count == 0) return false;
+
+    if (eval_sv_eq_ci_lit(op, "CONFIG")) {
+        if (args.count == 0) {
+            return usage_emit_semantic_error(ctx,
+                                             origin,
+                                             property_name,
+                                             nob_sv_from_cstr("CONFIG condition in target-usage item requires at least one configuration"),
+                                             cond_expr);
+        }
+        if (io->config_filter != EVENT_LINK_ITEM_CONFIG_ALL) {
+            return usage_emit_semantic_error(ctx,
+                                             origin,
+                                             property_name,
+                                             nob_sv_from_cstr("conflicting configuration qualifiers in target-usage item"),
+                                             cond_expr);
+        }
+        if (args.count == 1 && eval_sv_eq_ci_lit(args.items[0], "Debug")) {
+            io->config_filter = EVENT_LINK_ITEM_CONFIG_DEBUG_ONLY;
+            return true;
+        }
+        io->config_filter = EVENT_LINK_ITEM_CONFIG_MATCH_LIST;
+        return usage_copy_gx_items(ctx, &args, &io->configurations, &io->configuration_count);
+    }
+
+    if (eval_sv_eq_ci_lit(op, "COMPILE_LANGUAGE")) {
+        if (args.count == 0) {
+            return usage_emit_semantic_error(ctx,
+                                             origin,
+                                             property_name,
+                                             nob_sv_from_cstr("COMPILE_LANGUAGE condition in target-usage item requires at least one language"),
+                                             cond_expr);
+        }
+        return usage_copy_gx_items(ctx, &args, &io->compile_languages, &io->compile_language_count);
+    }
+
+    if (eval_sv_eq_ci_lit(op, "PLATFORM_ID")) {
+        if (args.count == 0) {
+            return usage_emit_semantic_error(ctx,
+                                             origin,
+                                             property_name,
+                                             nob_sv_from_cstr("PLATFORM_ID condition in target-usage item requires at least one platform"),
+                                             cond_expr);
+        }
+        return usage_copy_gx_items(ctx, &args, &io->platform_ids, &io->platform_id_count);
+    }
+
+    return usage_emit_semantic_error(ctx,
+                                     origin,
+                                     property_name,
+                                     nob_sv_from_cstr("unsupported conditional operator in target-usage item"),
+                                     cond_expr);
+}
+
+static bool usage_parse_item_expr(EvalExecContext *ctx,
+                                  Cmake_Event_Origin origin,
+                                  String_View property_name,
+                                  String_View owner_target_name,
+                                  bool link_family,
+                                  String_View expr,
+                                  Event_Link_Item_Metadata *io,
+                                  String_View *out_terminal) {
+    String_View trimmed = nob_sv_trim(expr);
+    String_View op = {0};
+    String_View args_expr = {0};
+    Genex_Context gx = {0};
+    Gx_Sv_List args = {0};
+    if (out_terminal) *out_terminal = nob_sv_from_cstr("");
+    if (!ctx || !io || !out_terminal) return false;
+    if (trimmed.count == 0) {
+        *out_terminal = nob_sv_from_cstr("");
+        return true;
+    }
+    if (!gx_sv_contains_genex_unescaped(trimmed)) {
+        *out_terminal = trimmed;
+        return true;
+    }
+    if (!usage_parse_genex_head(trimmed, &op, &args_expr)) {
+        return usage_emit_semantic_error(ctx,
+                                         origin,
+                                         property_name,
+                                         nob_sv_from_cstr("unsupported generator expression form in target-usage item"),
+                                         trimmed);
+    }
+
+    if (eval_sv_eq_ci_lit(op, "BUILD_INTERFACE")) {
+        if (io->interface_filter == EVENT_USAGE_INTERFACE_INSTALL) {
+            return usage_emit_semantic_error(ctx,
+                                             origin,
+                                             property_name,
+                                             nob_sv_from_cstr("target-usage item cannot combine BUILD_INTERFACE and INSTALL_INTERFACE"),
+                                             trimmed);
+        }
+        io->interface_filter = EVENT_USAGE_INTERFACE_BUILD;
+        return usage_parse_item_expr(ctx,
+                                     origin,
+                                     property_name,
+                                     owner_target_name,
+                                     link_family,
+                                     args_expr,
+                                     io,
+                                     out_terminal);
+    }
+
+    if (eval_sv_eq_ci_lit(op, "INSTALL_INTERFACE")) {
+        if (io->interface_filter == EVENT_USAGE_INTERFACE_BUILD) {
+            return usage_emit_semantic_error(ctx,
+                                             origin,
+                                             property_name,
+                                             nob_sv_from_cstr("target-usage item cannot combine BUILD_INTERFACE and INSTALL_INTERFACE"),
+                                             trimmed);
+        }
+        io->interface_filter = EVENT_USAGE_INTERFACE_INSTALL;
+        return usage_parse_item_expr(ctx,
+                                     origin,
+                                     property_name,
+                                     owner_target_name,
+                                     link_family,
+                                     args_expr,
+                                     io,
+                                     out_terminal);
+    }
+
+    if (eval_sv_eq_ci_lit(op, "LINK_ONLY")) {
+        io->link_only = true;
+        return usage_parse_item_expr(ctx,
+                                     origin,
+                                     property_name,
+                                     owner_target_name,
+                                     link_family,
+                                     args_expr,
+                                     io,
+                                     out_terminal);
+    }
+
+    if (eval_sv_eq_ci_lit(op, "TARGET_PROPERTY")) {
+        gx.arena = eval_temp_arena(ctx);
+        args = gx_split_top_level_alloc(&gx, args_expr, ',');
+        if (args_expr.count > 0 && args.count == 0) return false;
+        if (args.count == 1) {
+            if (owner_target_name.count == 0) {
+                return usage_emit_semantic_error(ctx,
+                                                 origin,
+                                                 property_name,
+                                                 nob_sv_from_cstr("implicit TARGET_PROPERTY form requires an owning target context"),
+                                                 trimmed);
+            }
+            io->kind = EVENT_LINK_ITEM_TARGET_PROPERTY_IMPLICIT;
+            io->target_name = owner_target_name;
+            io->property_name = nob_sv_trim(args.items[0]);
+            *out_terminal = trimmed;
+            return true;
+        }
+        if (args.count == 2) {
+            io->kind = EVENT_LINK_ITEM_TARGET_PROPERTY_EXPLICIT;
+            io->target_name = nob_sv_trim(args.items[0]);
+            io->property_name = nob_sv_trim(args.items[1]);
+            *out_terminal = trimmed;
+            return true;
+        }
+        return usage_emit_semantic_error(ctx,
+                                         origin,
+                                         property_name,
+                                         nob_sv_from_cstr("TARGET_PROPERTY in target-usage item expects property or target,property"),
+                                         trimmed);
+    }
+
+    if (args_expr.count > 0 && usage_expr_is_full_genex(op)) {
+        if (!usage_parse_condition_expr(ctx, origin, property_name, op, io)) return false;
+        return usage_parse_item_expr(ctx,
+                                     origin,
+                                     property_name,
+                                     owner_target_name,
+                                     link_family,
+                                     args_expr,
+                                     io,
+                                     out_terminal);
+    }
+
+    return usage_emit_semantic_error(ctx,
+                                     origin,
+                                     property_name,
+                                     nob_sv_from_cstr("unsupported generator expression in target-usage item"),
+                                     trimmed);
+}
 
 static bool eval_try_extract_simple_link_target_name(String_View item, String_View *out_target_name) {
     static const struct {
@@ -63,28 +330,87 @@ bool eval_link_item_metadata_from_raw(EvalExecContext *ctx,
                                       String_View raw_item,
                                       Event_Link_Item_Config_Filter filter,
                                       Event_Link_Item_Metadata *out) {
+    if (out) *out = (Event_Link_Item_Metadata){0};
+    if (!ctx || !out) return false;
+    return eval_usage_item_semantics_from_raw(ctx,
+                                              (Cmake_Event_Origin){0},
+                                              nob_sv_from_cstr("LINK_LIBRARIES"),
+                                              nob_sv_from_cstr(""),
+                                              true,
+                                              raw_item,
+                                              filter,
+                                              out);
+}
+
+bool eval_usage_item_semantics_from_raw(EvalExecContext *ctx,
+                                        Cmake_Event_Origin origin,
+                                        String_View property_name,
+                                        String_View owner_target_name,
+                                        bool link_family,
+                                        String_View raw_item,
+                                        Event_Link_Item_Config_Filter filter,
+                                        Event_Link_Item_Metadata *out) {
+    String_View terminal = nob_sv_from_cstr("");
     String_View candidate = nob_sv_trim(raw_item);
     if (out) *out = (Event_Link_Item_Metadata){0};
     if (!ctx || !out) return false;
 
+    out->interface_filter = EVENT_USAGE_INTERFACE_ANY;
     out->config_filter = filter;
+    out->link_only = false;
+    out->configurations = NULL;
+    out->configuration_count = 0;
+    out->compile_languages = NULL;
+    out->compile_language_count = 0;
+    out->platform_ids = NULL;
+    out->platform_id_count = 0;
     out->kind = EVENT_LINK_ITEM_RAW_VALUE;
+    out->value = raw_item;
     out->target_name = nob_sv_from_cstr("");
+    out->property_name = nob_sv_from_cstr("");
 
-    if (candidate.count == 0) return true;
-    if (!eval_try_extract_simple_link_target_name(candidate, &candidate)) {
-        candidate = nob_sv_trim(raw_item);
+    if (!usage_parse_item_expr(ctx,
+                               origin,
+                               property_name,
+                               owner_target_name,
+                               link_family,
+                               candidate,
+                               out,
+                               &terminal)) {
+        return false;
     }
 
-    if (candidate.count > 0 && eval_target_known(ctx, candidate)) {
+    if (!link_family &&
+        (out->kind == EVENT_LINK_ITEM_TARGET_PROPERTY_IMPLICIT ||
+         out->kind == EVENT_LINK_ITEM_TARGET_PROPERTY_EXPLICIT)) {
+        out->value = terminal;
+        return true;
+    }
+    if (link_family &&
+        (out->kind == EVENT_LINK_ITEM_TARGET_PROPERTY_IMPLICIT ||
+         out->kind == EVENT_LINK_ITEM_TARGET_PROPERTY_EXPLICIT)) {
+        return usage_emit_semantic_error(ctx,
+                                         origin,
+                                         property_name,
+                                         nob_sv_from_cstr("TARGET_PROPERTY is not supported as a link-library value producer in this phase"),
+                                         raw_item);
+    }
+
+    if (terminal.count > 0 && eval_try_extract_simple_link_target_name(terminal, &candidate)) {
+        terminal = candidate;
+    }
+    if (link_family && terminal.count > 0 && eval_target_known(ctx, terminal)) {
         out->kind = EVENT_LINK_ITEM_TARGET_REF;
-        out->target_name = candidate;
+        out->target_name = terminal;
     }
-
+    out->value = terminal;
     return true;
 }
 
 bool eval_parse_link_libraries_items_semantics(EvalExecContext *ctx,
+                                               Cmake_Event_Origin origin,
+                                               String_View property_name,
+                                               String_View owner_target_name,
                                                const String_View *tokens,
                                                size_t token_count,
                                                String_View **out_items,
@@ -117,7 +443,14 @@ bool eval_parse_link_libraries_items_semantics(EvalExecContext *ctx,
 
         stored_item = eval_link_item_apply_config_filter_temp(ctx, token, filter);
         if (eval_should_stop(ctx) ||
-            !eval_link_item_metadata_from_raw(ctx, token, filter, &semantic) ||
+            !eval_usage_item_semantics_from_raw(ctx,
+                                                origin,
+                                                property_name,
+                                                owner_target_name,
+                                                true,
+                                                token,
+                                                filter,
+                                                &semantic) ||
             !arena_arr_push(eval_temp_arena(ctx), items, stored_item) ||
             !arena_arr_push(eval_temp_arena(ctx), semantics, semantic)) {
             return false;
@@ -237,36 +570,66 @@ static Event_Property_Mutate_Op property_mutate_op_from_legacy(Cmake_Target_Prop
     return EVENT_PROPERTY_MUTATE_SET;
 }
 
-bool eval_populate_property_mutate_semantics(EvalExecContext *ctx, Event_Directory_Property_Mutate *mut) {
+bool eval_populate_property_mutate_semantics(EvalExecContext *ctx,
+                                             Cmake_Event_Origin origin,
+                                             Event_Directory_Property_Mutate *mut) {
     String_View *typed_items = NULL;
     Event_Link_Item_Metadata *semantics = NULL;
+    bool is_link_family = false;
     if (!ctx || !mut) return false;
-    mut->link_item_semantics = NULL;
+    mut->typed_items = NULL;
+    mut->typed_item_count = 0;
+    mut->typed_item_semantics = NULL;
 
-    if (!eval_sv_eq_ci_lit(mut->property_name, "LINK_LIBRARIES")) return true;
+    if (!eval_target_property_supports_typed_items(mut->property_name, &is_link_family)) return true;
     if (mut->item_count == 0 || !mut->items) return true;
 
-    if (!eval_parse_link_libraries_items_semantics(ctx,
-                                                   mut->items,
-                                                   mut->item_count,
-                                                   &typed_items,
-                                                   &semantics)) {
-        return false;
+    if (is_link_family) {
+        if (!eval_parse_link_libraries_items_semantics(ctx,
+                                                       origin,
+                                                       mut->property_name,
+                                                       nob_sv_from_cstr(""),
+                                                       mut->items,
+                                                       mut->item_count,
+                                                       &typed_items,
+                                                       &semantics)) {
+            return false;
+        }
+    } else {
+        for (size_t i = 0; i < mut->item_count; ++i) {
+            Event_Link_Item_Metadata semantic = {0};
+            if (!eval_usage_item_semantics_from_raw(ctx,
+                                                    origin,
+                                                    mut->property_name,
+                                                    nob_sv_from_cstr(""),
+                                                    false,
+                                                    mut->items[i],
+                                                    EVENT_LINK_ITEM_CONFIG_ALL,
+                                                    &semantic)) {
+                return false;
+            }
+            if (!arena_arr_push(eval_temp_arena(ctx), typed_items, mut->items[i]) ||
+                !arena_arr_push(eval_temp_arena(ctx), semantics, semantic)) {
+                return false;
+            }
+        }
     }
 
-    mut->items = typed_items;
-    mut->item_count = arena_arr_len(typed_items);
-    mut->link_item_semantics = semantics;
+    mut->typed_items = typed_items;
+    mut->typed_item_count = arena_arr_len(typed_items);
+    mut->typed_item_semantics = semantics;
     return true;
 }
 
-bool eval_populate_target_prop_set_semantics(EvalExecContext *ctx, Event_Target_Prop_Set *prop) {
+bool eval_populate_target_prop_set_semantics(EvalExecContext *ctx,
+                                             Cmake_Event_Origin origin,
+                                             Event_Target_Prop_Set *prop) {
     bool is_link_family = false;
     SV_List tokens = NULL;
     if (!ctx || !prop) return false;
     prop->typed_items = NULL;
     prop->typed_item_count = 0;
-    prop->typed_link_item_semantics = NULL;
+    prop->typed_item_semantics = NULL;
 
     if (prop->op == EV_PROP_APPEND_STRING) return true;
     if (!eval_target_property_supports_typed_items(prop->key, &is_link_family)) return true;
@@ -275,18 +638,37 @@ bool eval_populate_target_prop_set_semantics(EvalExecContext *ctx, Event_Target_
     if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), prop->value, &tokens)) return false;
     if (is_link_family) {
         if (!eval_parse_link_libraries_items_semantics(ctx,
+                                                       origin,
+                                                       prop->key,
+                                                       prop->target_name,
                                                        tokens,
                                                        arena_arr_len(tokens),
                                                        &prop->typed_items,
-                                                       &prop->typed_link_item_semantics)) {
+                                                       &prop->typed_item_semantics)) {
             return false;
         }
         prop->typed_item_count = arena_arr_len(prop->typed_items);
         return true;
     }
 
-    prop->typed_items = tokens;
-    prop->typed_item_count = arena_arr_len(tokens);
+    for (size_t i = 0; i < arena_arr_len(tokens); ++i) {
+        Event_Link_Item_Metadata semantic = {0};
+        if (!eval_usage_item_semantics_from_raw(ctx,
+                                                origin,
+                                                prop->key,
+                                                prop->target_name,
+                                                false,
+                                                tokens[i],
+                                                EVENT_LINK_ITEM_CONFIG_ALL,
+                                                &semantic)) {
+            return false;
+        }
+        if (!arena_arr_push(eval_temp_arena(ctx), prop->typed_items, tokens[i]) ||
+            !arena_arr_push(eval_temp_arena(ctx), prop->typed_item_semantics, semantic)) {
+            return false;
+        }
+    }
+    prop->typed_item_count = arena_arr_len(prop->typed_items);
     return true;
 }
 

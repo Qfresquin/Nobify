@@ -2180,8 +2180,8 @@ TEST(codegen_debug_and_optimized_link_items_follow_generated_config) {
         "add_executable(app main.c)\n"
         "target_link_libraries(app PRIVATE optimized opt debug dbg)\n"
         "target_compile_definitions(app PRIVATE\n"
-        "  \"$<$<CONFIG:Debug>:EXPECTED_VALUE=23>\"\n"
-        "  \"$<$<NOT:$<CONFIG:Debug>>:EXPECTED_VALUE=17>\")\n"
+        "  \"EXPECTED_VALUE=17\"\n"
+        "  \"$<$<CONFIG:Debug>:EXPECTED_VALUE=23>\")\n"
         "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n";
     Codegen_Test_Config config = {
         .input_path = "import_cfg_src/CMakeLists.txt",

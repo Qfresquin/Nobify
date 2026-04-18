@@ -74,35 +74,87 @@ TEST(evaluator_list_transform_genex_strip_and_output_variable) {
         temp_arena,
         "set(L \"$<CONFIG:Debug>;a$<IF:$<BOOL:1>,b,c>;x\")\n"
         "list(TRANSFORM L GENEX_STRIP OUTPUT_VARIABLE L_STRIPPED)\n"
-        "list(TRANSFORM L APPEND \"_S\" AT 0 OUTPUT_VARIABLE L_APPENDED)\n"
-        "add_executable(list_transform_ov main.c)\n"
-        "target_compile_definitions(list_transform_ov PRIVATE \"L=${L}\" \"L_STRIPPED=${L_STRIPPED}\" \"L_APPENDED=${L_APPENDED}\")\n");
+        "list(TRANSFORM L APPEND \"_S\" AT 0 OUTPUT_VARIABLE L_APPENDED)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
     const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 0);
 
-    bool saw_original = false;
-    bool saw_stripped = false;
-    bool saw_appended = false;
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("L")),
+                     nob_sv_from_cstr("$<CONFIG:Debug>;a$<IF:$<BOOL:1>,b,c>;x")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("L_STRIPPED")),
+                     nob_sv_from_cstr(";a;x")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("L_APPENDED")),
+                     nob_sv_from_cstr("$<CONFIG:Debug>_S;a$<IF:$<BOOL:1>,b,c>;x")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_target_usage_semantics_rejects_unsupported_genex_forms_early) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(WRITE sem_bad.c \"int sem_bad(void){return 0;}\\n\")\n"
+        "add_library(sem_bad STATIC sem_bad.c)\n"
+        "target_compile_definitions(sem_bad PRIVATE \"$<$<IF:$<BOOL:1>,1,0>:BAD_DEF>\")\n"
+        "set_property(TARGET sem_bad APPEND PROPERTY INTERFACE_COMPILE_OPTIONS \"$<$<IF:$<BOOL:1>,1,0>:BAD_OPT>\")\n"
+        "set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS \"$<$<IF:$<BOOL:1>,1,0>:BAD_DIR>\")\n"
+        "set_property(GLOBAL APPEND PROPERTY COMPILE_OPTIONS \"$<$<IF:$<BOOL:1>,1,0>:BAD_GLB>\")\n"
+        "target_link_libraries(sem_bad PRIVATE \"$<JOIN:a,b>\")\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 5);
+
+    size_t compile_definitions_conditional_errors = 0;
+    bool saw_target_interface_compile_options_error = false;
+    bool saw_global_compile_options_error = false;
+    bool saw_link_join_error = false;
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
-        if (ev->h.kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
-        if (nob_sv_eq(ev->as.target_compile_definitions.item,
-                      nob_sv_from_cstr("L=$<CONFIG:Debug>;a$<IF:$<BOOL:1>,b,c>;x"))) {
-            saw_original = true;
-        } else if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("L_STRIPPED=;a;x"))) {
-            saw_stripped = true;
-        } else if (nob_sv_eq(ev->as.target_compile_definitions.item,
-                             nob_sv_from_cstr("L_APPENDED=$<CONFIG:Debug>_S;a$<IF:$<BOOL:1>,b,c>;x"))) {
-            saw_appended = true;
+        if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
+        if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("unsupported conditional operator in target-usage item"))) {
+            ASSERT(nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("$<IF:$<BOOL:1>,1,0>")));
+            if (nob_sv_eq(ev->as.diag.command, nob_sv_from_cstr("COMPILE_DEFINITIONS"))) {
+                compile_definitions_conditional_errors++;
+            } else if (nob_sv_eq(ev->as.diag.command, nob_sv_from_cstr("INTERFACE_COMPILE_OPTIONS"))) {
+                saw_target_interface_compile_options_error = true;
+            } else if (nob_sv_eq(ev->as.diag.command, nob_sv_from_cstr("COMPILE_OPTIONS"))) {
+                saw_global_compile_options_error = true;
+            }
+        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("unsupported generator expression in target-usage item")) &&
+                   nob_sv_eq(ev->as.diag.command, nob_sv_from_cstr("LINK_LIBRARIES")) &&
+                   nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("$<JOIN:a,b>"))) {
+            saw_link_join_error = true;
         }
     }
 
-    ASSERT(saw_original);
-    ASSERT(saw_stripped);
-    ASSERT(saw_appended);
+    ASSERT(compile_definitions_conditional_errors == 2);
+    ASSERT(saw_target_interface_compile_options_error);
+    ASSERT(saw_global_compile_options_error);
+    ASSERT(saw_link_join_error);
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -2453,15 +2505,23 @@ TEST(evaluator_build_name_and_build_command_follow_policy_gates) {
     String_View host_name = eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"));
     String_View compiler_id = eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"));
     String_View build_name = eval_test_var_get(ctx, nob_sv_from_cstr("BN_OLD"));
+    String_View cmake_command = eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_COMMAND"));
+    ASSERT(cmake_command.count > 0);
     ASSERT(build_name.count == host_name.count + 1 + compiler_id.count);
     ASSERT(memcmp(build_name.data, host_name.data, host_name.count) == 0);
     ASSERT(build_name.data[host_name.count] == '-');
     ASSERT(memcmp(build_name.data + host_name.count + 1, compiler_id.data, compiler_id.count) == 0);
 
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BC_OLD")),
-                     nob_sv_from_cstr("cmake --build . --target demo --config Debug --parallel 3 -- -i")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BC_NEW")),
-                     nob_sv_from_cstr("cmake --build . --target legacy_target")));
+    String_View expected_bc_old = nob_sv_from_cstr(
+        nob_temp_sprintf("%.*s --build . --target demo --config Debug --parallel 3 -- -i",
+                         (int)cmake_command.count,
+                         cmake_command.data));
+    String_View expected_bc_new = nob_sv_from_cstr(
+        nob_temp_sprintf("%.*s --build . --target legacy_target",
+                         (int)cmake_command.count,
+                         cmake_command.data));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BC_OLD")), expected_bc_old));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BC_NEW")), expected_bc_new));
 
     bool saw_cmp0036_diag = false;
     for (size_t i = 0; i < stream->count; i++) {
@@ -2563,8 +2623,13 @@ TEST(evaluator_host_build_commands_reject_invalid_shapes_and_warn_on_ignored_pro
     ASSERT(saw_build_command_too_many);
     ASSERT(saw_build_command_bad_arg);
     ASSERT(saw_project_name_warning);
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BC_WARN")),
-                     nob_sv_from_cstr("cmake --build .")));
+    String_View cmake_command = eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_COMMAND"));
+    ASSERT(cmake_command.count > 0);
+    String_View expected_bc_warn = nob_sv_from_cstr(
+        nob_temp_sprintf("%.*s --build .",
+                         (int)cmake_command.count,
+                         cmake_command.data));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("BC_WARN")), expected_bc_warn));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -3513,6 +3578,7 @@ TEST(evaluator_batch6_metadata_commands_reject_incomplete_option_values) {
 
 void run_evaluator_v2_batch3(int *passed, int *failed, int *skipped) {
     test_evaluator_list_transform_genex_strip_and_output_variable(passed, failed, skipped);
+    test_evaluator_target_usage_semantics_rejects_unsupported_genex_forms_early(passed, failed, skipped);
     test_evaluator_list_transform_output_variable_requires_single_output_var(passed, failed, skipped);
     test_evaluator_list_sort_and_transform_selector_surface_matches_documented_combinations(passed, failed, skipped);
     test_evaluator_math_rejects_empty_and_incomplete_invocations(passed, failed, skipped);

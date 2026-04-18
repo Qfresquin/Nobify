@@ -4,7 +4,11 @@ bool cg_target_export_name(CG_Context *ctx, BM_Target_Id id, String_View *out) {
     String_View export_name = {0};
     if (!ctx || !out) return false;
     *out = bm_query_target_name(ctx->model, id);
-    if (!bm_query_target_property_value(ctx->model, id, nob_sv_from_cstr("EXPORT_NAME"), ctx->scratch, &export_name)) {
+    if (!bm_query_target_modeled_property_value(ctx->model,
+                                                id,
+                                                nob_sv_from_cstr("EXPORT_NAME"),
+                                                ctx->scratch,
+                                                &export_name)) {
         return false;
     }
     if (export_name.count > 0) *out = export_name;

@@ -136,6 +136,7 @@ static bool bm_clone_item_array(Arena *arena, BM_String_Item_View **dest, const 
     for (size_t i = 0; i < arena_arr_len(src); ++i) {
         BM_String_Item_View item = src[i];
         if (!bm_copy_string(arena, src[i].value, &item.value) ||
+            !bm_copy_item_semantic(arena, &item.semantic, src[i].semantic) ||
             !bm_clone_provenance(arena, &item.provenance, src[i].provenance) ||
             !arena_arr_push(arena, *dest, item)) {
             return false;
@@ -150,7 +151,7 @@ static bool bm_clone_link_item_array(Arena *arena, BM_Link_Item_View **dest, con
     for (size_t i = 0; i < arena_arr_len(src); ++i) {
         BM_Link_Item_View item = src[i];
         if (!bm_copy_string(arena, src[i].value, &item.value) ||
-            !bm_copy_string(arena, src[i].target_name, &item.target_name) ||
+            !bm_copy_item_semantic(arena, &item.semantic, src[i].semantic) ||
             !bm_clone_provenance(arena, &item.provenance, src[i].provenance) ||
             !arena_arr_push(arena, *dest, item)) {
             return false;
@@ -601,8 +602,8 @@ static bool bm_resolve_link_item_target_ids(const Build_Model_Draft *draft, Buil
         for (size_t item_index = 0; item_index < arena_arr_len(model->targets[i].link_libraries); ++item_index) {
             BM_Link_Item_View *item = &model->targets[i].link_libraries[item_index];
             BM_Target_Id target_id = BM_TARGET_ID_INVALID;
-            if (item->kind != BM_LINK_ITEM_TARGET_REF || item->target_name.count == 0) continue;
-            target_id = bm_draft_find_target_id(draft, item->target_name);
+            if (item->semantic.kind != EVENT_LINK_ITEM_TARGET_REF || item->semantic.target_name.count == 0) continue;
+            target_id = bm_draft_find_target_id(draft, item->semantic.target_name);
             if (bm_target_id_is_valid(target_id)) target_id = bm_freeze_resolve_alias_target_id(model, target_id);
             item->target_id = target_id;
         }
@@ -612,8 +613,8 @@ static bool bm_resolve_link_item_target_ids(const Build_Model_Draft *draft, Buil
         for (size_t item_index = 0; item_index < arena_arr_len(model->directories[i].link_libraries); ++item_index) {
             BM_Link_Item_View *item = &model->directories[i].link_libraries[item_index];
             BM_Target_Id target_id = BM_TARGET_ID_INVALID;
-            if (item->kind != BM_LINK_ITEM_TARGET_REF || item->target_name.count == 0) continue;
-            target_id = bm_draft_find_target_id(draft, item->target_name);
+            if (item->semantic.kind != EVENT_LINK_ITEM_TARGET_REF || item->semantic.target_name.count == 0) continue;
+            target_id = bm_draft_find_target_id(draft, item->semantic.target_name);
             if (bm_target_id_is_valid(target_id)) target_id = bm_freeze_resolve_alias_target_id(model, target_id);
             item->target_id = target_id;
         }
@@ -622,8 +623,8 @@ static bool bm_resolve_link_item_target_ids(const Build_Model_Draft *draft, Buil
     for (size_t i = 0; i < arena_arr_len(model->global_properties.link_libraries); ++i) {
         BM_Link_Item_View *item = &model->global_properties.link_libraries[i];
         BM_Target_Id target_id = BM_TARGET_ID_INVALID;
-        if (item->kind != BM_LINK_ITEM_TARGET_REF || item->target_name.count == 0) continue;
-        target_id = bm_draft_find_target_id(draft, item->target_name);
+        if (item->semantic.kind != EVENT_LINK_ITEM_TARGET_REF || item->semantic.target_name.count == 0) continue;
+        target_id = bm_draft_find_target_id(draft, item->semantic.target_name);
         if (bm_target_id_is_valid(target_id)) target_id = bm_freeze_resolve_alias_target_id(model, target_id);
         item->target_id = target_id;
     }

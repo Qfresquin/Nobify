@@ -1977,18 +1977,18 @@ TEST(build_model_context_aware_queries_expand_usage_requirements_and_target_prop
     ASSERT(build_model_string_span_contains(defs, "dbg-tag"));
     ASSERT(build_model_string_span_contains(defs, "RAW_IFACE_DEF=1"));
 
-    ASSERT(bm_query_target_property_value(model,
-                                          iface_id,
-                                          nob_sv_from_cstr("CUSTOM_TAG"),
-                                          query_arena,
-                                          &property_value));
+    ASSERT(bm_query_target_raw_property_value(model,
+                                              iface_id,
+                                              nob_sv_from_cstr("CUSTOM_TAG"),
+                                              query_arena,
+                                              &property_value));
     ASSERT(nob_sv_eq(property_value, nob_sv_from_cstr("dbg-tag")));
 
-    ASSERT(bm_query_target_property_value(model,
-                                          bm_query_target_by_name(model, nob_sv_from_cstr("raw_iface")),
-                                          nob_sv_from_cstr("INTERFACE_INCLUDE_DIRECTORIES"),
-                                          query_arena,
-                                          &raw_property_value));
+    ASSERT(bm_query_target_modeled_property_value(model,
+                                                  bm_query_target_by_name(model, nob_sv_from_cstr("raw_iface")),
+                                                  nob_sv_from_cstr("INTERFACE_INCLUDE_DIRECTORIES"),
+                                                  query_arena,
+                                                  &raw_property_value));
     ASSERT(nob_sv_eq(raw_property_value, nob_sv_from_cstr("raw_iface/include")));
 
     for (size_t i = 0; i < bm_query_target_raw_property_count(model, iface_id); ++i) {
@@ -2672,28 +2672,28 @@ TEST(build_model_source_membership_file_sets_and_source_properties_are_canonical
     ASSERT(build_model_string_span_contains_substring(bm_query_target_file_set_base_dirs(model, imported_id, 0), "imported"));
     ASSERT(build_model_string_span_contains_substring(bm_query_target_file_set_files_raw(model, imported_id, 0), "imported/api.cppm"));
 
-    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("SOURCES"), scratch, &property_value));
+    ASSERT(bm_query_target_modeled_property_value(model, core_id, nob_sv_from_cstr("SOURCES"), scratch, &property_value));
     ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("main.c")));
     ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("public.h")));
     ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("skip_compile.c")));
     ASSERT(!build_model_sv_contains(property_value, nob_sv_from_cstr("iface.h")));
 
-    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("INTERFACE_SOURCES"), scratch, &property_value));
+    ASSERT(bm_query_target_modeled_property_value(model, core_id, nob_sv_from_cstr("INTERFACE_SOURCES"), scratch, &property_value));
     ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("iface.h")));
 
-    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("HEADER_SETS"), scratch, &property_value));
+    ASSERT(bm_query_target_modeled_property_value(model, core_id, nob_sv_from_cstr("HEADER_SETS"), scratch, &property_value));
     ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("HEADERS")));
-    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("INTERFACE_HEADER_SETS"), scratch, &property_value));
+    ASSERT(bm_query_target_modeled_property_value(model, core_id, nob_sv_from_cstr("INTERFACE_HEADER_SETS"), scratch, &property_value));
     ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("api")));
-    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("HEADER_SET"), scratch, &property_value));
+    ASSERT(bm_query_target_modeled_property_value(model, core_id, nob_sv_from_cstr("HEADER_SET"), scratch, &property_value));
     ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("include/public.hpp")));
-    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("HEADER_SET_API"), scratch, &property_value));
+    ASSERT(bm_query_target_modeled_property_value(model, core_id, nob_sv_from_cstr("HEADER_SET_API"), scratch, &property_value));
     ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("api/iface.hpp")));
-    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("CXX_MODULE_SETS"), scratch, &property_value));
+    ASSERT(bm_query_target_modeled_property_value(model, core_id, nob_sv_from_cstr("CXX_MODULE_SETS"), scratch, &property_value));
     ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("CXX_MODULES")));
-    ASSERT(bm_query_target_property_value(model, core_id, nob_sv_from_cstr("CXX_MODULE_SET"), scratch, &property_value));
+    ASSERT(bm_query_target_modeled_property_value(model, core_id, nob_sv_from_cstr("CXX_MODULE_SET"), scratch, &property_value));
     ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("modules/core.cppm")));
-    ASSERT(bm_query_target_property_value(model,
+    ASSERT(bm_query_target_modeled_property_value(model,
                                           imported_id,
                                           nob_sv_from_cstr("INTERFACE_CXX_MODULE_SETS"),
                                           scratch,
@@ -3371,13 +3371,13 @@ TEST(build_model_usage_requirement_property_setters_promote_to_canonical_item_st
     ASSERT(raw_compile_options.count == 1);
     ASSERT(build_model_string_item_equals_at(raw_compile_options, 0, "-Wall"));
 
-    ASSERT(bm_query_target_property_value(model,
+    ASSERT(bm_query_target_modeled_property_value(model,
                                           iface_id,
                                           nob_sv_from_cstr("INTERFACE_SYSTEM_INCLUDE_DIRECTORIES"),
                                           query_arena,
                                           &property_value));
     ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("iface/sys")));
-    ASSERT(bm_query_target_property_value(model,
+    ASSERT(bm_query_target_modeled_property_value(model,
                                           iface_id,
                                           nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES"),
                                           query_arena,

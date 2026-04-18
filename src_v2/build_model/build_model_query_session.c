@@ -100,7 +100,9 @@ static bool bm_query_session_copy_item_span(Arena *arena, BM_String_Item_Span in
     if (!arena) return false;
     for (size_t i = 0; i < in.count; ++i) {
         BM_String_Item_View copy = in.items[i];
-        if (!bm_query_copy_sv(arena, in.items[i].value, &copy.value) || !arena_arr_push(arena, items, copy)) {
+        if (!bm_query_copy_sv(arena, in.items[i].value, &copy.value) ||
+            !bm_copy_item_semantic(arena, &copy.semantic, in.items[i].semantic) ||
+            !arena_arr_push(arena, items, copy)) {
             return false;
         }
     }
@@ -117,7 +119,7 @@ static bool bm_query_session_copy_link_item_span(Arena *arena, BM_Link_Item_Span
     for (size_t i = 0; i < in.count; ++i) {
         BM_Link_Item_View copy = in.items[i];
         if (!bm_query_copy_sv(arena, in.items[i].value, &copy.value) ||
-            !bm_query_copy_sv(arena, in.items[i].target_name, &copy.target_name) ||
+            !bm_copy_item_semantic(arena, &copy.semantic, in.items[i].semantic) ||
             !arena_arr_push(arena, items, copy)) {
             return false;
         }

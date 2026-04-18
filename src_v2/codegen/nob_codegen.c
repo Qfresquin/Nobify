@@ -1040,7 +1040,15 @@ static String_View cg_genex_target_property_cb(void *userdata, String_View targe
     if (!data || !data->ctx) return nob_sv_from_cstr("");
     id = bm_query_target_by_name(data->ctx->model, target_name);
     if (!bm_target_id_is_valid(id)) return nob_sv_from_cstr("");
-    if (!bm_query_target_property_value(data->ctx->model, id, property_name, data->ctx->scratch, &out)) {
+    if (!bm_query_target_modeled_property_value(data->ctx->model,
+                                                id,
+                                                property_name,
+                                                data->ctx->scratch,
+                                                &out)) {
+        return nob_sv_from_cstr("");
+    }
+    if (out.count > 0) return out;
+    if (!bm_query_target_raw_property_value(data->ctx->model, id, property_name, data->ctx->scratch, &out)) {
         return nob_sv_from_cstr("");
     }
     return out;

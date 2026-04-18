@@ -12,12 +12,16 @@ static bool bm_target_append_item(BM_Builder *builder,
                                   const Event *ev,
                                   BM_String_Item_View **dest,
                                   String_View value,
+                                  const Event_Link_Item_Metadata *semantic,
                                   Cmake_Visibility visibility,
                                   Event_Property_Mutate_Op op,
                                   uint32_t flags) {
     BM_String_Item_View item = {0};
     if (!bm_copy_string(builder->arena, value, &item.value)) {
         return bm_builder_error(builder, ev, "failed to copy target property item", "increase arena capacity");
+    }
+    if (semantic && !bm_copy_item_semantic(builder->arena, &item.semantic, *semantic)) {
+        return bm_builder_error(builder, ev, "failed to copy target property item semantics", "increase arena capacity");
     }
     item.visibility = bm_visibility_from_event(visibility);
     item.flags = flags;
@@ -26,20 +30,6 @@ static bool bm_target_append_item(BM_Builder *builder,
         return bm_builder_error(builder, ev, "failed to mutate target property item", "increase arena capacity");
     }
     return true;
-}
-
-static BM_Link_Item_Config_Filter bm_link_item_config_from_event(Event_Link_Item_Config_Filter filter) {
-    switch (filter) {
-        case EVENT_LINK_ITEM_CONFIG_DEBUG_ONLY: return BM_LINK_ITEM_CONFIG_DEBUG_ONLY;
-        case EVENT_LINK_ITEM_CONFIG_NONDEBUG_ONLY: return BM_LINK_ITEM_CONFIG_NONDEBUG_ONLY;
-        case EVENT_LINK_ITEM_CONFIG_ALL:
-        default:
-            return BM_LINK_ITEM_CONFIG_ALL;
-    }
-}
-
-static BM_Link_Item_Kind bm_link_item_kind_from_event(Event_Link_Item_Kind kind) {
-    return kind == EVENT_LINK_ITEM_TARGET_REF ? BM_LINK_ITEM_TARGET_REF : BM_LINK_ITEM_RAW_VALUE;
 }
 
 static bool bm_target_append_link_item(BM_Builder *builder,
@@ -57,12 +47,9 @@ static bool bm_target_append_link_item(BM_Builder *builder,
     item.visibility = bm_visibility_from_event(visibility);
     item.flags = flags;
     item.provenance = bm_provenance_from_event(builder->arena, ev);
-    item.config_filter = semantic ? bm_link_item_config_from_event(semantic->config_filter)
-                                  : BM_LINK_ITEM_CONFIG_ALL;
-    item.kind = semantic ? bm_link_item_kind_from_event(semantic->kind) : BM_LINK_ITEM_RAW_VALUE;
     item.target_id = BM_TARGET_ID_INVALID;
-    if (semantic && !bm_copy_string(builder->arena, semantic->target_name, &item.target_name)) {
-        return bm_builder_error(builder, ev, "failed to copy target link item metadata", "increase arena capacity");
+    if (semantic && !bm_copy_item_semantic(builder->arena, &item.semantic, *semantic)) {
+        return bm_builder_error(builder, ev, "failed to copy target link item semantics", "increase arena capacity");
     }
     if (!bm_apply_link_item_mutation(builder->arena, dest, &item, 1, op)) {
         return bm_builder_error(builder, ev, "failed to mutate target link item", "increase arena capacity");
@@ -222,16 +209,14 @@ static bool bm_target_promote_property_set(BM_Builder *builder,
             if (!bm_copy_string(builder->arena, prop->typed_items[i], &item.value)) {
                 return bm_builder_error(builder, ev, "failed to copy promoted link property item", "increase arena capacity");
             }
-            if (prop->typed_link_item_semantics && i < prop->typed_item_count) {
-                semantic = prop->typed_link_item_semantics[i];
+            if (prop->typed_item_semantics && i < prop->typed_item_count) {
+                semantic = prop->typed_item_semantics[i];
             }
             item.visibility = item_visibility;
             item.flags = flags;
             item.provenance = bm_provenance_from_event(builder->arena, ev);
-            item.config_filter = bm_link_item_config_from_event(semantic.config_filter);
-            item.kind = bm_link_item_kind_from_event(semantic.kind);
             item.target_id = BM_TARGET_ID_INVALID;
-            if (!bm_copy_string(builder->arena, semantic.target_name, &item.target_name) ||
+            if (!bm_copy_item_semantic(builder->arena, &item.semantic, semantic) ||
                 !arena_arr_push(builder->arena, link_items, item)) {
                 return bm_builder_error(builder, ev, "failed to append promoted link property item", "increase arena capacity");
             }
@@ -249,13 +234,18 @@ static bool bm_target_promote_property_set(BM_Builder *builder,
     } else {
         for (size_t i = 0; i < prop->typed_item_count; ++i) {
             BM_String_Item_View item = {0};
+            Event_Link_Item_Metadata semantic = {0};
             if (!bm_copy_string(builder->arena, prop->typed_items[i], &item.value)) {
                 return bm_builder_error(builder, ev, "failed to copy promoted target property item", "increase arena capacity");
+            }
+            if (prop->typed_item_semantics && i < prop->typed_item_count) {
+                semantic = prop->typed_item_semantics[i];
             }
             item.visibility = item_visibility;
             item.flags = flags;
             item.provenance = bm_provenance_from_event(builder->arena, ev);
-            if (!arena_arr_push(builder->arena, items, item)) {
+            if (!bm_copy_item_semantic(builder->arena, &item.semantic, semantic) ||
+                !arena_arr_push(builder->arena, items, item)) {
                 return bm_builder_error(builder, ev, "failed to append promoted target property item", "increase arena capacity");
             }
         }
@@ -576,6 +566,7 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
                                          ev,
                                          &target->link_options,
                                          ev->as.target_link_options.item,
+                                         &ev->as.target_link_options.semantic,
                                          ev->as.target_link_options.visibility,
                                          ev->as.target_link_options.is_before
                                              ? EVENT_PROPERTY_MUTATE_PREPEND_LIST
@@ -590,6 +581,7 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
                                          ev,
                                          &target->link_directories,
                                          ev->as.target_link_directories.path,
+                                         &ev->as.target_link_directories.semantic,
                                          ev->as.target_link_directories.visibility,
                                          EVENT_PROPERTY_MUTATE_APPEND_LIST,
                                          BM_ITEM_FLAG_NONE);
@@ -602,6 +594,7 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
                                          ev,
                                          &target->include_directories,
                                          ev->as.target_include_directories.path,
+                                         &ev->as.target_include_directories.semantic,
                                          ev->as.target_include_directories.visibility,
                                          ev->as.target_include_directories.is_before
                                              ? EVENT_PROPERTY_MUTATE_PREPEND_LIST
@@ -617,6 +610,7 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
                                          ev,
                                          &target->compile_definitions,
                                          ev->as.target_compile_definitions.item,
+                                         &ev->as.target_compile_definitions.semantic,
                                          ev->as.target_compile_definitions.visibility,
                                          EVENT_PROPERTY_MUTATE_APPEND_LIST,
                                          BM_ITEM_FLAG_NONE);
@@ -629,6 +623,7 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
                                          ev,
                                          &target->compile_options,
                                          ev->as.target_compile_options.item,
+                                         &ev->as.target_compile_options.semantic,
                                          ev->as.target_compile_options.visibility,
                                          ev->as.target_compile_options.is_before
                                              ? EVENT_PROPERTY_MUTATE_PREPEND_LIST
@@ -643,6 +638,7 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
                                          ev,
                                          &target->compile_features,
                                          ev->as.target_compile_features.item,
+                                         &ev->as.target_compile_features.semantic,
                                          ev->as.target_compile_features.visibility,
                                          EVENT_PROPERTY_MUTATE_APPEND_LIST,
                                          BM_ITEM_FLAG_NONE);

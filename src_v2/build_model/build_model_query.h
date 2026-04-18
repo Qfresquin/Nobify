@@ -133,11 +133,16 @@ BM_String_Item_Span bm_query_target_link_directories_raw(const Build_Model *mode
 size_t bm_query_target_raw_property_count(const Build_Model *model, BM_Target_Id id);
 String_View bm_query_target_raw_property_name(const Build_Model *model, BM_Target_Id id, size_t property_index);
 BM_String_Span bm_query_target_raw_property_items(const Build_Model *model, BM_Target_Id id, String_View property_name);
-bool bm_query_target_property_value(const Build_Model *model,
-                                    BM_Target_Id id,
-                                    String_View property_name,
-                                    Arena *scratch,
-                                    String_View *out);
+bool bm_query_target_modeled_property_value(const Build_Model *model,
+                                            BM_Target_Id id,
+                                            String_View property_name,
+                                            Arena *scratch,
+                                            String_View *out);
+bool bm_query_target_raw_property_value(const Build_Model *model,
+                                        BM_Target_Id id,
+                                        String_View property_name,
+                                        Arena *scratch,
+                                        String_View *out);
 String_View bm_query_target_output_name(const Build_Model *model, BM_Target_Id id);
 String_View bm_query_target_prefix(const Build_Model *model, BM_Target_Id id);
 String_View bm_query_target_suffix(const Build_Model *model, BM_Target_Id id);

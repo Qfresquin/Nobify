@@ -224,20 +224,39 @@ typedef enum {
 } Event_Build_Step_Kind;
 
 typedef enum {
+    EVENT_USAGE_INTERFACE_ANY = 0,
+    EVENT_USAGE_INTERFACE_BUILD,
+    EVENT_USAGE_INTERFACE_INSTALL,
+} Event_Usage_Interface_Filter;
+
+typedef enum {
     EVENT_LINK_ITEM_CONFIG_ALL = 0,
     EVENT_LINK_ITEM_CONFIG_DEBUG_ONLY,
     EVENT_LINK_ITEM_CONFIG_NONDEBUG_ONLY,
+    EVENT_LINK_ITEM_CONFIG_MATCH_LIST,
 } Event_Link_Item_Config_Filter;
 
 typedef enum {
     EVENT_LINK_ITEM_RAW_VALUE = 0,
+    EVENT_LINK_ITEM_TARGET_PROPERTY_IMPLICIT,
+    EVENT_LINK_ITEM_TARGET_PROPERTY_EXPLICIT,
     EVENT_LINK_ITEM_TARGET_REF,
 } Event_Link_Item_Kind;
 
 typedef struct {
+    Event_Usage_Interface_Filter interface_filter;
     Event_Link_Item_Config_Filter config_filter;
+    bool link_only;
+    String_View *configurations;
+    size_t configuration_count;
+    String_View *compile_languages;
+    size_t compile_language_count;
+    String_View *platform_ids;
+    size_t platform_id_count;
     Event_Link_Item_Kind kind;
+    String_View value;
     String_View target_name;
+    String_View property_name;
 } Event_Link_Item_Metadata;
 
 typedef enum {
@@ -407,7 +426,9 @@ typedef struct {
     uint32_t modifier_flags;
     String_View *items;
     size_t item_count;
-    Event_Link_Item_Metadata *link_item_semantics;
+    String_View *typed_items;
+    size_t typed_item_count;
+    Event_Link_Item_Metadata *typed_item_semantics;
 } Event_Directory_Property_Mutate;
 
 typedef Event_Directory_Property_Mutate Event_Global_Property_Mutate;
@@ -924,7 +945,7 @@ typedef struct {
     Cmake_Target_Property_Op op;
     String_View *typed_items;
     size_t typed_item_count;
-    Event_Link_Item_Metadata *typed_link_item_semantics;
+    Event_Link_Item_Metadata *typed_item_semantics;
 } Event_Target_Prop_Set;
 
 typedef struct {
@@ -939,12 +960,14 @@ typedef struct {
     Cmake_Visibility visibility;
     String_View item;
     bool is_before;
+    Event_Link_Item_Metadata semantic;
 } Event_Target_Link_Options;
 
 typedef struct {
     String_View target_name;
     Cmake_Visibility visibility;
     String_View path;
+    Event_Link_Item_Metadata semantic;
 } Event_Target_Link_Directories;
 
 typedef struct {
@@ -953,12 +976,14 @@ typedef struct {
     String_View path;
     bool is_system;
     bool is_before;
+    Event_Link_Item_Metadata semantic;
 } Event_Target_Include_Directories;
 
 typedef struct {
     String_View target_name;
     Cmake_Visibility visibility;
     String_View item;
+    Event_Link_Item_Metadata semantic;
 } Event_Target_Compile_Definitions;
 
 typedef struct {
@@ -966,12 +991,14 @@ typedef struct {
     Cmake_Visibility visibility;
     String_View item;
     bool is_before;
+    Event_Link_Item_Metadata semantic;
 } Event_Target_Compile_Options;
 
 typedef struct {
     String_View target_name;
     Cmake_Visibility visibility;
     String_View item;
+    Event_Link_Item_Metadata semantic;
 } Event_Target_Compile_Features;
 
 typedef struct {

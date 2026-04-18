@@ -1187,13 +1187,28 @@ bool eval_link_item_metadata_from_raw(EvalExecContext *ctx,
                                       String_View raw_item,
                                       Event_Link_Item_Config_Filter filter,
                                       Event_Link_Item_Metadata *out);
+bool eval_usage_item_semantics_from_raw(EvalExecContext *ctx,
+                                        Cmake_Event_Origin origin,
+                                        String_View property_name,
+                                        String_View owner_target_name,
+                                        bool link_family,
+                                        String_View raw_item,
+                                        Event_Link_Item_Config_Filter filter,
+                                        Event_Link_Item_Metadata *out);
 bool eval_parse_link_libraries_items_semantics(EvalExecContext *ctx,
+                                               Cmake_Event_Origin origin,
+                                               String_View property_name,
+                                               String_View owner_target_name,
                                                const String_View *tokens,
                                                size_t token_count,
                                                String_View **out_items,
                                                Event_Link_Item_Metadata **out_semantics);
-bool eval_populate_property_mutate_semantics(EvalExecContext *ctx, Event_Directory_Property_Mutate *mut);
-bool eval_populate_target_prop_set_semantics(EvalExecContext *ctx, Event_Target_Prop_Set *prop);
+bool eval_populate_property_mutate_semantics(EvalExecContext *ctx,
+                                             Cmake_Event_Origin origin,
+                                             Event_Directory_Property_Mutate *mut);
+bool eval_populate_target_prop_set_semantics(EvalExecContext *ctx,
+                                             Cmake_Event_Origin origin,
+                                             Event_Target_Prop_Set *prop);
 bool eval_populate_build_step_dependency_semantics(EvalExecContext *ctx, Event_Build_Step_Add_Dependency *dep);
 static inline bool emit_event(EvalExecContext *ctx, Event ev) {
     return eval_emit_event(ctx, ev);
@@ -1233,7 +1248,18 @@ static inline Event_Link_Item_Metadata *eval_link_item_metadata_array_copy_to_ev
     EVAL_OOM_RETURN_IF_NULL(ctx, copy, NULL);
     for (size_t i = 0; i < count; ++i) {
         copy[i] = items[i];
+        copy[i].configurations =
+            eval_sv_array_copy_to_event_arena(ctx, items[i].configurations, items[i].configuration_count);
+        if (eval_should_stop(ctx)) return NULL;
+        copy[i].compile_languages =
+            eval_sv_array_copy_to_event_arena(ctx, items[i].compile_languages, items[i].compile_language_count);
+        if (eval_should_stop(ctx)) return NULL;
+        copy[i].platform_ids =
+            eval_sv_array_copy_to_event_arena(ctx, items[i].platform_ids, items[i].platform_id_count);
+        if (eval_should_stop(ctx)) return NULL;
+        copy[i].value = sv_copy_to_event_arena(ctx, items[i].value);
         copy[i].target_name = sv_copy_to_event_arena(ctx, items[i].target_name);
+        copy[i].property_name = sv_copy_to_event_arena(ctx, items[i].property_name);
         if (eval_should_stop(ctx)) return NULL;
     }
     return copy;
@@ -1510,21 +1536,26 @@ static inline bool eval_emit_target_prop_set(EvalExecContext *ctx,
                                              String_View value,
                                              Cmake_Target_Property_Op op) {
     Event ev = {0};
+    Cmake_Event_Origin semantic_origin = {
+        .file_path = origin.file_path,
+        .line = origin.line,
+        .col = origin.col,
+    };
     ev.h.kind = EVENT_TARGET_PROP_SET;
     ev.h.origin = origin;
     ev.as.target_prop_set.target_name = sv_copy_to_event_arena(ctx, target_name);
     ev.as.target_prop_set.key = sv_copy_to_event_arena(ctx, key);
     ev.as.target_prop_set.value = sv_copy_to_event_arena(ctx, value);
     ev.as.target_prop_set.op = op;
-    if (!eval_populate_target_prop_set_semantics(ctx, &ev.as.target_prop_set)) return false;
+    if (!eval_populate_target_prop_set_semantics(ctx, semantic_origin, &ev.as.target_prop_set)) return false;
     ev.as.target_prop_set.typed_items =
         eval_sv_array_copy_to_event_arena(ctx,
                                           ev.as.target_prop_set.typed_items,
                                           ev.as.target_prop_set.typed_item_count);
     if (eval_should_stop(ctx)) return false;
-    ev.as.target_prop_set.typed_link_item_semantics =
+    ev.as.target_prop_set.typed_item_semantics =
         eval_link_item_metadata_array_copy_to_event_arena(ctx,
-                                                          ev.as.target_prop_set.typed_link_item_semantics,
+                                                          ev.as.target_prop_set.typed_item_semantics,
                                                           ev.as.target_prop_set.typed_item_count);
     if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
@@ -1622,12 +1653,13 @@ static inline bool eval_emit_target_link_libraries(EvalExecContext *ctx,
     if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
 }
-static inline bool eval_emit_target_link_options(EvalExecContext *ctx,
-                                                 Event_Origin origin,
-                                                 String_View target_name,
-                                                 Cmake_Visibility visibility,
-                                                 String_View item,
-                                                 bool is_before) {
+static inline bool eval_emit_target_link_options_semantic(EvalExecContext *ctx,
+                                                          Event_Origin origin,
+                                                          String_View target_name,
+                                                          Cmake_Visibility visibility,
+                                                          String_View item,
+                                                          bool is_before,
+                                                          Event_Link_Item_Metadata semantic) {
     Event ev = {0};
     ev.h.kind = EVENT_TARGET_LINK_OPTIONS;
     ev.h.origin = origin;
@@ -1635,6 +1667,79 @@ static inline bool eval_emit_target_link_options(EvalExecContext *ctx,
     ev.as.target_link_options.visibility = visibility;
     ev.as.target_link_options.item = sv_copy_to_event_arena(ctx, item);
     ev.as.target_link_options.is_before = is_before;
+    ev.as.target_link_options.semantic = semantic;
+    ev.as.target_link_options.semantic.value =
+        sv_copy_to_event_arena(ctx, ev.as.target_link_options.semantic.value);
+    ev.as.target_link_options.semantic.target_name =
+        sv_copy_to_event_arena(ctx, ev.as.target_link_options.semantic.target_name);
+    ev.as.target_link_options.semantic.property_name =
+        sv_copy_to_event_arena(ctx, ev.as.target_link_options.semantic.property_name);
+    ev.as.target_link_options.semantic.configurations =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_link_options.semantic.configurations,
+                                          ev.as.target_link_options.semantic.configuration_count);
+    ev.as.target_link_options.semantic.compile_languages =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_link_options.semantic.compile_languages,
+                                          ev.as.target_link_options.semantic.compile_language_count);
+    ev.as.target_link_options.semantic.platform_ids =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_link_options.semantic.platform_ids,
+                                          ev.as.target_link_options.semantic.platform_id_count);
+    if (eval_should_stop(ctx)) return false;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_target_link_options(EvalExecContext *ctx,
+                                                 Event_Origin origin,
+                                                 String_View target_name,
+                                                 Cmake_Visibility visibility,
+                                                 String_View item,
+                                                 bool is_before) {
+    Event_Link_Item_Metadata semantic = {0};
+    semantic.interface_filter = EVENT_USAGE_INTERFACE_ANY;
+    semantic.config_filter = EVENT_LINK_ITEM_CONFIG_ALL;
+    semantic.kind = EVENT_LINK_ITEM_RAW_VALUE;
+    semantic.value = item;
+    return eval_emit_target_link_options_semantic(ctx,
+                                                  origin,
+                                                  target_name,
+                                                  visibility,
+                                                  item,
+                                                  is_before,
+                                                  semantic);
+}
+static inline bool eval_emit_target_link_directories_semantic(EvalExecContext *ctx,
+                                                              Event_Origin origin,
+                                                              String_View target_name,
+                                                              Cmake_Visibility visibility,
+                                                              String_View path,
+                                                              Event_Link_Item_Metadata semantic) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TARGET_LINK_DIRECTORIES;
+    ev.h.origin = origin;
+    ev.as.target_link_directories.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_link_directories.visibility = visibility;
+    ev.as.target_link_directories.path = sv_copy_to_event_arena(ctx, path);
+    ev.as.target_link_directories.semantic = semantic;
+    ev.as.target_link_directories.semantic.value =
+        sv_copy_to_event_arena(ctx, ev.as.target_link_directories.semantic.value);
+    ev.as.target_link_directories.semantic.target_name =
+        sv_copy_to_event_arena(ctx, ev.as.target_link_directories.semantic.target_name);
+    ev.as.target_link_directories.semantic.property_name =
+        sv_copy_to_event_arena(ctx, ev.as.target_link_directories.semantic.property_name);
+    ev.as.target_link_directories.semantic.configurations =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_link_directories.semantic.configurations,
+                                          ev.as.target_link_directories.semantic.configuration_count);
+    ev.as.target_link_directories.semantic.compile_languages =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_link_directories.semantic.compile_languages,
+                                          ev.as.target_link_directories.semantic.compile_language_count);
+    ev.as.target_link_directories.semantic.platform_ids =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_link_directories.semantic.platform_ids,
+                                          ev.as.target_link_directories.semantic.platform_id_count);
+    if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_target_link_directories(EvalExecContext *ctx,
@@ -1642,12 +1747,54 @@ static inline bool eval_emit_target_link_directories(EvalExecContext *ctx,
                                                      String_View target_name,
                                                      Cmake_Visibility visibility,
                                                      String_View path) {
+    Event_Link_Item_Metadata semantic = {0};
+    semantic.interface_filter = EVENT_USAGE_INTERFACE_ANY;
+    semantic.config_filter = EVENT_LINK_ITEM_CONFIG_ALL;
+    semantic.kind = EVENT_LINK_ITEM_RAW_VALUE;
+    semantic.value = path;
+    return eval_emit_target_link_directories_semantic(ctx,
+                                                      origin,
+                                                      target_name,
+                                                      visibility,
+                                                      path,
+                                                      semantic);
+}
+static inline bool eval_emit_target_include_directories_semantic(EvalExecContext *ctx,
+                                                                 Event_Origin origin,
+                                                                 String_View target_name,
+                                                                 Cmake_Visibility visibility,
+                                                                 String_View path,
+                                                                 bool is_system,
+                                                                 bool is_before,
+                                                                 Event_Link_Item_Metadata semantic) {
     Event ev = {0};
-    ev.h.kind = EVENT_TARGET_LINK_DIRECTORIES;
+    ev.h.kind = EVENT_TARGET_INCLUDE_DIRECTORIES;
     ev.h.origin = origin;
-    ev.as.target_link_directories.target_name = sv_copy_to_event_arena(ctx, target_name);
-    ev.as.target_link_directories.visibility = visibility;
-    ev.as.target_link_directories.path = sv_copy_to_event_arena(ctx, path);
+    ev.as.target_include_directories.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_include_directories.visibility = visibility;
+    ev.as.target_include_directories.path = sv_copy_to_event_arena(ctx, path);
+    ev.as.target_include_directories.is_system = is_system;
+    ev.as.target_include_directories.is_before = is_before;
+    ev.as.target_include_directories.semantic = semantic;
+    ev.as.target_include_directories.semantic.value =
+        sv_copy_to_event_arena(ctx, ev.as.target_include_directories.semantic.value);
+    ev.as.target_include_directories.semantic.target_name =
+        sv_copy_to_event_arena(ctx, ev.as.target_include_directories.semantic.target_name);
+    ev.as.target_include_directories.semantic.property_name =
+        sv_copy_to_event_arena(ctx, ev.as.target_include_directories.semantic.property_name);
+    ev.as.target_include_directories.semantic.configurations =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_include_directories.semantic.configurations,
+                                          ev.as.target_include_directories.semantic.configuration_count);
+    ev.as.target_include_directories.semantic.compile_languages =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_include_directories.semantic.compile_languages,
+                                          ev.as.target_include_directories.semantic.compile_language_count);
+    ev.as.target_include_directories.semantic.platform_ids =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_include_directories.semantic.platform_ids,
+                                          ev.as.target_include_directories.semantic.platform_id_count);
+    if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_target_include_directories(EvalExecContext *ctx,
@@ -1657,14 +1804,52 @@ static inline bool eval_emit_target_include_directories(EvalExecContext *ctx,
                                                         String_View path,
                                                         bool is_system,
                                                         bool is_before) {
+    Event_Link_Item_Metadata semantic = {0};
+    semantic.interface_filter = EVENT_USAGE_INTERFACE_ANY;
+    semantic.config_filter = EVENT_LINK_ITEM_CONFIG_ALL;
+    semantic.kind = EVENT_LINK_ITEM_RAW_VALUE;
+    semantic.value = path;
+    return eval_emit_target_include_directories_semantic(ctx,
+                                                         origin,
+                                                         target_name,
+                                                         visibility,
+                                                         path,
+                                                         is_system,
+                                                         is_before,
+                                                         semantic);
+}
+static inline bool eval_emit_target_compile_definitions_semantic(EvalExecContext *ctx,
+                                                                 Event_Origin origin,
+                                                                 String_View target_name,
+                                                                 Cmake_Visibility visibility,
+                                                                 String_View item,
+                                                                 Event_Link_Item_Metadata semantic) {
     Event ev = {0};
-    ev.h.kind = EVENT_TARGET_INCLUDE_DIRECTORIES;
+    ev.h.kind = EVENT_TARGET_COMPILE_DEFINITIONS;
     ev.h.origin = origin;
-    ev.as.target_include_directories.target_name = sv_copy_to_event_arena(ctx, target_name);
-    ev.as.target_include_directories.visibility = visibility;
-    ev.as.target_include_directories.path = sv_copy_to_event_arena(ctx, path);
-    ev.as.target_include_directories.is_system = is_system;
-    ev.as.target_include_directories.is_before = is_before;
+    ev.as.target_compile_definitions.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_compile_definitions.visibility = visibility;
+    ev.as.target_compile_definitions.item = sv_copy_to_event_arena(ctx, item);
+    ev.as.target_compile_definitions.semantic = semantic;
+    ev.as.target_compile_definitions.semantic.value =
+        sv_copy_to_event_arena(ctx, ev.as.target_compile_definitions.semantic.value);
+    ev.as.target_compile_definitions.semantic.target_name =
+        sv_copy_to_event_arena(ctx, ev.as.target_compile_definitions.semantic.target_name);
+    ev.as.target_compile_definitions.semantic.property_name =
+        sv_copy_to_event_arena(ctx, ev.as.target_compile_definitions.semantic.property_name);
+    ev.as.target_compile_definitions.semantic.configurations =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_compile_definitions.semantic.configurations,
+                                          ev.as.target_compile_definitions.semantic.configuration_count);
+    ev.as.target_compile_definitions.semantic.compile_languages =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_compile_definitions.semantic.compile_languages,
+                                          ev.as.target_compile_definitions.semantic.compile_language_count);
+    ev.as.target_compile_definitions.semantic.platform_ids =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_compile_definitions.semantic.platform_ids,
+                                          ev.as.target_compile_definitions.semantic.platform_id_count);
+    if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_target_compile_definitions(EvalExecContext *ctx,
@@ -1672,12 +1857,52 @@ static inline bool eval_emit_target_compile_definitions(EvalExecContext *ctx,
                                                         String_View target_name,
                                                         Cmake_Visibility visibility,
                                                         String_View item) {
+    Event_Link_Item_Metadata semantic = {0};
+    semantic.interface_filter = EVENT_USAGE_INTERFACE_ANY;
+    semantic.config_filter = EVENT_LINK_ITEM_CONFIG_ALL;
+    semantic.kind = EVENT_LINK_ITEM_RAW_VALUE;
+    semantic.value = item;
+    return eval_emit_target_compile_definitions_semantic(ctx,
+                                                         origin,
+                                                         target_name,
+                                                         visibility,
+                                                         item,
+                                                         semantic);
+}
+static inline bool eval_emit_target_compile_options_semantic(EvalExecContext *ctx,
+                                                             Event_Origin origin,
+                                                             String_View target_name,
+                                                             Cmake_Visibility visibility,
+                                                             String_View item,
+                                                             bool is_before,
+                                                             Event_Link_Item_Metadata semantic) {
     Event ev = {0};
-    ev.h.kind = EVENT_TARGET_COMPILE_DEFINITIONS;
+    ev.h.kind = EVENT_TARGET_COMPILE_OPTIONS;
     ev.h.origin = origin;
-    ev.as.target_compile_definitions.target_name = sv_copy_to_event_arena(ctx, target_name);
-    ev.as.target_compile_definitions.visibility = visibility;
-    ev.as.target_compile_definitions.item = sv_copy_to_event_arena(ctx, item);
+    ev.as.target_compile_options.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_compile_options.visibility = visibility;
+    ev.as.target_compile_options.item = sv_copy_to_event_arena(ctx, item);
+    ev.as.target_compile_options.is_before = is_before;
+    ev.as.target_compile_options.semantic = semantic;
+    ev.as.target_compile_options.semantic.value =
+        sv_copy_to_event_arena(ctx, ev.as.target_compile_options.semantic.value);
+    ev.as.target_compile_options.semantic.target_name =
+        sv_copy_to_event_arena(ctx, ev.as.target_compile_options.semantic.target_name);
+    ev.as.target_compile_options.semantic.property_name =
+        sv_copy_to_event_arena(ctx, ev.as.target_compile_options.semantic.property_name);
+    ev.as.target_compile_options.semantic.configurations =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_compile_options.semantic.configurations,
+                                          ev.as.target_compile_options.semantic.configuration_count);
+    ev.as.target_compile_options.semantic.compile_languages =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_compile_options.semantic.compile_languages,
+                                          ev.as.target_compile_options.semantic.compile_language_count);
+    ev.as.target_compile_options.semantic.platform_ids =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_compile_options.semantic.platform_ids,
+                                          ev.as.target_compile_options.semantic.platform_id_count);
+    if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_target_compile_options(EvalExecContext *ctx,
@@ -1686,13 +1911,51 @@ static inline bool eval_emit_target_compile_options(EvalExecContext *ctx,
                                                     Cmake_Visibility visibility,
                                                     String_View item,
                                                     bool is_before) {
+    Event_Link_Item_Metadata semantic = {0};
+    semantic.interface_filter = EVENT_USAGE_INTERFACE_ANY;
+    semantic.config_filter = EVENT_LINK_ITEM_CONFIG_ALL;
+    semantic.kind = EVENT_LINK_ITEM_RAW_VALUE;
+    semantic.value = item;
+    return eval_emit_target_compile_options_semantic(ctx,
+                                                     origin,
+                                                     target_name,
+                                                     visibility,
+                                                     item,
+                                                     is_before,
+                                                     semantic);
+}
+static inline bool eval_emit_target_compile_features_semantic(EvalExecContext *ctx,
+                                                              Event_Origin origin,
+                                                              String_View target_name,
+                                                              Cmake_Visibility visibility,
+                                                              String_View item,
+                                                              Event_Link_Item_Metadata semantic) {
     Event ev = {0};
-    ev.h.kind = EVENT_TARGET_COMPILE_OPTIONS;
+    ev.h.kind = EVENT_TARGET_COMPILE_FEATURES;
     ev.h.origin = origin;
-    ev.as.target_compile_options.target_name = sv_copy_to_event_arena(ctx, target_name);
-    ev.as.target_compile_options.visibility = visibility;
-    ev.as.target_compile_options.item = sv_copy_to_event_arena(ctx, item);
-    ev.as.target_compile_options.is_before = is_before;
+    ev.as.target_compile_features.target_name = sv_copy_to_event_arena(ctx, target_name);
+    ev.as.target_compile_features.visibility = visibility;
+    ev.as.target_compile_features.item = sv_copy_to_event_arena(ctx, item);
+    ev.as.target_compile_features.semantic = semantic;
+    ev.as.target_compile_features.semantic.value =
+        sv_copy_to_event_arena(ctx, ev.as.target_compile_features.semantic.value);
+    ev.as.target_compile_features.semantic.target_name =
+        sv_copy_to_event_arena(ctx, ev.as.target_compile_features.semantic.target_name);
+    ev.as.target_compile_features.semantic.property_name =
+        sv_copy_to_event_arena(ctx, ev.as.target_compile_features.semantic.property_name);
+    ev.as.target_compile_features.semantic.configurations =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_compile_features.semantic.configurations,
+                                          ev.as.target_compile_features.semantic.configuration_count);
+    ev.as.target_compile_features.semantic.compile_languages =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_compile_features.semantic.compile_languages,
+                                          ev.as.target_compile_features.semantic.compile_language_count);
+    ev.as.target_compile_features.semantic.platform_ids =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.target_compile_features.semantic.platform_ids,
+                                          ev.as.target_compile_features.semantic.platform_id_count);
+    if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_target_compile_features(EvalExecContext *ctx,
@@ -1700,13 +1963,17 @@ static inline bool eval_emit_target_compile_features(EvalExecContext *ctx,
                                                      String_View target_name,
                                                      Cmake_Visibility visibility,
                                                      String_View item) {
-    Event ev = {0};
-    ev.h.kind = EVENT_TARGET_COMPILE_FEATURES;
-    ev.h.origin = origin;
-    ev.as.target_compile_features.target_name = sv_copy_to_event_arena(ctx, target_name);
-    ev.as.target_compile_features.visibility = visibility;
-    ev.as.target_compile_features.item = sv_copy_to_event_arena(ctx, item);
-    return emit_event(ctx, ev);
+    Event_Link_Item_Metadata semantic = {0};
+    semantic.interface_filter = EVENT_USAGE_INTERFACE_ANY;
+    semantic.config_filter = EVENT_LINK_ITEM_CONFIG_ALL;
+    semantic.kind = EVENT_LINK_ITEM_RAW_VALUE;
+    semantic.value = item;
+    return eval_emit_target_compile_features_semantic(ctx,
+                                                      origin,
+                                                      target_name,
+                                                      visibility,
+                                                      item,
+                                                      semantic);
 }
 static inline bool eval_emit_var_set_current(EvalExecContext *ctx,
                                              Event_Origin origin,
@@ -2074,6 +2341,11 @@ static inline bool eval_emit_directory_property_mutate(EvalExecContext *ctx,
                                                        String_View *items,
                                                        size_t item_count) {
     Event ev = {0};
+    Cmake_Event_Origin semantic_origin = {
+        .file_path = origin.file_path,
+        .line = origin.line,
+        .col = origin.col,
+    };
     ev.h.kind = EVENT_DIRECTORY_PROPERTY_MUTATE;
     ev.h.origin = origin;
     ev.as.directory_property_mutate.property_name = property_name;
@@ -2081,11 +2353,16 @@ static inline bool eval_emit_directory_property_mutate(EvalExecContext *ctx,
     ev.as.directory_property_mutate.modifier_flags = modifier_flags;
     ev.as.directory_property_mutate.items = items;
     ev.as.directory_property_mutate.item_count = item_count;
-    if (!eval_populate_property_mutate_semantics(ctx, &ev.as.directory_property_mutate)) return false;
-    ev.as.directory_property_mutate.link_item_semantics =
+    if (!eval_populate_property_mutate_semantics(ctx, semantic_origin, &ev.as.directory_property_mutate)) return false;
+    ev.as.directory_property_mutate.typed_items =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.directory_property_mutate.typed_items,
+                                          ev.as.directory_property_mutate.typed_item_count);
+    if (eval_should_stop(ctx)) return false;
+    ev.as.directory_property_mutate.typed_item_semantics =
         eval_link_item_metadata_array_copy_to_event_arena(ctx,
-                                                          ev.as.directory_property_mutate.link_item_semantics,
-                                                          ev.as.directory_property_mutate.item_count);
+                                                          ev.as.directory_property_mutate.typed_item_semantics,
+                                                          ev.as.directory_property_mutate.typed_item_count);
     if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
 }
@@ -2097,6 +2374,11 @@ static inline bool eval_emit_global_property_mutate(EvalExecContext *ctx,
                                                     String_View *items,
                                                     size_t item_count) {
     Event ev = {0};
+    Cmake_Event_Origin semantic_origin = {
+        .file_path = origin.file_path,
+        .line = origin.line,
+        .col = origin.col,
+    };
     ev.h.kind = EVENT_GLOBAL_PROPERTY_MUTATE;
     ev.h.origin = origin;
     ev.as.global_property_mutate.property_name = property_name;
@@ -2104,11 +2386,16 @@ static inline bool eval_emit_global_property_mutate(EvalExecContext *ctx,
     ev.as.global_property_mutate.modifier_flags = modifier_flags;
     ev.as.global_property_mutate.items = items;
     ev.as.global_property_mutate.item_count = item_count;
-    if (!eval_populate_property_mutate_semantics(ctx, &ev.as.global_property_mutate)) return false;
-    ev.as.global_property_mutate.link_item_semantics =
+    if (!eval_populate_property_mutate_semantics(ctx, semantic_origin, &ev.as.global_property_mutate)) return false;
+    ev.as.global_property_mutate.typed_items =
+        eval_sv_array_copy_to_event_arena(ctx,
+                                          ev.as.global_property_mutate.typed_items,
+                                          ev.as.global_property_mutate.typed_item_count);
+    if (eval_should_stop(ctx)) return false;
+    ev.as.global_property_mutate.typed_item_semantics =
         eval_link_item_metadata_array_copy_to_event_arena(ctx,
-                                                          ev.as.global_property_mutate.link_item_semantics,
-                                                          ev.as.global_property_mutate.item_count);
+                                                          ev.as.global_property_mutate.typed_item_semantics,
+                                                          ev.as.global_property_mutate.typed_item_count);
     if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
 }

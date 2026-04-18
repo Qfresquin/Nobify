@@ -469,6 +469,35 @@ bool bm_apply_link_item_mutation(Arena *arena,
                                  const BM_Link_Item_View *items,
                                  size_t count,
                                  Event_Property_Mutate_Op op);
+
+static inline bool bm_copy_string_array_owned(Arena *arena,
+                                              String_View **dest,
+                                              const String_View *src,
+                                              size_t count) {
+    if (!dest) return false;
+    *dest = NULL;
+    for (size_t i = 0; i < count; ++i) {
+        String_View copy = {0};
+        if (!bm_copy_string(arena, src[i], &copy) || !arena_arr_push(arena, *dest, copy)) return false;
+    }
+    return true;
+}
+
+static inline bool bm_copy_item_semantic(Arena *arena,
+                                         Event_Link_Item_Metadata *dest,
+                                         Event_Link_Item_Metadata src) {
+    if (!dest) return false;
+    *dest = src;
+    if (!bm_copy_string_array_owned(arena, &dest->configurations, src.configurations, src.configuration_count) ||
+        !bm_copy_string_array_owned(arena, &dest->compile_languages, src.compile_languages, src.compile_language_count) ||
+        !bm_copy_string_array_owned(arena, &dest->platform_ids, src.platform_ids, src.platform_id_count) ||
+        !bm_copy_string(arena, src.value, &dest->value) ||
+        !bm_copy_string(arena, src.target_name, &dest->target_name) ||
+        !bm_copy_string(arena, src.property_name, &dest->property_name)) {
+        return false;
+    }
+    return true;
+}
 bool bm_record_raw_property(Arena *arena,
                             BM_Raw_Property_Record **records,
                             String_View name,

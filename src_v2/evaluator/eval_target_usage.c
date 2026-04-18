@@ -596,6 +596,30 @@ static bool target_usage_apply_item_entries(EvalExecContext *ctx,
     return true;
 }
 
+static bool target_usage_attach_item_semantics(EvalExecContext *ctx,
+                                               Cmake_Event_Origin origin,
+                                               String_View target_name,
+                                               String_View property_name,
+                                               bool link_family,
+                                               Target_Usage_Item_Entry *entries) {
+    if (!ctx || !entries) return false;
+    for (size_t i = 0; i < arena_arr_len(entries); ++i) {
+        Event_Link_Item_Metadata semantic = {0};
+        if (!eval_usage_item_semantics_from_raw(ctx,
+                                                origin,
+                                                property_name,
+                                                target_name,
+                                                link_family,
+                                                entries[i].item,
+                                                EVENT_LINK_ITEM_CONFIG_ALL,
+                                                &semantic)) {
+            return false;
+        }
+        entries[i].semantic = semantic;
+    }
+    return true;
+}
+
 static bool target_usage_apply_include_directory_entries(EvalExecContext *ctx,
                                                          Cmake_Event_Origin origin,
                                                          String_View target_name,
@@ -657,43 +681,46 @@ static bool target_usage_emit_link_options_entry(EvalExecContext *ctx,
                                                  Cmake_Event_Origin origin,
                                                  String_View target_name,
                                                  const Target_Usage_Item_Entry *entry) {
-    return eval_emit_target_link_options(
-        ctx, origin, target_name, entry->visibility, entry->item, entry->is_before);
+    return eval_emit_target_link_options_semantic(
+        ctx, origin, target_name, entry->visibility, entry->item, entry->is_before, entry->semantic);
 }
 
 static bool target_usage_emit_link_directories_entry(EvalExecContext *ctx,
                                                      Cmake_Event_Origin origin,
                                                      String_View target_name,
                                                      const Target_Usage_Item_Entry *entry) {
-    return eval_emit_target_link_directories(ctx, origin, target_name, entry->visibility, entry->item);
+    return eval_emit_target_link_directories_semantic(
+        ctx, origin, target_name, entry->visibility, entry->item, entry->semantic);
 }
 
 static bool target_usage_emit_include_directories_entry(EvalExecContext *ctx,
                                                         Cmake_Event_Origin origin,
                                                         String_View target_name,
                                                         const Target_Usage_Item_Entry *entry) {
-    return eval_emit_target_include_directories(ctx,
-                                                origin,
-                                                target_name,
-                                                entry->visibility,
-                                                entry->item,
-                                                entry->is_system,
-                                                entry->is_before);
+    return eval_emit_target_include_directories_semantic(ctx,
+                                                         origin,
+                                                         target_name,
+                                                         entry->visibility,
+                                                         entry->item,
+                                                         entry->is_system,
+                                                         entry->is_before,
+                                                         entry->semantic);
 }
 
 static bool target_usage_emit_compile_definitions_entry(EvalExecContext *ctx,
                                                         Cmake_Event_Origin origin,
                                                         String_View target_name,
                                                         const Target_Usage_Item_Entry *entry) {
-    return eval_emit_target_compile_definitions(ctx, origin, target_name, entry->visibility, entry->item);
+    return eval_emit_target_compile_definitions_semantic(
+        ctx, origin, target_name, entry->visibility, entry->item, entry->semantic);
 }
 
 static bool target_usage_emit_compile_options_entry(EvalExecContext *ctx,
                                                     Cmake_Event_Origin origin,
                                                     String_View target_name,
                                                     const Target_Usage_Item_Entry *entry) {
-    return eval_emit_target_compile_options(
-        ctx, origin, target_name, entry->visibility, entry->item, entry->is_before);
+    return eval_emit_target_compile_options_semantic(
+        ctx, origin, target_name, entry->visibility, entry->item, entry->is_before, entry->semantic);
 }
 
 static bool target_usage_apply_compile_feature_groups(EvalExecContext *ctx,
@@ -911,7 +938,16 @@ static bool target_link_libraries_parse_request(EvalExecContext *ctx,
             filter = EVENT_LINK_ITEM_CONFIG_NONDEBUG_ONLY;
         }
         item = eval_link_item_apply_config_filter_temp(ctx, item, filter);
-        if (!eval_link_item_metadata_from_raw(ctx, args[i], filter, &semantic)) return false;
+        if (!eval_usage_item_semantics_from_raw(ctx,
+                                                origin,
+                                                nob_sv_from_cstr("LINK_LIBRARIES"),
+                                                out_req->target_name,
+                                                true,
+                                                args[i],
+                                                filter,
+                                                &semantic)) {
+            return false;
+        }
         if (eval_should_stop(ctx)) return false;
 
         if (!target_usage_append_item_entry(
@@ -1402,6 +1438,14 @@ Eval_Result eval_handle_target_link_options(EvalExecContext *ctx, const Node *no
             nob_sv_from_cstr("target_link_options() may only set INTERFACE items on IMPORTED targets"))) {
         return eval_result_from_ctx(ctx);
     }
+    if (!target_usage_attach_item_semantics(ctx,
+                                            o,
+                                            req.target_name,
+                                            nob_sv_from_cstr("LINK_OPTIONS"),
+                                            false,
+                                            req.items)) {
+        return eval_result_from_ctx(ctx);
+    }
 
     if (!target_usage_apply_item_entries(ctx,
                                          o,
@@ -1443,6 +1487,14 @@ Eval_Result eval_handle_target_link_directories(EvalExecContext *ctx, const Node
             req.target_name,
             req.items,
             nob_sv_from_cstr("target_link_directories() may only set INTERFACE items on IMPORTED targets"))) {
+        return eval_result_from_ctx(ctx);
+    }
+    if (!target_usage_attach_item_semantics(ctx,
+                                            o,
+                                            req.target_name,
+                                            nob_sv_from_cstr("LINK_DIRECTORIES"),
+                                            false,
+                                            req.items)) {
         return eval_result_from_ctx(ctx);
     }
 
@@ -1488,6 +1540,14 @@ Eval_Result eval_handle_target_include_directories(EvalExecContext *ctx, const N
             nob_sv_from_cstr("target_include_directories() may only set INTERFACE items on IMPORTED targets"))) {
         return eval_result_from_ctx(ctx);
     }
+    if (!target_usage_attach_item_semantics(ctx,
+                                            o,
+                                            req.target_name,
+                                            nob_sv_from_cstr("INCLUDE_DIRECTORIES"),
+                                            false,
+                                            req.items)) {
+        return eval_result_from_ctx(ctx);
+    }
 
     if (!target_usage_apply_include_directory_entries(ctx, o, req.target_name, req.items)) {
         return eval_result_from_ctx(ctx);
@@ -1523,6 +1583,14 @@ Eval_Result eval_handle_target_compile_definitions(EvalExecContext *ctx, const N
             req.target_name,
             req.items,
             nob_sv_from_cstr("target_compile_definitions() may only set INTERFACE items on IMPORTED targets"))) {
+        return eval_result_from_ctx(ctx);
+    }
+    if (!target_usage_attach_item_semantics(ctx,
+                                            o,
+                                            req.target_name,
+                                            nob_sv_from_cstr("COMPILE_DEFINITIONS"),
+                                            false,
+                                            req.items)) {
         return eval_result_from_ctx(ctx);
     }
 
@@ -1565,6 +1633,14 @@ Eval_Result eval_handle_target_compile_options(EvalExecContext *ctx, const Node 
             req.target_name,
             req.items,
             nob_sv_from_cstr("target_compile_options() may only set INTERFACE items on IMPORTED targets"))) {
+        return eval_result_from_ctx(ctx);
+    }
+    if (!target_usage_attach_item_semantics(ctx,
+                                            o,
+                                            req.target_name,
+                                            nob_sv_from_cstr("COMPILE_OPTIONS"),
+                                            false,
+                                            req.items)) {
         return eval_result_from_ctx(ctx);
     }
 

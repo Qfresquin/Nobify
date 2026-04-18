@@ -51,10 +51,30 @@ static bool event_copy_link_item_metadata_array_inplace(Arena *arena,
 
     for (size_t i = 0; i < count; ++i) {
         copy[i] = (*items)[i];
-        if (!event_copy_sv_inplace(arena, &copy[i].target_name)) return false;
+        if (!event_copy_sv_array_inplace(arena, &copy[i].configurations, copy[i].configuration_count) ||
+            !event_copy_sv_array_inplace(arena, &copy[i].compile_languages, copy[i].compile_language_count) ||
+            !event_copy_sv_array_inplace(arena, &copy[i].platform_ids, copy[i].platform_id_count) ||
+            !event_copy_sv_inplace(arena, &copy[i].value) ||
+            !event_copy_sv_inplace(arena, &copy[i].target_name) ||
+            !event_copy_sv_inplace(arena, &copy[i].property_name)) {
+            return false;
+        }
     }
 
     *items = copy;
+    return true;
+}
+
+static bool event_copy_link_item_metadata_inplace(Arena *arena, Event_Link_Item_Metadata *item) {
+    if (!arena || !item) return false;
+    if (!event_copy_sv_array_inplace(arena, &item->configurations, item->configuration_count) ||
+        !event_copy_sv_array_inplace(arena, &item->compile_languages, item->compile_language_count) ||
+        !event_copy_sv_array_inplace(arena, &item->platform_ids, item->platform_id_count) ||
+        !event_copy_sv_inplace(arena, &item->value) ||
+        !event_copy_sv_inplace(arena, &item->target_name) ||
+        !event_copy_sv_inplace(arena, &item->property_name)) {
+        return false;
+    }
     return true;
 }
 
@@ -62,7 +82,8 @@ static bool event_copy_property_mutate_inplace(Arena *arena, Event_Directory_Pro
     if (!arena || !mut) return false;
     if (!event_copy_sv_inplace(arena, &mut->property_name)) return false;
     if (!event_copy_sv_array_inplace(arena, &mut->items, mut->item_count)) return false;
-    if (!event_copy_link_item_metadata_array_inplace(arena, &mut->link_item_semantics, mut->item_count)) return false;
+    if (!event_copy_sv_array_inplace(arena, &mut->typed_items, mut->typed_item_count)) return false;
+    if (!event_copy_link_item_metadata_array_inplace(arena, &mut->typed_item_semantics, mut->typed_item_count)) return false;
     return true;
 }
 
@@ -623,7 +644,7 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
                 return false;
             }
             if (!event_copy_link_item_metadata_array_inplace(arena,
-                                                             &ev->as.target_prop_set.typed_link_item_semantics,
+                                                             &ev->as.target_prop_set.typed_item_semantics,
                                                              ev->as.target_prop_set.typed_item_count)) {
                 return false;
             }
@@ -631,31 +652,37 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
         case EVENT_TARGET_LINK_LIBRARIES:
             if (!event_copy_sv_inplace(arena, &ev->as.target_link_libraries.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_link_libraries.item)) return false;
-            if (!event_copy_sv_inplace(arena, &ev->as.target_link_libraries.semantic.target_name)) return false;
+            if (!event_copy_link_item_metadata_inplace(arena, &ev->as.target_link_libraries.semantic)) return false;
             break;
         case EVENT_TARGET_LINK_OPTIONS:
             if (!event_copy_sv_inplace(arena, &ev->as.target_link_options.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_link_options.item)) return false;
+            if (!event_copy_link_item_metadata_inplace(arena, &ev->as.target_link_options.semantic)) return false;
             break;
         case EVENT_TARGET_LINK_DIRECTORIES:
             if (!event_copy_sv_inplace(arena, &ev->as.target_link_directories.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_link_directories.path)) return false;
+            if (!event_copy_link_item_metadata_inplace(arena, &ev->as.target_link_directories.semantic)) return false;
             break;
         case EVENT_TARGET_INCLUDE_DIRECTORIES:
             if (!event_copy_sv_inplace(arena, &ev->as.target_include_directories.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_include_directories.path)) return false;
+            if (!event_copy_link_item_metadata_inplace(arena, &ev->as.target_include_directories.semantic)) return false;
             break;
         case EVENT_TARGET_COMPILE_DEFINITIONS:
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_definitions.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_definitions.item)) return false;
+            if (!event_copy_link_item_metadata_inplace(arena, &ev->as.target_compile_definitions.semantic)) return false;
             break;
         case EVENT_TARGET_COMPILE_OPTIONS:
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_options.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_options.item)) return false;
+            if (!event_copy_link_item_metadata_inplace(arena, &ev->as.target_compile_options.semantic)) return false;
             break;
         case EVENT_TARGET_COMPILE_FEATURES:
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_features.target_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_features.item)) return false;
+            if (!event_copy_link_item_metadata_inplace(arena, &ev->as.target_compile_features.semantic)) return false;
             break;
         case EVENT_KIND_COUNT:
             return false;

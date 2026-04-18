@@ -1,56 +1,124 @@
 #include "build_model_query_internal.h"
 
-static String_View bm_query_genex_target_property_cb(void *userdata,
-                                                     String_View target_name,
-                                                     String_View property_name) {
-    BM_Query_Genex_Context *ctx = (BM_Query_Genex_Context*)userdata;
-    BM_Target_Id id = BM_TARGET_ID_INVALID;
-    String_View out = nob_sv_from_cstr("");
-    if (!ctx || !ctx->model) return nob_sv_from_cstr("");
-    id = bm_find_target_by_name_id(ctx->model, target_name);
-    if (!bm_target_id_is_valid(id)) return nob_sv_from_cstr("");
-    id = bm_resolve_alias_target_id(ctx->model, id);
-    if (!bm_target_id_is_valid(id)) return nob_sv_from_cstr("");
-    if (!bm_query_target_property_value(ctx->model, id, property_name, ctx->scratch, &out)) {
-        return nob_sv_from_cstr("");
+static bool bm_query_sv_in_ci_list(const String_View *items, size_t count, String_View needle) {
+    String_View trimmed = nob_sv_trim(needle);
+    if (trimmed.count == 0) return false;
+    for (size_t i = 0; i < count; ++i) {
+        if (bm_sv_eq_ci_query(nob_sv_trim(items[i]), trimmed)) return true;
     }
-    return out;
+    return false;
 }
 
-static String_View bm_query_genex_target_file_cb(void *userdata, String_View target_name) {
-    BM_Query_Genex_Context *ctx = (BM_Query_Genex_Context*)userdata;
-    BM_Target_Id id = BM_TARGET_ID_INVALID;
-    String_View out = nob_sv_from_cstr("");
-    if (!ctx || !ctx->model) return nob_sv_from_cstr("");
-    id = bm_find_target_by_name_id(ctx->model, target_name);
-    if (!bm_target_id_is_valid(id)) return nob_sv_from_cstr("");
-    if (!bm_query_target_effective_file_internal(ctx->model, id, ctx->eval_ctx, false, ctx->scratch, &out)) {
-        return nob_sv_from_cstr("");
+static bool bm_query_semantic_matches_context(const Event_Link_Item_Metadata *semantic,
+                                              const BM_Query_Eval_Context *ctx) {
+    bool is_debug = false;
+    if (!semantic || !ctx) return true;
+
+    if (semantic->interface_filter == EVENT_USAGE_INTERFACE_BUILD && !ctx->build_interface_active) return false;
+    if (semantic->interface_filter == EVENT_USAGE_INTERFACE_INSTALL && !ctx->install_interface_active) return false;
+    if (semantic->link_only && ctx->usage_mode != BM_QUERY_USAGE_LINK) return false;
+
+    is_debug = bm_sv_eq_ci_query(nob_sv_trim(ctx->config), nob_sv_from_cstr("Debug"));
+    switch (semantic->config_filter) {
+        case EVENT_LINK_ITEM_CONFIG_ALL:
+            break;
+        case EVENT_LINK_ITEM_CONFIG_DEBUG_ONLY:
+            if (!is_debug) return false;
+            break;
+        case EVENT_LINK_ITEM_CONFIG_NONDEBUG_ONLY:
+            if (is_debug) return false;
+            break;
+        case EVENT_LINK_ITEM_CONFIG_MATCH_LIST:
+            if (!bm_query_sv_in_ci_list(semantic->configurations,
+                                        semantic->configuration_count,
+                                        ctx->config)) {
+                return false;
+            }
+            break;
     }
-    return out;
+
+    if (semantic->compile_language_count > 0 &&
+        !bm_query_sv_in_ci_list(semantic->compile_languages,
+                                semantic->compile_language_count,
+                                ctx->compile_language)) {
+        return false;
+    }
+    if (semantic->platform_id_count > 0 &&
+        !bm_query_sv_in_ci_list(semantic->platform_ids,
+                                semantic->platform_id_count,
+                                ctx->platform_id)) {
+        return false;
+    }
+
+    return true;
 }
 
-static String_View bm_query_genex_target_linker_file_cb(void *userdata, String_View target_name) {
-    BM_Query_Genex_Context *ctx = (BM_Query_Genex_Context*)userdata;
-    BM_Target_Id id = BM_TARGET_ID_INVALID;
-    String_View out = nob_sv_from_cstr("");
-    if (!ctx || !ctx->model) return nob_sv_from_cstr("");
-    id = bm_find_target_by_name_id(ctx->model, target_name);
-    if (!bm_target_id_is_valid(id)) return nob_sv_from_cstr("");
-    if (!bm_query_target_effective_file_internal(ctx->model, id, ctx->eval_ctx, true, ctx->scratch, &out)) {
-        return nob_sv_from_cstr("");
+static bool bm_query_resolve_semantic_target_property(const Build_Model *model,
+                                                      BM_Target_Id owner_target_id,
+                                                      const BM_Query_Eval_Context *ctx,
+                                                      Arena *scratch,
+                                                      const Event_Link_Item_Metadata *semantic,
+                                                      String_View *out) {
+    BM_Target_Id target_id = BM_TARGET_ID_INVALID;
+    String_View value = nob_sv_from_cstr("");
+    if (!out) return false;
+    *out = nob_sv_from_cstr("");
+    if (!model || !semantic || !scratch || !ctx) return false;
+
+    if (semantic->kind == EVENT_LINK_ITEM_TARGET_PROPERTY_IMPLICIT) {
+        target_id = bm_target_id_is_valid(ctx->current_target_id) ? ctx->current_target_id : owner_target_id;
+    } else if (semantic->kind == EVENT_LINK_ITEM_TARGET_PROPERTY_EXPLICIT) {
+        target_id = bm_find_target_by_name_id(model, semantic->target_name);
+    } else {
+        return true;
     }
-    return out;
+    if (!bm_target_id_is_valid(target_id)) return true;
+    target_id = bm_resolve_alias_target_id(model, target_id);
+    if (!bm_target_id_is_valid(target_id)) return true;
+
+    if (!bm_query_target_modeled_property_value(model, target_id, semantic->property_name, scratch, &value)) {
+        return false;
+    }
+    if (value.count == 0 &&
+        !bm_query_target_raw_property_value(model, target_id, semantic->property_name, scratch, &value)) {
+        return false;
+    }
+    *out = value;
+    return true;
+}
+
+static bool bm_query_resolve_item_value(const Build_Model *model,
+                                        BM_Target_Id owner_target_id,
+                                        const BM_Query_Eval_Context *ctx,
+                                        Arena *scratch,
+                                        String_View fallback_value,
+                                        const Event_Link_Item_Metadata *semantic,
+                                        String_View *out) {
+    if (!out) return false;
+    *out = nob_sv_from_cstr("");
+    if (!semantic) {
+        *out = fallback_value;
+        return true;
+    }
+    if (semantic->kind == EVENT_LINK_ITEM_TARGET_PROPERTY_IMPLICIT ||
+        semantic->kind == EVENT_LINK_ITEM_TARGET_PROPERTY_EXPLICIT) {
+        return bm_query_resolve_semantic_target_property(model, owner_target_id, ctx, scratch, semantic, out);
+    }
+    if (semantic->value.count > 0) {
+        *out = semantic->value;
+        return true;
+    }
+    *out = fallback_value;
+    return true;
 }
 
 static bool bm_eval_item_span(const Build_Model *model,
                               BM_Target_Id owner_target_id,
                               const BM_Query_Eval_Context *ctx,
                               Arena *scratch,
-                              BM_String_Item_Span raw_items,
-                              BM_String_Item_Span *out) {
+    BM_String_Item_Span raw_items,
+    BM_String_Item_Span *out) {
     BM_String_Item_View *items = NULL;
-    BM_Query_Genex_Context gx_userdata = {0};
     BM_Query_Eval_Context default_ctx = {0};
     if (!out) return false;
     out->items = NULL;
@@ -58,36 +126,23 @@ static bool bm_eval_item_span(const Build_Model *model,
     if (!scratch) return false;
 
     default_ctx = ctx ? *ctx : bm_default_query_eval_context(owner_target_id, BM_QUERY_USAGE_COMPILE);
-    gx_userdata.model = model;
-    gx_userdata.eval_ctx = &default_ctx;
-    gx_userdata.scratch = scratch;
-    gx_userdata.consumer_target_id = owner_target_id;
-    gx_userdata.current_target_id = bm_target_id_is_valid(default_ctx.current_target_id)
-        ? default_ctx.current_target_id
-        : owner_target_id;
 
     for (size_t i = 0; i < raw_items.count; ++i) {
-        Genex_Context gx = {0};
-        Genex_Result gx_result = {0};
-        gx.arena = scratch;
-        gx.config = default_ctx.config;
-        gx.platform_id = default_ctx.platform_id;
-        gx.compile_language = default_ctx.compile_language;
-        gx.current_target_name = bm_query_target_name(model, gx_userdata.current_target_id);
-        gx.link_only_active = default_ctx.usage_mode == BM_QUERY_USAGE_LINK;
-        gx.build_interface_active = default_ctx.build_interface_active;
-        gx.install_interface_active = default_ctx.install_interface_active;
-        gx.target_name_case_insensitive = false;
-        gx.max_depth = 128;
-        gx.max_target_property_depth = 64;
-        gx.read_target_property = bm_query_genex_target_property_cb;
-        gx.read_target_file = bm_query_genex_target_file_cb;
-        gx.read_target_linker_file = bm_query_genex_target_linker_file_cb;
-        gx.userdata = &gx_userdata;
-
-        gx_result = genex_eval(&gx, raw_items.items[i].value);
-        if (gx_result.status != GENEX_OK) return false;
-        if (!bm_append_split_values(scratch, &items, raw_items.items[i], gx_result.value)) return false;
+        BM_String_Item_View item = raw_items.items[i];
+        String_View resolved = nob_sv_from_cstr("");
+        if (!bm_query_semantic_matches_context(&item.semantic, &default_ctx)) continue;
+        if (!bm_query_resolve_item_value(model,
+                                         owner_target_id,
+                                         &default_ctx,
+                                         scratch,
+                                         item.value,
+                                         &item.semantic,
+                                         &resolved)) {
+            return false;
+        }
+        if (resolved.count == 0) continue;
+        item.value = resolved;
+        if (!bm_append_split_values(scratch, &items, item, resolved)) return false;
     }
 
     out->items = items;
@@ -102,7 +157,6 @@ static bool bm_eval_link_item_span(const Build_Model *model,
                                    BM_Link_Item_Span raw_items,
                                    BM_Link_Item_Span *out) {
     BM_Link_Item_View *items = NULL;
-    BM_Query_Genex_Context gx_userdata = {0};
     BM_Query_Eval_Context default_ctx = {0};
     if (!out) return false;
     out->items = NULL;
@@ -110,36 +164,30 @@ static bool bm_eval_link_item_span(const Build_Model *model,
     if (!scratch) return false;
 
     default_ctx = ctx ? *ctx : bm_default_query_eval_context(owner_target_id, BM_QUERY_USAGE_LINK);
-    gx_userdata.model = model;
-    gx_userdata.eval_ctx = &default_ctx;
-    gx_userdata.scratch = scratch;
-    gx_userdata.consumer_target_id = owner_target_id;
-    gx_userdata.current_target_id = bm_target_id_is_valid(default_ctx.current_target_id)
-        ? default_ctx.current_target_id
-        : owner_target_id;
 
     for (size_t i = 0; i < raw_items.count; ++i) {
-        Genex_Context gx = {0};
-        Genex_Result gx_result = {0};
-        gx.arena = scratch;
-        gx.config = default_ctx.config;
-        gx.platform_id = default_ctx.platform_id;
-        gx.compile_language = default_ctx.compile_language;
-        gx.current_target_name = bm_query_target_name(model, gx_userdata.current_target_id);
-        gx.link_only_active = default_ctx.usage_mode == BM_QUERY_USAGE_LINK;
-        gx.build_interface_active = default_ctx.build_interface_active;
-        gx.install_interface_active = default_ctx.install_interface_active;
-        gx.target_name_case_insensitive = false;
-        gx.max_depth = 128;
-        gx.max_target_property_depth = 64;
-        gx.read_target_property = bm_query_genex_target_property_cb;
-        gx.read_target_file = bm_query_genex_target_file_cb;
-        gx.read_target_linker_file = bm_query_genex_target_linker_file_cb;
-        gx.userdata = &gx_userdata;
-
-        gx_result = genex_eval(&gx, raw_items.items[i].value);
-        if (gx_result.status != GENEX_OK) return false;
-        if (!bm_append_split_link_values(scratch, &items, raw_items.items[i], gx_result.value)) return false;
+        BM_Link_Item_View item = raw_items.items[i];
+        String_View resolved = nob_sv_from_cstr("");
+        if (!bm_query_semantic_matches_context(&item.semantic, &default_ctx)) continue;
+        if (!bm_query_resolve_item_value(model,
+                                         owner_target_id,
+                                         &default_ctx,
+                                         scratch,
+                                         item.value,
+                                         &item.semantic,
+                                         &resolved)) {
+            return false;
+        }
+        if (resolved.count == 0) continue;
+        item.value = resolved;
+        if (item.semantic.kind == EVENT_LINK_ITEM_TARGET_REF &&
+            !bm_target_id_is_valid(item.target_id) &&
+            item.semantic.target_name.count > 0) {
+            BM_Target_Id target_id = bm_find_target_by_name_id(model, item.semantic.target_name);
+            if (bm_target_id_is_valid(target_id)) target_id = bm_resolve_alias_target_id(model, target_id);
+            item.target_id = target_id;
+        }
+        if (!bm_append_split_link_values(scratch, &items, item, resolved)) return false;
     }
 
     out->items = items;
