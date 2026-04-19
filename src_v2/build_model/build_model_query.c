@@ -1745,6 +1745,31 @@ String_View bm_query_install_rule_component(const Build_Model *model, BM_Install
     return rule ? rule->component : (String_View){0};
 }
 
+String_View bm_query_install_rule_archive_component(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->archive_component : (String_View){0};
+}
+
+String_View bm_query_install_rule_library_component(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->library_component : (String_View){0};
+}
+
+String_View bm_query_install_rule_runtime_component(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->runtime_component : (String_View){0};
+}
+
+String_View bm_query_install_rule_includes_component(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->includes_component : (String_View){0};
+}
+
+String_View bm_query_install_rule_public_header_component(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->public_header_component : (String_View){0};
+}
+
 String_View bm_query_install_rule_namelink_component(const Build_Model *model, BM_Install_Rule_Id id) {
     const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
     return rule ? rule->namelink_component : (String_View){0};
@@ -1812,7 +1837,14 @@ BM_Install_Rule_Id_Span bm_query_install_rules_for_component(const Build_Model *
 
     for (size_t i = 0; i < arena_arr_len(model->install_rules); ++i) {
         const BM_Install_Rule_Record *rule = &model->install_rules[i];
-        if (!bm_component_name_matches(rule->component, component)) continue;
+        if (!bm_component_name_matches(rule->component, component) &&
+            !bm_component_name_matches(rule->archive_component, component) &&
+            !bm_component_name_matches(rule->library_component, component) &&
+            !bm_component_name_matches(rule->runtime_component, component) &&
+            !bm_component_name_matches(rule->includes_component, component) &&
+            !bm_component_name_matches(rule->public_header_component, component)) {
+            continue;
+        }
         if (!arena_arr_push(scratch, matches, (BM_Install_Rule_Id)i)) return (BM_Install_Rule_Id_Span){0};
     }
 

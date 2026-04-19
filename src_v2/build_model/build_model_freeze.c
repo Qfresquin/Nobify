@@ -1181,6 +1181,11 @@ static bool bm_clone_install_rules(const Build_Model_Draft *draft, Build_Model *
         if (!bm_copy_string(arena, src->item, &rule.item) ||
             !bm_copy_string(arena, src->destination, &rule.destination) ||
             !bm_copy_string(arena, src->component, &rule.component) ||
+            !bm_copy_string(arena, src->archive_component, &rule.archive_component) ||
+            !bm_copy_string(arena, src->library_component, &rule.library_component) ||
+            !bm_copy_string(arena, src->runtime_component, &rule.runtime_component) ||
+            !bm_copy_string(arena, src->includes_component, &rule.includes_component) ||
+            !bm_copy_string(arena, src->public_header_component, &rule.public_header_component) ||
             !bm_copy_string(arena, src->namelink_component, &rule.namelink_component) ||
             !bm_copy_string(arena, src->export_name, &rule.export_name) ||
             !bm_copy_string(arena, src->archive_destination, &rule.archive_destination) ||

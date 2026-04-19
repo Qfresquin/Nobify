@@ -231,7 +231,8 @@ bool cg_validate_model_for_backend(CG_Context *ctx) {
         } else if (phase == BM_REPLAY_PHASE_TEST) {
             supported =
                 kind == BM_REPLAY_ACTION_TEST_DRIVER &&
-                (opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY ||
+                (opcode == BM_REPLAY_OPCODE_NONE ||
+                 opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY ||
                  opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL ||
                  opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF ||
                  opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF ||

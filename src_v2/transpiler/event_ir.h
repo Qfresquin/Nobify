@@ -705,6 +705,11 @@ typedef struct {
     String_View item;
     String_View destination;
     String_View component;
+    String_View archive_component;
+    String_View library_component;
+    String_View runtime_component;
+    String_View includes_component;
+    String_View public_header_component;
     String_View namelink_component;
     String_View export_name;
     String_View archive_destination;

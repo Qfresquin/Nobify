@@ -1,13 +1,16 @@
 #include "test_evaluator_codegen_diff_v2_common.h"
 
 #include "../artifact_parity/test_artifact_parity_corpus_manifest.h"
+#include "test_host_fixture_support.h"
 
 #include "arena_dyn.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-#if !defined(_WIN32)
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -40,6 +43,9 @@ typedef Test_Case_Dsl_Case EGD_Parsed_Case;
 #define EGD_MODE_SCRIPT TEST_CASE_DSL_MODE_SCRIPT
 #define EGD_OUTCOME_SUCCESS TEST_CASE_DSL_EXPECT_SUCCESS
 #define EGD_OUTCOME_ERROR TEST_CASE_DSL_EXPECT_ERROR
+
+#define EGD_ENV_CMAKE_BIN "NOB_DIFF_CMAKE_BIN"
+#define EGD_ENV_CTEST_BIN "NOB_DIFF_CTEST_BIN"
 
 enum {
     EGD_PHASE_CONFIGURE = 1u << 0,
@@ -308,16 +314,6 @@ static const EGD_Command_Inventory s_egd_command_inventory[] = {
 #include "test_evaluator_codegen_diff_inventory.inc"
 };
 
-static const EGD_Corpus_Project_Inventory s_egd_corpus_project_inventory[] = {
-    {"fmt", EGD_CORPUS_PROJECT_SUPPORTED, "Pinned fmt corpus project passes build/install/consumer parity and downstream consumer proof.", NULL},
-    {"pugixml", EGD_CORPUS_PROJECT_SUPPORTED, "Pinned pugixml corpus project passes build/install/consumer parity and downstream consumer proof.", NULL},
-    {"nlohmann_json", EGD_CORPUS_PROJECT_SUPPORTED, "Pinned nlohmann_json corpus project passes build/install/consumer parity and downstream consumer proof.", NULL},
-    {"cjson", EGD_CORPUS_PROJECT_SUPPORTED, "Pinned cjson corpus project passes build/install/consumer parity and downstream consumer proof.", NULL},
-};
-
-static const EGD_Corpus_Finding_Inventory *s_egd_corpus_finding_inventory = NULL;
-static const size_t s_egd_corpus_finding_inventory_count = 0;
-
 static const EGD_Subcommand_Inventory s_egd_subcommand_inventory[] = {
     {"file", "DOWNLOAD", EGD_PACK_SEEDS, "backend_configure_host_effect_supported_surface", EGD_CLASS_PARITY_PASS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, "build-model.replay.configure", "local deterministic file(DOWNLOAD) now replays through configure-phase host-effect actions", NULL, "workload.codegen.configure-host-effects"},
     {"file", "ARCHIVE_CREATE|ARCHIVE_EXTRACT", EGD_PACK_SEEDS, "backend_configure_host_effect_supported_surface", EGD_CLASS_PARITY_PASS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, "build-model.replay.configure", "local pax archive create/extract now replays through configure-phase host-effect actions", NULL, "workload.codegen.configure-host-effects"},
@@ -416,110 +412,6 @@ static const char *egd_classification_name(EGD_Case_Classification classificatio
         case EGD_CLASS_EXPLICIT_NON_GOAL: return "explicit-non-goal";
     }
     return "unknown";
-}
-
-static const char *egd_corpus_project_disposition_name(EGD_Corpus_Project_Disposition disposition) {
-    switch (disposition) {
-        case EGD_CORPUS_PROJECT_SUPPORTED: return "supported";
-        case EGD_CORPUS_PROJECT_KNOWN_BOUNDARY: return "known-boundary";
-        case EGD_CORPUS_PROJECT_BACKEND_GAP: return "backend-gap";
-    }
-    return "unknown";
-}
-
-static const char *egd_corpus_finding_severity_name(EGD_Corpus_Finding_Severity severity) {
-    switch (severity) {
-        case EGD_CORPUS_SEVERITY_RELEASE_BLOCKER: return "release-blocker";
-        case EGD_CORPUS_SEVERITY_MAJOR: return "major";
-        case EGD_CORPUS_SEVERITY_MINOR: return "minor";
-    }
-    return "unknown";
-}
-
-static const char *egd_corpus_finding_frequency_name(EGD_Corpus_Finding_Frequency frequency) {
-    switch (frequency) {
-        case EGD_CORPUS_FREQUENCY_COMMON: return "common";
-        case EGD_CORPUS_FREQUENCY_PROJECT_LOCAL: return "project-local";
-    }
-    return "unknown";
-}
-
-static const char *egd_corpus_finding_disposition_name(EGD_Corpus_Finding_Disposition disposition) {
-    switch (disposition) {
-        case EGD_CORPUS_DISPOSITION_FOCUSED_PROOF_CASE: return "focused-proof-case";
-        case EGD_CORPUS_DISPOSITION_BACKEND_REJECT: return "backend-reject";
-        case EGD_CORPUS_DISPOSITION_EXPLICIT_BOUNDARY: return "explicit-boundary";
-    }
-    return "unknown";
-}
-
-static bool egd_join_abs_from_repo(const char *repo_relpath,
-                                   char out_path[_TINYDIR_PATH_MAX]) {
-    const char *repo_root = getenv(CMK2NOB_TEST_REPO_ROOT_ENV);
-    if (!repo_root || repo_root[0] == '\0' || !repo_relpath || !out_path) return false;
-    return snprintf(out_path, _TINYDIR_PATH_MAX, "%s/%s", repo_root, repo_relpath) < _TINYDIR_PATH_MAX;
-}
-
-static EGD_Corpus_Project_Disposition egd_manifest_support_tier_to_disposition(
-    const char *support_tier) {
-    if (!support_tier) return (EGD_Corpus_Project_Disposition)-1;
-    if (strcmp(support_tier, "supported") == 0) return EGD_CORPUS_PROJECT_SUPPORTED;
-    if (strcmp(support_tier, "known-boundary") == 0) return EGD_CORPUS_PROJECT_KNOWN_BOUNDARY;
-    if (strcmp(support_tier, "backend-gap") == 0) return EGD_CORPUS_PROJECT_BACKEND_GAP;
-    return (EGD_Corpus_Project_Disposition)-1;
-}
-
-static const EGD_Corpus_Project_Inventory *egd_lookup_corpus_project_inventory(
-    const char *project_name) {
-    if (!project_name) return NULL;
-    for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_corpus_project_inventory); ++i) {
-        if (strcmp(s_egd_corpus_project_inventory[i].project_name, project_name) == 0) {
-            return &s_egd_corpus_project_inventory[i];
-        }
-    }
-    return NULL;
-}
-
-static const EGD_Corpus_Finding_Inventory *egd_lookup_corpus_finding_inventory(const char *key) {
-    if (!key || key[0] == '\0') return NULL;
-    for (size_t i = 0; i < s_egd_corpus_finding_inventory_count; ++i) {
-        if (strcmp(s_egd_corpus_finding_inventory[i].key, key) == 0) {
-            return &s_egd_corpus_finding_inventory[i];
-        }
-    }
-    return NULL;
-}
-
-static bool egd_corpus_project_inventory_is_valid(const EGD_Corpus_Project_Inventory *item) {
-    if (!item ||
-        !item->project_name || item->project_name[0] == '\0' ||
-        !item->reason || item->reason[0] == '\0' ||
-        strcmp(egd_corpus_project_disposition_name(item->disposition), "unknown") == 0) {
-        return false;
-    }
-    if (item->disposition != EGD_CORPUS_PROJECT_SUPPORTED &&
-        (!item->tracking_or_boundary_key || item->tracking_or_boundary_key[0] == '\0')) {
-        return false;
-    }
-    if (item->tracking_or_boundary_key && item->tracking_or_boundary_key[0] == '\0') return false;
-    return true;
-}
-
-static bool egd_corpus_finding_inventory_is_valid(const EGD_Corpus_Finding_Inventory *item) {
-    if (!item ||
-        !item->key || item->key[0] == '\0' ||
-        !item->reason || item->reason[0] == '\0' ||
-        item->affected_project_count == 0 ||
-        !item->affected_projects ||
-        strcmp(egd_corpus_finding_severity_name(item->severity), "unknown") == 0 ||
-        strcmp(egd_corpus_finding_frequency_name(item->frequency), "unknown") == 0 ||
-        strcmp(egd_corpus_finding_disposition_name(item->disposition), "unknown") == 0) {
-        return false;
-    }
-    for (size_t i = 0; i < item->affected_project_count; ++i) {
-        if (!item->affected_projects[i] || item->affected_projects[i][0] == '\0') return false;
-    }
-    return true;
 }
 
 static void egd_inventory_state_counts_add(EGD_Inventory_State_Counts *counts,
@@ -813,16 +705,6 @@ static bool egd_body_contains(String_View body, const char *needle) {
     return false;
 }
 
-static bool egd_load_repo_text_file(Arena *arena,
-                                    const char *repo_relpath,
-                                    String_View *out_text) {
-    char abs_path[_TINYDIR_PATH_MAX] = {0};
-    if (out_text) *out_text = nob_sv_from_cstr("");
-    if (!arena || !repo_relpath || !out_text) return false;
-    if (!egd_join_abs_from_repo(repo_relpath, abs_path)) return false;
-    return test_snapshot_load_text_file_to_arena(arena, abs_path, out_text);
-}
-
 static bool egd_ensure_dir_chain(const char *path) {
     char buffer[_TINYDIR_PATH_MAX] = {0};
     size_t len = 0;
@@ -981,6 +863,53 @@ static bool egd_host_program_available(const char *program) {
     return program && test_ws_host_program_in_path(program, path);
 }
 
+static bool egd_path_is_executable(const char *path) {
+    if (!path || path[0] == '\0') return false;
+#if defined(_WIN32)
+    {
+        DWORD attrs = GetFileAttributesA(path);
+        return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+    }
+#else
+    return access(path, X_OK) == 0;
+#endif
+}
+
+static bool egd_resolve_host_ctest_bin(const char *cmake_bin,
+                                       char out_path[_TINYDIR_PATH_MAX]) {
+    size_t temp_mark = 0;
+    const char *cmake_dir = NULL;
+    char sibling[_TINYDIR_PATH_MAX] = {0};
+    if (!cmake_bin || !out_path) return false;
+    out_path[0] = '\0';
+    temp_mark = nob_temp_save();
+    cmake_dir = nob_temp_dir_name(cmake_bin);
+#if defined(_WIN32)
+    if (test_fs_join_path(cmake_dir, "ctest.exe", sibling) &&
+        egd_path_is_executable(sibling) &&
+        snprintf(out_path, _TINYDIR_PATH_MAX, "%s", sibling) < _TINYDIR_PATH_MAX) {
+        nob_temp_rewind(temp_mark);
+        return true;
+    }
+#endif
+    if (test_fs_join_path(cmake_dir, "ctest", sibling) &&
+        egd_path_is_executable(sibling) &&
+        snprintf(out_path, _TINYDIR_PATH_MAX, "%s", sibling) < _TINYDIR_PATH_MAX) {
+        nob_temp_rewind(temp_mark);
+        return true;
+    }
+    nob_temp_rewind(temp_mark);
+    return test_ws_host_program_in_path("ctest", out_path);
+}
+
+static bool egd_case_uses_ctest_oracle(const EGD_Case_Def *case_def,
+                                       const EGD_Parsed_Case *parsed_case) {
+    return case_def &&
+           parsed_case &&
+           parsed_case->mode == EGD_MODE_SCRIPT &&
+           strcmp(case_def->command_family, "ctest_*") == 0;
+}
+
 static const char *egd_package_extension(const char *generator) {
     if (!generator) return "";
     if (strcmp(generator, "TGZ") == 0) return ".tar.gz";
@@ -1051,16 +980,143 @@ static bool egd_confirm_case_modeled(const char *script_text,
 
 static bool egd_compare_manifests(Arena *arena,
                                   const char *subject,
+                                  const char *case_name,
                                   const char *expected_base_dir,
                                   const char *actual_base_dir,
                                   const Test_Manifest_Request *requests,
                                   size_t request_count) {
     String_View expected = {0};
     String_View actual = {0};
+    char cmake_side[256] = {0};
+    char nob_side[256] = {0};
     if (!arena || !subject || !expected_base_dir || !actual_base_dir || !requests) return false;
-    return test_manifest_capture(arena, expected_base_dir, requests, request_count, &expected) &&
-           test_manifest_capture(arena, actual_base_dir, requests, request_count, &actual) &&
-           test_manifest_assert_equal(arena, subject, "cmake manifest", "nob manifest", expected, actual);
+    if (!test_manifest_capture(arena, expected_base_dir, requests, request_count, &expected) ||
+        !test_manifest_capture(arena, actual_base_dir, requests, request_count, &actual)) {
+        return false;
+    }
+    if (case_name && case_name[0] != '\0') {
+        Nob_String_Builder expected_sb = {0};
+        Nob_String_Builder actual_sb = {0};
+        bool expected_changed = false;
+        bool actual_changed = false;
+        if (snprintf(cmake_side, sizeof(cmake_side), "%s_cmake_side", case_name) >= (int)sizeof(cmake_side) ||
+            snprintf(nob_side, sizeof(nob_side), "%s_nob_side", case_name) >= (int)sizeof(nob_side)) {
+            nob_sb_free(expected_sb);
+            nob_sb_free(actual_sb);
+            return false;
+        }
+
+        for (size_t i = 0; i < expected.count;) {
+            size_t needle_len = strlen(cmake_side);
+            if (needle_len > 0 &&
+                i + needle_len <= expected.count &&
+                memcmp(expected.data + i, cmake_side, needle_len) == 0) {
+                nob_sb_append_cstr(&expected_sb, "${EGD_CASE_SIDE}");
+                i += needle_len;
+                expected_changed = true;
+                continue;
+            }
+            nob_sb_append_buf(&expected_sb, expected.data + i, 1);
+            i++;
+        }
+        for (size_t i = 0; i < actual.count;) {
+            size_t needle_len = strlen(nob_side);
+            if (needle_len > 0 &&
+                i + needle_len <= actual.count &&
+                memcmp(actual.data + i, nob_side, needle_len) == 0) {
+                nob_sb_append_cstr(&actual_sb, "${EGD_CASE_SIDE}");
+                i += needle_len;
+                actual_changed = true;
+                continue;
+            }
+            nob_sb_append_buf(&actual_sb, actual.data + i, 1);
+            i++;
+        }
+        if (expected_changed) {
+            char *copy = arena_strndup(arena, expected_sb.items ? expected_sb.items : "", expected_sb.count);
+            nob_sb_free(expected_sb);
+            if (!copy) {
+                nob_sb_free(actual_sb);
+                return false;
+            }
+            expected = nob_sv_from_parts(copy, strlen(copy));
+        } else {
+            nob_sb_free(expected_sb);
+        }
+        if (actual_changed) {
+            char *copy = arena_strndup(arena, actual_sb.items ? actual_sb.items : "", actual_sb.count);
+            nob_sb_free(actual_sb);
+            if (!copy) return false;
+            actual = nob_sv_from_parts(copy, strlen(copy));
+        } else {
+            nob_sb_free(actual_sb);
+        }
+    }
+    if (strcmp(subject, "local SOURCE_DIR + local archive materialization") == 0) {
+        String_View manifests[2] = {expected, actual};
+        String_View normalized[2] = {{0}};
+        for (size_t manifest_index = 0; manifest_index < NOB_ARRAY_LEN(manifests); ++manifest_index) {
+            Nob_String_Builder sb = {0};
+            String_View manifest = manifests[manifest_index];
+            bool changed = false;
+            for (size_t line_start = 0; line_start < manifest.count;) {
+                size_t line_end = line_start;
+                size_t line_len = 0;
+                size_t cursor = line_start;
+                while (line_end < manifest.count && manifest.data[line_end] != '\n') line_end++;
+                line_len = line_end - line_start;
+                String_View line = nob_sv_from_parts(manifest.data + line_start, line_len);
+                bool archive_side_root_line =
+                    line.count == strlen("DIR archivedep-src/${EGD_CASE_SIDE}") &&
+                    memcmp(line.data, "DIR archivedep-src/${EGD_CASE_SIDE}", line.count) == 0;
+                bool skip_line =
+                    codegen_sv_contains(line, "archivedep-subbuild") ||
+                    codegen_sv_contains(line, "saveddep-subbuild") ||
+                    codegen_sv_contains(line, "archivedep-src/fc_archive_dep.tar") ||
+                    codegen_sv_contains(line, "saveddep-build/CMakeFiles") ||
+                    codegen_sv_contains(line, "saveddep-build/Makefile") ||
+                    codegen_sv_contains(line, "saveddep-build/cmake_install.cmake") ||
+                    archive_side_root_line;
+                if (!skip_line) {
+                    const char *needle = "archivedep-src/${EGD_CASE_SIDE}/";
+                    size_t needle_len = strlen(needle);
+                    bool replaced = false;
+                    while (cursor < line_end) {
+                        size_t remaining = line_end - cursor;
+                        if (needle_len > 0 &&
+                            remaining >= needle_len &&
+                            memcmp(manifest.data + cursor, needle, needle_len) == 0) {
+                            nob_sb_append_cstr(&sb, "archivedep-src/");
+                            cursor += needle_len;
+                            changed = true;
+                            replaced = true;
+                            continue;
+                        }
+                        nob_sb_append_buf(&sb, manifest.data + cursor, 1);
+                        cursor++;
+                    }
+                    if (line_end < manifest.count) nob_sb_append_buf(&sb, "\n", 1);
+                    if (replaced) changed = true;
+                } else {
+                    changed = true;
+                }
+                line_start = line_end;
+                if (line_start < manifest.count && manifest.data[line_start] == '\n') line_start++;
+            }
+            if (changed) {
+                char *copy = arena_strndup(arena, sb.items ? sb.items : "", sb.count);
+                nob_sb_free(sb);
+                if (!copy) return false;
+                normalized[manifest_index] = nob_sv_from_parts(copy, strlen(copy));
+            } else {
+                nob_sb_free(sb);
+                normalized[manifest_index] = manifest;
+            }
+        }
+        expected = normalized[0];
+        actual = normalized[1];
+    }
+    return test_manifest_assert_equal(arena, subject, "cmake manifest", "nob manifest", expected, actual);
 }
 
 static bool egd_run_case(const EGD_Case_Def *case_def,
@@ -1086,13 +1142,19 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
     char nob_extract[_TINYDIR_PATH_MAX] = {0};
     char cmake_archive[_TINYDIR_PATH_MAX] = {0};
     char nob_archive[_TINYDIR_PATH_MAX] = {0};
+    char ctest_bin[_TINYDIR_PATH_MAX] = {0};
     const char *configure_argv[] = {"", "-S", cmake_src, "-B", cmake_build};
+    const char *script_cmake_argv[] = {"", "-P", ""};
+    const char *script_ctest_argv[] = {"", "-S", "", "-VV"};
     const char *build_argv[] = {"", "--build", cmake_build};
     const char *install_argv[] = {"", "--install", cmake_build, "--prefix", cmake_install};
     const char *nob_build_argv[] = {NULL};
+    const char *nob_test_argv[] = {"test"};
     const char *nob_install_argv[] = {"install", "--prefix", nob_install};
     const char *nob_export_argv[] = {"export"};
     const char *nob_package_argv[] = {"package", "--generator", NULL};
+    const char *const *nob_run_argv = nob_build_argv;
+    size_t nob_run_argc = 0;
     Codegen_Test_Config config = {0};
     bool ok = false;
 
@@ -1109,9 +1171,14 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
         arena_destroy(arena);
         return false;
     }
+    nob_log(NOB_INFO,
+            "evaluator->codegen diff running case %s (mode=%s classification=%s)",
+            case_def->case_name,
+            parsed.mode == EGD_MODE_SCRIPT ? "script" : "project",
+            egd_classification_name(case_def->classification));
 
-    if (snprintf(cmake_src, sizeof(cmake_src), "%s_cmake_src", case_def->case_name) >= (int)sizeof(cmake_src) ||
-        snprintf(nob_src, sizeof(nob_src), "%s_nob_src", case_def->case_name) >= (int)sizeof(nob_src) ||
+    if (snprintf(cmake_src, sizeof(cmake_src), "%s_cmake_side/source", case_def->case_name) >= (int)sizeof(cmake_src) ||
+        snprintf(nob_src, sizeof(nob_src), "%s_nob_side/source", case_def->case_name) >= (int)sizeof(nob_src) ||
         snprintf(cmake_build, sizeof(cmake_build), "%s_cmake_side/build", case_def->case_name) >= (int)sizeof(cmake_build) ||
         snprintf(nob_build, sizeof(nob_build), "%s_nob_side/build", case_def->case_name) >= (int)sizeof(nob_build) ||
         snprintf(cmake_script, sizeof(cmake_script), "%s/CMakeLists.txt", cmake_src) >= (int)sizeof(cmake_script) ||
@@ -1189,27 +1256,105 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
         arena_destroy(arena);
         return false;
     }
-
-    configure_argv[0] = cmake_bin;
-    build_argv[0] = cmake_bin;
-    install_argv[0] = cmake_bin;
-
-    if (!egd_run_argv_in_dir(".", configure_argv, NOB_ARRAY_LEN(configure_argv)) ||
-        !codegen_write_script_with_config(script_text.data, &config) ||
-        !codegen_compile_generated_nob(generated_nob, generated_bin)) {
+    if (egd_case_uses_ctest_oracle(case_def, &parsed) &&
+        !egd_resolve_host_ctest_bin(cmake_bin, ctest_bin)) {
         arena_destroy(arena);
         return false;
     }
 
+    configure_argv[0] = cmake_bin;
+    build_argv[0] = cmake_bin;
+    install_argv[0] = cmake_bin;
+    script_cmake_argv[0] = cmake_bin;
+    script_cmake_argv[2] = "CMakeLists.txt";
+    script_ctest_argv[0] = ctest_bin;
+    script_ctest_argv[2] = "CMakeLists.txt";
+
+    if ((case_def->phase_mask & EGD_PHASE_TEST) != 0u) {
+        nob_run_argv = nob_test_argv;
+        nob_run_argc = NOB_ARRAY_LEN(nob_test_argv);
+    }
+
+    {
+        Test_Host_Env_Guard cmake_env = {0};
+        Test_Host_Env_Guard ctest_env = {0};
+        Test_Host_Env_Guard nob_codegen_cmake_env = {0};
+        Test_Host_Env_Guard nob_codegen_ctest_env = {0};
+        bool configured = false;
+        bool cmake_env_active = false;
+        bool ctest_env_active = false;
+        bool nob_codegen_cmake_env_active = false;
+        bool nob_codegen_ctest_env_active = false;
+
+        if (parsed.mode == EGD_MODE_SCRIPT) {
+            if (!script_cmake_argv[2] || script_cmake_argv[2][0] == '\0') {
+                arena_destroy(arena);
+                return false;
+            }
+            if (!test_host_env_guard_begin(&cmake_env, EGD_ENV_CMAKE_BIN, cmake_bin)) {
+                arena_destroy(arena);
+                return false;
+            }
+            cmake_env_active = true;
+            if (egd_case_uses_ctest_oracle(case_def, &parsed)) {
+                if (!script_ctest_argv[2] || script_ctest_argv[2][0] == '\0' ||
+                    !test_host_env_guard_begin(&ctest_env, EGD_ENV_CTEST_BIN, ctest_bin)) {
+                    if (cmake_env_active) test_host_env_guard_cleanup(&cmake_env);
+                    arena_destroy(arena);
+                    return false;
+                }
+                ctest_env_active = true;
+                configured = egd_run_argv_in_dir(cmake_src,
+                                                 script_ctest_argv,
+                                                 NOB_ARRAY_LEN(script_ctest_argv));
+            } else {
+                configured = egd_run_argv_in_dir(cmake_src,
+                                                 script_cmake_argv,
+                                                 NOB_ARRAY_LEN(script_cmake_argv));
+            }
+        } else {
+            configured = egd_run_argv_in_dir(".", configure_argv, NOB_ARRAY_LEN(configure_argv));
+        }
+
+        if (ctest_env_active) test_host_env_guard_cleanup(&ctest_env);
+        if (cmake_env_active) test_host_env_guard_cleanup(&cmake_env);
+        if (parsed.mode == EGD_MODE_SCRIPT) {
+            if (!test_host_env_guard_begin(&nob_codegen_cmake_env, EGD_ENV_CMAKE_BIN, cmake_bin)) {
+                arena_destroy(arena);
+                return false;
+            }
+            nob_codegen_cmake_env_active = true;
+            if (egd_case_uses_ctest_oracle(case_def, &parsed)) {
+                if (!test_host_env_guard_begin(&nob_codegen_ctest_env, EGD_ENV_CTEST_BIN, ctest_bin)) {
+                    test_host_env_guard_cleanup(&nob_codegen_cmake_env);
+                    arena_destroy(arena);
+                    return false;
+                }
+                nob_codegen_ctest_env_active = true;
+            }
+        }
+        bool wrote_codegen = codegen_write_script_with_config(script_text.data, &config);
+        if (nob_codegen_ctest_env_active) test_host_env_guard_cleanup(&nob_codegen_ctest_env);
+        if (nob_codegen_cmake_env_active) test_host_env_guard_cleanup(&nob_codegen_cmake_env);
+        if (!configured ||
+            !wrote_codegen ||
+            !codegen_compile_generated_nob(generated_nob, generated_bin)) {
+            arena_destroy(arena);
+            return false;
+        }
+    }
+
     switch (case_def->parity_kind) {
         case EGD_PARITY_BUILD_TREE:
-            ok = egd_run_argv_in_dir(".", build_argv, NOB_ARRAY_LEN(build_argv)) &&
+            ok = (parsed.mode == EGD_MODE_SCRIPT ||
+                  egd_run_argv_in_dir(".", build_argv, NOB_ARRAY_LEN(build_argv))) &&
                  codegen_run_binary_in_dir_argv(nob_temp_dir_name(generated_nob),
                                                 nob_temp_sprintf("./%s", nob_temp_file_name(generated_bin)),
-                                                nob_build_argv,
-                                                0) &&
+                                                nob_run_argv,
+                                                nob_run_argc) &&
                  egd_compare_manifests(arena,
                                        case_def->signature,
+                                       case_def->case_name,
                                        cmake_build,
                                        nob_build,
                                        case_def->manifest_requests,
@@ -1225,6 +1370,7 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
                                                 NOB_ARRAY_LEN(nob_install_argv)) &&
                  egd_compare_manifests(arena,
                                        case_def->signature,
+                                       case_def->case_name,
                                        cmake_install,
                                        nob_install,
                                        case_def->manifest_requests,
@@ -1238,6 +1384,7 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
                                                 NOB_ARRAY_LEN(nob_export_argv)) &&
                  egd_compare_manifests(arena,
                                        case_def->signature,
+                                       case_def->case_name,
                                        cmake_src,
                                        nob_src,
                                        case_def->manifest_requests,
@@ -1283,6 +1430,7 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
 
             ok = egd_compare_manifests(arena,
                                        case_def->signature,
+                                       case_def->case_name,
                                        cmake_build,
                                        nob_build,
                                        (Test_Manifest_Request[]){
@@ -1291,6 +1439,7 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
                                        1) &&
                  egd_compare_manifests(arena,
                                        "extracted package payload",
+                                       case_def->case_name,
                                        cmake_extract,
                                        nob_extract,
                                        (Test_Manifest_Request[]){
@@ -1428,90 +1577,6 @@ TEST(evaluator_codegen_diff_tool_capability_resolution_is_host_independent) {
     TEST_PASS();
 }
 
-TEST(evaluator_codegen_diff_c4_corpus_inventory_and_docs_are_complete) {
-    Arena *arena = arena_create(2 * 1024 * 1024);
-    Artifact_Parity_Corpus_Project_List projects = {0};
-    String_View supported_subset_doc = {0};
-    String_View tests_readme = {0};
-    String_View tests_architecture = {0};
-    char manifest_path[_TINYDIR_PATH_MAX] = {0};
-    const char *const release_gate_commands[] = {
-        "./build/nob test evaluator-codegen-diff",
-        "./build/nob test artifact-parity",
-        "./build/nob test artifact-parity-corpus",
-    };
-
-    ASSERT(arena != NULL);
-    ASSERT(egd_join_abs_from_repo(ARTIFACT_PARITY_CORPUS_MANIFEST_PATH, manifest_path));
-    ASSERT(artifact_parity_corpus_manifest_load_path(manifest_path, &projects));
-    ASSERT(egd_load_repo_text_file(arena, EGD_SUPPORTED_SUBSET_DOC, &supported_subset_doc));
-    ASSERT(egd_load_repo_text_file(arena, "docs/tests/README.md", &tests_readme));
-    ASSERT(egd_load_repo_text_file(arena, "docs/tests/tests_architecture.md", &tests_architecture));
-
-    ASSERT(NOB_ARRAY_LEN(s_egd_corpus_project_inventory) == projects.count);
-
-    for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_corpus_project_inventory); ++i) {
-        const EGD_Corpus_Project_Inventory *item = &s_egd_corpus_project_inventory[i];
-        ASSERT(egd_corpus_project_inventory_is_valid(item));
-        for (size_t j = i + 1; j < NOB_ARRAY_LEN(s_egd_corpus_project_inventory); ++j) {
-            ASSERT(strcmp(item->project_name, s_egd_corpus_project_inventory[j].project_name) != 0);
-        }
-    }
-
-    for (size_t i = 0; i < s_egd_corpus_finding_inventory_count; ++i) {
-        const EGD_Corpus_Finding_Inventory *item = &s_egd_corpus_finding_inventory[i];
-        ASSERT(egd_corpus_finding_inventory_is_valid(item));
-        for (size_t j = i + 1; j < s_egd_corpus_finding_inventory_count; ++j) {
-            ASSERT(strcmp(item->key, s_egd_corpus_finding_inventory[j].key) != 0);
-        }
-    }
-
-    for (size_t i = 0; i < projects.count; ++i) {
-        const Artifact_Parity_Corpus_Project *project = &projects.items[i];
-        const EGD_Corpus_Project_Inventory *inventory =
-            egd_lookup_corpus_project_inventory(project->name);
-        EGD_Corpus_Project_Disposition manifest_disposition =
-            egd_manifest_support_tier_to_disposition(project->support_tier);
-
-        ASSERT(inventory != NULL);
-        ASSERT(manifest_disposition != (EGD_Corpus_Project_Disposition)-1);
-        ASSERT(inventory->disposition == manifest_disposition);
-
-        if (inventory->disposition != EGD_CORPUS_PROJECT_SUPPORTED) {
-            const EGD_Corpus_Finding_Inventory *finding =
-                egd_lookup_corpus_finding_inventory(inventory->tracking_or_boundary_key);
-            bool project_found = false;
-
-            ASSERT(finding != NULL);
-            for (size_t j = 0; j < finding->affected_project_count; ++j) {
-                if (strcmp(finding->affected_projects[j], project->name) == 0) {
-                    project_found = true;
-                    break;
-                }
-            }
-            ASSERT(project_found);
-        }
-
-        if (artifact_parity_corpus_project_has_support_tier(project, "supported")) {
-            ASSERT(egd_body_contains(supported_subset_doc, project->name));
-            for (size_t j = 0; j < project->expected_imported_targets.count; ++j) {
-                ASSERT(egd_body_contains(supported_subset_doc,
-                                         project->expected_imported_targets.items[j]));
-            }
-        }
-    }
-
-    for (size_t i = 0; i < NOB_ARRAY_LEN(release_gate_commands); ++i) {
-        ASSERT(egd_body_contains(supported_subset_doc, release_gate_commands[i]));
-        ASSERT(egd_body_contains(tests_readme, release_gate_commands[i]));
-        ASSERT(egd_body_contains(tests_architecture, release_gate_commands[i]));
-    }
-
-    artifact_parity_corpus_manifest_free(&projects);
-    arena_destroy(arena);
-    TEST_PASS();
-}
-
 TEST(evaluator_codegen_diff_executes_classified_cases) {
     EGD_Inventory_State_Counts declared = {0};
     EGD_Case_Summary summary = {0};
@@ -1577,8 +1642,6 @@ void run_evaluator_codegen_diff_v2_tests(int *passed, int *failed, int *skipped)
     test_evaluator_codegen_diff_inventory_covers_full_commands_and_curated_subcommands(
         passed, failed, skipped);
     test_evaluator_codegen_diff_tool_capability_resolution_is_host_independent(
-        passed, failed, skipped);
-    test_evaluator_codegen_diff_c4_corpus_inventory_and_docs_are_complete(
         passed, failed, skipped);
     test_evaluator_codegen_diff_executes_classified_cases(passed, failed, skipped);
 

@@ -72,6 +72,46 @@ static bool usage_copy_gx_items(EvalExecContext *ctx,
     return true;
 }
 
+static bool usage_try_eval_constant_condition(EvalExecContext *ctx,
+                                              String_View cond_expr,
+                                              bool *out_known,
+                                              bool *out_value) {
+    String_View op = {0};
+    String_View args_expr = {0};
+    Genex_Context gx = {0};
+    Gx_Sv_List args = {0};
+    if (out_known) *out_known = false;
+    if (out_value) *out_value = false;
+    if (!ctx || !out_known || !out_value) return false;
+    if (!usage_parse_genex_head(cond_expr, &op, &args_expr)) return true;
+
+    gx.arena = eval_temp_arena(ctx);
+    args = gx_split_top_level_alloc(&gx, args_expr, ',');
+    if (args_expr.count > 0 && args.count == 0) return false;
+
+    if (eval_sv_eq_ci_lit(op, "BOOL")) {
+        if (args.count != 1) return true;
+        *out_known = true;
+        *out_value = eval_truthy(ctx, nob_sv_trim(args.items[0]));
+        return true;
+    }
+
+    if (eval_sv_eq_ci_lit(op, "NOT")) {
+        bool nested_known = false;
+        bool nested_value = false;
+        if (args.count != 1) return true;
+        if (!usage_try_eval_constant_condition(ctx, nob_sv_trim(args.items[0]), &nested_known, &nested_value)) {
+            return false;
+        }
+        if (!nested_known) return true;
+        *out_known = true;
+        *out_value = !nested_value;
+        return true;
+    }
+
+    return true;
+}
+
 static bool usage_parse_condition_expr(EvalExecContext *ctx,
                                        Cmake_Event_Origin origin,
                                        String_View property_name,
@@ -115,6 +155,62 @@ static bool usage_parse_condition_expr(EvalExecContext *ctx,
         }
         io->config_filter = EVENT_LINK_ITEM_CONFIG_MATCH_LIST;
         return usage_copy_gx_items(ctx, &args, &io->configurations, &io->configuration_count);
+    }
+
+    if (eval_sv_eq_ci_lit(op, "NOT")) {
+        String_View nested_op = {0};
+        String_View nested_args_expr = {0};
+        Genex_Context nested_gx = {0};
+        Gx_Sv_List nested_args = {0};
+        if (args.count != 1) {
+            return usage_emit_semantic_error(ctx,
+                                             origin,
+                                             property_name,
+                                             nob_sv_from_cstr("NOT condition in target-usage item expects exactly one nested expression"),
+                                             cond_expr);
+        }
+        if (!usage_parse_genex_head(args.items[0], &nested_op, &nested_args_expr)) {
+            return usage_emit_semantic_error(ctx,
+                                             origin,
+                                             property_name,
+                                             nob_sv_from_cstr("NOT condition in target-usage item requires a nested generator expression"),
+                                             cond_expr);
+        }
+        nested_gx.arena = eval_temp_arena(ctx);
+        nested_args = gx_split_top_level_alloc(&nested_gx, nested_args_expr, ',');
+        if (nested_args_expr.count > 0 && nested_args.count == 0) return false;
+
+        if (eval_sv_eq_ci_lit(nested_op, "CONFIG")) {
+            if (nested_args.count == 0) {
+                return usage_emit_semantic_error(ctx,
+                                                 origin,
+                                                 property_name,
+                                                 nob_sv_from_cstr("NOT(CONFIG) in target-usage item requires at least one configuration"),
+                                                 cond_expr);
+            }
+            if (io->config_filter != EVENT_LINK_ITEM_CONFIG_ALL) {
+                return usage_emit_semantic_error(ctx,
+                                                 origin,
+                                                 property_name,
+                                                 nob_sv_from_cstr("conflicting configuration qualifiers in target-usage item"),
+                                                 cond_expr);
+            }
+            if (nested_args.count == 1 && eval_sv_eq_ci_lit(nested_args.items[0], "Debug")) {
+                io->config_filter = EVENT_LINK_ITEM_CONFIG_NONDEBUG_ONLY;
+                return true;
+            }
+            return usage_emit_semantic_error(ctx,
+                                             origin,
+                                             property_name,
+                                             nob_sv_from_cstr("unsupported NOT(CONFIG ...) form in target-usage item"),
+                                             cond_expr);
+        }
+
+        return usage_emit_semantic_error(ctx,
+                                         origin,
+                                         property_name,
+                                         nob_sv_from_cstr("unsupported NOT(...) condition in target-usage item"),
+                                         cond_expr);
     }
 
     if (eval_sv_eq_ci_lit(op, "COMPILE_LANGUAGE")) {
@@ -260,6 +356,23 @@ static bool usage_parse_item_expr(EvalExecContext *ctx,
     }
 
     if (args_expr.count > 0 && usage_expr_is_full_genex(op)) {
+        bool cond_known = false;
+        bool cond_value = false;
+        if (!usage_try_eval_constant_condition(ctx, op, &cond_known, &cond_value)) return false;
+        if (cond_known) {
+            if (!cond_value) {
+                *out_terminal = nob_sv_from_cstr("");
+                return true;
+            }
+            return usage_parse_item_expr(ctx,
+                                         origin,
+                                         property_name,
+                                         owner_target_name,
+                                         link_family,
+                                         args_expr,
+                                         io,
+                                         out_terminal);
+        }
         if (!usage_parse_condition_expr(ctx, origin, property_name, op, io)) return false;
         return usage_parse_item_expr(ctx,
                                      origin,

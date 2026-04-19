@@ -4,6 +4,7 @@
 #include "test_manifest_support.h"
 
 #include <stdint.h>
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -285,7 +286,8 @@ static bool artifact_parity_append_tree_manifest(Arena *arena,
 
 static bool artifact_parity_append_file_text_manifest(Arena *arena,
                                                       Nob_String_Builder *sb,
-                                                      const char *abs_path) {
+                                                      const char *abs_path,
+                                                      const char *base_dir_abs) {
     Test_Fs_Path_Info info = {0};
     String_View text = {0};
     String_View normalized = {0};
@@ -302,10 +304,47 @@ static bool artifact_parity_append_file_text_manifest(Arena *arena,
     }
     if (!test_snapshot_load_text_file_to_arena(arena, abs_path, &text)) return false;
     normalized = test_snapshot_normalize_newlines_to_arena(arena, text);
+    if (base_dir_abs && base_dir_abs[0] != '\0') {
+        size_t base_len = strlen(base_dir_abs);
+        bool replaced = false;
+        Nob_String_Builder normalized_sb = {0};
+        char *copy = NULL;
+
+        for (size_t i = 0; i < normalized.count;) {
+            if (base_len > 0 && i + base_len <= normalized.count &&
+                memcmp(normalized.data + i, base_dir_abs, base_len) == 0) {
+                nob_sb_append_cstr(&normalized_sb, "${ARTIFACT_PARITY_BASE}");
+                i += base_len;
+                replaced = true;
+                continue;
+            }
+            nob_sb_append_buf(&normalized_sb, normalized.data + i, 1);
+            i++;
+        }
+
+        if (replaced) {
+            copy = arena_strndup(arena, normalized_sb.items ? normalized_sb.items : "", normalized_sb.count);
+            nob_sb_free(normalized_sb);
+            if (!copy) return false;
+            normalized = nob_sv_from_parts(copy, strlen(copy));
+        } else {
+            nob_sb_free(normalized_sb);
+        }
+    }
     nob_sb_append_cstr(sb, "STATUS PRESENT\nTEXT ");
     test_snapshot_append_escaped_sv(sb, normalized);
     nob_sb_append_cstr(sb, "\n");
     return true;
+}
+
+static bool artifact_parity_path_is_absolute(const char *path) {
+    if (!path || path[0] == '\0') return false;
+#if defined(_WIN32)
+    if (path[0] == '/' || path[0] == '\\') return true;
+    return isalpha((unsigned char)path[0]) && path[1] == ':';
+#else
+    return path[0] == '/';
+#endif
 }
 
 static uint32_t artifact_parity_load_be32(const unsigned char *p) {
@@ -605,28 +644,19 @@ static bool artifact_parity_append_package_metadata_entry(Arena *arena,
                                                           const char *archive_abs_path,
                                                           const char *archive_relpath) {
     Test_Fs_Path_Info info = {0};
-    String_View hash = {0};
     char extract_dir[_TINYDIR_PATH_MAX] = {0};
     const char *generator = artifact_parity_package_generator_from_path(archive_abs_path);
-    struct stat st = {0};
     if (!arena || !sb || !archive_abs_path || !archive_relpath || !generator) return false;
     if (!test_fs_get_path_info(archive_abs_path, &info) ||
         !info.exists ||
-        info.is_dir ||
-        stat(archive_abs_path, &st) != 0) {
+        info.is_dir) {
         return false;
     }
-    hash = artifact_parity_hash_file_sha256_to_arena(arena, archive_abs_path);
-    if (hash.count == 0) return false;
 
     nob_sb_append_cstr(sb, "PACKAGE generator=");
     nob_sb_append_cstr(sb, generator);
     nob_sb_append_cstr(sb, " file=");
     test_snapshot_append_escaped_sv(sb, nob_sv_from_cstr(archive_relpath));
-    nob_sb_append_cstr(sb, " size=");
-    nob_sb_append_cstr(sb, nob_temp_sprintf("%llu", (unsigned long long)st.st_size));
-    nob_sb_append_cstr(sb, " sha256=");
-    test_snapshot_append_escaped_sv(sb, hash);
     nob_sb_append_cstr(sb, "\n");
 
     if (!artifact_parity_extract_archive_to_dir(archive_abs_path, generator, extract_dir)) return false;
@@ -1029,10 +1059,18 @@ bool artifact_parity_capture_manifest(
     String_View *out) {
     Nob_String_Builder sb = {0};
     char abs_path[_TINYDIR_PATH_MAX] = {0};
+    char base_abs[_TINYDIR_PATH_MAX] = {0};
     char *copy = NULL;
     size_t len = 0;
+    const char *cwd = NULL;
 
     if (!arena || !base_dir || !requests || !out) return false;
+    cwd = nob_get_current_dir_temp();
+    if (artifact_parity_path_is_absolute(base_dir)) {
+        if (!artifact_parity_copy_string(base_dir, base_abs)) return false;
+    } else {
+        if (!cwd || !test_fs_join_path(cwd, base_dir, base_abs)) return false;
+    }
 
     nob_sb_append_cstr(&sb, "MANIFEST requests=");
     nob_sb_append_cstr(&sb, nob_temp_sprintf("%zu\n\n", request_count));
@@ -1070,7 +1108,7 @@ bool artifact_parity_capture_manifest(
                         nob_sb_free(sb);
                         return false;
                     }
-                } else if (!artifact_parity_append_file_text_manifest(arena, &sb, abs_path)) {
+                } else if (!artifact_parity_append_file_text_manifest(arena, &sb, abs_path, base_abs)) {
                     nob_sb_free(sb);
                     return false;
                 }

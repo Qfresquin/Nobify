@@ -83,6 +83,116 @@ static String_View eval_default_cmake_command_temp(EvalExecContext *ctx) {
     return nob_sv_from_cstr("cmake");
 }
 
+static String_View eval_path_dirname_temp_sv(EvalExecContext *ctx, String_View path) {
+    size_t end = 0;
+    if (!ctx || path.count == 0) return nob_sv_from_cstr("");
+
+    path = eval_sv_path_normalize_temp(ctx, path);
+    if (eval_should_stop(ctx) || path.count == 0) return nob_sv_from_cstr("");
+
+    end = path.count;
+    while (end > 1 && svu_is_path_sep(path.data[end - 1])) end--;
+    while (end > 0 && !svu_is_path_sep(path.data[end - 1])) end--;
+    if (end == 0) return nob_sv_from_cstr("");
+    while (end > 1 && svu_is_path_sep(path.data[end - 1])) end--;
+    return nob_sv_from_parts(path.data, end);
+}
+
+String_View eval_cmake_builtin_root_temp(EvalExecContext *ctx) {
+    Nob_File_Paths entries = {0};
+    String_View cmake_command = {0};
+    String_View cmake_dir = {0};
+    String_View install_prefix = {0};
+    String_View share_dir = {0};
+    String_View preferred_name = {0};
+    String_View best_root = {0};
+
+    if (!ctx) return nob_sv_from_cstr("");
+
+    cmake_command = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_COMMAND"));
+    if (cmake_command.count == 0) cmake_command = eval_default_cmake_command_temp(ctx);
+    if (cmake_command.count == 0 || eval_should_stop(ctx)) return nob_sv_from_cstr("");
+
+#if !defined(_WIN32)
+    {
+        char *cmake_command_c = eval_sv_to_cstr_temp(ctx, cmake_command);
+        EVAL_OOM_RETURN_IF_NULL(ctx, cmake_command_c, nob_sv_from_cstr(""));
+        char *resolved = realpath(cmake_command_c, NULL);
+        if (resolved) {
+            cmake_command = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(resolved));
+            free(resolved);
+        }
+    }
+#endif
+
+    cmake_dir = eval_path_dirname_temp_sv(ctx, cmake_command);
+    install_prefix = eval_path_dirname_temp_sv(ctx, cmake_dir);
+    if (eval_should_stop(ctx) || install_prefix.count == 0) return nob_sv_from_cstr("");
+
+    share_dir = eval_sv_path_join(eval_temp_arena(ctx), install_prefix, nob_sv_from_cstr("share"));
+    if (eval_should_stop(ctx) || share_dir.count == 0) return nob_sv_from_cstr("");
+
+    char *share_dir_c = eval_sv_to_cstr_temp(ctx, share_dir);
+    EVAL_OOM_RETURN_IF_NULL(ctx, share_dir_c, nob_sv_from_cstr(""));
+    if (!nob_file_exists(share_dir_c) || nob_get_file_type(share_dir_c) != NOB_FILE_DIRECTORY) {
+        return nob_sv_from_cstr("");
+    }
+
+    {
+        String_View major = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_MAJOR_VERSION"));
+        String_View minor = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_MINOR_VERSION"));
+        if (major.count > 0 && minor.count > 0) {
+            preferred_name = nob_sv_from_cstr(nob_temp_sprintf("cmake-%.*s.%.*s",
+                                                               (int)major.count,
+                                                               major.data,
+                                                               (int)minor.count,
+                                                               minor.data));
+        }
+    }
+
+    if (!nob_read_entire_dir(share_dir_c, &entries)) return nob_sv_from_cstr("");
+    for (size_t i = 0; i < entries.count; i++) {
+        const char *entry_c = entries.items[i];
+        if (!entry_c || strcmp(entry_c, ".") == 0 || strcmp(entry_c, "..") == 0) continue;
+
+        String_View entry = nob_sv_from_cstr(entry_c);
+        if (!svu_has_prefix_ci_lit(entry, "cmake-")) continue;
+
+        String_View candidate_root = eval_sv_path_join(eval_temp_arena(ctx), share_dir, entry);
+        String_View candidate_modules = eval_sv_path_join(eval_temp_arena(ctx),
+                                                          candidate_root,
+                                                          nob_sv_from_cstr("Modules"));
+        if (eval_should_stop(ctx)) {
+            nob_da_free(entries);
+            return nob_sv_from_cstr("");
+        }
+
+        char *candidate_modules_c = eval_sv_to_cstr_temp(ctx, candidate_modules);
+        EVAL_OOM_RETURN_IF_NULL(ctx, candidate_modules_c, nob_sv_from_cstr(""));
+        if (!nob_file_exists(candidate_modules_c) ||
+            nob_get_file_type(candidate_modules_c) != NOB_FILE_DIRECTORY) {
+            continue;
+        }
+
+        if (preferred_name.count > 0 && nob_sv_eq(entry, preferred_name)) {
+            String_View exact = sv_copy_to_temp_arena(ctx, candidate_root);
+            nob_da_free(entries);
+            return exact;
+        }
+
+        if (best_root.count == 0) best_root = sv_copy_to_temp_arena(ctx, candidate_root);
+    }
+
+    nob_da_free(entries);
+    return best_root;
+}
+
+String_View eval_cmake_builtin_modules_dir_temp(EvalExecContext *ctx) {
+    String_View root = eval_cmake_builtin_root_temp(ctx);
+    if (!ctx || root.count == 0) return nob_sv_from_cstr("");
+    return eval_sv_path_join(eval_temp_arena(ctx), root, nob_sv_from_cstr("Modules"));
+}
+
 // -----------------------------------------------------------------------------
 // Arena helpers and origin tracking
 // -----------------------------------------------------------------------------
@@ -2742,6 +2852,14 @@ static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg) {
                                                      nob_sv_from_cstr("CMAKE_COMMAND"),
                                                      eval_default_cmake_command_temp(ctx)),
                                 "set CMAKE_COMMAND");
+    {
+        String_View builtin_root = eval_cmake_builtin_root_temp(ctx);
+        if (eval_should_stop(ctx)) return NULL;
+        if (builtin_root.count > 0 &&
+            !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_ROOT"), builtin_root)) {
+            return NULL;
+        }
+    }
 
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_NAME"), nob_sv_from_cstr(""))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("PROJECT_VERSION"), nob_sv_from_cstr(""))) return NULL;

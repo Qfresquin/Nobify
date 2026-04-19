@@ -410,6 +410,11 @@ BM_Directory_Id bm_query_install_rule_owner_directory(const Build_Model *model, 
 String_View bm_query_install_rule_item_raw(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_destination(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_component(const Build_Model *model, BM_Install_Rule_Id id);
+String_View bm_query_install_rule_archive_component(const Build_Model *model, BM_Install_Rule_Id id);
+String_View bm_query_install_rule_library_component(const Build_Model *model, BM_Install_Rule_Id id);
+String_View bm_query_install_rule_runtime_component(const Build_Model *model, BM_Install_Rule_Id id);
+String_View bm_query_install_rule_includes_component(const Build_Model *model, BM_Install_Rule_Id id);
+String_View bm_query_install_rule_public_header_component(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_namelink_component(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_export_name(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_archive_destination(const Build_Model *model, BM_Install_Rule_Id id);

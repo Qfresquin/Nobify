@@ -3,6 +3,7 @@
 #include "eval_dispatcher.h"
 #include "sv_utils.h"
 #include <ctype.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <pcre2posix.h>
@@ -366,6 +367,47 @@ bool eval_truthy(struct EvalExecContext *ctx, String_View v) {
     }
 
     // Non-constant bare tokens are treated as true in if() conditions.
+    return true;
+}
+
+static bool eval_set_regex_match_vars(EvalExecContext *ctx,
+                                      const char *subject,
+                                      const regmatch_t *matches,
+                                      size_t match_count,
+                                      bool matched) {
+    if (!ctx) return true;
+
+    size_t highest_group = 0;
+    if (matched && subject && matches) {
+        for (size_t i = 1; i < match_count; i++) {
+            if (matches[i].rm_so >= 0 && matches[i].rm_eo >= matches[i].rm_so) highest_group = i;
+        }
+    }
+
+    for (size_t i = 0; i < match_count; i++) {
+        char name[32] = {0};
+        String_View value = nob_sv_from_cstr("");
+        if (snprintf(name, sizeof(name), "CMAKE_MATCH_%zu", i) >= (int)sizeof(name)) return false;
+        if (matched && subject && matches &&
+            matches[i].rm_so >= 0 && matches[i].rm_eo >= matches[i].rm_so) {
+            value = nob_sv_from_parts(subject + matches[i].rm_so,
+                                      (size_t)(matches[i].rm_eo - matches[i].rm_so));
+        }
+        if (!eval_var_set_current(ctx, nob_sv_from_cstr(name), value)) return false;
+    }
+
+    {
+        char count_buf[32] = {0};
+        if (snprintf(count_buf, sizeof(count_buf), "%zu", matched ? highest_group : 0) >= (int)sizeof(count_buf)) {
+            return false;
+        }
+        if (!eval_var_set_current(ctx,
+                                  nob_sv_from_cstr("CMAKE_MATCH_COUNT"),
+                                  nob_sv_from_cstr(count_buf))) {
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -751,6 +793,7 @@ static bool parse_cmp(Expr *e) {
     }
 
     if (eval_sv_eq_ci_lit(op, "MATCHES")) {
+        enum { MAX_REGEX_MATCHES = 10 };
         expr_next(e);
         if (!expr_has(e)) return false;
 
@@ -764,8 +807,14 @@ static bool parse_cmp(Expr *e) {
 
         regex_t re;
         if (regcomp(&re, pat, REG_EXTENDED) != 0) return false;
-        int rc = regexec(&re, subj, 0, NULL, 0);
+        regmatch_t matches[MAX_REGEX_MATCHES];
+        for (size_t i = 0; i < MAX_REGEX_MATCHES; i++) {
+            matches[i].rm_so = -1;
+            matches[i].rm_eo = -1;
+        }
+        int rc = regexec(&re, subj, MAX_REGEX_MATCHES, matches, 0);
         regfree(&re);
+        if (!eval_set_regex_match_vars(e->ctx, subj, matches, MAX_REGEX_MATCHES, rc == 0)) return false;
         return rc == 0;
     }
 

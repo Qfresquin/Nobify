@@ -75,7 +75,10 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
             if (ctx->build_steps[i].uses_stamp) needs_write_stamp = true;
         }
     }
-    if (bm_query_test_count(ctx->model) > 0) ctx->helper_bits |= CG_HELPER_RUN_CMD;
+    if (bm_query_test_count(ctx->model) > 0) {
+        ctx->helper_bits |= CG_HELPER_RUN_CMD;
+        ctx->helper_bits |= CG_HELPER_CMAKE_RESOLVER;
+    }
     if (cg_step_uses_bare_tool(ctx, "cmake")) ctx->helper_bits |= CG_HELPER_CMAKE_RESOLVER;
     if (cg_step_uses_bare_tool(ctx, "cpack")) ctx->helper_bits |= CG_HELPER_CPACK_RESOLVER;
 
@@ -92,6 +95,7 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
         needs_install_copy_file = true;
         needs_install_copy_directory = true;
         needs_package_archive = true;
+        ctx->helper_bits |= CG_HELPER_CPACK_RESOLVER;
         if (cg_package_generator_enabled(ctx, "TGZ")) ctx->helper_bits |= CG_HELPER_GZIP_RESOLVER;
         if (cg_package_generator_enabled(ctx, "TXZ")) ctx->helper_bits |= CG_HELPER_XZ_RESOLVER;
     }
@@ -100,6 +104,10 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
         BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
         BM_Replay_Opcode opcode = bm_query_replay_action_opcode(ctx->model, id);
         needs_write_stamp = true;
+        if (opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF ||
+            opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF) {
+            ctx->helper_bits |= CG_HELPER_CMAKE_RESOLVER;
+        }
         if (opcode == BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR ||
             opcode == BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR ||
             opcode == BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE) {

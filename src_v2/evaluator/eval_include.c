@@ -120,11 +120,9 @@ static bool include_try_module_search(EvalExecContext *ctx,
         return false;
     }
 
-    // Real CMake's builtin-module precedence for CMP0017 is tied to its
-    // installation's canonical Modules tree, not to user-overridden
-    // CMAKE_ROOT values. The evaluator does not model that builtin tree yet,
-    // so module lookup here stays within user-observable paths only.
-    String_View modules_dir = nob_sv_from_cstr("");
+    // Resolve the host CMake installation's builtin Modules tree as a fallback,
+    // but keep user-provided CMAKE_MODULE_PATH ahead of it for now.
+    String_View modules_dir = eval_cmake_builtin_modules_dir_temp(ctx);
     bool cmp0017_new = eval_policy_is_new(ctx, EVAL_POLICY_CMP0017);
     bool search_builtin_first = false;
     (void)cmp0017_new;

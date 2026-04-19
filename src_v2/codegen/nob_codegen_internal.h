@@ -177,6 +177,7 @@ const CG_Build_Step_Info *cg_build_step_info(const CG_Context *ctx, BM_Build_Ste
 
 bool cg_sb_append_c_string(Nob_String_Builder *sb, String_View sv);
 bool cg_rebase_path_from_cwd(CG_Context *ctx, String_View in, String_View *out);
+bool cg_rebase_path_from_generation_cwd(CG_Context *ctx, String_View in, String_View *out);
 bool cg_emit_cmd_append_sv(Nob_String_Builder *out, const char *cmd_var, String_View arg);
 bool cg_emit_cmd_append_expr(Nob_String_Builder *out, const char *cmd_var, const char *expr);
 bool cg_eval_string_for_config(CG_Context *ctx,
@@ -240,6 +241,7 @@ bool cg_emit_cmake_imported_target_declaration(BM_Target_Kind kind,
 bool cg_build_cmake_targets_file_contents(CG_Context *ctx,
                                           BM_Export_Id export_id,
                                           String_View config,
+                                          bool install_style,
                                           bool include_noconfig,
                                           CG_CMake_Target_Properties_Emitter emit_properties,
                                           void *userdata,

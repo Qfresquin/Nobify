@@ -25,6 +25,16 @@ static bool cg_package_output_dir(CG_Context *ctx,
     return cg_relative_path_to_arena(ctx->scratch, ctx->emit_dir_abs, absolute, out);
 }
 
+static bool cg_package_binary_root_path_abs(CG_Context *ctx,
+                                            String_View subpath,
+                                            String_View *out) {
+    String_View joined = {0};
+    if (!ctx || !out) return false;
+    *out = nob_sv_from_cstr("");
+    if (!cg_join_paths_to_arena(ctx->scratch, ctx->binary_root_abs, subpath, &joined)) return false;
+    return cg_normalize_path_to_arena(ctx->scratch, joined, out);
+}
+
 static bool cg_emit_package_plan_tables(CG_Context *ctx, Nob_String_Builder *out) {
     if (!ctx || !out) return false;
 
@@ -33,6 +43,7 @@ static bool cg_emit_package_plan_tables(CG_Context *ctx, Nob_String_Builder *out
         "    const char *package_name;\n"
         "    const char *package_version;\n"
         "    const char *package_file_name;\n"
+        "    const char *plan_root;\n"
         "    const char *default_output_dir;\n"
         "    const char *staging_root;\n"
         "    const char *payload_root;\n"
@@ -67,20 +78,24 @@ static bool cg_emit_package_plan_tables(CG_Context *ctx, Nob_String_Builder *out
     for (size_t package_index = 0; package_index < bm_query_cpack_package_count(ctx->model); ++package_index) {
         BM_CPack_Package_Id id = (BM_CPack_Package_Id)package_index;
         String_View output_dir = {0};
+        String_View plan_root = {0};
         String_View staging_root = {0};
         String_View payload_root = {0};
         String_View metadata_path = {0};
         BM_String_Span generators = bm_query_cpack_package_generators(ctx->model, id);
         if (!cg_package_output_dir(ctx, id, &output_dir) ||
-            !cg_rebase_from_binary_root(ctx,
-                                        nob_sv_from_cstr(nob_temp_sprintf(".nob/package/plan%zu/staging", package_index)),
-                                        &staging_root) ||
-            !cg_rebase_from_binary_root(ctx,
-                                        nob_sv_from_cstr(nob_temp_sprintf(".nob/package/plan%zu/payload", package_index)),
-                                        &payload_root) ||
-            !cg_rebase_from_binary_root(ctx,
-                                        nob_sv_from_cstr(nob_temp_sprintf(".nob/package/plan%zu/package_metadata.txt", package_index)),
-                                        &metadata_path)) {
+            !cg_package_binary_root_path_abs(ctx,
+                                             nob_sv_from_cstr(nob_temp_sprintf(".nob/package/plan%zu", package_index)),
+                                             &plan_root) ||
+            !cg_package_binary_root_path_abs(ctx,
+                                             nob_sv_from_cstr(nob_temp_sprintf(".nob/package/plan%zu/staging", package_index)),
+                                             &staging_root) ||
+            !cg_package_binary_root_path_abs(ctx,
+                                             nob_sv_from_cstr(nob_temp_sprintf(".nob/package/plan%zu/payload", package_index)),
+                                             &payload_root) ||
+            !cg_package_binary_root_path_abs(ctx,
+                                             nob_sv_from_cstr(nob_temp_sprintf(".nob/package/plan%zu/package_metadata.txt", package_index)),
+                                             &metadata_path)) {
             return false;
         }
 
@@ -91,6 +106,8 @@ static bool cg_emit_package_plan_tables(CG_Context *ctx, Nob_String_Builder *out
         if (!cg_sb_append_c_string(out, bm_query_cpack_package_version(ctx->model, id))) return false;
         nob_sb_append_cstr(out, ",\n        .package_file_name = ");
         if (!cg_sb_append_c_string(out, bm_query_cpack_package_file_name(ctx->model, id))) return false;
+        nob_sb_append_cstr(out, ",\n        .plan_root = ");
+        if (!cg_sb_append_c_string(out, plan_root)) return false;
         nob_sb_append_cstr(out, ",\n        .default_output_dir = ");
         if (!cg_sb_append_c_string(out, output_dir)) return false;
         nob_sb_append_cstr(out, ",\n        .staging_root = ");
@@ -159,11 +176,27 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "    if (!rhs || rhs[0] == '\\0') return lhs;\n"
         "    return nob_temp_sprintf(\"%s/%s\", lhs, rhs);\n"
         "}\n\n"
+        "static bool package_path_is_absolute(const char *path) {\n"
+        "    if (!path || path[0] == '\\0') return false;\n"
+        "#if defined(_WIN32)\n"
+        "    return (strlen(path) >= 3 && isalpha((unsigned char)path[0]) && path[1] == ':' &&\n"
+        "            (path[2] == '/' || path[2] == '\\\\')) ||\n"
+        "           (path[0] == '\\\\' && path[1] == '\\\\');\n"
+        "#else\n"
+        "    return path[0] == '/';\n"
+        "#endif\n"
+        "}\n\n"
+        "static const char *package_make_absolute_path(const char *path) {\n"
+        "    if (!path || path[0] == '\\0') return path;\n"
+        "    if (package_path_is_absolute(path)) return path;\n"
+        "    return package_join_path(nob_get_current_dir_temp(), path);\n"
+        "}\n\n"
         "static const char *package_make_archive_name(const Nob_Package_Request *request, const char *generator) {\n"
         "    return nob_temp_sprintf(\"%s%s\", request->plan->package_file_name, package_generator_extension(generator));\n"
         "}\n\n"
         "static const char *package_make_archive_path(const Nob_Package_Request *request, const char *generator) {\n"
-        "    return package_join_path(request->effective_output_dir, package_make_archive_name(request, generator));\n"
+        "    return package_join_path(package_make_absolute_path(request->effective_output_dir),\n"
+        "                             package_make_archive_name(request, generator));\n"
         "}\n\n"
         "static bool package_request_init(const Nob_Package_Plan *plan,\n"
         "                                 const char *selected_generator,\n"
@@ -236,6 +269,57 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "    }\n"
         "    return package_copy_directory_contents(request->staging_root, request->payload_root);\n"
         "}\n\n"
+        "static const char *package_payload_source_root(const Nob_Package_Request *request) {\n"
+        "    if (!request || !request->plan) return NULL;\n"
+        "    if (!request->plan->include_toplevel_directory) return request->payload_root;\n"
+        "    return package_join_path(request->payload_root, request->plan->package_file_name);\n"
+        "}\n\n"
+        "static const char *package_cpack_platform(void) {\n"
+        "#if defined(_WIN32)\n"
+        "    return \"win32\";\n"
+        "#elif defined(__APPLE__)\n"
+        "    return \"Darwin\";\n"
+        "#else\n"
+        "    return \"Linux\";\n"
+        "#endif\n"
+        "}\n\n"
+        "static const char *package_cpack_generator_root(const Nob_Package_Request *request, const char *generator) {\n"
+        "    const char *output_dir = NULL;\n"
+        "    if (!request || !generator) return NULL;\n"
+        "    output_dir = package_make_absolute_path(request->effective_output_dir);\n"
+        "    return package_join_path(package_join_path(package_join_path(output_dir, \"_CPack_Packages\"),\n"
+        "                                               package_cpack_platform()),\n"
+        "                            generator);\n"
+        "}\n\n"
+        "static const char *package_cpack_payload_root(const Nob_Package_Request *request, const char *generator) {\n"
+        "    const char *generator_root = package_cpack_generator_root(request, generator);\n"
+        "    if (!request || !request->plan || !generator_root) return NULL;\n"
+        "    return package_join_path(generator_root, request->plan->package_file_name);\n"
+        "}\n\n"
+        "static const char *package_cpack_archive_path(const Nob_Package_Request *request, const char *generator) {\n"
+        "    const char *generator_root = package_cpack_generator_root(request, generator);\n"
+        "    if (!generator_root) return NULL;\n"
+        "    return package_join_path(generator_root, package_make_archive_name(request, generator));\n"
+        "}\n\n"
+        "static bool package_sync_cpack_tree(const Nob_Package_Request *request,\n"
+        "                                    const char *generator,\n"
+        "                                    const char *archive_path) {\n"
+        "    const char *generator_root = NULL;\n"
+        "    const char *payload_root = NULL;\n"
+        "    const char *payload_source = NULL;\n"
+        "    const char *archive_copy_path = NULL;\n"
+        "    if (!request || !request->plan || !generator || !archive_path) return false;\n"
+        "    generator_root = package_cpack_generator_root(request, generator);\n"
+        "    payload_root = package_cpack_payload_root(request, generator);\n"
+        "    payload_source = package_payload_source_root(request);\n"
+        "    archive_copy_path = package_cpack_archive_path(request, generator);\n"
+        "    if (!generator_root || !payload_root || !payload_source || !archive_copy_path) return false;\n"
+        "    if (!remove_path_recursive(payload_root) || !remove_path_recursive(archive_copy_path)) return false;\n"
+        "    if (!ensure_dir(generator_root) || !ensure_dir(payload_root)) return false;\n"
+        "    if (!package_copy_directory_contents(payload_source, payload_root)) return false;\n"
+        "    if (!install_copy_file(archive_path, archive_copy_path)) return false;\n"
+        "    return true;\n"
+        "}\n\n"
         "static bool package_metadata_append(const Nob_Package_Request *request,\n"
         "                                    const char *generator,\n"
         "                                    const char *archive_path) {\n"
@@ -263,6 +347,108 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "            request->plan->include_toplevel_directory ? 1 : 0);\n"
         "    fclose(fp);\n"
         "    return true;\n"
+        "}\n\n"
+        "static bool package_write_cmake_quoted(FILE *fp, const char *value) {\n"
+        "    if (!fp) return false;\n"
+        "    fputc('\"', fp);\n"
+        "    if (value) {\n"
+        "        for (const char *p = value; *p; ++p) {\n"
+        "            if (*p == '\\\\' || *p == '\"') fputc('\\\\', fp);\n"
+        "            fputc(*p, fp);\n"
+        "        }\n"
+        "    }\n"
+        "    fputc('\"', fp);\n"
+        "    return !ferror(fp);\n"
+        "}\n\n"
+        "static bool package_write_cmake_set(FILE *fp, const char *key, const char *value) {\n"
+        "    if (!fp || !key) return false;\n"
+        "    if (fprintf(fp, \"set(%s \", key) < 0) return false;\n"
+        "    if (!package_write_cmake_quoted(fp, value ? value : \"\")) return false;\n"
+        "    return fprintf(fp, \")\\n\") >= 0;\n"
+        "}\n\n"
+        "static void package_split_version_triplet(const char *version,\n"
+        "                                          char major[32],\n"
+        "                                          char minor[32],\n"
+        "                                          char patch[32]) {\n"
+        "    const char *segments[3] = {\"0\", \"0\", \"0\"};\n"
+        "    size_t lengths[3] = {1, 1, 1};\n"
+        "    size_t count = 0;\n"
+        "    const char *cursor = version ? version : \"\";\n"
+        "    while (*cursor != '\\0' && count < 3) {\n"
+        "        const char *start = cursor;\n"
+        "        while (*cursor != '\\0' && *cursor != '.') ++cursor;\n"
+        "        segments[count] = start;\n"
+        "        lengths[count] = (size_t)(cursor - start);\n"
+        "        ++count;\n"
+        "        if (*cursor == '.') ++cursor;\n"
+        "    }\n"
+        "    snprintf(major, 32, \"%.*s\", (int)lengths[0], segments[0]);\n"
+        "    snprintf(minor, 32, \"%.*s\", (int)lengths[1], segments[1]);\n"
+        "    snprintf(patch, 32, \"%.*s\", (int)lengths[2], segments[2]);\n"
+        "}\n\n"
+        "static bool package_write_cpack_config(const Nob_Package_Request *request,\n"
+        "                                       const char *generator,\n"
+        "                                       const char *config_path) {\n"
+        "    FILE *fp = NULL;\n"
+        "    char version_major[32] = {0};\n"
+        "    char version_minor[32] = {0};\n"
+        "    char version_patch[32] = {0};\n"
+        "    const char *package_name = NULL;\n"
+        "    const char *package_version = NULL;\n"
+        "    const char *output_dir = NULL;\n"
+        "    char *summary = NULL;\n"
+        "    if (!request || !request->plan || !generator || !config_path) return false;\n"
+        "    if (!ensure_parent_dir(config_path)) return false;\n"
+        "    fp = fopen(config_path, \"wb\");\n"
+        "    if (!fp) {\n"
+        "        nob_log(NOB_ERROR, \"package: failed to open CPack config %s: %s\", config_path, strerror(errno));\n"
+        "        return false;\n"
+        "    }\n"
+        "    package_name = request->plan->package_name ? request->plan->package_name : \"Package\";\n"
+        "    package_version = request->plan->package_version ? request->plan->package_version : \"0.0.0\";\n"
+        "    output_dir = package_make_absolute_path(request->effective_output_dir ? request->effective_output_dir : \".\");\n"
+        "    summary = nob_temp_sprintf(\"%s built using CMake\", package_name);\n"
+        "    package_split_version_triplet(package_version, version_major, version_minor, version_patch);\n"
+        "    if (!package_write_cmake_set(fp, \"CPACK_PACKAGE_NAME\", package_name) ||\n"
+        "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_VENDOR\", \"\") ||\n"
+        "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_DESCRIPTION\", summary) ||\n"
+        "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_DESCRIPTION_SUMMARY\", summary) ||\n"
+        "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_VERSION\", package_version) ||\n"
+        "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_VERSION_MAJOR\", version_major) ||\n"
+        "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_VERSION_MINOR\", version_minor) ||\n"
+        "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_VERSION_PATCH\", version_patch) ||\n"
+        "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_FILE_NAME\", request->plan->package_file_name ? request->plan->package_file_name : package_name) ||\n"
+        "        !package_write_cmake_set(fp, \"CPACK_GENERATOR\", generator) ||\n"
+        "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_DIRECTORY\", output_dir) ||\n"
+        "        !package_write_cmake_set(fp, \"CPACK_SYSTEM_NAME\", package_cpack_platform()) ||\n"
+        "        !package_write_cmake_set(fp, \"CPACK_TOPLEVEL_TAG\", package_cpack_platform())) {\n"
+        "        fclose(fp);\n"
+        "        return false;\n"
+        "    }\n"
+        "    if (fprintf(fp, \"set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY %s)\\n\",\n"
+        "                request->plan->include_toplevel_directory ? \"ON\" : \"OFF\") < 0) {\n"
+        "        fclose(fp);\n"
+        "        return false;\n"
+        "    }\n"
+        "    if (fprintf(fp, \"set(CPACK_INSTALLED_DIRECTORIES \") < 0 ||\n"
+        "        !package_write_cmake_quoted(fp, request->staging_root) ||\n"
+        "        fprintf(fp, \" \") < 0 ||\n"
+        "        !package_write_cmake_quoted(fp, \"/\") ||\n"
+        "        fprintf(fp, \")\\n\") < 0) {\n"
+        "        fclose(fp);\n"
+        "        return false;\n"
+        "    }\n"
+        "    fclose(fp);\n"
+        "    return true;\n"
+        "}\n\n"
+        "static bool package_run_cpack_config(const char *config_path) {\n"
+        "    Nob_Cmd cmd = {0};\n"
+        "    bool ok = false;\n"
+        "    if (!config_path) return false;\n"
+        "    nob_cmd_append(&cmd, resolve_cpack_bin(), \"--config\", config_path);\n"
+        "    ok = nob_cmd_run(&cmd);\n"
+        "    nob_cmd_free(cmd);\n"
+        "    return ok;\n"
         "}\n\n");
 
     if (has_tgz || has_txz) {
@@ -632,43 +818,30 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
     if (has_tgz) {
         nob_sb_append_cstr(out,
             "    if (strcmp(generator, \"TGZ\") == 0) {\n"
-            "        const char *tar_path = package_join_path(request->staging_root, \"payload.tar\");\n"
-            "        const char *compressed_tmp = nob_temp_sprintf(\"%s.gz\", tar_path);\n"
-            "        Nob_Cmd cmd = {0};\n"
-            "        bool ok = false;\n"
-            "        if (!remove_path_recursive(tar_path) || !remove_path_recursive(compressed_tmp)) return false;\n"
-            "        if (!package_write_tar_tree(request->payload_root, tar_path)) return false;\n"
-            "        nob_cmd_append(&cmd, resolve_gzip_bin(), \"-n\", \"-f\", \"-k\", tar_path);\n"
-            "        ok = nob_cmd_run(&cmd);\n"
-            "        nob_cmd_free(cmd);\n"
-            "        if (!ok) return false;\n"
-            "        if (!install_copy_file(compressed_tmp, archive_path)) return false;\n"
-            "        if (!remove_path_recursive(compressed_tmp) || !remove_path_recursive(tar_path)) return false;\n"
+            "        const char *config_path = package_join_path(request->plan->plan_root, \"CPackTGZConfig.cmake\");\n"
+            "        const char *generator_root = package_cpack_generator_root(request, generator);\n"
+            "        if (!remove_path_recursive(archive_path) || !remove_path_recursive(generator_root) || !remove_path_recursive(config_path)) return false;\n"
+            "        if (!package_write_cpack_config(request, generator, config_path) || !package_run_cpack_config(config_path)) return false;\n"
             "        return package_metadata_append(request, generator, archive_path);\n"
             "    }\n");
     }
     if (has_txz) {
         nob_sb_append_cstr(out,
             "    if (strcmp(generator, \"TXZ\") == 0) {\n"
-            "        const char *tar_path = package_join_path(request->staging_root, \"payload.tar\");\n"
-            "        const char *compressed_tmp = nob_temp_sprintf(\"%s.xz\", tar_path);\n"
-            "        Nob_Cmd cmd = {0};\n"
-            "        bool ok = false;\n"
-            "        if (!remove_path_recursive(tar_path) || !remove_path_recursive(compressed_tmp)) return false;\n"
-            "        if (!package_write_tar_tree(request->payload_root, tar_path)) return false;\n"
-            "        nob_cmd_append(&cmd, resolve_xz_bin(), \"-f\", \"-k\", tar_path);\n"
-            "        ok = nob_cmd_run(&cmd);\n"
-            "        nob_cmd_free(cmd);\n"
-            "        if (!ok) return false;\n"
-            "        if (!install_copy_file(compressed_tmp, archive_path)) return false;\n"
-            "        if (!remove_path_recursive(compressed_tmp) || !remove_path_recursive(tar_path)) return false;\n"
+            "        const char *config_path = package_join_path(request->plan->plan_root, \"CPackTXZConfig.cmake\");\n"
+            "        const char *generator_root = package_cpack_generator_root(request, generator);\n"
+            "        if (!remove_path_recursive(archive_path) || !remove_path_recursive(generator_root) || !remove_path_recursive(config_path)) return false;\n"
+            "        if (!package_write_cpack_config(request, generator, config_path) || !package_run_cpack_config(config_path)) return false;\n"
             "        return package_metadata_append(request, generator, archive_path);\n"
             "    }\n");
     }
     if (has_zip) {
         nob_sb_append_cstr(out,
             "    if (strcmp(generator, \"ZIP\") == 0) {\n"
-            "        if (!package_write_zip_tree(request->payload_root, archive_path)) return false;\n"
+            "        const char *config_path = package_join_path(request->plan->plan_root, \"CPackZIPConfig.cmake\");\n"
+            "        const char *generator_root = package_cpack_generator_root(request, generator);\n"
+            "        if (!remove_path_recursive(archive_path) || !remove_path_recursive(generator_root) || !remove_path_recursive(config_path)) return false;\n"
+            "        if (!package_write_cpack_config(request, generator, config_path) || !package_run_cpack_config(config_path)) return false;\n"
             "        return package_metadata_append(request, generator, archive_path);\n"
             "    }\n");
     }

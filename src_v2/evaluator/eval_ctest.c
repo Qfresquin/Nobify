@@ -487,12 +487,12 @@ static bool ctest_paths_match_normalized(EvalExecContext *ctx, String_View lhs, 
     return nob_sv_eq(lhs, rhs);
 }
 
-static bool ctest_path_is_self_source_dir(EvalExecContext *ctx, String_View path) {
+static bool __attribute__((unused)) ctest_path_is_self_source_dir(EvalExecContext *ctx, String_View path) {
     if (!ctx) return false;
     return ctest_paths_match_normalized(ctx, path, ctest_source_root(ctx));
 }
 
-static bool ctest_path_is_self_binary_dir(EvalExecContext *ctx, String_View path) {
+static bool __attribute__((unused)) ctest_path_is_self_binary_dir(EvalExecContext *ctx, String_View path) {
     if (!ctx) return false;
     return ctest_paths_match_normalized(ctx, path, ctest_binary_root(ctx));
 }
@@ -1411,12 +1411,22 @@ static String_View ctest_source_root(EvalExecContext *ctx) {
     return v.count > 0 ? v : eval_current_source_dir(ctx);
 }
 
+static String_View ctest_absolutize_session_dir(EvalExecContext *ctx, String_View path) {
+    const char *cwd = NULL;
+    if (!ctx || path.count == 0 || eval_sv_is_abs_path(path)) return path;
+    cwd = nob_get_current_dir_temp();
+    if (!cwd || cwd[0] == '\0') return path;
+    return eval_sv_path_normalize_temp(
+        ctx,
+        eval_sv_path_join(eval_temp_arena(ctx), nob_sv_from_cstr(cwd), path));
+}
+
 static String_View ctest_resolve_source_dir(EvalExecContext *ctx, String_View raw) {
     if (!ctx) return nob_sv_from_cstr("");
     if (raw.count == 0) return nob_sv_from_cstr("");
     String_View resolved = eval_path_resolve_for_cmake_arg(ctx, raw, eval_current_source_dir_for_paths(ctx), false);
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
-    return eval_sv_path_normalize_temp(ctx, resolved);
+    return ctest_absolutize_session_dir(ctx, eval_sv_path_normalize_temp(ctx, resolved));
 }
 
 static String_View ctest_default_source_setting(EvalExecContext *ctx) {
@@ -1432,7 +1442,7 @@ static String_View ctest_resolve_binary_dir(EvalExecContext *ctx, String_View ra
     if (raw.count == 0) return nob_sv_from_cstr("");
     String_View resolved = eval_path_resolve_for_cmake_arg(ctx, raw, ctest_current_binary_dir(ctx), false);
     if (eval_should_stop(ctx)) return nob_sv_from_cstr("");
-    return eval_sv_path_normalize_temp(ctx, resolved);
+    return ctest_absolutize_session_dir(ctx, eval_sv_path_normalize_temp(ctx, resolved));
 }
 
 static String_View ctest_default_binary_setting(EvalExecContext *ctx) {
@@ -4935,17 +4945,11 @@ Eval_Result eval_handle_ctest_build(EvalExecContext *ctx, const Node *node) {
     Ctest_Build_Request req = {0};
     if (!ctest_parse_build_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_build_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
-    if (ctest_path_is_self_binary_dir(ctx, req.core.resolved_build)) {
-        if (!ctest_emit_replay_build_self(ctx,
-                                          eval_origin_from_node(ctx, node),
-                                          req.core.resolved_build,
-                                          req.configuration,
-                                          req.target)) {
-            return eval_result_from_ctx(ctx);
-        }
-    } else if (!ctest_emit_test_driver_reject_marker(ctx,
-                                                     eval_origin_from_node(ctx, node),
-                                                     req.core.resolved_build)) {
+    if (!ctest_emit_replay_build_self(ctx,
+                                      eval_origin_from_node(ctx, node),
+                                      req.core.resolved_build,
+                                      req.configuration,
+                                      req.target)) {
         return eval_result_from_ctx(ctx);
     }
     return eval_result_from_ctx(ctx);
@@ -5561,17 +5565,10 @@ Eval_Result eval_handle_ctest_configure(EvalExecContext *ctx, const Node *node) 
     Ctest_Configure_Request req = {0};
     if (!ctest_parse_configure_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
     if (!ctest_execute_configure_request(ctx, node, &req)) return eval_result_from_ctx(ctx);
-    if (ctest_path_is_self_source_dir(ctx, req.resolved_source) &&
-        ctest_path_is_self_binary_dir(ctx, req.build_dir)) {
-        if (!ctest_emit_replay_configure_self(ctx,
-                                              eval_origin_from_node(ctx, node),
-                                              req.resolved_source,
-                                              req.build_dir)) {
-            return eval_result_from_ctx(ctx);
-        }
-    } else if (!ctest_emit_test_driver_reject_marker(ctx,
-                                                     eval_origin_from_node(ctx, node),
-                                                     req.build_dir)) {
+    if (!ctest_emit_replay_configure_self(ctx,
+                                          eval_origin_from_node(ctx, node),
+                                          req.resolved_source,
+                                          req.build_dir)) {
         return eval_result_from_ctx(ctx);
     }
     return eval_result_from_ctx(ctx);

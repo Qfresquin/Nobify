@@ -162,6 +162,119 @@ TEST(evaluator_target_usage_semantics_rejects_unsupported_genex_forms_early) {
     TEST_PASS();
 }
 
+TEST(evaluator_target_usage_semantics_accepts_bool_constant_genex) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(WRITE bool_usage.c \"int bool_usage(void){return 0;}\\n\")\n"
+        "add_library(bool_usage STATIC bool_usage.c)\n"
+        "set(BOOL_OFF OFF)\n"
+        "target_compile_definitions(bool_usage PRIVATE \"$<$<BOOL:${BOOL_OFF}>:HIDDEN_DEF>\")\n"
+        "target_compile_definitions(bool_usage PRIVATE \"$<$<BOOL:1>:VISIBLE_DEF>\")\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_visible = false;
+    bool saw_hidden = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("bool_usage"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("VISIBLE_DEF"))) saw_visible = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("HIDDEN_DEF"))) saw_hidden = true;
+    }
+
+    ASSERT(saw_visible);
+    ASSERT(!saw_hidden);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_if_matches_populates_cmake_match_variables) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(WRITE match_probe.c \"int match_probe(void){return 0;}\\n\")\n"
+        "set(TEXT \"FMT_VERSION 120100\")\n"
+        "if (TEXT MATCHES \"FMT_VERSION ([0-9]+)([0-9][0-9])([0-9][0-9])\")\n"
+        "  add_library(match_probe STATIC match_probe.c)\n"
+        "  target_compile_definitions(match_probe PRIVATE "
+        "M0=${CMAKE_MATCH_0} M1=${CMAKE_MATCH_1} M2=${CMAKE_MATCH_2} M3=${CMAKE_MATCH_3} MC=${CMAKE_MATCH_COUNT})\n"
+        "endif()\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_m0 = false;
+    bool saw_m1 = false;
+    bool saw_m2 = false;
+    bool saw_m3 = false;
+    bool saw_mc = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
+        if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("match_probe"))) continue;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("M0=FMT_VERSION 120100"))) saw_m0 = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("M1=12"))) saw_m1 = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("M2=01"))) saw_m2 = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("M3=00"))) saw_m3 = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("MC=3"))) saw_mc = true;
+    }
+
+    ASSERT(saw_m0);
+    ASSERT(saw_m1);
+    ASSERT(saw_m2);
+    ASSERT(saw_m3);
+    ASSERT(saw_mc);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_list_transform_output_variable_requires_single_output_var) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3579,6 +3692,8 @@ TEST(evaluator_batch6_metadata_commands_reject_incomplete_option_values) {
 void run_evaluator_v2_batch3(int *passed, int *failed, int *skipped) {
     test_evaluator_list_transform_genex_strip_and_output_variable(passed, failed, skipped);
     test_evaluator_target_usage_semantics_rejects_unsupported_genex_forms_early(passed, failed, skipped);
+    test_evaluator_target_usage_semantics_accepts_bool_constant_genex(passed, failed, skipped);
+    test_evaluator_if_matches_populates_cmake_match_variables(passed, failed, skipped);
     test_evaluator_list_transform_output_variable_requires_single_output_var(passed, failed, skipped);
     test_evaluator_list_sort_and_transform_selector_surface_matches_documented_combinations(passed, failed, skipped);
     test_evaluator_math_rejects_empty_and_incomplete_invocations(passed, failed, skipped);

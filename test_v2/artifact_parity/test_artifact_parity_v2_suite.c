@@ -158,6 +158,27 @@ static bool artifact_parity_make_abs_path(const char *relpath,
     return n >= 0 && n < _TINYDIR_PATH_MAX;
 }
 
+static bool artifact_parity_path_is_absolute(const char *path) {
+    if (!path || path[0] == '\0') return false;
+#if defined(_WIN32)
+    if (path[0] == '/' || path[0] == '\\') return true;
+    return strlen(path) >= 3 &&
+           ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
+           path[1] == ':' &&
+           (path[2] == '/' || path[2] == '\\');
+#else
+    return path[0] == '/';
+#endif
+}
+
+static const char *artifact_parity_abs_home_dir(const char *home_dir,
+                                                char out_path[_TINYDIR_PATH_MAX]) {
+    if (!home_dir || home_dir[0] == '\0' || !out_path) return NULL;
+    if (artifact_parity_path_is_absolute(home_dir)) return home_dir;
+    if (!artifact_parity_make_abs_path(home_dir, out_path)) return NULL;
+    return out_path;
+}
+
 static bool artifact_parity_write_consumer_project(const char *source_dir,
                                                    const char *cmakelists_text,
                                                    const char *main_text) {
@@ -174,10 +195,14 @@ static bool artifact_parity_build_consumer_project(const char *source_dir,
                                                    const char *home_dir) {
     Test_Host_Env_Guard home_guard = {0};
     bool home_guard_active = false;
+    char home_dir_abs[_TINYDIR_PATH_MAX] = {0};
+    const char *effective_home_dir = NULL;
     if (!source_dir || !binary_dir) return false;
+    effective_home_dir = artifact_parity_abs_home_dir(home_dir, home_dir_abs);
     if (home_dir && home_dir[0] != '\0') {
-        if (!nob_mkdir_if_not_exists(home_dir) ||
-            !test_host_env_guard_begin(&home_guard, "HOME", home_dir)) {
+        if (!effective_home_dir ||
+            !nob_mkdir_if_not_exists(effective_home_dir) ||
+            !test_host_env_guard_begin(&home_guard, "HOME", effective_home_dir)) {
             return false;
         }
         home_guard_active = true;
@@ -335,6 +360,10 @@ static bool artifact_parity_run_case(const Artifact_Parity_Case *case_def) {
     const char *cmake_install_prefix = NULL;
     const char *cmake_home_dir = NULL;
     const char *nob_home_dir = NULL;
+    char cmake_home_dir_abs[_TINYDIR_PATH_MAX] = {0};
+    char nob_home_dir_abs[_TINYDIR_PATH_MAX] = {0};
+    const char *effective_cmake_home_dir = NULL;
+    const char *effective_nob_home_dir = NULL;
     Test_Host_Env_Guard cmake_home_guard = {0};
     Test_Host_Env_Guard nob_home_guard = {0};
     bool cmake_home_guard_active = false;
@@ -350,6 +379,8 @@ static bool artifact_parity_run_case(const Artifact_Parity_Case *case_def) {
     cmake_install_prefix = artifact_parity_case_cmake_install_prefix(case_def);
     cmake_home_dir = artifact_parity_case_cmake_home_dir(case_def);
     nob_home_dir = artifact_parity_case_nob_home_dir(case_def);
+    effective_cmake_home_dir = artifact_parity_abs_home_dir(cmake_home_dir, cmake_home_dir_abs);
+    effective_nob_home_dir = artifact_parity_abs_home_dir(nob_home_dir, nob_home_dir_abs);
     if (s_artifact_parity_nobify_bin[0] == '\0') {
         nob_log(NOB_ERROR,
                 "artifact parity suite: missing nobify tool: %s",
@@ -372,8 +403,9 @@ static bool artifact_parity_run_case(const Artifact_Parity_Case *case_def) {
     if (case_def->prepare && !case_def->prepare(case_def)) return false;
 
     if (cmake_home_dir && cmake_home_dir[0] != '\0') {
-        if (!nob_mkdir_if_not_exists(cmake_home_dir) ||
-            !test_host_env_guard_begin(&cmake_home_guard, "HOME", cmake_home_dir)) {
+        if (!effective_cmake_home_dir ||
+            !nob_mkdir_if_not_exists(effective_cmake_home_dir) ||
+            !test_host_env_guard_begin(&cmake_home_guard, "HOME", effective_cmake_home_dir)) {
             return false;
         }
         cmake_home_guard_active = true;
@@ -450,8 +482,9 @@ static bool artifact_parity_run_case(const Artifact_Parity_Case *case_def) {
     if (!artifact_parity_compile_generated_nob(generated_nob_path, generated_nob_bin_path)) return false;
 
     if (nob_home_dir && nob_home_dir[0] != '\0') {
-        if (!nob_mkdir_if_not_exists(nob_home_dir) ||
-            !test_host_env_guard_begin(&nob_home_guard, "HOME", nob_home_dir)) {
+        if (!effective_nob_home_dir ||
+            !nob_mkdir_if_not_exists(effective_nob_home_dir) ||
+            !test_host_env_guard_begin(&nob_home_guard, "HOME", effective_nob_home_dir)) {
             return false;
         }
         nob_home_guard_active = true;

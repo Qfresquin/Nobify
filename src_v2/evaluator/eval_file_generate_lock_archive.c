@@ -874,14 +874,21 @@ static bool handle_file_archive_create(EvalExecContext *ctx, const Node *node, S
     bopt.mtime_epoch = mtime_epoch;
     bopt.verbose = verbose;
 
+    bool replay_compatible_tar_backend = eval_sv_eq_ci_lit(format, "PAXR") &&
+                                         (compression.count == 0 || eval_sv_eq_ci_lit(compression, "NONE")) &&
+                                         !has_compression_level &&
+                                         has_mtime;
     int rc_backend = 1;
     String_View backend_log = nob_sv_from_cstr("");
-    bool backend_ok = eval_file_backend_archive_create(ctx, &bopt, &rc_backend, &backend_log);
-    if (backend_ok) {
-        if (rc_backend != 0) {
-            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(ARCHIVE_CREATE) failed in libarchive backend"), backend_log.count > 0 ? backend_log : out_path);
+    bool backend_ok = false;
+    if (!replay_compatible_tar_backend) {
+        backend_ok = eval_file_backend_archive_create(ctx, &bopt, &rc_backend, &backend_log);
+        if (backend_ok) {
+            if (rc_backend != 0) {
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(ARCHIVE_CREATE) failed in libarchive backend"), backend_log.count > 0 ? backend_log : out_path);
+            }
+            return true;
         }
-        return true;
     }
 
     char *out_c = eval_sv_to_cstr_temp(ctx, out_path);
@@ -971,6 +978,10 @@ static bool handle_file_archive_create(EvalExecContext *ctx, const Node *node, S
                 file_cmd_reset(&cmd);
                 return true;
             }
+            if (!file_cmd_append_checked(ctx, &cmd, "--pax-option=delete=atime,delete=ctime")) {
+                file_cmd_reset(&cmd);
+                return true;
+            }
         } else if (eval_sv_eq_ci_lit(format, "PAX")) {
             if (!file_cmd_append_checked(ctx, &cmd, "--format=pax")) {
                 file_cmd_reset(&cmd);
@@ -978,6 +989,14 @@ static bool handle_file_archive_create(EvalExecContext *ctx, const Node *node, S
             }
         } else if (eval_sv_eq_ci_lit(format, "GNUTAR")) {
             if (!file_cmd_append_checked(ctx, &cmd, "--format=gnu")) {
+                file_cmd_reset(&cmd);
+                return true;
+            }
+        }
+        if (has_mtime) {
+            char *mtime_flag = eval_sv_to_cstr_temp(ctx, nob_sv_from_cstr(nob_temp_sprintf("--mtime=@%lld", mtime_epoch)));
+            EVAL_OOM_RETURN_IF_NULL(ctx, mtime_flag, true);
+            if (!file_cmd_append_checked(ctx, &cmd, mtime_flag)) {
                 file_cmd_reset(&cmd);
                 return true;
             }

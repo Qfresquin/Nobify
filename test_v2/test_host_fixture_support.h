@@ -8,6 +8,7 @@ typedef struct {
     char *name;
     char *prev_value;
     bool had_prev_value;
+    bool heap_allocated;
 } Test_Host_Env_Guard;
 
 bool test_host_set_env_value(const char *name, const char *value);

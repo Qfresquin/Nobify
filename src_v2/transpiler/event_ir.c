@@ -471,6 +471,11 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.item)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.destination)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.component)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.archive_component)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.library_component)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.runtime_component)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.includes_component)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.public_header_component)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.namelink_component)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.export_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.archive_destination)) return false;
@@ -889,7 +894,7 @@ static void event_dump_one(const Event *ev) {
                    ev->as.project_minimum_required.version.data ? ev->as.project_minimum_required.version.data : "");
             break;
         case EVENT_INSTALL_RULE_ADD:
-            printf(" rule_type=%d item=%.*s destination=%.*s export=%.*s component=%.*s",
+            printf(" rule_type=%d item=%.*s destination=%.*s export=%.*s component=%.*s archive_component=%.*s library_component=%.*s runtime_component=%.*s public_header_component=%.*s",
                    (int)ev->as.install_rule_add.rule_type,
                    (int)ev->as.install_rule_add.item.count,
                    ev->as.install_rule_add.item.data ? ev->as.install_rule_add.item.data : "",
@@ -898,7 +903,15 @@ static void event_dump_one(const Event *ev) {
                    (int)ev->as.install_rule_add.export_name.count,
                    ev->as.install_rule_add.export_name.data ? ev->as.install_rule_add.export_name.data : "",
                    (int)ev->as.install_rule_add.component.count,
-                   ev->as.install_rule_add.component.data ? ev->as.install_rule_add.component.data : "");
+                   ev->as.install_rule_add.component.data ? ev->as.install_rule_add.component.data : "",
+                   (int)ev->as.install_rule_add.archive_component.count,
+                   ev->as.install_rule_add.archive_component.data ? ev->as.install_rule_add.archive_component.data : "",
+                   (int)ev->as.install_rule_add.library_component.count,
+                   ev->as.install_rule_add.library_component.data ? ev->as.install_rule_add.library_component.data : "",
+                   (int)ev->as.install_rule_add.runtime_component.count,
+                   ev->as.install_rule_add.runtime_component.data ? ev->as.install_rule_add.runtime_component.data : "",
+                   (int)ev->as.install_rule_add.public_header_component.count,
+                   ev->as.install_rule_add.public_header_component.data ? ev->as.install_rule_add.public_header_component.data : "");
             break;
         case EVENT_EXPORT_INSTALL:
             printf(" export=%.*s destination=%.*s namespace=%.*s file=%.*s component=%.*s",

@@ -12,55 +12,6 @@ static bool cg_build_export_output_file_abs(CG_Context *ctx,
     return cg_absolute_from_cwd(ctx, path, out);
 }
 
-static bool cg_build_export_noconfig_output_file_abs(CG_Context *ctx,
-                                                     BM_Export_Id export_id,
-                                                     String_View *out) {
-    String_View output_abs = {0};
-    String_View dir_abs = {0};
-    String_View file_name = {0};
-    if (!ctx || !out) return false;
-    *out = nob_sv_from_cstr("");
-    if (!cg_build_export_output_file_abs(ctx, export_id, &output_abs) ||
-        !cg_export_noconfig_file_name(ctx, export_id, &file_name)) {
-        return false;
-    }
-    if (output_abs.count == 0 || file_name.count == 0) return true;
-    dir_abs = cg_dirname_to_arena(ctx->scratch, output_abs);
-    if (dir_abs.count == 0 || cg_sv_eq_lit(dir_abs, ".")) return cg_absolute_from_cwd(ctx, file_name, out);
-    return cg_join_paths_to_arena(ctx->scratch, dir_abs, file_name, out);
-}
-
-static bool cg_relative_build_export_expr(CG_Context *ctx,
-                                          BM_Export_Id export_id,
-                                          String_View absolute_path,
-                                          String_View *out) {
-    String_View output_abs = {0};
-    String_View export_dir_abs = {0};
-    String_View relative = {0};
-    Nob_String_Builder sb = {0};
-    char *copy = NULL;
-    if (!ctx || !out) return false;
-    *out = nob_sv_from_cstr("");
-    if (absolute_path.count == 0) return true;
-    if (!cg_build_export_output_file_abs(ctx, export_id, &output_abs)) return false;
-    export_dir_abs = cg_dirname_to_arena(ctx->scratch, output_abs);
-    if (!cg_relative_path_to_arena(ctx->scratch, export_dir_abs, absolute_path, &relative)) return false;
-    if (cg_sv_eq_lit(relative, ".")) {
-        copy = arena_strdup(ctx->scratch, "${CMAKE_CURRENT_LIST_DIR}");
-        if (!copy) return false;
-        *out = nob_sv_from_cstr(copy);
-        return true;
-    }
-
-    nob_sb_append_cstr(&sb, "${CMAKE_CURRENT_LIST_DIR}/");
-    nob_sb_append_buf(&sb, relative.data ? relative.data : "", relative.count);
-    copy = arena_strndup(ctx->scratch, sb.items ? sb.items : "", sb.count);
-    nob_sb_free(sb);
-    if (!copy) return false;
-    *out = nob_sv_from_cstr(copy);
-    return true;
-}
-
 static bool cg_build_tree_resolve_owner_path_abs(CG_Context *ctx,
                                                  BM_Directory_Id owner_dir,
                                                  String_View value,
@@ -117,7 +68,6 @@ static bool cg_export_collect_build_interface_values(CG_Context *ctx,
 }
 
 static bool cg_export_collect_build_interface_includes(CG_Context *ctx,
-                                                       BM_Export_Id export_id,
                                                        BM_Target_Id target_id,
                                                        String_View config,
                                                        bool want_system,
@@ -138,18 +88,11 @@ static bool cg_export_collect_build_interface_includes(CG_Context *ctx,
     for (size_t i = 0; i < includes.count; ++i) {
         String_View item = includes.items[i].value;
         String_View absolute = {0};
-        String_View expr = {0};
         bool is_system = (includes.items[i].flags & BM_ITEM_FLAG_SYSTEM) != 0;
         if (is_system != want_system) continue;
         if (item.count == 0) continue;
         if (!cg_build_tree_resolve_owner_path_abs(ctx, owner_dir, item, &absolute)) return false;
-        if (cg_path_is_abs(absolute)) {
-            if (!cg_relative_build_export_expr(ctx, export_id, absolute, &expr)) return false;
-            item = expr;
-        } else {
-            item = absolute;
-        }
-        if (!cg_collect_unique_path(ctx->scratch, out, item)) return false;
+        if (!cg_collect_unique_path(ctx->scratch, out, absolute)) return false;
     }
     return true;
 }
@@ -199,7 +142,7 @@ static bool cg_export_emit_build_tree_target_properties(CG_Context *ctx,
                                                         Nob_String_Builder *sb) {
     const CG_Target_Info *info = cg_target_info(ctx, target_id);
     String_View runtime_abs = {0};
-    String_View runtime_expr = {0};
+    String_View link_languages_joined = {0};
     String_View includes_joined = {0};
     String_View system_includes_joined = {0};
     String_View compile_defs_joined = {0};
@@ -219,14 +162,15 @@ static bool cg_export_emit_build_tree_target_properties(CG_Context *ctx,
     (void)userdata;
     if (!ctx || !info || !sb) return false;
 
-    if (!cg_export_collect_build_interface_includes(ctx, export_id, target_id, config, false, &include_items) ||
-        !cg_export_collect_build_interface_includes(ctx, export_id, target_id, config, true, &system_include_items) ||
+    if (!cg_export_collect_build_interface_includes(ctx, target_id, config, false, &include_items) ||
+        !cg_export_collect_build_interface_includes(ctx, target_id, config, true, &system_include_items) ||
         !cg_export_collect_build_interface_values(ctx, target_id, config, BM_QUERY_USAGE_COMPILE, CG_EFFECTIVE_COMPILE_DEFINITIONS, &compile_defs) ||
         !cg_export_collect_build_interface_values(ctx, target_id, config, BM_QUERY_USAGE_COMPILE, CG_EFFECTIVE_COMPILE_OPTIONS, &compile_opts) ||
         !cg_export_collect_build_interface_values(ctx, target_id, config, BM_QUERY_USAGE_COMPILE, CG_EFFECTIVE_COMPILE_FEATURES, &compile_features) ||
         !cg_export_collect_build_interface_values(ctx, target_id, config, BM_QUERY_USAGE_LINK, CG_EFFECTIVE_LINK_OPTIONS, &link_opts) ||
         !cg_export_collect_build_interface_values(ctx, target_id, config, BM_QUERY_USAGE_LINK, CG_EFFECTIVE_LINK_DIRECTORIES, &link_dirs) ||
         !cg_export_collect_build_link_libraries(ctx, export_id, target_id, export_namespace, config, &link_libs) ||
+        !cg_collect_target_link_languages(ctx, target_id, &link_languages_joined) ||
         !cg_join_sv_list(ctx->scratch, include_items, &includes_joined) ||
         !cg_join_sv_list(ctx->scratch, system_include_items, &system_includes_joined) ||
         !cg_join_sv_list(ctx->scratch, compile_defs, &compile_defs_joined) ||
@@ -238,21 +182,20 @@ static bool cg_export_emit_build_tree_target_properties(CG_Context *ctx,
         return false;
     }
 
-    nob_sb_append_cstr(sb, "set_target_properties(");
-    if (!cg_cmake_append_escaped(sb, exported_name)) return false;
-    nob_sb_append_cstr(sb, " PROPERTIES\n");
-
     if (info->emits_artifact) {
-        if (!cg_absolute_from_emit(ctx, info->artifact_path, &runtime_abs) ||
-            !cg_relative_build_export_expr(ctx, export_id, runtime_abs, &runtime_expr)) {
+        if (!cg_absolute_from_emit(ctx, info->artifact_path, &runtime_abs)) {
             return false;
         }
     }
-    if (runtime_expr.count > 0) {
-        nob_sb_append_cstr(sb, "  IMPORTED_LOCATION \"");
-        if (!cg_cmake_append_escaped(sb, runtime_expr)) return false;
-        nob_sb_append_cstr(sb, "\"\n");
-    }
+    nob_sb_append_cstr(sb, "# Import target \"");
+    if (!cg_cmake_append_escaped(sb, exported_name)) return false;
+    nob_sb_append_cstr(sb, "\" for configuration \"\"\n");
+    nob_sb_append_cstr(sb, "set_property(TARGET ");
+    if (!cg_cmake_append_escaped(sb, exported_name)) return false;
+    nob_sb_append_cstr(sb, " APPEND PROPERTY IMPORTED_CONFIGURATIONS NOCONFIG)\n");
+    nob_sb_append_cstr(sb, "set_target_properties(");
+    if (!cg_cmake_append_escaped(sb, exported_name)) return false;
+    nob_sb_append_cstr(sb, " PROPERTIES\n");
     if (includes_joined.count > 0) {
         nob_sb_append_cstr(sb, "  INTERFACE_INCLUDE_DIRECTORIES \"");
         if (!cg_cmake_append_escaped(sb, includes_joined)) return false;
@@ -293,35 +236,30 @@ static bool cg_export_emit_build_tree_target_properties(CG_Context *ctx,
         if (!cg_cmake_append_escaped(sb, link_libs_joined)) return false;
         nob_sb_append_cstr(sb, "\"\n");
     }
-    nob_sb_append_cstr(sb, ")\n\n");
+    if (link_languages_joined.count > 0) {
+        nob_sb_append_cstr(sb, "  IMPORTED_LINK_INTERFACE_LANGUAGES_NOCONFIG \"");
+        if (!cg_cmake_append_escaped(sb, link_languages_joined)) return false;
+        nob_sb_append_cstr(sb, "\"\n");
+    }
+    if (runtime_abs.count > 0) {
+        nob_sb_append_cstr(sb, "  IMPORTED_LOCATION_NOCONFIG \"");
+        if (!cg_cmake_append_escaped(sb, runtime_abs)) return false;
+        nob_sb_append_cstr(sb, "\"\n");
+    }
+    nob_sb_append_cstr(sb, "  )\n\n");
     return true;
-}
-
-static bool cg_build_buildtree_export_noconfig_file_contents(CG_Context *ctx,
-                                                             BM_Export_Id export_id,
-                                                             String_View config,
-                                                             String_View *out) {
-    if (!ctx || !out) return false;
-    return cg_build_cmake_targets_noconfig_file_contents(ctx,
-                                                         export_id,
-                                                         config,
-                                                         cg_export_emit_build_tree_target_properties,
-                                                         NULL,
-                                                         out);
 }
 
 static bool cg_build_buildtree_export_file_contents(CG_Context *ctx,
                                                     BM_Export_Id export_id,
                                                     String_View config,
                                                     String_View *out) {
-    bool use_noconfig = false;
     if (!ctx || !out) return false;
-
-    use_noconfig = cg_export_has_non_interface_targets(ctx, export_id);
     return cg_build_cmake_targets_file_contents(ctx,
                                                 export_id,
                                                 config,
-                                                use_noconfig,
+                                                false,
+                                                false,
                                                 cg_export_emit_build_tree_target_properties,
                                                 NULL,
                                                 out);
@@ -446,21 +384,45 @@ static bool cg_emit_package_registry_helpers(Nob_String_Builder *out) {
         "#endif\n"
         "    return home;\n"
         "}\n\n"
+        "static char *export_registry_heap_join2(const char *lhs, const char *rhs, const char *sep) {\n"
+        "    size_t lhs_len = lhs ? strlen(lhs) : 0u;\n"
+        "    size_t rhs_len = rhs ? strlen(rhs) : 0u;\n"
+        "    size_t sep_len = sep ? strlen(sep) : 0u;\n"
+        "    char *joined = (char*)malloc(lhs_len + sep_len + rhs_len + 1u);\n"
+        "    if (!joined) return NULL;\n"
+        "    if (lhs_len > 0) memcpy(joined, lhs, lhs_len);\n"
+        "    if (sep_len > 0) memcpy(joined + lhs_len, sep, sep_len);\n"
+        "    if (rhs_len > 0) memcpy(joined + lhs_len + sep_len, rhs, rhs_len);\n"
+        "    joined[lhs_len + sep_len + rhs_len] = '\\0';\n"
+        "    return joined;\n"
+        "}\n\n"
         "static bool export_package_registry_add(const char *package_name, const char *prefix) {\n"
         "    char entry_name[33] = {0};\n"
         "    const char *home = NULL;\n"
-        "    const char *package_dir = NULL;\n"
-        "    const char *entry_path = NULL;\n"
-        "    const char *contents = NULL;\n"
+        "    char *package_dir = NULL;\n"
+        "    char *entry_path = NULL;\n"
+        "    char *contents = NULL;\n"
+        "    bool ok = false;\n"
         "    if (!package_name || package_name[0] == '\\0' || !prefix || prefix[0] == '\\0') return false;\n"
         "    home = resolve_home_dir();\n"
         "    if (!home || home[0] == '\\0') return true;\n"
         "    if (!export_registry_md5_hex(prefix, entry_name)) return false;\n"
-        "    package_dir = nob_temp_sprintf(\"%s/.cmake/packages/%s\", home, package_name);\n"
-        "    if (!ensure_dir(package_dir)) return false;\n"
-        "    entry_path = nob_temp_sprintf(\"%s/%s\", package_dir, entry_name);\n"
-        "    contents = nob_temp_sprintf(\"%s\\n\", prefix);\n"
-        "    return nob_write_entire_file(entry_path, contents, strlen(contents));\n"
+        "    package_dir = export_registry_heap_join2(home, \".cmake/packages\", \"/\");\n"
+        "    if (!package_dir) return false;\n"
+        "    entry_path = export_registry_heap_join2(package_dir, package_name, \"/\");\n"
+        "    free(package_dir);\n"
+        "    package_dir = entry_path;\n"
+        "    entry_path = NULL;\n"
+        "    if (!package_dir || !ensure_dir(package_dir)) goto cleanup;\n"
+        "    entry_path = export_registry_heap_join2(package_dir, entry_name, \"/\");\n"
+        "    contents = export_registry_heap_join2(prefix, \"\\n\", \"\");\n"
+        "    if (!entry_path || !contents) goto cleanup;\n"
+        "    ok = nob_write_entire_file(entry_path, contents, strlen(contents));\n"
+        "cleanup:\n"
+        "    free(contents);\n"
+        "    free(entry_path);\n"
+        "    free(package_dir);\n"
+        "    return ok;\n"
         "}\n\n");
     return true;
 }
@@ -493,8 +455,6 @@ bool cg_emit_export_function(CG_Context *ctx, Nob_String_Builder *out) {
 
         if (kind == BM_EXPORT_BUILD_TREE) {
             String_View output_abs = {0};
-            String_View noconfig_output_abs = {0};
-            bool use_noconfig = cg_export_has_non_interface_targets(ctx, export_id);
             if (!cg_build_export_output_file_abs(ctx, export_id, &output_abs)) return false;
             nob_sb_append_cstr(out, "    {\n");
             nob_sb_append_cstr(out, "        const char *output_path = ");
@@ -517,30 +477,6 @@ bool cg_emit_export_function(CG_Context *ctx, Nob_String_Builder *out) {
                 nob_sb_append_cstr(out, "))) return false;\n");
             }
             if (!cg_emit_runtime_config_branches_suffix(ctx, out)) return false;
-
-            if (use_noconfig) {
-                if (!cg_build_export_noconfig_output_file_abs(ctx, export_id, &noconfig_output_abs)) return false;
-                nob_sb_append_cstr(out, "        const char *noconfig_output_path = ");
-                if (!cg_sb_append_c_string(out, noconfig_output_abs)) return false;
-                nob_sb_append_cstr(out, ";\n");
-                nob_sb_append_cstr(out, "        if (!ensure_parent_dir(noconfig_output_path)) return false;\n");
-                for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
-                    String_View config = branch < arena_arr_len(ctx->known_configs)
-                        ? ctx->known_configs[branch]
-                        : nob_sv_from_cstr("");
-                    String_View export_noconfig_text = {0};
-                    if (!cg_build_buildtree_export_noconfig_file_contents(ctx, export_id, config, &export_noconfig_text) ||
-                        !cg_emit_runtime_config_branches_prefix(ctx, out, branch)) {
-                        return false;
-                    }
-                    nob_sb_append_cstr(out, "        if (!nob_write_entire_file(noconfig_output_path, ");
-                    if (!cg_sb_append_c_string(out, export_noconfig_text)) return false;
-                    nob_sb_append_cstr(out, ", strlen(");
-                    if (!cg_sb_append_c_string(out, export_noconfig_text)) return false;
-                    nob_sb_append_cstr(out, "))) return false;\n");
-                }
-                if (!cg_emit_runtime_config_branches_suffix(ctx, out)) return false;
-            }
             nob_sb_append_cstr(out, "    }\n");
             continue;
         }

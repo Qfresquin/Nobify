@@ -33,26 +33,36 @@ ctest_sleep(0.01)
 #@@CASE ctest_local_coverage_memcheck_parity_surface
 #@@MODE SCRIPT
 #@@OUTCOME SUCCESS
-#@@FILE_TEXT source/src/main.c
+#@@FILE_TEXT project_src/CMakeLists.txt
+cmake_minimum_required(VERSION 3.28)
+project(NobDiffCtestExtended NONE)
+enable_testing()
+add_test(NAME pass
+  COMMAND /bin/sh "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_runner.sh" pass
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/memcheck_work")
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/main.c" PROPERTIES LABELS "core;ui")
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/net.c" PROPERTIES LABELS infra)
+#@@END_FILE_TEXT
+#@@FILE_TEXT project_src/src/main.c
 int main(void) { return 0; }
 #@@END_FILE_TEXT
-#@@FILE_TEXT source/src/net.c
+#@@FILE_TEXT project_src/src/net.c
 int net(void) { return 0; }
 #@@END_FILE_TEXT
-#@@FILE_TEXT source/tools/coverage.sh
+#@@FILE_TEXT project_src/tools/coverage.sh
 #!/bin/sh
 pwd > coverage.pwd
 printf 'coverage ok\n'
 exit 0
 #@@END_FILE_TEXT
-#@@FILE_TEXT source/tools/test_runner.sh
+#@@FILE_TEXT project_src/tools/test_runner.sh
 #!/bin/sh
 mode="$1"
 pwd > "test-${mode}.pwd"
 printf '%s\n' "$mode"
 exit 0
 #@@END_FILE_TEXT
-#@@FILE_TEXT source/tools/memcheck.sh
+#@@FILE_TEXT project_src/tools/memcheck.sh
 #!/bin/sh
 printf '%s\n' "$*" >> memcheck-args.log
 pwd >> memcheck-cwd.log
@@ -62,9 +72,11 @@ if [ "$#" -gt 0 ]; then shift; fi
 exit $?
 #@@END_FILE_TEXT
 #@@QUERY FILE_TEXT build/__oracle/ctest_extended_report.txt
+set(CMAKE_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}")
+set(CMAKE_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+set(CMAKE_CURRENT_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}")
+set(CMAKE_CURRENT_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 cmake_minimum_required(VERSION 3.28)
-project(NobDiffCtestExtended NONE)
-enable_testing()
 function(nob_diff_report_reset path)
   get_filename_component(_nob_diff_dir "${path}" DIRECTORY)
   if(NOT "${_nob_diff_dir}" STREQUAL "")
@@ -75,23 +87,23 @@ endfunction()
 function(nob_diff_report_append_kv path key value)
   file(APPEND "${path}" "${key}=${value}\n")
 endfunction()
-set(CTEST_SOURCE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+set(CTEST_SOURCE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/project_src")
 set(CTEST_BINARY_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-file(MAKE_DIRECTORY "${CTEST_BINARY_DIRECTORY}")
+set(CTEST_CMAKE_COMMAND "$ENV{NOB_DIFF_CMAKE_BIN}")
+set(CTEST_COMMAND "$ENV{NOB_DIFF_CTEST_BIN}")
 file(RELATIVE_PATH _source_from_build "${CTEST_BINARY_DIRECTORY}" "${CTEST_SOURCE_DIRECTORY}")
 file(MAKE_DIRECTORY "${CTEST_SOURCE_DIRECTORY}/memcheck_work")
 set(COVERAGE_COMMAND "/bin/sh;${_source_from_build}/tools/coverage.sh")
 set(CTEST_MEMORYCHECK_COMMAND "/bin/sh")
 set(CTEST_MEMORYCHECK_TYPE Generic)
 set(CTEST_MEMORYCHECK_COMMAND_OPTIONS "${_source_from_build}/tools/memcheck.sh")
-add_test(NAME pass
-  COMMAND /bin/sh "${_source_from_build}/tools/test_runner.sh" pass
-  WORKING_DIRECTORY "${_source_from_build}/memcheck_work")
-set_source_files_properties("${CTEST_SOURCE_DIRECTORY}/src/main.c" PROPERTIES LABELS "core;ui")
-set_source_files_properties("${CTEST_SOURCE_DIRECTORY}/src/net.c" PROPERTIES LABELS infra)
 set(_report "${CTEST_BINARY_DIRECTORY}/__oracle/ctest_extended_report.txt")
 nob_diff_report_reset("${_report}")
+ctest_empty_binary_directory("${CTEST_BINARY_DIRECTORY}")
 ctest_start(Experimental "${CTEST_SOURCE_DIRECTORY}" "${CTEST_BINARY_DIRECTORY}" QUIET)
+ctest_configure(QUIET)
+ctest_build(QUIET)
+ctest_test(QUIET)
 ctest_coverage(LABELS core ui APPEND QUIET)
 ctest_memcheck(APPEND QUIET)
 set(TAG_EXISTS 0)

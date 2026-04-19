@@ -136,6 +136,7 @@ static bool corpus_run_project(const Artifact_Parity_Corpus_Project *project, co
     char archive_relpath[_TINYDIR_PATH_MAX] = {0};
     char consumer_relpath[_TINYDIR_PATH_MAX] = {0};
     char snapshot_dst[_TINYDIR_PATH_MAX] = {0};
+    char extracted_project_rel[_TINYDIR_PATH_MAX] = {0};
     char consumer_dst[_TINYDIR_PATH_MAX] = {0};
     char cmake_install_abs[_TINYDIR_PATH_MAX] = {0};
     char nob_install_abs[_TINYDIR_PATH_MAX] = {0};
@@ -161,15 +162,17 @@ static bool corpus_run_project(const Artifact_Parity_Corpus_Project *project, co
             (int)sizeof(snapshot_dst) ||
         snprintf(consumer_dst, sizeof(consumer_dst), "%s_consumer", project->name) >=
             (int)sizeof(consumer_dst) ||
+        snprintf(extracted_project_rel, sizeof(extracted_project_rel), "%s_project/%s", project->name, project->archive_prefix) >=
+            (int)sizeof(extracted_project_rel) ||
         snprintf(cmake_install_abs, sizeof(cmake_install_abs), "%s/%s_cmake_install", cwd, project->name) >=
             (int)sizeof(cmake_install_abs) ||
-        snprintf(nob_install_abs, sizeof(nob_install_abs), "%s/%s_project/install", cwd, project->name) >=
+        snprintf(nob_install_abs, sizeof(nob_install_abs), "%s/%s/install", cwd, extracted_project_rel) >=
             (int)sizeof(nob_install_abs) ||
-        snprintf(input_abs, sizeof(input_abs), "%s/%s_project/CMakeLists.txt", cwd, project->name) >=
+        snprintf(input_abs, sizeof(input_abs), "%s/%s/CMakeLists.txt", cwd, extracted_project_rel) >=
             (int)sizeof(input_abs) ||
-        snprintf(output_abs, sizeof(output_abs), "%s/%s_project/nob.c", cwd, project->name) >=
+        snprintf(output_abs, sizeof(output_abs), "%s/%s/nob.c", cwd, extracted_project_rel) >=
             (int)sizeof(output_abs) ||
-        snprintf(source_root_abs, sizeof(source_root_abs), "%s/%s_project", cwd, project->name) >=
+        snprintf(source_root_abs, sizeof(source_root_abs), "%s/%s", cwd, extracted_project_rel) >=
             (int)sizeof(source_root_abs) ||
         snprintf(binary_root_abs, sizeof(binary_root_abs), "%s/%s_nob_build", cwd, project->name) >=
             (int)sizeof(binary_root_abs)) {
@@ -183,7 +186,7 @@ static bool corpus_run_project(const Artifact_Parity_Corpus_Project *project, co
 
     if (out_stage) *out_stage = "cmake_configure";
     if (!artifact_parity_run_cmake_configure(&s_corpus_cmake,
-                                             snapshot_dst,
+                                             extracted_project_rel,
                                              nob_temp_sprintf("%s_cmake_build", project->name),
                                              NULL)) {
         return false;
@@ -211,19 +214,19 @@ static bool corpus_run_project(const Artifact_Parity_Corpus_Project *project, co
         return false;
     }
     if (out_stage) *out_stage = "generated_nob_compile";
-    if (!artifact_parity_compile_generated_nob(nob_temp_sprintf("%s_project/nob.c", project->name),
-                                               nob_temp_sprintf("%s_project/nob_gen", project->name))) {
+    if (!artifact_parity_compile_generated_nob(nob_temp_sprintf("%s/nob.c", extracted_project_rel),
+                                               nob_temp_sprintf("%s/nob_gen", extracted_project_rel))) {
         return false;
     }
     if (out_stage) *out_stage = "generated_nob_build";
-    if (!artifact_parity_run_binary_in_dir(nob_temp_sprintf("%s_project", project->name),
+    if (!artifact_parity_run_binary_in_dir(extracted_project_rel,
                                            "./nob_gen",
                                            NULL,
                                            NULL)) {
         return false;
     }
     if (out_stage) *out_stage = "generated_nob_install";
-    if (!artifact_parity_run_binary_in_dir_argv(nob_temp_sprintf("%s_project", project->name),
+    if (!artifact_parity_run_binary_in_dir_argv(extracted_project_rel,
                                                 "./nob_gen",
                                                 (const char *[]){"install", "--prefix", nob_install_abs},
                                                 3)) {
@@ -257,7 +260,7 @@ static bool corpus_run_project(const Artifact_Parity_Corpus_Project *project, co
                                       "install_tree",
                                       &cmake_install_manifest) ||
         !corpus_capture_tree_manifest(arena,
-                                      nob_temp_sprintf("%s_project/install", project->name),
+                                      nob_temp_sprintf("%s/install", extracted_project_rel),
                                       "",
                                       "install_tree",
                                       &nob_install_manifest) ||

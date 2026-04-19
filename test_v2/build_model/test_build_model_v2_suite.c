@@ -1759,6 +1759,166 @@ TEST(build_model_replay_actions_accept_c5_ctest_coverage_and_memcheck_queries) {
     TEST_PASS();
 }
 
+TEST(build_model_ctest_memcheck_preserves_registered_test_command_surface) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_Test_Id test_id = BM_TEST_ID_INVALID;
+    String_View command = {0};
+    String_View working_dir = {0};
+
+    ASSERT(build_model_write_text_file("ctest_memcheck_surface_src/tools/test_runner.sh",
+                                       "#!/bin/sh\nexit 0\n"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "ctest_memcheck_surface_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("ctest_memcheck_surface_src");
+    config.binary_dir = nob_sv_from_cstr("ctest_memcheck_surface_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(NobDiffCtestExtended NONE)\n"
+        "enable_testing()\n"
+        "set(CTEST_SOURCE_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}\")\n"
+        "set(CTEST_BINARY_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}\")\n"
+        "file(MAKE_DIRECTORY \"${CTEST_BINARY_DIRECTORY}\")\n"
+        "file(MAKE_DIRECTORY \"${CTEST_SOURCE_DIRECTORY}/memcheck_work\")\n"
+        "file(RELATIVE_PATH _source_from_build \"${CTEST_BINARY_DIRECTORY}\" \"${CTEST_SOURCE_DIRECTORY}\")\n"
+        "set(CTEST_MEMORYCHECK_COMMAND \"/bin/sh\")\n"
+        "set(CTEST_MEMORYCHECK_TYPE Generic)\n"
+        "set(CTEST_MEMORYCHECK_COMMAND_OPTIONS \"${_source_from_build}/tools/test_runner.sh\")\n"
+        "add_test(NAME pass\n"
+        "  COMMAND /bin/sh \"${_source_from_build}/tools/test_runner.sh\" pass\n"
+        "  WORKING_DIRECTORY \"${_source_from_build}/memcheck_work\")\n"
+        "ctest_start(Experimental \"${CTEST_SOURCE_DIRECTORY}\" \"${CTEST_BINARY_DIRECTORY}\" QUIET)\n"
+        "ctest_memcheck(APPEND QUIET)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.builder_ok);
+    ASSERT(fixture.build.validate_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    ASSERT(bm_query_test_count(model) == 1);
+
+    test_id = (BM_Test_Id)0;
+    command = bm_query_test_command(model, test_id);
+    working_dir = bm_query_test_working_directory(model, test_id);
+
+    ASSERT(nob_sv_eq(bm_query_test_name(model, test_id), nob_sv_from_cstr("pass")));
+    ASSERT(build_model_sv_contains(command, nob_sv_from_cstr("/bin/sh")));
+    ASSERT(build_model_sv_contains(command, nob_sv_from_cstr("tools/test_runner.sh")));
+    ASSERT(build_model_sv_contains(command, nob_sv_from_cstr(" pass")));
+    ASSERT(!build_model_sv_contains(command, nob_sv_from_cstr("cmake -P CMakeLists.txt")));
+    ASSERT(build_model_sv_contains(working_dir, nob_sv_from_cstr("memcheck_work")));
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_ctest_local_memcheck_relative_command_surface) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_Test_Id test_id = BM_TEST_ID_INVALID;
+    BM_Replay_Action_Id memcheck_id = BM_REPLAY_ACTION_ID_INVALID;
+    String_View command = {0};
+    String_View working_dir = {0};
+    BM_String_Span memcheck_argv = {0};
+
+    ASSERT(build_model_write_text_file("ctest_local_memcheck_surface/source/src/main.c",
+                                       "int main(void) { return 0; }\n"));
+    ASSERT(build_model_write_text_file("ctest_local_memcheck_surface/source/src/net.c",
+                                       "int net(void) { return 0; }\n"));
+    ASSERT(build_model_write_text_file("ctest_local_memcheck_surface/source/tools/coverage.sh",
+                                       "#!/bin/sh\n"
+                                       "pwd > coverage.pwd\n"
+                                       "printf 'coverage ok\\n'\n"
+                                       "exit 0\n"));
+    ASSERT(build_model_write_text_file("ctest_local_memcheck_surface/source/tools/test_runner.sh",
+                                       "#!/bin/sh\n"
+                                       "mode=\"$1\"\n"
+                                       "pwd > \"test-${mode}.pwd\"\n"
+                                       "printf '%s\\n' \"$mode\"\n"
+                                       "exit 0\n"));
+    ASSERT(build_model_write_text_file("ctest_local_memcheck_surface/source/tools/memcheck.sh",
+                                       "#!/bin/sh\n"
+                                       "printf '%s\\n' \"$*\" >> memcheck-args.log\n"
+                                       "pwd >> memcheck-cwd.log\n"
+                                       "while [ \"$#\" -gt 0 ] && [ \"$1\" != \"--\" ]; do shift; done\n"
+                                       "if [ \"$#\" -gt 0 ]; then shift; fi\n"
+                                       "\"$@\"\n"
+                                       "exit $?\n"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "ctest_local_memcheck_surface/source/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("ctest_local_memcheck_surface/source");
+    config.binary_dir = nob_sv_from_cstr("ctest_local_memcheck_surface/build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(NobDiffCtestExtended NONE)\n"
+        "enable_testing()\n"
+        "set(CTEST_SOURCE_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}\")\n"
+        "set(CTEST_BINARY_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}\")\n"
+        "file(MAKE_DIRECTORY \"${CTEST_BINARY_DIRECTORY}\")\n"
+        "file(RELATIVE_PATH _source_from_build \"${CTEST_BINARY_DIRECTORY}\" \"${CTEST_SOURCE_DIRECTORY}\")\n"
+        "file(MAKE_DIRECTORY \"${CTEST_SOURCE_DIRECTORY}/memcheck_work\")\n"
+        "set(COVERAGE_COMMAND \"/bin/sh;${_source_from_build}/tools/coverage.sh\")\n"
+        "set(CTEST_MEMORYCHECK_COMMAND \"/bin/sh\")\n"
+        "set(CTEST_MEMORYCHECK_TYPE Generic)\n"
+        "set(CTEST_MEMORYCHECK_COMMAND_OPTIONS \"${_source_from_build}/tools/memcheck.sh\")\n"
+        "add_test(NAME pass\n"
+        "  COMMAND /bin/sh \"${_source_from_build}/tools/test_runner.sh\" pass\n"
+        "  WORKING_DIRECTORY \"${_source_from_build}/memcheck_work\")\n"
+        "set_source_files_properties(\"${CTEST_SOURCE_DIRECTORY}/src/main.c\" PROPERTIES LABELS \"core;ui\")\n"
+        "set_source_files_properties(\"${CTEST_SOURCE_DIRECTORY}/src/net.c\" PROPERTIES LABELS infra)\n"
+        "ctest_start(Experimental \"${CTEST_SOURCE_DIRECTORY}\" \"${CTEST_BINARY_DIRECTORY}\" QUIET)\n"
+        "ctest_coverage(LABELS core ui APPEND QUIET)\n"
+        "ctest_memcheck(APPEND QUIET)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.builder_ok);
+    ASSERT(fixture.build.validate_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    ASSERT(bm_query_test_count(model) == 1);
+
+    test_id = (BM_Test_Id)0;
+    command = bm_query_test_command(model, test_id);
+    working_dir = bm_query_test_working_directory(model, test_id);
+
+    ASSERT(nob_sv_eq(bm_query_test_name(model, test_id), nob_sv_from_cstr("pass")));
+    ASSERT(build_model_sv_contains(command, nob_sv_from_cstr("/bin/sh")));
+    ASSERT(build_model_sv_contains(command, nob_sv_from_cstr("../source/tools/test_runner.sh")));
+    ASSERT(build_model_sv_contains(command, nob_sv_from_cstr(" pass")));
+    ASSERT(!build_model_sv_contains(command, nob_sv_from_cstr("cmake -P CMakeLists.txt")));
+    ASSERT(build_model_sv_contains(working_dir, nob_sv_from_cstr("../source/memcheck_work")));
+
+    for (size_t i = 0; i < bm_query_replay_action_count(model); ++i) {
+        if (bm_query_replay_action_opcode(model, (BM_Replay_Action_Id)i) ==
+            BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL) {
+            memcheck_id = (BM_Replay_Action_Id)i;
+            break;
+        }
+    }
+    ASSERT(memcheck_id != BM_REPLAY_ACTION_ID_INVALID);
+
+    memcheck_argv = bm_query_replay_action_argv(model, memcheck_id);
+    ASSERT(memcheck_argv.count >= 16);
+    ASSERT(build_model_string_equals_at(memcheck_argv, 12, "Generic"));
+    ASSERT(build_model_string_equals_at(memcheck_argv, 13, "2"));
+    ASSERT(build_model_string_equals_at(memcheck_argv, 14, "/bin/sh"));
+    ASSERT(build_model_string_equals_at(memcheck_argv, 15, "../source/tools/memcheck.sh"));
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 TEST(build_model_replay_actions_reject_malformed_ordering) {
     Arena *arena = arena_create(2 * 1024 * 1024);
     Arena *validate_arena = arena_create(512 * 1024);
@@ -3590,6 +3750,8 @@ TEST(build_model_install_queries_materialize_effective_default_components) {
                      nob_sv_from_cstr("Toolkit")));
     ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)2) == core_id);
     ASSERT(nob_sv_eq(bm_query_install_rule_component(model, (BM_Install_Rule_Id)2),
+                     nob_sv_from_cstr("Toolkit")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_archive_component(model, (BM_Install_Rule_Id)2),
                      nob_sv_from_cstr("Development")));
 
     ASSERT(bm_query_export_count(model) == 1);
@@ -3832,6 +3994,8 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_tests_freeze_owner_working_dir_expand_lists_and_configurations(passed, failed, skipped);
     test_build_model_replay_actions_accept_c3_opcodes_and_queries(passed, failed, skipped);
     test_build_model_replay_actions_accept_c5_ctest_coverage_and_memcheck_queries(passed, failed, skipped);
+    test_build_model_ctest_memcheck_preserves_registered_test_command_surface(passed, failed, skipped);
+    test_build_model_ctest_local_memcheck_relative_command_surface(passed, failed, skipped);
     test_build_model_replay_actions_reject_malformed_ordering(passed, failed, skipped);
     test_build_model_context_aware_queries_expand_usage_requirements_and_target_property_genex(passed, failed, skipped);
     test_build_model_effective_queries_follow_global_directory_and_transitive_link_library_seeds(passed, failed, skipped);

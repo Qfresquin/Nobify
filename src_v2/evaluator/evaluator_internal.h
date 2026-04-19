@@ -2056,6 +2056,11 @@ static inline bool eval_emit_install_rule_add(EvalExecContext *ctx,
                                               String_View item,
                                               String_View destination,
                                               String_View component,
+                                              String_View archive_component,
+                                              String_View library_component,
+                                              String_View runtime_component,
+                                              String_View includes_component,
+                                              String_View public_header_component,
                                               String_View namelink_component,
                                               String_View export_name,
                                               String_View archive_destination,
@@ -2070,6 +2075,11 @@ static inline bool eval_emit_install_rule_add(EvalExecContext *ctx,
     ev.as.install_rule_add.item = sv_copy_to_event_arena(ctx, item);
     ev.as.install_rule_add.destination = sv_copy_to_event_arena(ctx, destination);
     ev.as.install_rule_add.component = sv_copy_to_event_arena(ctx, component);
+    ev.as.install_rule_add.archive_component = sv_copy_to_event_arena(ctx, archive_component);
+    ev.as.install_rule_add.library_component = sv_copy_to_event_arena(ctx, library_component);
+    ev.as.install_rule_add.runtime_component = sv_copy_to_event_arena(ctx, runtime_component);
+    ev.as.install_rule_add.includes_component = sv_copy_to_event_arena(ctx, includes_component);
+    ev.as.install_rule_add.public_header_component = sv_copy_to_event_arena(ctx, public_header_component);
     ev.as.install_rule_add.namelink_component = sv_copy_to_event_arena(ctx, namelink_component);
     ev.as.install_rule_add.export_name = sv_copy_to_event_arena(ctx, export_name);
     ev.as.install_rule_add.archive_destination = sv_copy_to_event_arena(ctx, archive_destination);
@@ -3198,6 +3208,8 @@ bool eval_host_memory_info(Eval_Host_Memory_Info *out_info);
 bool eval_host_logical_cores(size_t *out_count);
 String_View eval_host_os_release_temp(EvalExecContext *ctx);
 String_View eval_host_os_version_temp(EvalExecContext *ctx);
+String_View eval_cmake_builtin_root_temp(EvalExecContext *ctx);
+String_View eval_cmake_builtin_modules_dir_temp(EvalExecContext *ctx);
 String_View eval_sv_join_semi_temp(EvalExecContext *ctx, String_View *items, size_t count);
 bool eval_sv_split_semicolon_genex_aware(Arena *arena, String_View input, SV_List *out);
 bool eval_split_shell_like_temp(EvalExecContext *ctx, String_View input, SV_List *out);

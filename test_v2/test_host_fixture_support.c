@@ -59,6 +59,7 @@ bool test_host_env_guard_begin(Test_Host_Env_Guard *guard, const char *name, con
 
     if (!guard || !name || name[0] == '\0') return false;
     memset(guard, 0, sizeof(*guard));
+    guard->heap_allocated = false;
 
     prev_value = getenv(name);
     name_len = strlen(name);
@@ -100,19 +101,26 @@ bool test_host_env_guard_begin_heap(Test_Host_Env_Guard **out_guard,
         free(guard);
         return false;
     }
+    guard->heap_allocated = true;
     *out_guard = guard;
     return true;
 }
 
 void test_host_env_guard_cleanup(void *ctx) {
     Test_Host_Env_Guard *guard = (Test_Host_Env_Guard*)ctx;
+    bool heap_allocated = false;
     if (!guard) return;
+    heap_allocated = guard->heap_allocated;
     if (guard->name) {
         (void)test_host_set_env_value(guard->name, guard->had_prev_value ? guard->prev_value : NULL);
     }
     free(guard->name);
     free(guard->prev_value);
-    free(guard);
+    if (heap_allocated) {
+        free(guard);
+    } else {
+        memset(guard, 0, sizeof(*guard));
+    }
 }
 
 bool test_host_create_directory_link_like(const char *link_path, const char *target_path) {

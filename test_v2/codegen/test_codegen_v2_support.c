@@ -9,6 +9,8 @@
 
 static char s_codegen_repo_root[_TINYDIR_PATH_MAX] = {0};
 
+bool codegen_write_text_file(const char *path, const char *text);
+
 static bool codegen_copy_string(const char *src,
                                 char out[_TINYDIR_PATH_MAX]) {
     int n = 0;
@@ -203,6 +205,10 @@ static bool codegen_mkdirs(const char *path) {
     return nob_mkdir_if_not_exists(buf);
 }
 
+static bool codegen_path_has_parent_component(const char *path) {
+    return path && path[0] != '\0' && strcmp(nob_temp_dir_name(path), ".") != 0;
+}
+
 static bool codegen_render_or_write_script(const char *script,
                                            const Codegen_Test_Config *config,
                                            Nob_String_Builder *out,
@@ -210,6 +216,7 @@ static bool codegen_render_or_write_script(const char *script,
     Test_Semantic_Pipeline_Config pipeline_config = {0};
     Test_Semantic_Pipeline_Fixture fixture = {0};
     Arena *codegen_arena = arena_create(8 * 1024 * 1024);
+    char resolved_input_path[_TINYDIR_PATH_MAX] = {0};
     const char *effective_input_path = NULL;
     const char *effective_output_path = NULL;
     const char *effective_source_dir = NULL;
@@ -221,18 +228,33 @@ static bool codegen_render_or_write_script(const char *script,
         (config && config->input_path && config->input_path[0] != '\0')
             ? config->input_path
             : "CMakeLists.txt";
-    effective_output_path =
-        (config && config->output_path && config->output_path[0] != '\0')
-            ? config->output_path
-            : nob_temp_sprintf("%s/nob.c", nob_temp_dir_name(effective_input_path));
     effective_source_dir =
         (config && config->source_dir && config->source_dir[0] != '\0')
             ? config->source_dir
             : nob_temp_dir_name(effective_input_path);
+    if (effective_source_dir &&
+        effective_source_dir[0] != '\0' &&
+        strcmp(effective_source_dir, ".") != 0 &&
+        !codegen_path_has_parent_component(effective_input_path)) {
+        if (!test_fs_join_path(effective_source_dir, effective_input_path, resolved_input_path)) {
+            arena_destroy(codegen_arena);
+            return false;
+        }
+        effective_input_path = resolved_input_path;
+    }
+    effective_output_path =
+        (config && config->output_path && config->output_path[0] != '\0')
+            ? config->output_path
+            : nob_temp_sprintf("%s/nob.c", nob_temp_dir_name(effective_input_path));
     effective_binary_dir =
         (config && config->binary_dir && config->binary_dir[0] != '\0')
             ? config->binary_dir
             : effective_source_dir;
+
+    if (write_file && !codegen_write_text_file(effective_input_path, script ? script : "")) {
+        arena_destroy(codegen_arena);
+        return false;
+    }
 
     diag_reset();
     diag_set_strict(false);

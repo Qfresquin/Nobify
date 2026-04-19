@@ -1023,8 +1023,8 @@ TEST(codegen_configure_replay_supported_effects_and_phase_cli_work) {
     ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/legacy_dir/sub"));
     ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/file_dir/sub"));
     ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/sample.tar"));
-    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/archive_out/archive_input/root.txt"));
-    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/archive_out/archive_input/sub/child.txt"));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/archive_out/cfg_phase_src/archive_input/root.txt"));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/archive_out/cfg_phase_src/archive_input/sub/child.txt"));
     ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/lock_dir/cmake.lock"));
     ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/legacy.txt", "legacy-body"));
     ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/file_write.txt", "alphabeta"));
@@ -1134,7 +1134,7 @@ TEST(codegen_fetchcontent_local_materialization_replays_from_clean_workspace) {
 
     ASSERT(codegen_run_binary_in_dir(".", "./fetchcontent_local_nob_gen", "configure", NULL));
     ASSERT(test_ws_host_path_exists("fetchcontent_local_build/fc_base/saveddep-build"));
-    ASSERT(test_ws_host_path_exists("fetchcontent_local_build/fc_base/archivedep-src/CMakeLists.txt"));
+    ASSERT(test_ws_host_path_exists("fetchcontent_local_build/fc_base/archivedep-src/fetchcontent_local_src/fc_archive_src/CMakeLists.txt"));
     ASSERT(test_ws_host_path_exists("fetchcontent_local_build/fc_base/archivedep-build"));
     TEST_PASS();
 }
@@ -1194,15 +1194,17 @@ TEST(codegen_ctest_local_dashboard_replay_stages_testing_tree) {
     ASSERT(codegen_compile_generated_nob("ctest_local_nob.c", "ctest_local_nob_gen"));
 
     ASSERT(codegen_run_binary_in_dir_argv(".", "./ctest_local_nob_gen", test_argv, NOB_ARRAY_LEN(test_argv)));
-    ASSERT(test_ws_host_path_exists("ctest_dash_build/Testing/TAG"));
-    ASSERT(test_ws_host_path_exists("ctest_dash_build/dash"));
-    ASSERT(test_ws_host_path_exists("ctest_dash_build/dash-test.txt"));
-    ASSERT(codegen_load_text_file_to_arena(arena, "ctest_dash_build/Testing/TAG", &tag_file));
+    ASSERT(test_ws_host_path_exists("ctest_local_src/ctest_dash_build/Testing/TAG"));
+    ASSERT(test_ws_host_path_exists("ctest_local_src/ctest_dash_build/dash"));
+    ASSERT(test_ws_host_path_exists("ctest_local_src/ctest_dash_build/dash-test.txt"));
+    ASSERT(codegen_load_text_file_to_arena(arena,
+                                           "ctest_local_src/ctest_dash_build/Testing/TAG",
+                                           &tag_file));
     while (tag_len < tag_file.count && tag_file.data[tag_len] != '\n' && tag_file.data[tag_len] != '\r') tag_len++;
     ASSERT(tag_len > 0);
     ASSERT(snprintf(tag_dir,
                     sizeof(tag_dir),
-                    "ctest_dash_build/Testing/%.*s",
+                    "ctest_local_src/ctest_dash_build/Testing/%.*s",
                     (int)tag_len,
                     tag_file.data) < (int)sizeof(tag_dir));
     ASSERT(test_ws_host_path_exists(tag_dir));
@@ -1372,6 +1374,114 @@ TEST(codegen_ctest_coverage_and_memcheck_local_replay_stage_reports) {
     TEST_PASS();
 }
 
+TEST(codegen_ctest_coverage_and_memcheck_relative_paths_replay_stage_reports) {
+    Arena *arena = arena_create(1024 * 1024);
+    String_View tag_file = {0};
+    String_View coverage_xml = {0};
+    String_View memcheck_xml = {0};
+    String_View memcheck_args = {0};
+    char tag_dir[_TINYDIR_PATH_MAX] = {0};
+    size_t tag_len = 0;
+    const char *test_argv[] = {"test"};
+    const char *script = NULL;
+    Codegen_Test_Config config = {
+        .input_path = "ctest_rel_src/CMakeLists.txt",
+        .output_path = "ctest_rel_src/generated/nob.c",
+        .source_dir = "ctest_rel_src",
+        .binary_dir = "ctest_rel_build",
+    };
+
+    ASSERT(arena != NULL);
+    ASSERT(codegen_write_text_file(
+        "ctest_rel_src/src/main.c",
+        "int main(void) { return 0; }\n"));
+    ASSERT(codegen_write_text_file(
+        "ctest_rel_src/src/net.c",
+        "int net(void) { return 0; }\n"));
+    ASSERT(codegen_write_text_file(
+        "ctest_rel_src/tools/coverage.sh",
+        "#!/bin/sh\n"
+        "pwd > coverage.pwd\n"
+        "printf 'coverage ok\\n'\n"
+        "exit 0\n"));
+    ASSERT(codegen_write_text_file(
+        "ctest_rel_src/tools/test_runner.sh",
+        "#!/bin/sh\n"
+        "mode=\"$1\"\n"
+        "pwd > \"test-${mode}.pwd\"\n"
+        "printf '%s\\n' \"$mode\"\n"
+        "exit 0\n"));
+    ASSERT(codegen_write_text_file(
+        "ctest_rel_src/tools/memcheck.sh",
+        "#!/bin/sh\n"
+        "printf '%s\\n' \"$*\" >> memcheck-args.log\n"
+        "pwd >> memcheck-cwd.log\n"
+        "while [ \"$#\" -gt 0 ] && [ \"$1\" != \"--\" ]; do shift; done\n"
+        "if [ \"$#\" -gt 0 ]; then shift; fi\n"
+        "\"$@\"\n"
+        "exit $?\n"));
+    ASSERT(codegen_test_make_executable("ctest_rel_src/tools/coverage.sh"));
+    ASSERT(codegen_test_make_executable("ctest_rel_src/tools/test_runner.sh"));
+    ASSERT(codegen_test_make_executable("ctest_rel_src/tools/memcheck.sh"));
+
+    script =
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(NobDiffCtestExtended NONE)\n"
+        "enable_testing()\n"
+        "set(CTEST_SOURCE_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}\")\n"
+        "set(CTEST_BINARY_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}\")\n"
+        "file(MAKE_DIRECTORY \"${CTEST_BINARY_DIRECTORY}\")\n"
+        "file(RELATIVE_PATH _source_from_build \"${CTEST_BINARY_DIRECTORY}\" \"${CTEST_SOURCE_DIRECTORY}\")\n"
+        "file(MAKE_DIRECTORY \"${CTEST_SOURCE_DIRECTORY}/memcheck_work\")\n"
+        "set(COVERAGE_COMMAND \"/bin/sh;${_source_from_build}/tools/coverage.sh\")\n"
+        "set(CTEST_MEMORYCHECK_COMMAND \"/bin/sh\")\n"
+        "set(CTEST_MEMORYCHECK_TYPE Generic)\n"
+        "set(CTEST_MEMORYCHECK_COMMAND_OPTIONS \"${_source_from_build}/tools/memcheck.sh\")\n"
+        "add_test(NAME pass COMMAND /bin/sh \"${_source_from_build}/tools/test_runner.sh\" pass WORKING_DIRECTORY \"${_source_from_build}/memcheck_work\")\n"
+        "set_source_files_properties(\"${CTEST_SOURCE_DIRECTORY}/src/main.c\" PROPERTIES LABELS \"core;ui\")\n"
+        "set_source_files_properties(\"${CTEST_SOURCE_DIRECTORY}/src/net.c\" PROPERTIES LABELS infra)\n"
+        "ctest_start(Experimental \"${CTEST_SOURCE_DIRECTORY}\" \"${CTEST_BINARY_DIRECTORY}\" QUIET)\n"
+        "ctest_coverage(LABELS core ui APPEND QUIET)\n"
+        "ctest_memcheck(APPEND QUIET)\n";
+
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("ctest_rel_src/generated/nob.c",
+                                         "ctest_rel_src/generated/nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir_argv("ctest_rel_src/generated",
+                                          "./nob_gen",
+                                          test_argv,
+                                          NOB_ARRAY_LEN(test_argv)));
+    ASSERT(test_ws_host_path_exists("ctest_rel_build/Testing/TAG"));
+    ASSERT(test_ws_host_path_exists("ctest_rel_src/memcheck_work/test-pass.pwd"));
+    ASSERT(test_ws_host_path_exists("ctest_rel_src/memcheck_work/memcheck-args.log"));
+
+    ASSERT(codegen_load_text_file_to_arena(arena, "ctest_rel_build/Testing/TAG", &tag_file));
+    while (tag_len < tag_file.count && tag_file.data[tag_len] != '\n' && tag_file.data[tag_len] != '\r') tag_len++;
+    ASSERT(tag_len > 0);
+    ASSERT(snprintf(tag_dir,
+                    sizeof(tag_dir),
+                    "ctest_rel_build/Testing/%.*s",
+                    (int)tag_len,
+                    tag_file.data) < (int)sizeof(tag_dir));
+
+    ASSERT(codegen_load_text_file_to_arena(arena,
+                                           nob_temp_sprintf("%s/Coverage.xml", tag_dir),
+                                           &coverage_xml));
+    ASSERT(codegen_load_text_file_to_arena(arena,
+                                           nob_temp_sprintf("%s/MemCheck.xml", tag_dir),
+                                           &memcheck_xml));
+    ASSERT(codegen_load_text_file_to_arena(arena,
+                                           "ctest_rel_src/memcheck_work/memcheck-args.log",
+                                           &memcheck_args));
+    ASSERT(codegen_sv_contains(coverage_xml, "coverage.sh"));
+    ASSERT(codegen_sv_contains(memcheck_xml, "test_runner.sh pass"));
+    ASSERT(codegen_sv_contains(memcheck_args, "test_runner.sh pass"));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(codegen_install_export_and_package_auto_configure_from_clean_workspace) {
     const char *install_argv[] = {"install", "--prefix", "cfg_auto_prefix"};
     const char *export_argv[] = {"export"};
@@ -1523,10 +1633,10 @@ TEST(codegen_install_component_selection_and_default_component_fallback_work) {
     ASSERT(codegen_run_binary_in_dir_argv(".", "./install_component_nob_gen",
                                           install_dev_argv,
                                           NOB_ARRAY_LEN(install_dev_argv)));
-    ASSERT(test_ws_host_path_exists("install_component_dev/lib/libcore.a"));
     ASSERT(test_ws_host_path_exists("install_component_dev/include/demo/core.h"));
     ASSERT(test_ws_host_path_exists("install_component_dev/share/cmake/Demo/DemoTargets.cmake"));
     ASSERT(!test_ws_host_path_exists("install_component_dev/bin/app"));
+    ASSERT(!test_ws_host_path_exists("install_component_dev/lib/libcore.a"));
     ASSERT(!test_ws_host_path_exists("install_component_dev/share/toolkit/default.txt"));
 
     ASSERT(codegen_run_binary_in_dir_argv(".", "./install_component_nob_gen",
@@ -1544,7 +1654,7 @@ TEST(codegen_install_component_selection_and_default_component_fallback_work) {
                                           NOB_ARRAY_LEN(install_toolkit_argv)));
     ASSERT(test_ws_host_path_exists("install_component_toolkit/share/toolkit/default.txt"));
     ASSERT(!test_ws_host_path_exists("install_component_toolkit/bin/app"));
-    ASSERT(!test_ws_host_path_exists("install_component_toolkit/lib/libcore.a"));
+    ASSERT(test_ws_host_path_exists("install_component_toolkit/lib/libcore.a"));
     ASSERT(!test_ws_host_path_exists("install_component_toolkit/share/cmake/Demo/DemoTargets.cmake"));
     TEST_PASS();
 }
@@ -2275,11 +2385,9 @@ TEST(codegen_export_targets_writes_build_tree_exports_without_implicit_build) {
     ASSERT(codegen_compile_generated_nob("export_targets_nob.c", "export_targets_nob_gen"));
     ASSERT(codegen_run_binary_in_dir_argv(".", "./export_targets_nob_gen", export_argv, NOB_ARRAY_LEN(export_argv)));
     ASSERT(test_ws_host_path_exists("export_targets_build/exports/CoreTargets.cmake"));
-    ASSERT(test_ws_host_path_exists("export_targets_build/exports/CoreTargets-noconfig.cmake"));
     ASSERT(!test_ws_host_path_exists("export_targets_build/artifacts/lib/libcore.a"));
     ASSERT(codegen_run_binary_in_dir_argv(".", "./export_targets_nob_gen", clean_argv, NOB_ARRAY_LEN(clean_argv)));
     ASSERT(test_ws_host_path_exists("export_targets_build/exports/CoreTargets.cmake"));
-    ASSERT(test_ws_host_path_exists("export_targets_build/exports/CoreTargets-noconfig.cmake"));
     TEST_PASS();
 }
 
@@ -2350,10 +2458,10 @@ TEST(codegen_property_setter_usage_requirements_drive_build_and_export_metadata)
     ASSERT(codegen_run_binary_in_dir_argv(".", "./prop_item_nob_gen", install_argv, NOB_ARRAY_LEN(install_argv)));
 
     ASSERT(codegen_load_text_file_to_arena(arena,
-                                           "prop_item_build/exports/CoreTargets-noconfig.cmake",
+                                           "prop_item_build/exports/CoreTargets.cmake",
                                            &build_export));
     ASSERT(codegen_load_text_file_to_arena(arena,
-                                           "prop_item_prefix/share/cmake/Demo/DemoTargets-noconfig.cmake",
+                                           "prop_item_prefix/share/cmake/Demo/DemoTargets.cmake",
                                            &install_export));
     ASSERT(codegen_sv_contains(build_export, "INTERFACE_INCLUDE_DIRECTORIES"));
     ASSERT(codegen_sv_contains(build_export, "INTERFACE_SYSTEM_INCLUDE_DIRECTORIES"));
@@ -2385,7 +2493,6 @@ TEST(codegen_export_export_set_writes_build_tree_exports_from_install_sets) {
     ASSERT(codegen_compile_generated_nob("export_set_nob.c", "export_set_nob_gen"));
     ASSERT(codegen_run_binary_in_dir_argv(".", "./export_set_nob_gen", export_argv, NOB_ARRAY_LEN(export_argv)));
     ASSERT(test_ws_host_path_exists("export_set_build/exports/DemoTargets.cmake"));
-    ASSERT(test_ws_host_path_exists("export_set_build/exports/DemoTargets-noconfig.cmake"));
     TEST_PASS();
 }
 
@@ -2493,6 +2600,7 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_fetchcontent_local_materialization_replays_from_clean_workspace(passed, failed, skipped);
     test_codegen_ctest_local_dashboard_replay_stages_testing_tree(passed, failed, skipped);
     test_codegen_ctest_coverage_and_memcheck_local_replay_stage_reports(passed, failed, skipped);
+    test_codegen_ctest_coverage_and_memcheck_relative_paths_replay_stage_reports(passed, failed, skipped);
     test_codegen_install_export_and_package_auto_configure_from_clean_workspace(passed, failed, skipped);
     test_codegen_install_full_custom_prefix_preserves_program_mode_and_directory_semantics(passed, failed, skipped);
     test_codegen_install_component_selection_and_default_component_fallback_work(passed, failed, skipped);

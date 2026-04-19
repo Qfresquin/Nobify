@@ -392,16 +392,31 @@ static bool cg_emit_replay_configure_helpers(CG_Context *ctx, Nob_String_Builder
 
     if (needs_tar) {
         nob_sb_append_cstr(out,
-            "static bool replay_archive_create_paxr(const char *archive_path, long long mtime_epoch, const char *const *paths, size_t path_count) {\n"
+            "static size_t replay_path_trimmed_len(const char *path) {\n"
+            "    size_t len = path ? strlen(path) : 0u;\n"
+            "    while (len > 1u && (path[len - 1] == '/' || path[len - 1] == '\\\\')) --len;\n"
+            "    return len;\n"
+            "}\n\n"
+            "static bool replay_archive_append_input(Nob_Cmd *cmd, const char *path) {\n"
+            "    size_t len = 0u;\n"
+            "    if (!cmd || !path || path[0] == '\\0') return false;\n"
+            "    len = replay_path_trimmed_len(path);\n"
+            "    if (len == 0u) return false;\n"
+            "    nob_cmd_append(cmd, nob_temp_sprintf(\"%.*s\", (int)len, path));\n"
+            "    return true;\n"
+            "}\n\n"
+            "static bool replay_archive_create_paxr(const char *archive_path, const char *input_cwd, long long mtime_epoch, const char *const *paths, size_t path_count) {\n"
             "    Nob_Cmd cmd = {0};\n"
             "    if (!archive_path || !paths || path_count == 0) return false;\n"
             "    if (!ensure_parent_dir(archive_path)) return false;\n"
-            "    nob_cmd_append(&cmd, resolve_tar_bin(), \"--format=pax\", nob_temp_sprintf(\"--mtime=@%lld\", mtime_epoch), \"-cf\", archive_path);\n"
+            "    nob_cmd_append(&cmd, resolve_tar_bin(), \"--format=pax\", \"--pax-option=delete=atime,delete=ctime\", nob_temp_sprintf(\"--mtime=@%lld\", mtime_epoch), \"-cf\", archive_path);\n"
+            "    nob_cmd_append(&cmd, \"-C\", (input_cwd && input_cwd[0] != '\\0') ? input_cwd : \".\", \"--\");\n"
             "    for (size_t i = 0; i < path_count; ++i) {\n"
-            "        const char *parent = nob_temp_dir_name(paths[i]);\n"
-            "        const char *name = nob_temp_file_name(paths[i]);\n"
-            "        if (!name || name[0] == '\\0') return false;\n"
-            "        nob_cmd_append(&cmd, \"-C\", (parent && parent[0] != '\\0') ? parent : \".\", name);\n"
+            "        if (!replay_archive_append_input(&cmd, paths[i])) {\n"
+            "            nob_log(NOB_ERROR, \"configure: invalid archive input path\");\n"
+            "            nob_cmd_free(cmd);\n"
+            "            return false;\n"
+            "        }\n"
             "    }\n"
             "    if (!nob_cmd_run(&cmd)) {\n"
             "        nob_log(NOB_ERROR, \"configure: failed to create archive %s\", archive_path);\n"
@@ -517,6 +532,7 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
     if (!cg_emit_replay_configure_helpers(ctx, out)) return false;
 
     nob_sb_append_cstr(out,
+        "static bool clean_all(void);\n\n"
         "static bool configure_all(bool force) {\n"
         "    const char *stamp_path = configure_stamp_path();\n"
         "    if (!ensure_dir(configure_state_dir())) return false;\n"
@@ -538,6 +554,9 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
     }
     nob_sb_append_cstr(out, "        return true;\n    }\n");
     if (has_output_guards) nob_sb_append_cstr(out, "configure_run:\n");
+    nob_sb_append_cstr(out,
+        "    if (!clean_all()) return false;\n"
+        "    if (!ensure_dir(configure_state_dir())) return false;\n");
 
     for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
         BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
@@ -626,16 +645,18 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
             case BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR:
                 nob_sb_append_cstr(out, "        static const char *paths[] = {");
                 for (size_t input_index = 0; input_index < inputs.count; ++input_index) {
-                    String_View input_path = {0};
-                    if (!cg_rebase_path_from_cwd(ctx, inputs.items[input_index], &input_path)) return false;
                     if (input_index > 0) nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, input_path)) return false;
+                    if (!cg_sb_append_c_string(out, inputs.items[input_index])) return false;
                 }
                 nob_sb_append_cstr(out, "};\n        if (!replay_archive_create_paxr(");
                 {
                     String_View output_path = {0};
+                    String_View input_cwd = {0};
                     if (!cg_rebase_path_from_cwd(ctx, outputs.items[0], &output_path)) return false;
+                    if (!cg_rebase_path_from_cwd(ctx, ctx->cwd_abs, &input_cwd)) return false;
                     if (!cg_sb_append_c_string(out, output_path)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, input_cwd)) return false;
                 }
                 nob_sb_append_cstr(out, ", ");
                 nob_sb_append_cstr(out, "atoll(");
@@ -755,9 +776,15 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
 static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
     size_t test_count = 0;
     size_t test_driver_count = 0;
+    String_View generated_source_dir = {0};
+    String_View generated_binary_dir = {0};
     if (!ctx || !out) return false;
 
     test_count = bm_query_test_count(ctx->model);
+    if (!cg_rebase_path_from_cwd(ctx, ctx->source_root_abs, &generated_source_dir) ||
+        !cg_rebase_path_from_cwd(ctx, ctx->binary_root_abs, &generated_binary_dir)) {
+        return false;
+    }
     for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
         BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
         if (bm_query_replay_action_phase(ctx->model, id) == BM_REPLAY_PHASE_TEST &&
@@ -775,6 +802,7 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "typedef struct {\n"
         "    const char *name;\n"
         "    const char *command;\n"
+        "    const char *command_base_dir;\n"
         "    const char *working_dir;\n"
         "    bool command_expand_lists;\n"
         "    const char *const *configurations;\n"
@@ -807,6 +835,75 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    if (!path || path[0] == '\\0') return false;\n"
         "    if (path[0] == '/' || path[0] == '\\\\') return true;\n"
         "    return strlen(path) >= 3 && path[1] == ':' && (path[2] == '/' || path[2] == '\\\\');\n"
+        "}\n\n"
+        "static const char *test_path_basename(const char *path) {\n"
+        "    const char *last_slash = NULL;\n"
+        "    const char *last_backslash = NULL;\n"
+        "    if (!path) return \"\";\n"
+        "    last_slash = strrchr(path, '/');\n"
+        "    last_backslash = strrchr(path, '\\\\');\n"
+        "    if (last_slash && last_backslash) return (last_slash > last_backslash ? last_slash : last_backslash) + 1;\n"
+        "    if (last_slash) return last_slash + 1;\n"
+        "    if (last_backslash) return last_backslash + 1;\n"
+        "    return path;\n"
+        "}\n\n"
+        "static bool test_token_looks_like_path(const char *token) {\n"
+        "    if (!token || token[0] == '\\0' || test_path_is_absolute(token)) return false;\n"
+        "    if (token[0] == '.') return true;\n"
+        "    return strchr(token, '/') != NULL || strchr(token, '\\\\') != NULL;\n"
+        "}\n\n"
+        "static bool test_command_uses_script_launcher(const char *token) {\n"
+        "    const char *base = test_path_basename(token);\n"
+        "    if (!base || base[0] == '\\0') return false;\n"
+        "    return strcmp(base, \"sh\") == 0 ||\n"
+        "           strcmp(base, \"bash\") == 0 ||\n"
+        "           strcmp(base, \"dash\") == 0 ||\n"
+        "           strcmp(base, \"zsh\") == 0 ||\n"
+        "           strcmp(base, \"python\") == 0 ||\n"
+        "           strcmp(base, \"python3\") == 0 ||\n"
+        "           strcmp(base, \"python.exe\") == 0 ||\n"
+        "           strcmp(base, \"perl\") == 0 ||\n"
+        "           strcmp(base, \"ruby\") == 0 ||\n"
+        "           strcmp(base, \"node\") == 0 ||\n"
+        "           strcmp(base, \"cmd\") == 0 ||\n"
+        "           strcmp(base, \"cmd.exe\") == 0 ||\n"
+        "           strcmp(base, \"powershell\") == 0 ||\n"
+        "           strcmp(base, \"pwsh\") == 0;\n"
+        "}\n\n"
+        "static char *test_resolve_token_from_base(const char *base_dir, const char *token) {\n"
+        "    const char *candidate = NULL;\n"
+        "    const char *resolved = NULL;\n"
+        "    const char *cwd = NULL;\n"
+        "    if (!base_dir || !token || !test_token_looks_like_path(token)) return NULL;\n"
+        "    candidate = nob_temp_sprintf(\"%s/%s\", base_dir, token);\n"
+        "    if (!candidate || !nob_file_exists(candidate)) return NULL;\n"
+        "    resolved = candidate;\n"
+        "    if (!test_path_is_absolute(candidate)) {\n"
+        "        cwd = nob_get_current_dir_temp();\n"
+        "        if (!cwd) return NULL;\n"
+        "        resolved = nob_temp_sprintf(\"%s/%s\", cwd, candidate);\n"
+        "    }\n"
+        "    return test_strdup_n(resolved, strlen(resolved));\n"
+        "}\n\n"
+        "static bool test_replace_token_from_base(Nob_Test_String_List *argv,\n"
+        "                                        size_t index,\n"
+        "                                        const char *base_dir) {\n"
+        "    char *replacement = NULL;\n"
+        "    if (!argv || index >= argv->count || !base_dir || base_dir[0] == '\\0') return true;\n"
+        "    replacement = test_resolve_token_from_base(base_dir, argv->items[index]);\n"
+        "    if (!replacement) return true;\n"
+        "    free(argv->items[index]);\n"
+        "    argv->items[index] = replacement;\n"
+        "    return true;\n"
+        "}\n\n"
+        "static bool test_normalize_command_tokens(Nob_Test_String_List *argv,\n"
+        "                                         const char *base_dir) {\n"
+        "    if (!argv || !base_dir || base_dir[0] == '\\0') return true;\n"
+        "    if (!test_replace_token_from_base(argv, 0u, base_dir)) return false;\n"
+        "    if (argv->count > 1u && test_command_uses_script_launcher(argv->items[0])) {\n"
+        "        if (!test_replace_token_from_base(argv, 1u, base_dir)) return false;\n"
+        "    }\n"
+        "    return true;\n"
         "}\n\n"
         "static bool test_string_list_push(Nob_Test_String_List *list, const char *src, size_t len) {\n"
         "    char *copy = NULL;\n"
@@ -1172,11 +1269,18 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         BM_Directory_Id owner = bm_query_test_owner_directory(ctx->model, id);
         String_View working_dir = bm_query_test_working_directory(ctx->model, id);
         String_View effective_owner_binary_dir = {0};
+        String_View emitted_command_base_dir = {0};
         String_View emitted_working_dir = {0};
         BM_String_Span configs = bm_query_test_configurations(ctx->model, id);
         if (!bm_directory_id_is_valid(owner) ||
             !cg_effective_owner_binary_dir(ctx, owner, &effective_owner_binary_dir)) {
             effective_owner_binary_dir = ctx->binary_root_abs;
+        }
+        if (!cg_rebase_from_base(ctx,
+                                 nob_sv_from_cstr("."),
+                                 effective_owner_binary_dir,
+                                 &emitted_command_base_dir)) {
+            return false;
         }
         if (working_dir.count > 0) {
             if (!cg_rebase_from_base(ctx, working_dir, effective_owner_binary_dir, &emitted_working_dir)) return false;
@@ -1190,6 +1294,8 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         if (!cg_sb_append_c_string(out, bm_query_test_name(ctx->model, id))) return false;
         nob_sb_append_cstr(out, ", ");
         if (!cg_sb_append_c_string(out, bm_query_test_command(ctx->model, id))) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, emitted_command_base_dir)) return false;
         nob_sb_append_cstr(out, ", ");
         if (!cg_sb_append_c_string(out, emitted_working_dir)) return false;
         nob_sb_append_cstr(out, ", ");
@@ -1303,6 +1409,7 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "        free(argv->items[0]);\n"
         "        argv->items[0] = replacement;\n"
         "    }\n"
+        "    if (!test_normalize_command_tokens(argv, test_case->command_base_dir)) return false;\n"
         "    return true;\n"
         "}\n\n"
         "static bool __attribute__((unused)) ctest_write_test_reports(const char *build_dir,\n"
@@ -1559,13 +1666,27 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    char *stdout_text = NULL;\n"
         "    char *stderr_text = NULL;\n"
         "    char *command_text = NULL;\n"
+        "    Nob_Test_String_List normalized_argv = {0};\n"
         "    bool ok = false;\n"
         "    if (!build_dir || !coverage_argv || coverage_argc == 0) return false;\n"
-        "    command_text = test_join_cstr_array(coverage_argv, coverage_argc, \" \");\n"
+        "    for (size_t i = 0; i < coverage_argc; ++i) {\n"
+        "        if (!test_string_list_push(&normalized_argv,\n"
+        "                                   coverage_argv[i] ? coverage_argv[i] : \"\",\n"
+        "                                   strlen(coverage_argv[i] ? coverage_argv[i] : \"\"))) {\n"
+        "            test_string_list_free(&normalized_argv);\n"
+        "            return false;\n"
+        "        }\n"
+        "    }\n"
+        "    if (!test_normalize_command_tokens(&normalized_argv, build_dir)) {\n"
+        "        test_string_list_free(&normalized_argv);\n"
+        "        return false;\n"
+        "    }\n"
+        "    command_text = test_string_list_join(&normalized_argv, \" \");\n"
         "    if (!command_text) return false;\n"
-        "    for (size_t i = 0; i < coverage_argc; ++i) nob_cmd_append(&cmd, coverage_argv[i]);\n"
+        "    for (size_t i = 0; i < normalized_argv.count; ++i) nob_cmd_append(&cmd, normalized_argv.items[i]);\n"
         "    ok = run_cmd_capture_in_dir(build_dir, &cmd, &stdout_text, &stderr_text);\n"
         "    nob_cmd_free(cmd);\n"
+        "    test_string_list_free(&normalized_argv);\n"
         "    if (!stdout_text || !stderr_text) {\n"
         "        free(command_text);\n"
         "        free(stdout_text);\n"
@@ -1696,6 +1817,12 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "                    goto memcheck_cleanup;\n"
         "                }\n"
         "            }\n"
+        "            if (!test_normalize_command_tokens(&backend_argv, build_dir)) {\n"
+        "                test_string_list_free(&test_argv);\n"
+        "                test_string_list_free(&backend_argv);\n"
+        "                ok = false;\n"
+        "                goto memcheck_cleanup;\n"
+        "            }\n"
         "            if (!test_string_list_push(&backend_argv, \"--\", 2u)) {\n"
         "                test_string_list_free(&test_argv);\n"
         "                test_string_list_free(&backend_argv);\n"
@@ -1718,6 +1845,9 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "                ok = false;\n"
         "                goto memcheck_cleanup;\n"
         "            }\n"
+        "            nob_log(NOB_INFO,\n"
+        "                    \"ctest_memcheck local backend command: %s\",\n"
+        "                    result->backend_command ? result->backend_command : \"<null>\");\n"
         "            for (size_t i = 0; i < backend_argv.count; ++i) nob_cmd_append(&cmd, backend_argv.items[i]);\n"
         "            run_ok = run_cmd_capture_in_dir(test_case->working_dir, &cmd, &result->stdout_text, &result->stderr_text);\n"
         "            nob_cmd_free(cmd);\n"
@@ -1863,6 +1993,134 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    }\n"
         "    return ensure_dir(target_dir);\n"
         "}\n\n"
+        "static const char * __attribute__((unused)) ctest_generated_source_dir(void) {\n"
+        "    return ");
+    if (!cg_sb_append_c_string(out, generated_source_dir)) return false;
+    nob_sb_append_cstr(out,
+        ";\n"
+        "}\n\n"
+        "static const char * __attribute__((unused)) ctest_generated_binary_dir(void) {\n"
+        "    return ");
+    if (!cg_sb_append_c_string(out, generated_binary_dir)) return false;
+    nob_sb_append_cstr(out,
+        ";\n"
+        "}\n\n"
+        "static const char * __attribute__((unused)) resolve_ctest_bin(void) {\n"
+        "    const char *tool = getenv(\"NOB_CTEST_BIN\");\n"
+        "    if (tool && tool[0] != '\\0') return tool;\n"
+        "    return \"ctest\";\n"
+        "}\n\n"
+        "static const char * __attribute__((unused)) ctest_resolve_cmake_bin(void) {\n"
+        "    const char *tool = getenv(\"NOB_CMAKE_BIN\");\n"
+        "    if (tool && tool[0] != '\\0') return tool;\n"
+        "    return ");
+    if (!cg_sb_append_c_string(out,
+                               ctx->embedded_cmake_bin_abs.count > 0
+                                   ? ctx->embedded_cmake_bin_abs
+                                   : nob_sv_from_cstr("cmake"))) {
+        return false;
+    }
+    nob_sb_append_cstr(out,
+        ";\n"
+        "}\n\n"
+        "static const char * __attribute__((unused)) ctest_skip_dot_prefixes(const char *path) {\n"
+        "    if (!path) return \"\";\n"
+        "    while (path[0] == '.' && path[1] == '/') path += 2;\n"
+        "    return path;\n"
+        "}\n\n"
+        "static bool __attribute__((unused)) ctest_paths_match(const char *lhs, const char *rhs) {\n"
+        "    lhs = ctest_skip_dot_prefixes(lhs);\n"
+        "    rhs = ctest_skip_dot_prefixes(rhs);\n"
+        "    return strcmp(lhs ? lhs : \"\", rhs ? rhs : \"\") == 0;\n"
+        "}\n\n"
+        "static bool __attribute__((unused)) ctest_targets_generated_backend(const char *source_dir,\n"
+        "                                                                    const char *build_dir) {\n"
+        "    return ctest_paths_match(source_dir, ctest_generated_source_dir()) &&\n"
+        "           ctest_paths_match(build_dir, ctest_generated_binary_dir());\n"
+        "}\n\n"
+        "static bool __attribute__((unused)) ctest_build_dir_is_generated_backend(const char *build_dir) {\n"
+        "    return ctest_paths_match(build_dir, ctest_generated_binary_dir());\n"
+        "}\n\n"
+        "static bool __attribute__((unused)) ctest_execute_configure_local(const char *source_dir,\n"
+        "                                                                 const char *build_dir) {\n"
+        "    Nob_Cmd cmd = {0};\n"
+        "    bool ok = false;\n"
+        "    if (!source_dir || source_dir[0] == '\\0' || !build_dir || build_dir[0] == '\\0') return false;\n"
+        "    if (!ensure_dir(build_dir)) return false;\n"
+        "    nob_cmd_append(&cmd, ctest_resolve_cmake_bin(), \"-S\", source_dir, \"-B\", build_dir);\n"
+        "    ok = nob_cmd_run(&cmd);\n"
+        "    nob_cmd_free(cmd);\n"
+        "    return ok;\n"
+        "}\n\n"
+        "static bool __attribute__((unused)) ctest_execute_build_local(const char *build_dir,\n"
+        "                                                             const char *configuration,\n"
+        "                                                             const char *target) {\n"
+        "    Nob_Cmd cmd = {0};\n"
+        "    bool ok = false;\n"
+        "    if (!build_dir || build_dir[0] == '\\0') return false;\n"
+        "    nob_cmd_append(&cmd, ctest_resolve_cmake_bin(), \"--build\", build_dir);\n"
+        "    if (configuration && configuration[0] != '\\0') nob_cmd_append(&cmd, \"--config\", configuration);\n"
+        "    if (target && target[0] != '\\0') nob_cmd_append(&cmd, \"--target\", target);\n"
+        "    ok = nob_cmd_run(&cmd);\n"
+        "    nob_cmd_free(cmd);\n"
+        "    return ok;\n"
+        "}\n\n"
+        "static char * __attribute__((unused)) ctest_selected_names_regex(const char *const *selected_names,\n"
+        "                                                                size_t selected_count) {\n"
+        "    Nob_String_Builder sb = {0};\n"
+        "    char *copy = NULL;\n"
+        "    if (!selected_names || selected_count == 0u) return NULL;\n"
+        "    nob_sb_append_cstr(&sb, \"^(\");\n"
+        "    for (size_t i = 0; i < selected_count; ++i) {\n"
+        "        const char *name = selected_names[i] ? selected_names[i] : \"\";\n"
+        "        if (i > 0u) nob_sb_append_cstr(&sb, \"|\");\n"
+        "        nob_sb_append_cstr(&sb, name);\n"
+        "    }\n"
+        "    nob_sb_append_cstr(&sb, \")$\");\n"
+        "    copy = (char *)malloc(sb.count + 1u);\n"
+        "    if (!copy) {\n"
+        "        nob_sb_free(sb);\n"
+        "        return NULL;\n"
+        "    }\n"
+        "    if (sb.count > 0u && sb.items) memcpy(copy, sb.items, sb.count);\n"
+        "    copy[sb.count] = '\\0';\n"
+        "    nob_sb_free(sb);\n"
+        "    return copy;\n"
+        "}\n\n"
+        "static bool __attribute__((unused)) ctest_execute_test_local(const char *build_dir,\n"
+        "                                                            const char *const *selected_names,\n"
+        "                                                            size_t selected_count,\n"
+        "                                                            const char *config_filter,\n"
+        "                                                            const char *output_junit,\n"
+        "                                                            bool schedule_random) {\n"
+        "    Nob_Cmd cmd = {0};\n"
+        "    char *selected_regex = NULL;\n"
+        "    bool ok = false;\n"
+        "    if (!build_dir || build_dir[0] == '\\0') return false;\n"
+        "    nob_cmd_append(&cmd, resolve_ctest_bin(), \"--test-dir\", build_dir);\n"
+        "    if (config_filter && config_filter[0] != '\\0') nob_cmd_append(&cmd, \"-C\", config_filter);\n"
+        "    if (schedule_random) nob_cmd_append(&cmd, \"--schedule-random\");\n"
+        "    if (output_junit && output_junit[0] != '\\0') nob_cmd_append(&cmd, \"--output-junit\", output_junit);\n"
+        "    if (selected_count > 0u) {\n"
+        "        selected_regex = ctest_selected_names_regex(selected_names, selected_count);\n"
+        "        if (!selected_regex) {\n"
+        "            nob_cmd_free(cmd);\n"
+        "            return false;\n"
+        "        }\n"
+        "        nob_cmd_append(&cmd, \"-R\", selected_regex);\n"
+        "    }\n"
+        "    ok = nob_cmd_run(&cmd);\n"
+        "    nob_cmd_free(cmd);\n"
+        "    free(selected_regex);\n"
+        "    if (!ok) return false;\n"
+        "    if (!ctest_prepare_tree(build_dir, true)) return false;\n"
+        "    if (!test_write_text_file(nob_temp_sprintf(\"%s/Test.xml\", ctest_tag_dir(build_dir)),\n"
+        "                              nob_temp_sprintf(\"<Test build=\\\"%s\\\" status=\\\"ok\\\" />\\n\",\n"
+        "                                               build_dir ? build_dir : \"\"))) {\n"
+        "        return false;\n"
+        "    }\n"
+        "    return test_write_text_file(nob_temp_sprintf(\"%s/TestManifest.txt\", ctest_tag_dir(build_dir)), \"Test.xml\\n\");\n"
+        "}\n\n"
         "static bool __attribute__((unused)) ctest_execute_start_local(const char *source_dir,\n"
         "                                                             const char *build_dir,\n"
         "                                                             const char *model,\n"
@@ -1875,7 +2133,11 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "                                nob_temp_sprintf(\"source=%s\\nbuild=%s\\n\", source_dir ? source_dir : \"\", build_dir ? build_dir : \"\"));\n"
         "}\n\n"
         "static bool __attribute__((unused)) ctest_execute_configure_self(const char *source_dir, const char *build_dir) {\n"
-        "    if (!configure_all(true)) return false;\n"
+        "    if (ctest_targets_generated_backend(source_dir, build_dir)) {\n"
+        "        if (!configure_all(true)) return false;\n"
+        "    } else if (!ctest_execute_configure_local(source_dir, build_dir)) {\n"
+        "        return false;\n"
+        "    }\n"
         "    if (!ctest_prepare_tree(build_dir, true)) return false;\n"
         "    if (!test_write_text_file(nob_temp_sprintf(\"%s/Configure.xml\", ctest_tag_dir(build_dir)),\n"
         "                              nob_temp_sprintf(\"<Configure source=\\\"%s\\\" build=\\\"%s\\\" status=\\\"ok\\\" />\\n\",\n"
@@ -1888,14 +2150,18 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "static bool __attribute__((unused)) ctest_execute_build_self(const char *build_dir, const char *configuration, const char *target) {\n"
         "    const char *prev_config = g_build_config;\n"
         "    bool ok = false;\n"
-        "    if (configuration && configuration[0] != '\\0') g_build_config = configuration;\n"
-        "    if (!ensure_configured()) {\n"
+        "    if (ctest_build_dir_is_generated_backend(build_dir)) {\n"
+        "        if (configuration && configuration[0] != '\\0') g_build_config = configuration;\n"
+        "        if (!ensure_configured()) {\n"
+        "            g_build_config = prev_config;\n"
+        "            return false;\n"
+        "        }\n"
+        "        ok = (target && target[0] != '\\0') ? build_request(target) : build_default_targets();\n"
         "        g_build_config = prev_config;\n"
+        "        if (!ok) return false;\n"
+        "    } else if (!ctest_execute_build_local(build_dir, configuration, target)) {\n"
         "        return false;\n"
         "    }\n"
-        "    ok = (target && target[0] != '\\0') ? build_request(target) : build_default_targets();\n"
-        "    g_build_config = prev_config;\n"
-        "    if (!ok) return false;\n"
         "    if (!ctest_prepare_tree(build_dir, true)) return false;\n"
         "    if (!test_write_text_file(nob_temp_sprintf(\"%s/Build.xml\", ctest_tag_dir(build_dir)),\n"
         "                              nob_temp_sprintf(\"<Build configuration=\\\"%s\\\" target=\\\"%s\\\" status=\\\"ok\\\" />\\n\",\n"
@@ -1911,6 +2177,14 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "                                                      const char *config_filter,\n"
         "                                                      const char *output_junit,\n"
         "                                                      bool schedule_random) {\n"
+        "    if (!ctest_build_dir_is_generated_backend(build_dir)) {\n"
+        "        return ctest_execute_test_local(build_dir,\n"
+        "                                        selected_names,\n"
+        "                                        selected_count,\n"
+        "                                        config_filter,\n"
+        "                                        output_junit,\n"
+        "                                        schedule_random);\n"
+        "    }\n"
         "    return run_registered_tests(false,\n"
         "                               selected_names,\n"
         "                               selected_count,\n"
@@ -2161,6 +2435,7 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
                 }
 
                 case BM_REPLAY_OPCODE_NONE:
+                    break;
                 case BM_REPLAY_OPCODE_FS_MKDIR:
                 case BM_REPLAY_OPCODE_FS_WRITE_TEXT:
                 case BM_REPLAY_OPCODE_FS_APPEND_TEXT:

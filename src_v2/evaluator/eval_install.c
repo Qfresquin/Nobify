@@ -22,6 +22,11 @@ static bool install_emit_rule(EvalExecContext *ctx,
                               String_View item,
                               String_View destination,
                               String_View component,
+                              String_View archive_component,
+                              String_View library_component,
+                              String_View runtime_component,
+                              String_View includes_component,
+                              String_View public_header_component,
                               String_View namelink_component,
                               String_View export_name,
                               String_View archive_destination,
@@ -36,6 +41,11 @@ static bool install_emit_rule(EvalExecContext *ctx,
                                       item,
                                       destination,
                                       component,
+                                      archive_component,
+                                      library_component,
+                                      runtime_component,
+                                      includes_component,
+                                      public_header_component,
                                       namelink_component,
                                       export_name,
                                       archive_destination,
@@ -48,6 +58,11 @@ static bool install_emit_rule(EvalExecContext *ctx,
 typedef struct {
     String_View destination;
     String_View component;
+    String_View archive_component;
+    String_View library_component;
+    String_View runtime_component;
+    String_View includes_component;
+    String_View public_header_component;
     String_View namelink_component;
     String_View export_name;
     String_View archive_destination;
@@ -333,6 +348,11 @@ static bool install_handle_files_like(EvalExecContext *ctx,
                                nob_sv_from_cstr(""),
                                nob_sv_from_cstr(""),
                                nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
                                nob_sv_from_cstr(""))) {
             return false;
         }
@@ -379,7 +399,17 @@ static bool install_handle_targets_like(EvalExecContext *ctx,
             continue;
         }
         if (eval_sv_eq_ci_lit(args[j], "COMPONENT")) {
-            if (j + 1 < arena_arr_len(args) && meta.component.count == 0) meta.component = args[++j];
+            if (j + 1 < arena_arr_len(args)) {
+                String_View value = args[++j];
+                switch (scope) {
+                    case INSTALL_TARGET_SCOPE_ARCHIVE: meta.archive_component = value; break;
+                    case INSTALL_TARGET_SCOPE_LIBRARY: meta.library_component = value; break;
+                    case INSTALL_TARGET_SCOPE_RUNTIME: meta.runtime_component = value; break;
+                    case INSTALL_TARGET_SCOPE_INCLUDES: meta.includes_component = value; break;
+                    case INSTALL_TARGET_SCOPE_PUBLIC_HEADER: meta.public_header_component = value; break;
+                    case INSTALL_TARGET_SCOPE_GENERAL: meta.component = value; break;
+                }
+            }
             continue;
         }
         if (eval_sv_eq_ci_lit(args[j], "NAMELINK_COMPONENT")) {
@@ -457,6 +487,11 @@ static bool install_handle_targets_like(EvalExecContext *ctx,
                                item,
                                meta.destination,
                                meta.component,
+                               meta.archive_component,
+                               meta.library_component,
+                               meta.runtime_component,
+                               meta.includes_component,
+                               meta.public_header_component,
                                meta.namelink_component,
                                meta.export_name,
                                meta.archive_destination,
@@ -504,6 +539,11 @@ static bool install_handle_script_code_block(EvalExecContext *ctx,
                                    o,
                                    EV_INSTALL_RULE_FILE,
                                    item,
+                                   nob_sv_from_cstr(""),
+                                   nob_sv_from_cstr(""),
+                                   nob_sv_from_cstr(""),
+                                   nob_sv_from_cstr(""),
+                                   nob_sv_from_cstr(""),
                                    nob_sv_from_cstr(""),
                                    nob_sv_from_cstr(""),
                                    nob_sv_from_cstr(""),
@@ -609,6 +649,11 @@ static bool install_handle_export_like(EvalExecContext *ctx,
                                  nob_sv_from_cstr(""),
                                  nob_sv_from_cstr(""),
                                  nob_sv_from_cstr(""),
+                                 nob_sv_from_cstr(""),
+                                 nob_sv_from_cstr(""),
+                                 nob_sv_from_cstr(""),
+                                 nob_sv_from_cstr(""),
+                                 nob_sv_from_cstr(""),
                                  nob_sv_from_cstr(""));
     }
 }
@@ -647,6 +692,11 @@ static bool install_handle_runtime_dependency_set(EvalExecContext *ctx,
                                EV_INSTALL_RULE_TARGET,
                                item,
                                destinations[i],
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
+                               nob_sv_from_cstr(""),
                                nob_sv_from_cstr(""),
                                nob_sv_from_cstr(""),
                                nob_sv_from_cstr(""),

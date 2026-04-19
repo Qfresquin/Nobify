@@ -37,6 +37,25 @@ static bool cg_sv_has_prefix(String_View sv, const char *prefix) {
     return memcmp(sv.data, p.data, p.count) == 0;
 }
 
+static String_View cg_trim_current_dir_prefixes(String_View path) {
+    while (path.count >= 2 &&
+           path.data[0] == '.' &&
+           (path.data[1] == '/' || path.data[1] == '\\')) {
+        path.data += 2;
+        path.count -= 2;
+    }
+    return path;
+}
+
+static bool cg_path_has_prefix(String_View path, String_View prefix) {
+    path = cg_trim_current_dir_prefixes(path);
+    prefix = cg_trim_current_dir_prefixes(prefix);
+    if (prefix.count == 0 || path.count < prefix.count) return false;
+    if (!nob_sv_starts_with(path, prefix)) return false;
+    if (path.count == prefix.count) return true;
+    return path.data[prefix.count] == '/' || path.data[prefix.count] == '\\';
+}
+
 static bool cg_path_is_abs(String_View path) {
     return path.count > 0 && path.data[0] == '/';
 }
@@ -384,8 +403,19 @@ static bool cg_absolute_from_base(CG_Context *ctx,
                                   String_View path,
                                   String_View *out) {
     String_View base_abs = {0};
+    String_View normalized_base = {0};
     if (!ctx || !out) return false;
     if (cg_path_is_abs(path)) return cg_normalize_path_to_arena(ctx->scratch, path, out);
+    if ((ctx->opts.source_root.count > 0 && cg_path_has_prefix(path, ctx->opts.source_root)) ||
+        (ctx->opts.binary_root.count > 0 && cg_path_has_prefix(path, ctx->opts.binary_root))) {
+        return cg_absolute_from_cwd(ctx, path, out);
+    }
+    if (!cg_normalize_path_to_arena(ctx->scratch, base_dir, &normalized_base)) return false;
+    if (normalized_base.count > 0 &&
+        !cg_path_is_abs(normalized_base) &&
+        cg_path_has_prefix(path, normalized_base)) {
+        return cg_absolute_from_cwd(ctx, path, out);
+    }
     if (cg_path_is_abs(base_dir)) {
         if (!cg_normalize_path_to_arena(ctx->scratch, base_dir, &base_abs)) return false;
     } else {
@@ -478,6 +508,13 @@ bool cg_rebase_path_from_cwd(CG_Context *ctx, String_View value, String_View *ou
     return cg_rebase_from_base(ctx, value, ctx->cwd_abs, out);
 }
 
+bool cg_rebase_path_from_generation_cwd(CG_Context *ctx, String_View value, String_View *out) {
+    String_View absolute = {0};
+    if (!ctx || !out) return false;
+    if (!cg_absolute_from_base(ctx, ctx->cwd_abs, value, &absolute)) return false;
+    return cg_relative_path_to_arena(ctx->scratch, ctx->emit_dir_abs, absolute, out);
+}
+
 static bool cg_rebase_from_binary_root(CG_Context *ctx, String_View value, String_View *out) {
     return cg_rebase_from_base(ctx, value, ctx->binary_root_abs, out);
 }
@@ -565,8 +602,7 @@ static bool cg_target_is_non_emitting(BM_Target_Kind kind) {
 
 static bool cg_target_needs_pic(CG_Context *ctx, BM_Target_Kind kind) {
     if (!ctx || ctx->policy.backend != NOB_CODEGEN_BACKEND_POSIX) return false;
-    return kind == BM_TARGET_STATIC_LIBRARY ||
-           kind == BM_TARGET_SHARED_LIBRARY ||
+    return kind == BM_TARGET_SHARED_LIBRARY ||
            kind == BM_TARGET_MODULE_LIBRARY;
 }
 
@@ -905,16 +941,40 @@ const CG_Build_Step_Info *cg_build_step_info(const CG_Context *ctx, BM_Build_Ste
 
 static bool cg_object_path_for_index(CG_Context *ctx,
                                      String_View object_dir,
+                                     const CG_Source_Info *sources,
+                                     size_t source_count,
                                      size_t index,
                                      String_View *out) {
+    String_View basename = {0};
+    size_t duplicate_count = 0;
     char *name = NULL;
     if (out) *out = nob_sv_from_cstr("");
-    if (!ctx || !out) return false;
-    name = cg_arena_sprintf(ctx->scratch,
-                            "%zu%.*s",
-                            index,
-                            (int)ctx->policy.object_suffix.count,
-                            ctx->policy.object_suffix.data ? ctx->policy.object_suffix.data : "");
+    if (!ctx || !sources || index >= source_count || !out) return false;
+
+    basename = cg_basename_to_arena(ctx->scratch, sources[index].path);
+    if (basename.count == 0) basename = nob_sv_from_cstr("obj");
+    for (size_t i = 0; i < source_count; ++i) {
+        if (nob_sv_eq(cg_basename_to_arena(ctx->scratch, sources[i].path), basename)) {
+            duplicate_count++;
+        }
+    }
+
+    if (duplicate_count > 1) {
+        name = cg_arena_sprintf(ctx->scratch,
+                                "%.*s_%zu%.*s",
+                                (int)basename.count,
+                                basename.data ? basename.data : "",
+                                index,
+                                (int)ctx->policy.object_suffix.count,
+                                ctx->policy.object_suffix.data ? ctx->policy.object_suffix.data : "");
+    } else {
+        name = cg_arena_sprintf(ctx->scratch,
+                                "%.*s%.*s",
+                                (int)basename.count,
+                                basename.data ? basename.data : "",
+                                (int)ctx->policy.object_suffix.count,
+                                ctx->policy.object_suffix.data ? ctx->policy.object_suffix.data : "");
+    }
     if (!name) return false;
     return cg_join_paths_to_arena(ctx->scratch, object_dir, nob_sv_from_cstr(name), out);
 }
@@ -1943,7 +2003,7 @@ static bool cg_emit_link_args_runtime(CG_Context *ctx,
         }
         for (size_t i = 0; i < source_count; ++i) {
             String_View obj_path = {0};
-            if (!cg_object_path_for_index(ctx, object_dir, i, &obj_path)) {
+            if (!cg_object_path_for_index(ctx, object_dir, sources, arena_arr_len(sources), i, &obj_path)) {
                 return false;
             }
             if (!cg_emit_cmd_append_sv(out, "link_cmd", obj_path)) return false;
@@ -2196,7 +2256,7 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
 
     for (size_t i = 0; i < arena_arr_len(sources); ++i) {
         String_View obj_path = {0};
-        if (!cg_object_path_for_index(ctx, object_dir, i, &obj_path)) {
+        if (!cg_object_path_for_index(ctx, object_dir, sources, arena_arr_len(sources), i, &obj_path)) {
             return false;
         }
 
@@ -2254,7 +2314,7 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         if (!cg_sb_append_c_string(out, ctx->emit_path_abs)) return false;
         for (size_t i = 0; i < arena_arr_len(sources); ++i) {
             String_View obj_path = {0};
-            if (!cg_object_path_for_index(ctx, object_dir, i, &obj_path)) {
+            if (!cg_object_path_for_index(ctx, object_dir, sources, arena_arr_len(sources), i, &obj_path)) {
                 return false;
             }
             nob_sb_append_cstr(out, ", ");
@@ -2283,7 +2343,7 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         }
         for (size_t i = 0; i < arena_arr_len(sources); ++i) {
             String_View obj_path = {0};
-            if (!cg_object_path_for_index(ctx, object_dir, i, &obj_path)) {
+            if (!cg_object_path_for_index(ctx, object_dir, sources, arena_arr_len(sources), i, &obj_path)) {
                 return false;
             }
             if (!cg_emit_cmd_append_sv(out, "ar_cmd", obj_path)) return false;
@@ -2320,7 +2380,7 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         if (!cg_sb_append_c_string(out, ctx->emit_path_abs)) return false;
         for (size_t i = 0; i < arena_arr_len(sources); ++i) {
             String_View obj_path = {0};
-            if (!cg_object_path_for_index(ctx, object_dir, i, &obj_path)) {
+            if (!cg_object_path_for_index(ctx, object_dir, sources, arena_arr_len(sources), i, &obj_path)) {
                 return false;
             }
             nob_sb_append_cstr(out, ", ");
@@ -2381,6 +2441,7 @@ static bool cg_emit_build_request(CG_Context *ctx, Nob_String_Builder *out) {
 
 static bool cg_emit_clean_function(CG_Context *ctx, Nob_String_Builder *out) {
     String_View *paths = NULL;
+    String_View *preserve_dirs = NULL;
     if (!ctx || !out) return false;
 
     {
@@ -2400,6 +2461,7 @@ static bool cg_emit_clean_function(CG_Context *ctx, Nob_String_Builder *out) {
         if (dir.count == 0 || cg_sv_eq_lit(dir, "/")) {
             if (!cg_collect_unique_path(ctx->scratch, &paths, ctx->targets[i].artifact_path)) return false;
         } else {
+            if (!cg_collect_unique_path(ctx->scratch, &preserve_dirs, dir)) return false;
             if (!cg_absolute_from_emit(ctx, dir, &dir_abs)) return false;
             if (nob_sv_eq(dir_abs, ctx->binary_root_abs) || cg_sv_eq_lit(dir, ".")) {
                 if (!cg_collect_unique_path(ctx->scratch, &paths, ctx->targets[i].artifact_path)) return false;
@@ -2412,6 +2474,7 @@ static bool cg_emit_clean_function(CG_Context *ctx, Nob_String_Builder *out) {
             if (linker_dir.count == 0 || cg_sv_eq_lit(linker_dir, "/")) {
                 if (!cg_collect_unique_path(ctx->scratch, &paths, ctx->targets[i].linker_artifact_path)) return false;
             } else {
+                if (!cg_collect_unique_path(ctx->scratch, &preserve_dirs, linker_dir)) return false;
                 if (!cg_absolute_from_emit(ctx, linker_dir, &dir_abs)) return false;
                 if (nob_sv_eq(dir_abs, ctx->binary_root_abs) || cg_sv_eq_lit(linker_dir, ".")) {
                     if (!cg_collect_unique_path(ctx->scratch, &paths, ctx->targets[i].linker_artifact_path)) return false;
@@ -2462,6 +2525,11 @@ static bool cg_emit_clean_function(CG_Context *ctx, Nob_String_Builder *out) {
     for (size_t i = 0; i < arena_arr_len(paths); ++i) {
         nob_sb_append_cstr(out, "    if (!remove_path_recursive(");
         if (!cg_sb_append_c_string(out, paths[i])) return false;
+        nob_sb_append_cstr(out, ")) return false;\n");
+    }
+    for (size_t i = 0; i < arena_arr_len(preserve_dirs); ++i) {
+        nob_sb_append_cstr(out, "    if (!ensure_dir(");
+        if (!cg_sb_append_c_string(out, preserve_dirs[i])) return false;
         nob_sb_append_cstr(out, ")) return false;\n");
     }
     nob_sb_append_cstr(out, "    return true;\n");
