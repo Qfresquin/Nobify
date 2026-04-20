@@ -13,9 +13,10 @@ artifact-relevant semantics in explicit data structures rather than in late
 heuristics.
 
 ## Current gap
-Some effective-query paths still reconstruct dependency or usage meaning from
-evaluated strings. That behavior is migration debt left over from the old
-subset-first closure shape, not the target architecture.
+The supported `target`/`directory`/`install`/`export`/`replay` genex path now
+resolves downstream through query context and frozen data. Remaining debt is
+mostly limited to intentional raw-property boundaries and adjacent rows such as
+broader toolchain, dependency-materialization, and custom-command breadth.
 
 ## Guarantees
 - `builder` records upstream facts and domain entities.

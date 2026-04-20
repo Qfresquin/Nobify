@@ -32,12 +32,14 @@ typedef struct {
     String_View current_target_name;
     String_View platform_id;
     String_View compile_language;
+    String_View install_prefix;
     Genex_Target_Property_Read_Fn read_target_property;
     Genex_Target_File_Read_Fn read_target_file;
     Genex_Target_Linker_File_Read_Fn read_target_linker_file;
     void *userdata;
     bool link_only_active;
     bool build_interface_active;
+    bool build_local_interface_active;
     bool install_interface_active;
     bool target_name_case_insensitive;
     // Defensive bound for callback-returned values. 0 => use internal default.

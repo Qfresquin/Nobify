@@ -248,6 +248,7 @@ typedef struct {
     BM_Provenance provenance;
     String_View item;
     String_View destination;
+    String_View rename;
     String_View component;
     String_View archive_component;
     String_View library_component;

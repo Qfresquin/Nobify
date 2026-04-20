@@ -3655,7 +3655,7 @@ TEST(build_model_install_and_export_queries_surface_typed_metadata) {
         "  INCLUDES DESTINATION include\n"
         "  PUBLIC_HEADER DESTINATION include/demo\n"
         "  COMPONENT Development)\n"
-        "install(FILES cmake/DemoConfig.cmake DESTINATION lib/cmake/demo COMPONENT Development)\n"
+        "install(FILES cmake/DemoConfig.cmake DESTINATION lib/cmake/demo RENAME DemoPkgConfig.cmake COMPONENT Development)\n"
         "install(EXPORT DemoTargets NAMESPACE Demo:: DESTINATION lib/cmake/demo FILE DemoTargets.cmake COMPONENT Development)\n",
         &config));
     ASSERT(fixture.eval_ok);
@@ -3669,7 +3669,7 @@ TEST(build_model_install_and_export_queries_surface_typed_metadata) {
     ASSERT(bm_query_install_rule_count(model) == 2);
     ASSERT(bm_query_install_rule_kind(model, (BM_Install_Rule_Id)0) == BM_INSTALL_RULE_TARGET);
     ASSERT(nob_sv_eq(bm_query_install_rule_component(model, (BM_Install_Rule_Id)0),
-                     nob_sv_from_cstr("Development")));
+                     nob_sv_from_cstr("Unspecified")));
     ASSERT(nob_sv_eq(bm_query_install_rule_export_name(model, (BM_Install_Rule_Id)0),
                      nob_sv_from_cstr("DemoTargets")));
     ASSERT(nob_sv_eq(bm_query_install_rule_archive_destination(model, (BM_Install_Rule_Id)0),
@@ -3682,7 +3682,14 @@ TEST(build_model_install_and_export_queries_surface_typed_metadata) {
                      nob_sv_from_cstr("include")));
     ASSERT(nob_sv_eq(bm_query_install_rule_public_header_destination(model, (BM_Install_Rule_Id)0),
                      nob_sv_from_cstr("include/demo")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_public_header_component(model, (BM_Install_Rule_Id)0),
+                     nob_sv_from_cstr("Development")));
     ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)0) == core_id);
+    ASSERT(bm_query_install_rule_kind(model, (BM_Install_Rule_Id)1) == BM_INSTALL_RULE_FILE);
+    ASSERT(nob_sv_eq(bm_query_install_rule_component(model, (BM_Install_Rule_Id)1),
+                     nob_sv_from_cstr("Development")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_rename(model, (BM_Install_Rule_Id)1),
+                     nob_sv_from_cstr("DemoPkgConfig.cmake")));
 
     ASSERT(bm_query_export_count(model) == 1);
     ASSERT(nob_sv_eq(bm_query_export_name(model, (BM_Export_Id)0), nob_sv_from_cstr("DemoTargets")));
@@ -3696,6 +3703,177 @@ TEST(build_model_install_and_export_queries_surface_typed_metadata) {
     export_targets = bm_query_export_targets(model, (BM_Export_Id)0);
     ASSERT(export_targets.count == 1);
     ASSERT(export_targets.items[0] == core_id);
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_context_queries_support_build_local_install_prefix_target_genex_eval_and_link_literals) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    BM_Query_Eval_Context build_ctx = {0};
+    BM_Query_Eval_Context export_ctx = {0};
+    BM_Query_Eval_Context install_ctx = {0};
+    BM_Query_Eval_Context link_ctx = {0};
+    BM_String_Item_Span include_items = {0};
+    BM_String_Item_Span compile_opts = {0};
+    BM_Link_Item_Span link_items = {0};
+    String_View resolved = {0};
+
+    ASSERT(query_arena != NULL);
+    ASSERT(build_model_write_text_file("row51_query_src/main.c", "int main(void) { return 0; }\n"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "row51_query_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("row51_query_src");
+    config.binary_dir = nob_sv_from_cstr("row51_query_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "add_library(base INTERFACE)\n"
+        "set_property(TARGET base PROPERTY CUSTOM_DIR \"$<BUILD_INTERFACE:base/custom>\")\n"
+        "target_include_directories(base INTERFACE\n"
+        "  \"$<BUILD_LOCAL_INTERFACE:base/local>\"\n"
+        "  \"$<INSTALL_INTERFACE:$<INSTALL_PREFIX>/sdk/include>\")\n"
+        "target_compile_options(base INTERFACE \"$<$<COMPILE_LANGUAGE:C>:-DBASE_C>\")\n"
+        "target_link_libraries(base INTERFACE \"$<LINK_LIBRARY:WHOLE_ARCHIVE,dep>\")\n"
+        "add_library(wrapper INTERFACE)\n"
+        "target_include_directories(wrapper INTERFACE \"$<TARGET_PROPERTY:base,INTERFACE_INCLUDE_DIRECTORIES>\")\n"
+        "target_include_directories(wrapper INTERFACE \"$<TARGET_GENEX_EVAL:base,$<TARGET_PROPERTY:base,CUSTOM_DIR>>\")\n"
+        "target_compile_options(wrapper INTERFACE \"$<TARGET_PROPERTY:base,INTERFACE_COMPILE_OPTIONS>\")\n"
+        "target_link_libraries(wrapper INTERFACE \"$<TARGET_PROPERTY:base,INTERFACE_LINK_LIBRARIES>\")\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE wrapper)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+
+    build_ctx.current_target_id = app_id;
+    build_ctx.usage_mode = BM_QUERY_USAGE_COMPILE;
+    build_ctx.compile_language = nob_sv_from_cstr("C");
+    build_ctx.build_interface_active = true;
+    build_ctx.build_local_interface_active = true;
+    build_ctx.install_interface_active = false;
+
+    export_ctx = build_ctx;
+    export_ctx.build_local_interface_active = false;
+
+    install_ctx = build_ctx;
+    install_ctx.build_interface_active = false;
+    install_ctx.build_local_interface_active = false;
+    install_ctx.install_interface_active = true;
+    install_ctx.install_prefix = nob_sv_from_cstr("/opt/demo");
+
+    link_ctx = build_ctx;
+    link_ctx.usage_mode = BM_QUERY_USAGE_LINK;
+    link_ctx.compile_language = nob_sv_from_cstr("");
+
+    ASSERT(bm_query_target_effective_include_directories_items_with_context(model,
+                                                                            app_id,
+                                                                            &build_ctx,
+                                                                            query_arena,
+                                                                            &include_items));
+    ASSERT(build_model_string_item_span_contains(include_items, "base/local"));
+    ASSERT(build_model_string_item_span_contains(include_items, "base/custom"));
+
+    ASSERT(bm_query_target_effective_include_directories_items_with_context(model,
+                                                                            app_id,
+                                                                            &export_ctx,
+                                                                            query_arena,
+                                                                            &include_items));
+    ASSERT(!build_model_string_item_span_contains(include_items, "base/local"));
+    ASSERT(build_model_string_item_span_contains(include_items, "base/custom"));
+
+    ASSERT(bm_query_target_effective_include_directories_items_with_context(model,
+                                                                            app_id,
+                                                                            &install_ctx,
+                                                                            query_arena,
+                                                                            &include_items));
+    ASSERT(!build_model_string_item_span_contains(include_items, "base/local"));
+    ASSERT(!build_model_string_item_span_contains(include_items, "base/custom"));
+    ASSERT(build_model_string_item_span_contains(include_items, "/opt/demo/sdk/include"));
+
+    ASSERT(bm_query_target_effective_compile_options_items_with_context(model,
+                                                                        app_id,
+                                                                        &build_ctx,
+                                                                        query_arena,
+                                                                        &compile_opts));
+    ASSERT(build_model_string_item_span_contains(compile_opts, "-DBASE_C"));
+
+    ASSERT(bm_query_target_effective_link_libraries_items_with_context(model,
+                                                                       app_id,
+                                                                       &link_ctx,
+                                                                       query_arena,
+                                                                       &link_items));
+    ASSERT(build_model_link_item_span_contains(link_items, "$<LINK_LIBRARY:WHOLE_ARCHIVE,dep>"));
+
+    ASSERT(bm_query_resolve_string_with_context(model,
+                                                &install_ctx,
+                                                query_arena,
+                                                nob_sv_from_cstr("$<INSTALL_PREFIX>/sdk/include"),
+                                                &resolved));
+    ASSERT(nob_sv_eq(resolved, nob_sv_from_cstr("/opt/demo/sdk/include")));
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_same_family_target_property_cycles_fail_deterministically) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(256 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    BM_Query_Eval_Context ctx = {0};
+    BM_String_Item_Span include_items = {0};
+
+    ASSERT(query_arena != NULL);
+    ASSERT(build_model_write_text_file("row51_cycle_src/main.c", "int main(void) { return 0; }\n"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "row51_cycle_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("row51_cycle_src");
+    config.binary_dir = nob_sv_from_cstr("row51_cycle_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "add_library(loop INTERFACE)\n"
+        "target_include_directories(loop INTERFACE \"$<TARGET_PROPERTY:loop,INTERFACE_INCLUDE_DIRECTORIES>\")\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE loop)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+
+    ctx.current_target_id = app_id;
+    ctx.usage_mode = BM_QUERY_USAGE_COMPILE;
+    ctx.compile_language = nob_sv_from_cstr("C");
+    ctx.build_interface_active = true;
+    ctx.build_local_interface_active = true;
+    ctx.install_interface_active = false;
+
+    ASSERT(!bm_query_target_effective_include_directories_items_with_context(model,
+                                                                             app_id,
+                                                                             &ctx,
+                                                                             query_arena,
+                                                                             &include_items));
 
     arena_destroy(query_arena);
     test_semantic_pipeline_fixture_destroy(&fixture);
@@ -3998,6 +4176,8 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_ctest_local_memcheck_relative_command_surface(passed, failed, skipped);
     test_build_model_replay_actions_reject_malformed_ordering(passed, failed, skipped);
     test_build_model_context_aware_queries_expand_usage_requirements_and_target_property_genex(passed, failed, skipped);
+    test_build_model_context_queries_support_build_local_install_prefix_target_genex_eval_and_link_literals(passed, failed, skipped);
+    test_build_model_same_family_target_property_cycles_fail_deterministically(passed, failed, skipped);
     test_build_model_effective_queries_follow_global_directory_and_transitive_link_library_seeds(passed, failed, skipped);
     test_build_model_platform_context_and_typed_platform_properties_are_queryable(passed, failed, skipped);
     test_build_model_imported_target_queries_resolve_configs_and_mapped_locations(passed, failed, skipped);

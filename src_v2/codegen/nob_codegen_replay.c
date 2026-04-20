@@ -17,6 +17,57 @@ static bool cg_replay_output_is_clean_safe(CG_Context *ctx, String_View output, 
     return true;
 }
 
+static BM_Query_Eval_Context cg_make_replay_eval_ctx(CG_Context *ctx, String_View config) {
+    BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx,
+                                                   BM_TARGET_ID_INVALID,
+                                                   BM_QUERY_USAGE_COMPILE,
+                                                   config,
+                                                   nob_sv_from_cstr(""));
+    qctx.build_interface_active = true;
+    qctx.build_local_interface_active = true;
+    qctx.install_interface_active = false;
+    return qctx;
+}
+
+static bool cg_resolve_replay_string_for_config(CG_Context *ctx,
+                                                String_View config,
+                                                String_View raw,
+                                                String_View *out) {
+    BM_Query_Eval_Context qctx = cg_make_replay_eval_ctx(ctx, config);
+    return cg_resolve_model_string_with_query_ctx(ctx, &qctx, raw, out);
+}
+
+static bool cg_resolve_replay_path_for_config(CG_Context *ctx,
+                                              String_View config,
+                                              String_View raw,
+                                              String_View *out) {
+    String_View resolved = {0};
+    if (!ctx || !out) return false;
+    *out = nob_sv_from_cstr("");
+    if (!cg_resolve_replay_string_for_config(ctx, config, raw, &resolved)) return false;
+    if (resolved.count == 0) {
+        *out = resolved;
+        return true;
+    }
+    return cg_rebase_path_from_cwd(ctx, resolved, out);
+}
+
+static bool cg_resolve_replay_span_for_config(CG_Context *ctx,
+                                              String_View config,
+                                              BM_String_Span raw_values,
+                                              String_View **out_values) {
+    if (out_values) *out_values = NULL;
+    if (!ctx || !out_values) return false;
+    for (size_t i = 0; i < raw_values.count; ++i) {
+        String_View resolved = {0};
+        if (!cg_resolve_replay_string_for_config(ctx, config, raw_values.items[i], &resolved) ||
+            !arena_arr_push(ctx->scratch, *out_values, resolved)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool cg_emit_replay_configure_helpers(CG_Context *ctx, Nob_String_Builder *out) {
     String_View state_dir = {0};
     bool needs_apply_mode = false;
@@ -539,18 +590,24 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
         "    if (!force && nob_file_exists(stamp_path) && !configure_stamp_is_stale(stamp_path)) {\n");
 
     if (has_output_guards) {
-        for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
-            BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
-            if (bm_query_replay_action_phase(ctx->model, id) != BM_REPLAY_PHASE_CONFIGURE) continue;
-            BM_String_Span outputs = bm_query_replay_action_outputs(ctx->model, id);
-            for (size_t output_index = 0; output_index < outputs.count; ++output_index) {
-                String_View path = {0};
-                if (!cg_rebase_path_from_cwd(ctx, outputs.items[output_index], &path)) return false;
-                nob_sb_append_cstr(out, "        if (!nob_file_exists(");
-                if (!cg_sb_append_c_string(out, path)) return false;
-                nob_sb_append_cstr(out, ")) goto configure_run;\n");
+        for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
+            String_View config = branch < arena_arr_len(ctx->known_configs) ? ctx->known_configs[branch] : nob_sv_from_cstr("");
+            if (!cg_emit_runtime_config_branches_prefix(ctx, out, branch)) return false;
+            for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
+                BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
+                if (bm_query_replay_action_phase(ctx->model, id) != BM_REPLAY_PHASE_CONFIGURE) continue;
+                BM_String_Span outputs = bm_query_replay_action_outputs(ctx->model, id);
+                for (size_t output_index = 0; output_index < outputs.count; ++output_index) {
+                    String_View path = {0};
+                    if (!cg_resolve_replay_path_for_config(ctx, config, outputs.items[output_index], &path)) return false;
+                    if (path.count == 0) continue;
+                    nob_sb_append_cstr(out, "        if (!nob_file_exists(");
+                    if (!cg_sb_append_c_string(out, path)) return false;
+                    nob_sb_append_cstr(out, ")) goto configure_run;\n");
+                }
             }
         }
+        if (!cg_emit_runtime_config_branches_suffix(ctx, out)) return false;
     }
     nob_sb_append_cstr(out, "        return true;\n    }\n");
     if (has_output_guards) nob_sb_append_cstr(out, "configure_run:\n");
@@ -571,196 +628,211 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
         argv = bm_query_replay_action_argv(ctx->model, id);
 
         nob_sb_append_cstr(out, "    {\n");
-        switch (opcode) {
-            case BM_REPLAY_OPCODE_FS_MKDIR:
-                for (size_t output_index = 0; output_index < outputs.count; ++output_index) {
-                    String_View path = {0};
-                    if (!cg_rebase_path_from_cwd(ctx, outputs.items[output_index], &path)) return false;
-                    nob_sb_append_cstr(out, "        if (!ensure_dir(");
-                    if (!cg_sb_append_c_string(out, path)) return false;
-                    nob_sb_append_cstr(out, ")) return false;\n");
-                }
-                break;
-
-            case BM_REPLAY_OPCODE_FS_WRITE_TEXT: {
-                String_View output_path = {0};
-                if (!cg_rebase_path_from_cwd(ctx, outputs.items[0], &output_path)) return false;
-                nob_sb_append_cstr(out, "        if (!replay_write_text(");
-                if (!cg_sb_append_c_string(out, output_path)) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, argv.items[0])) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, argv.items[1])) return false;
-                nob_sb_append_cstr(out, ")) return false;\n");
-                break;
+        for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
+            String_View config = branch < arena_arr_len(ctx->known_configs) ? ctx->known_configs[branch] : nob_sv_from_cstr("");
+            String_View *resolved_inputs = NULL;
+            String_View *resolved_outputs = NULL;
+            String_View *resolved_argv = NULL;
+            if (!cg_resolve_replay_span_for_config(ctx, config, inputs, &resolved_inputs) ||
+                !cg_resolve_replay_span_for_config(ctx, config, outputs, &resolved_outputs) ||
+                !cg_resolve_replay_span_for_config(ctx, config, argv, &resolved_argv) ||
+                !cg_emit_runtime_config_branches_prefix(ctx, out, branch)) {
+                return false;
             }
+            switch (opcode) {
+                case BM_REPLAY_OPCODE_FS_MKDIR:
+                    for (size_t output_index = 0; output_index < outputs.count; ++output_index) {
+                        String_View path = {0};
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[output_index], &path)) return false;
+                        nob_sb_append_cstr(out, "        if (!ensure_dir(");
+                        if (!cg_sb_append_c_string(out, path)) return false;
+                        nob_sb_append_cstr(out, ")) return false;\n");
+                    }
+                    break;
 
-            case BM_REPLAY_OPCODE_FS_APPEND_TEXT: {
-                String_View output_path = {0};
-                if (!cg_rebase_path_from_cwd(ctx, outputs.items[0], &output_path)) return false;
-                nob_sb_append_cstr(out, "        if (!replay_append_text(");
-                if (!cg_sb_append_c_string(out, output_path)) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, argv.items[0])) return false;
-                nob_sb_append_cstr(out, ")) return false;\n");
-                break;
-            }
-
-            case BM_REPLAY_OPCODE_FS_COPY_FILE: {
-                String_View input_path = {0};
-                String_View output_path = {0};
-                if (!cg_rebase_path_from_cwd(ctx, inputs.items[0], &input_path) ||
-                    !cg_rebase_path_from_cwd(ctx, outputs.items[0], &output_path)) {
-                    return false;
-                }
-                nob_sb_append_cstr(out, "        if (!replay_copy_file_with_mode(");
-                if (!cg_sb_append_c_string(out, input_path)) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, output_path)) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, argv.items[0])) return false;
-                nob_sb_append_cstr(out, ")) return false;\n");
-                break;
-            }
-
-            case BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL: {
-                String_View input_path = {0};
-                String_View output_path = {0};
-                if (!cg_rebase_path_from_cwd(ctx, inputs.items[0], &input_path) ||
-                    !cg_rebase_path_from_cwd(ctx, outputs.items[0], &output_path)) {
-                    return false;
-                }
-                nob_sb_append_cstr(out, "        if (!replay_download_local(");
-                if (!cg_sb_append_c_string(out, input_path)) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, output_path)) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, argv.items[0])) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, argv.items[1])) return false;
-                nob_sb_append_cstr(out, ")) return false;\n");
-                break;
-            }
-
-            case BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR:
-                nob_sb_append_cstr(out, "        static const char *paths[] = {");
-                for (size_t input_index = 0; input_index < inputs.count; ++input_index) {
-                    if (input_index > 0) nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, inputs.items[input_index])) return false;
-                }
-                nob_sb_append_cstr(out, "};\n        if (!replay_archive_create_paxr(");
-                {
+                case BM_REPLAY_OPCODE_FS_WRITE_TEXT: {
                     String_View output_path = {0};
-                    String_View input_cwd = {0};
-                    if (!cg_rebase_path_from_cwd(ctx, outputs.items[0], &output_path)) return false;
-                    if (!cg_rebase_path_from_cwd(ctx, ctx->cwd_abs, &input_cwd)) return false;
+                    if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &output_path)) return false;
+                    nob_sb_append_cstr(out, "        if (!replay_write_text(");
                     if (!cg_sb_append_c_string(out, output_path)) return false;
                     nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, input_cwd)) return false;
+                    if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, resolved_argv[1])) return false;
+                    nob_sb_append_cstr(out, ")) return false;\n");
+                    break;
                 }
-                nob_sb_append_cstr(out, ", ");
-                nob_sb_append_cstr(out, "atoll(");
-                if (!cg_sb_append_c_string(out, argv.items[0])) return false;
-                nob_sb_append_cstr(out, "), paths, sizeof(paths) / sizeof(paths[0]))) return false;\n");
-                break;
 
-            case BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR: {
-                String_View input_path = {0};
-                String_View output_path = {0};
-                if (!cg_rebase_path_from_cwd(ctx, inputs.items[0], &input_path) ||
-                    !cg_rebase_path_from_cwd(ctx, outputs.items[0], &output_path)) {
-                    return false;
+                case BM_REPLAY_OPCODE_FS_APPEND_TEXT: {
+                    String_View output_path = {0};
+                    if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &output_path)) return false;
+                    nob_sb_append_cstr(out, "        if (!replay_append_text(");
+                    if (!cg_sb_append_c_string(out, output_path)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                    nob_sb_append_cstr(out, ")) return false;\n");
+                    break;
                 }
-                nob_sb_append_cstr(out, "        if (!replay_archive_extract_tar(");
-                if (!cg_sb_append_c_string(out, input_path)) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, output_path)) return false;
-                nob_sb_append_cstr(out, ")) return false;\n");
-                break;
-            }
 
-            case BM_REPLAY_OPCODE_HOST_LOCK_ACQUIRE: {
-                String_View lock_path = {0};
-                if (!cg_rebase_path_from_cwd(ctx, outputs.items[0], &lock_path)) return false;
-                nob_sb_append_cstr(out, "        if (!replay_lock_acquire(");
-                if (!cg_sb_append_c_string(out, lock_path)) return false;
-                nob_sb_append_cstr(out, ")) return false;\n");
-                break;
-            }
-
-            case BM_REPLAY_OPCODE_HOST_LOCK_RELEASE: {
-                String_View lock_path = {0};
-                if (!cg_rebase_path_from_cwd(ctx, outputs.items[0], &lock_path)) return false;
-                nob_sb_append_cstr(out, "        if (!replay_lock_release(");
-                if (!cg_sb_append_c_string(out, lock_path)) return false;
-                nob_sb_append_cstr(out, ")) return false;\n");
-                break;
-            }
-
-            case BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR: {
-                String_View source_dir = {0};
-                String_View binary_dir = {0};
-                if (!cg_rebase_path_from_cwd(ctx, outputs.items[0], &source_dir) ||
-                    !cg_rebase_path_from_cwd(ctx, outputs.items[1], &binary_dir)) {
-                    return false;
+                case BM_REPLAY_OPCODE_FS_COPY_FILE: {
+                    String_View input_path = {0};
+                    String_View output_path = {0};
+                    if (!cg_rebase_path_from_cwd(ctx, resolved_inputs[0], &input_path) ||
+                        !cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &output_path)) {
+                        return false;
+                    }
+                    nob_sb_append_cstr(out, "        if (!replay_copy_file_with_mode(");
+                    if (!cg_sb_append_c_string(out, input_path)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, output_path)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                    nob_sb_append_cstr(out, ")) return false;\n");
+                    break;
                 }
-                nob_sb_append_cstr(out, "        if (!replay_fetchcontent_source_dir(");
-                if (!cg_sb_append_c_string(out, argv.items[0])) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, source_dir)) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, binary_dir)) return false;
-                nob_sb_append_cstr(out, ")) return false;\n");
-                break;
-            }
 
-            case BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE: {
-                String_View archive_path = {0};
-                String_View source_dir = {0};
-                String_View binary_dir = {0};
-                if (!cg_rebase_path_from_cwd(ctx, inputs.items[0], &archive_path) ||
-                    !cg_rebase_path_from_cwd(ctx, outputs.items[0], &source_dir) ||
-                    !cg_rebase_path_from_cwd(ctx, outputs.items[1], &binary_dir)) {
-                    return false;
+                case BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL: {
+                    String_View input_path = {0};
+                    String_View output_path = {0};
+                    if (!cg_rebase_path_from_cwd(ctx, resolved_inputs[0], &input_path) ||
+                        !cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &output_path)) {
+                        return false;
+                    }
+                    nob_sb_append_cstr(out, "        if (!replay_download_local(");
+                    if (!cg_sb_append_c_string(out, input_path)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, output_path)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, resolved_argv[1])) return false;
+                    nob_sb_append_cstr(out, ")) return false;\n");
+                    break;
                 }
-                nob_sb_append_cstr(out, "        if (!replay_fetchcontent_local_archive(");
-                if (!cg_sb_append_c_string(out, argv.items[0])) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, archive_path)) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, source_dir)) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, binary_dir)) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, argv.items[1])) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, argv.items[2])) return false;
-                nob_sb_append_cstr(out, ", ");
-                if (!cg_sb_append_c_string(out, argv.items[3])) return false;
-                nob_sb_append_cstr(out, ")) return false;\n");
-                break;
+
+                case BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR:
+                    nob_sb_append_cstr(out, "        static const char *paths[] = {");
+                    for (size_t input_index = 0; input_index < inputs.count; ++input_index) {
+                        String_View input_path = {0};
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_inputs[input_index], &input_path)) return false;
+                        if (input_index > 0) nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, input_path)) return false;
+                    }
+                    nob_sb_append_cstr(out, "};\n        if (!replay_archive_create_paxr(");
+                    {
+                        String_View output_path = {0};
+                        String_View input_cwd = {0};
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &output_path)) return false;
+                        if (!cg_rebase_path_from_cwd(ctx, ctx->cwd_abs, &input_cwd)) return false;
+                        if (!cg_sb_append_c_string(out, output_path)) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, input_cwd)) return false;
+                    }
+                    nob_sb_append_cstr(out, ", ");
+                    nob_sb_append_cstr(out, "atoll(");
+                    if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                    nob_sb_append_cstr(out, "), paths, sizeof(paths) / sizeof(paths[0]))) return false;\n");
+                    break;
+
+                case BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR: {
+                    String_View input_path = {0};
+                    String_View output_path = {0};
+                    if (!cg_rebase_path_from_cwd(ctx, resolved_inputs[0], &input_path) ||
+                        !cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &output_path)) {
+                        return false;
+                    }
+                    nob_sb_append_cstr(out, "        if (!replay_archive_extract_tar(");
+                    if (!cg_sb_append_c_string(out, input_path)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, output_path)) return false;
+                    nob_sb_append_cstr(out, ")) return false;\n");
+                    break;
+                }
+
+                case BM_REPLAY_OPCODE_HOST_LOCK_ACQUIRE: {
+                    String_View lock_path = {0};
+                    if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &lock_path)) return false;
+                    nob_sb_append_cstr(out, "        if (!replay_lock_acquire(");
+                    if (!cg_sb_append_c_string(out, lock_path)) return false;
+                    nob_sb_append_cstr(out, ")) return false;\n");
+                    break;
+                }
+
+                case BM_REPLAY_OPCODE_HOST_LOCK_RELEASE: {
+                    String_View lock_path = {0};
+                    if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &lock_path)) return false;
+                    nob_sb_append_cstr(out, "        if (!replay_lock_release(");
+                    if (!cg_sb_append_c_string(out, lock_path)) return false;
+                    nob_sb_append_cstr(out, ")) return false;\n");
+                    break;
+                }
+
+                case BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR: {
+                    String_View source_dir = {0};
+                    String_View binary_dir = {0};
+                    if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &source_dir) ||
+                        !cg_rebase_path_from_cwd(ctx, resolved_outputs[1], &binary_dir)) {
+                        return false;
+                    }
+                    nob_sb_append_cstr(out, "        if (!replay_fetchcontent_source_dir(");
+                    if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, source_dir)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, binary_dir)) return false;
+                    nob_sb_append_cstr(out, ")) return false;\n");
+                    break;
+                }
+
+                case BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE: {
+                    String_View archive_path = {0};
+                    String_View source_dir = {0};
+                    String_View binary_dir = {0};
+                    if (!cg_rebase_path_from_cwd(ctx, resolved_inputs[0], &archive_path) ||
+                        !cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &source_dir) ||
+                        !cg_rebase_path_from_cwd(ctx, resolved_outputs[1], &binary_dir)) {
+                        return false;
+                    }
+                    nob_sb_append_cstr(out, "        if (!replay_fetchcontent_local_archive(");
+                    if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, archive_path)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, source_dir)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, binary_dir)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, resolved_argv[1])) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, resolved_argv[2])) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, resolved_argv[3])) return false;
+                    nob_sb_append_cstr(out, ")) return false;\n");
+                    break;
+                }
+
+                case BM_REPLAY_OPCODE_NONE:
+                    nob_sb_append_cstr(out, "        nob_log(NOB_ERROR, \"configure: unsupported replay opcode marker encountered during code generation\");\n");
+                    nob_sb_append_cstr(out, "        return false;\n");
+                    break;
+
+                case BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_SOURCE:
+                case BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_PROJECT:
+                case BM_REPLAY_OPCODE_PROBE_TRY_RUN:
+                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY:
+                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL:
+                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF:
+                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF:
+                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST:
+                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP:
+                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL:
+                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL:
+                    nob_sb_append_cstr(out, "        nob_log(NOB_ERROR, \"configure: non-configure replay opcode reached configure_all()\");\n");
+                    nob_sb_append_cstr(out, "        return false;\n");
+                    break;
             }
-
-            case BM_REPLAY_OPCODE_NONE:
-                nob_sb_append_cstr(out, "        nob_log(NOB_ERROR, \"configure: unsupported replay opcode marker encountered during code generation\");\n");
-                nob_sb_append_cstr(out, "        return false;\n");
-                break;
-
-            case BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_SOURCE:
-            case BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_PROJECT:
-            case BM_REPLAY_OPCODE_PROBE_TRY_RUN:
-            case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY:
-            case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL:
-            case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF:
-            case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF:
-            case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST:
-            case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP:
-            case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL:
-            case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL:
-                nob_sb_append_cstr(out, "        nob_log(NOB_ERROR, \"configure: non-configure replay opcode reached configure_all()\");\n");
-                nob_sb_append_cstr(out, "        return false;\n");
-                break;
         }
+        if (!cg_emit_runtime_config_branches_suffix(ctx, out)) return false;
         nob_sb_append_cstr(out, "    }\n");
     }
 
@@ -2234,226 +2306,239 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
             outputs = bm_query_replay_action_outputs(ctx->model, id);
             argv = bm_query_replay_action_argv(ctx->model, id);
             nob_sb_append_cstr(out, "    {\n");
-            switch (opcode) {
-                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY: {
-                    String_View target_dir = {0};
-                    if (!cg_rebase_path_from_cwd(ctx, outputs.items[0], &target_dir)) return false;
-                    nob_sb_append_cstr(out, "        if (!ctest_execute_empty_binary_directory(");
-                    if (!cg_sb_append_c_string(out, target_dir)) return false;
-                    nob_sb_append_cstr(out, ")) return false;\n");
-                    break;
+            for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
+                String_View config = branch < arena_arr_len(ctx->known_configs) ? ctx->known_configs[branch] : nob_sv_from_cstr("");
+                String_View *resolved_inputs = NULL;
+                String_View *resolved_outputs = NULL;
+                String_View *resolved_argv = NULL;
+                if (!cg_resolve_replay_span_for_config(ctx, config, inputs, &resolved_inputs) ||
+                    !cg_resolve_replay_span_for_config(ctx, config, outputs, &resolved_outputs) ||
+                    !cg_resolve_replay_span_for_config(ctx, config, argv, &resolved_argv) ||
+                    !cg_emit_runtime_config_branches_prefix_for_var(ctx, out, branch, "config_filter")) {
+                    return false;
                 }
-                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL: {
-                    String_View source_dir = {0};
-                    String_View build_dir = {0};
-                    if (!cg_rebase_path_from_cwd(ctx, outputs.items[0], &source_dir) ||
-                        !cg_rebase_path_from_cwd(ctx, outputs.items[1], &build_dir)) {
-                        return false;
+                switch (opcode) {
+                    case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY: {
+                        String_View target_dir = {0};
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &target_dir)) return false;
+                        nob_sb_append_cstr(out, "        if (!ctest_execute_empty_binary_directory(");
+                        if (!cg_sb_append_c_string(out, target_dir)) return false;
+                        nob_sb_append_cstr(out, ")) return false;\n");
+                        break;
                     }
-                    nob_sb_append_cstr(out, "        if (!ctest_execute_start_local(");
-                    if (!cg_sb_append_c_string(out, source_dir)) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, build_dir)) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, argv.items[0])) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, argv.items[1])) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    nob_sb_append_cstr(out, cg_sv_eq_lit(argv.items[2], "1") ? "true" : "false");
-                    nob_sb_append_cstr(out, ")) return false;\n");
-                    break;
-                }
-                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF: {
-                    String_View source_dir = {0};
-                    String_View build_dir = {0};
-                    if (!cg_rebase_path_from_cwd(ctx, outputs.items[0], &source_dir) ||
-                        !cg_rebase_path_from_cwd(ctx, outputs.items[1], &build_dir)) {
-                        return false;
-                    }
-                    nob_sb_append_cstr(out, "        if (!ctest_execute_configure_self(");
-                    if (!cg_sb_append_c_string(out, source_dir)) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, build_dir)) return false;
-                    nob_sb_append_cstr(out, ")) return false;\n");
-                    break;
-                }
-                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF: {
-                    String_View build_dir = {0};
-                    if (!cg_rebase_path_from_cwd(ctx, outputs.items[0], &build_dir)) return false;
-                    nob_sb_append_cstr(out, "        if (!ctest_execute_build_self(");
-                    if (!cg_sb_append_c_string(out, build_dir)) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, argv.items[0])) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, argv.items[1])) return false;
-                    nob_sb_append_cstr(out, ")) return false;\n");
-                    break;
-                }
-                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST: {
-                    String_View build_dir = {0};
-                    String_View output_junit = {0};
-                    if (!cg_rebase_path_from_cwd(ctx, outputs.items[0], &build_dir)) return false;
-                    if (argv.items[0].count > 0 &&
-                        !cg_rebase_path_from_cwd(ctx, argv.items[0], &output_junit)) {
-                        return false;
-                    }
-                    nob_sb_append_cstr(out, "        if (!ctest_execute_test(");
-                    if (!cg_sb_append_c_string(out, build_dir)) return false;
-                    nob_sb_append_cstr(out, ", selected_names, selected_count, config_filter, ");
-                    if (argv.items[0].count > 0) {
-                        if (!cg_sb_append_c_string(out, output_junit)) return false;
-                    } else {
-                        nob_sb_append_cstr(out, "\"\"");
-                    }
-                    nob_sb_append_cstr(out, ", ");
-                    nob_sb_append_cstr(out, cg_sv_eq_lit(argv.items[1], "1") ? "true" : "false");
-                    nob_sb_append_cstr(out, ")) return false;\n");
-                    break;
-                }
-                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP:
-                    nob_sb_append_cstr(out, "        if (!ctest_execute_sleep(");
-                    if (!cg_sb_append_c_string(out, argv.items[0])) return false;
-                    nob_sb_append_cstr(out, ")) return false;\n");
-                    break;
-                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL: {
-                    String_View build_dir = {0};
-                    if (!cg_rebase_path_from_cwd(ctx, outputs.items[0], &build_dir)) return false;
-                    nob_sb_append_cstr(out, "        if (!ctest_execute_coverage_local(");
-                    if (!cg_sb_append_c_string(out, build_dir)) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, argv.items[0])) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, argv.items[1])) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    nob_sb_append_cstr(out, cg_sv_eq_lit(argv.items[2], "1") ? "true" : "false");
-                    nob_sb_append_cstr(out, ", ");
-                    if (inputs.count > 0) {
-                        nob_sb_append_cstr(out, "(const char *const[]){");
-                        for (size_t i = 0; i < inputs.count; ++i) {
-                            String_View path = {0};
-                            if (!cg_rebase_path_from_cwd(ctx, inputs.items[i], &path)) return false;
-                            if (i > 0) nob_sb_append_cstr(out, ", ");
-                            if (!cg_sb_append_c_string(out, path)) return false;
+                    case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL: {
+                        String_View source_dir = {0};
+                        String_View build_dir = {0};
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &source_dir) ||
+                            !cg_rebase_path_from_cwd(ctx, resolved_outputs[1], &build_dir)) {
+                            return false;
                         }
-                        nob_sb_append_cstr(out, "}");
-                    } else {
-                        nob_sb_append_cstr(out, "NULL");
+                        nob_sb_append_cstr(out, "        if (!ctest_execute_start_local(");
+                        if (!cg_sb_append_c_string(out, source_dir)) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, build_dir)) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[1])) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        nob_sb_append_cstr(out, cg_sv_eq_lit(resolved_argv[2], "1") ? "true" : "false");
+                        nob_sb_append_cstr(out, ")) return false;\n");
+                        break;
                     }
-                    nob_sb_append_cstr(out, ", ");
-                    nob_sb_append_cstr(out, nob_temp_sprintf("%zu", inputs.count));
-                    nob_sb_append_cstr(out, ", ");
-                    if (argv.count > 4) {
-                        nob_sb_append_cstr(out, "(const char *const[]){");
-                        for (size_t i = 4; i < argv.count; ++i) {
-                            if (i > 4) nob_sb_append_cstr(out, ", ");
-                            if (!cg_sb_append_c_string(out, argv.items[i])) return false;
+                    case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF: {
+                        String_View source_dir = {0};
+                        String_View build_dir = {0};
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &source_dir) ||
+                            !cg_rebase_path_from_cwd(ctx, resolved_outputs[1], &build_dir)) {
+                            return false;
                         }
-                        nob_sb_append_cstr(out, "}");
-                    } else {
-                        nob_sb_append_cstr(out, "NULL");
+                        nob_sb_append_cstr(out, "        if (!ctest_execute_configure_self(");
+                        if (!cg_sb_append_c_string(out, source_dir)) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, build_dir)) return false;
+                        nob_sb_append_cstr(out, ")) return false;\n");
+                        break;
                     }
-                    nob_sb_append_cstr(out, ", ");
-                    nob_sb_append_cstr(out, nob_temp_sprintf("%zu", argv.count > 4 ? argv.count - 4 : 0));
-                    nob_sb_append_cstr(out, ")) return false;\n");
-                    break;
-                }
-                case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL: {
-                    String_View build_dir = {0};
-                    String_View output_junit = {0};
-                    String_View resource_spec = {0};
-                    String_View suppression_file = {0};
-                    if (!cg_rebase_path_from_cwd(ctx, outputs.items[0], &build_dir)) return false;
-                    if (outputs.items[1].count > 0 &&
-                        !cg_rebase_path_from_cwd(ctx, outputs.items[1], &output_junit)) {
-                        return false;
+                    case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF: {
+                        String_View build_dir = {0};
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &build_dir)) return false;
+                        nob_sb_append_cstr(out, "        if (!ctest_execute_build_self(");
+                        if (!cg_sb_append_c_string(out, build_dir)) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[1])) return false;
+                        nob_sb_append_cstr(out, ")) return false;\n");
+                        break;
                     }
-                    if (inputs.items[0].count > 0 &&
-                        !cg_rebase_path_from_cwd(ctx, inputs.items[0], &resource_spec)) {
-                        return false;
-                    }
-                    if (inputs.items[1].count > 0 &&
-                        !cg_rebase_path_from_cwd(ctx, inputs.items[1], &suppression_file)) {
-                        return false;
-                    }
-                    nob_sb_append_cstr(out, "        if (!ctest_execute_memcheck_local(");
-                    if (!cg_sb_append_c_string(out, build_dir)) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (outputs.items[1].count > 0) {
-                        if (!cg_sb_append_c_string(out, output_junit)) return false;
-                    } else {
-                        nob_sb_append_cstr(out, "\"\"");
-                    }
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, argv.items[0])) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, argv.items[1])) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    nob_sb_append_cstr(out, cg_sv_eq_lit(argv.items[2], "1") ? "true" : "false");
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, argv.items[3])) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, argv.items[4])) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, argv.items[5])) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, argv.items[7])) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    nob_sb_append_cstr(out, cg_sv_eq_lit(argv.items[8], "1") ? "true" : "false");
-                    nob_sb_append_cstr(out, ", ");
-                    nob_sb_append_cstr(out, cg_sv_eq_lit(argv.items[9], "1") ? "true" : "false");
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, argv.items[10])) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (!cg_sb_append_c_string(out, argv.items[12])) return false;
-                    nob_sb_append_cstr(out, ", ");
-                    if (inputs.items[0].count > 0) {
-                        if (!cg_sb_append_c_string(out, resource_spec)) return false;
-                    } else {
-                        nob_sb_append_cstr(out, "\"\"");
-                    }
-                    nob_sb_append_cstr(out, ", ");
-                    if (inputs.items[1].count > 0) {
-                        if (!cg_sb_append_c_string(out, suppression_file)) return false;
-                    } else {
-                        nob_sb_append_cstr(out, "\"\"");
-                    }
-                    nob_sb_append_cstr(out, ", ");
-                    if (argv.count > 14) {
-                        nob_sb_append_cstr(out, "(const char *const[]){");
-                        for (size_t i = 14; i < argv.count; ++i) {
-                            if (i > 14) nob_sb_append_cstr(out, ", ");
-                            if (!cg_sb_append_c_string(out, argv.items[i])) return false;
+                    case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST: {
+                        String_View build_dir = {0};
+                        String_View output_junit = {0};
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &build_dir)) return false;
+                        if (resolved_argv[0].count > 0 &&
+                            !cg_rebase_path_from_cwd(ctx, resolved_argv[0], &output_junit)) {
+                            return false;
                         }
-                        nob_sb_append_cstr(out, "}");
-                    } else {
-                        nob_sb_append_cstr(out, "NULL");
+                        nob_sb_append_cstr(out, "        if (!ctest_execute_test(");
+                        if (!cg_sb_append_c_string(out, build_dir)) return false;
+                        nob_sb_append_cstr(out, ", selected_names, selected_count, config_filter, ");
+                        if (resolved_argv[0].count > 0) {
+                            if (!cg_sb_append_c_string(out, output_junit)) return false;
+                        } else {
+                            nob_sb_append_cstr(out, "\"\"");
+                        }
+                        nob_sb_append_cstr(out, ", ");
+                        nob_sb_append_cstr(out, cg_sv_eq_lit(resolved_argv[1], "1") ? "true" : "false");
+                        nob_sb_append_cstr(out, ")) return false;\n");
+                        break;
                     }
-                    nob_sb_append_cstr(out, ", ");
-                    nob_sb_append_cstr(out, nob_temp_sprintf("%zu", argv.count > 14 ? argv.count - 14 : 0));
-                    nob_sb_append_cstr(out, ", selected_names, selected_count, config_filter)) return false;\n");
-                    break;
-                }
+                    case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP:
+                        nob_sb_append_cstr(out, "        if (!ctest_execute_sleep(");
+                        if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                        nob_sb_append_cstr(out, ")) return false;\n");
+                        break;
+                    case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL: {
+                        String_View build_dir = {0};
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &build_dir)) return false;
+                        nob_sb_append_cstr(out, "        if (!ctest_execute_coverage_local(");
+                        if (!cg_sb_append_c_string(out, build_dir)) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[1])) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        nob_sb_append_cstr(out, cg_sv_eq_lit(resolved_argv[2], "1") ? "true" : "false");
+                        nob_sb_append_cstr(out, ", ");
+                        if (inputs.count > 0) {
+                            nob_sb_append_cstr(out, "(const char *const[]){");
+                            for (size_t i = 0; i < inputs.count; ++i) {
+                                String_View path = {0};
+                                if (!cg_rebase_path_from_cwd(ctx, resolved_inputs[i], &path)) return false;
+                                if (i > 0) nob_sb_append_cstr(out, ", ");
+                                if (!cg_sb_append_c_string(out, path)) return false;
+                            }
+                            nob_sb_append_cstr(out, "}");
+                        } else {
+                            nob_sb_append_cstr(out, "NULL");
+                        }
+                        nob_sb_append_cstr(out, ", ");
+                        nob_sb_append_cstr(out, nob_temp_sprintf("%zu", inputs.count));
+                        nob_sb_append_cstr(out, ", ");
+                        if (argv.count > 4) {
+                            nob_sb_append_cstr(out, "(const char *const[]){");
+                            for (size_t i = 4; i < argv.count; ++i) {
+                                if (i > 4) nob_sb_append_cstr(out, ", ");
+                                if (!cg_sb_append_c_string(out, resolved_argv[i])) return false;
+                            }
+                            nob_sb_append_cstr(out, "}");
+                        } else {
+                            nob_sb_append_cstr(out, "NULL");
+                        }
+                        nob_sb_append_cstr(out, ", ");
+                        nob_sb_append_cstr(out, nob_temp_sprintf("%zu", argv.count > 4 ? argv.count - 4 : 0));
+                        nob_sb_append_cstr(out, ")) return false;\n");
+                        break;
+                    }
+                    case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL: {
+                        String_View build_dir = {0};
+                        String_View output_junit = {0};
+                        String_View resource_spec = {0};
+                        String_View suppression_file = {0};
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &build_dir)) return false;
+                        if (resolved_outputs[1].count > 0 &&
+                            !cg_rebase_path_from_cwd(ctx, resolved_outputs[1], &output_junit)) {
+                            return false;
+                        }
+                        if (resolved_inputs[0].count > 0 &&
+                            !cg_rebase_path_from_cwd(ctx, resolved_inputs[0], &resource_spec)) {
+                            return false;
+                        }
+                        if (resolved_inputs[1].count > 0 &&
+                            !cg_rebase_path_from_cwd(ctx, resolved_inputs[1], &suppression_file)) {
+                            return false;
+                        }
+                        nob_sb_append_cstr(out, "        if (!ctest_execute_memcheck_local(");
+                        if (!cg_sb_append_c_string(out, build_dir)) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (resolved_outputs[1].count > 0) {
+                            if (!cg_sb_append_c_string(out, output_junit)) return false;
+                        } else {
+                            nob_sb_append_cstr(out, "\"\"");
+                        }
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[1])) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        nob_sb_append_cstr(out, cg_sv_eq_lit(resolved_argv[2], "1") ? "true" : "false");
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[3])) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[4])) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[5])) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[7])) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        nob_sb_append_cstr(out, cg_sv_eq_lit(resolved_argv[8], "1") ? "true" : "false");
+                        nob_sb_append_cstr(out, ", ");
+                        nob_sb_append_cstr(out, cg_sv_eq_lit(resolved_argv[9], "1") ? "true" : "false");
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[10])) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[12])) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (resolved_inputs[0].count > 0) {
+                            if (!cg_sb_append_c_string(out, resource_spec)) return false;
+                        } else {
+                            nob_sb_append_cstr(out, "\"\"");
+                        }
+                        nob_sb_append_cstr(out, ", ");
+                        if (resolved_inputs[1].count > 0) {
+                            if (!cg_sb_append_c_string(out, suppression_file)) return false;
+                        } else {
+                            nob_sb_append_cstr(out, "\"\"");
+                        }
+                        nob_sb_append_cstr(out, ", ");
+                        if (argv.count > 14) {
+                            nob_sb_append_cstr(out, "(const char *const[]){");
+                            for (size_t i = 14; i < argv.count; ++i) {
+                                if (i > 14) nob_sb_append_cstr(out, ", ");
+                                if (!cg_sb_append_c_string(out, resolved_argv[i])) return false;
+                            }
+                            nob_sb_append_cstr(out, "}");
+                        } else {
+                            nob_sb_append_cstr(out, "NULL");
+                        }
+                        nob_sb_append_cstr(out, ", ");
+                        nob_sb_append_cstr(out, nob_temp_sprintf("%zu", argv.count > 14 ? argv.count - 14 : 0));
+                        nob_sb_append_cstr(out, ", selected_names, selected_count, config_filter)) return false;\n");
+                        break;
+                    }
 
-                case BM_REPLAY_OPCODE_NONE:
-                    break;
-                case BM_REPLAY_OPCODE_FS_MKDIR:
-                case BM_REPLAY_OPCODE_FS_WRITE_TEXT:
-                case BM_REPLAY_OPCODE_FS_APPEND_TEXT:
-                case BM_REPLAY_OPCODE_FS_COPY_FILE:
-                case BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL:
-                case BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR:
-                case BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR:
-                case BM_REPLAY_OPCODE_HOST_LOCK_ACQUIRE:
-                case BM_REPLAY_OPCODE_HOST_LOCK_RELEASE:
-                case BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_SOURCE:
-                case BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_PROJECT:
-                case BM_REPLAY_OPCODE_PROBE_TRY_RUN:
-                case BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR:
-                case BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE:
-                    nob_sb_append_cstr(out, "        nob_log(NOB_ERROR, \"test: unsupported replay opcode reached test-driver runner\");\n");
-                    nob_sb_append_cstr(out, "        return false;\n");
-                    break;
+                    case BM_REPLAY_OPCODE_NONE:
+                        break;
+                    case BM_REPLAY_OPCODE_FS_MKDIR:
+                    case BM_REPLAY_OPCODE_FS_WRITE_TEXT:
+                    case BM_REPLAY_OPCODE_FS_APPEND_TEXT:
+                    case BM_REPLAY_OPCODE_FS_COPY_FILE:
+                    case BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL:
+                    case BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR:
+                    case BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR:
+                    case BM_REPLAY_OPCODE_HOST_LOCK_ACQUIRE:
+                    case BM_REPLAY_OPCODE_HOST_LOCK_RELEASE:
+                    case BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_SOURCE:
+                    case BM_REPLAY_OPCODE_PROBE_TRY_COMPILE_PROJECT:
+                    case BM_REPLAY_OPCODE_PROBE_TRY_RUN:
+                    case BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR:
+                    case BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE:
+                        nob_sb_append_cstr(out, "        nob_log(NOB_ERROR, \"test: unsupported replay opcode reached test-driver runner\");\n");
+                        nob_sb_append_cstr(out, "        return false;\n");
+                        break;
+                }
             }
+            if (!cg_emit_runtime_config_branches_suffix(ctx, out)) return false;
             nob_sb_append_cstr(out, "    }\n");
         }
         nob_sb_append_cstr(out, "    return true;\n");

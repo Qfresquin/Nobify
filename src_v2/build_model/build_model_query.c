@@ -1,10 +1,12 @@
 #include "build_model_query_internal.h"
+#include "../genex/genex_internal.h"
 
 static bool bm_eval_item_span(const Build_Model *model,
                               BM_Target_Id owner_target_id,
                               const BM_Query_Eval_Context *ctx,
                               Arena *scratch,
                               BM_String_Item_Span raw_items,
+                              BM_Effective_Query_Kind current_kind,
                               BM_String_Item_Span *out);
 static bool bm_eval_link_item_span(const Build_Model *model,
                                    BM_Target_Id owner_target_id,
@@ -199,6 +201,7 @@ static BM_Query_Eval_Context bm_default_query_eval_context(BM_Target_Id current_
     ctx.current_target_id = current_target_id;
     ctx.usage_mode = usage_mode;
     ctx.build_interface_active = true;
+    ctx.build_local_interface_active = true;
     ctx.install_interface_active = false;
     return ctx;
 }
@@ -625,16 +628,16 @@ static bool bm_append_split_values(Arena *scratch,
                                    BM_String_Item_View **out,
                                    BM_String_Item_View item,
                                    String_View value) {
-    size_t start = 0;
+    Genex_Context gx = {0};
+    Gx_Sv_List pieces = {0};
     if (!scratch || !out) return false;
     if (value.count == 0) return true;
-    for (size_t i = 0; i <= value.count; ++i) {
-        bool sep = (i == value.count) || (value.data[i] == ';');
+    gx.arena = scratch;
+    pieces = gx_split_top_level_alloc(&gx, value, ';');
+    if (value.count > 0 && pieces.count == 0) return false;
+    for (size_t i = 0; i < pieces.count; ++i) {
         BM_String_Item_View copy = item;
-        String_View piece = {0};
-        if (!sep) continue;
-        piece = nob_sv_trim(nob_sv_from_parts(value.data + start, i - start));
-        start = i + 1;
+        String_View piece = nob_sv_trim(pieces.items[i]);
         if (piece.count == 0) continue;
         {
             char *dup = arena_strndup(scratch, piece.data, piece.count);
@@ -650,16 +653,16 @@ static bool bm_append_split_link_values(Arena *scratch,
                                         BM_Link_Item_View **out,
                                         BM_Link_Item_View item,
                                         String_View value) {
-    size_t start = 0;
+    Genex_Context gx = {0};
+    Gx_Sv_List pieces = {0};
     if (!scratch || !out) return false;
     if (value.count == 0) return true;
-    for (size_t i = 0; i <= value.count; ++i) {
-        bool sep = (i == value.count) || (value.data[i] == ';');
+    gx.arena = scratch;
+    pieces = gx_split_top_level_alloc(&gx, value, ';');
+    if (value.count > 0 && pieces.count == 0) return false;
+    for (size_t i = 0; i < pieces.count; ++i) {
         BM_Link_Item_View copy = item;
-        String_View piece = {0};
-        if (!sep) continue;
-        piece = nob_sv_trim(nob_sv_from_parts(value.data + start, i - start));
-        start = i + 1;
+        String_View piece = nob_sv_trim(pieces.items[i]);
         if (piece.count == 0) continue;
         {
             char *dup = arena_strndup(scratch, piece.data, piece.count);
@@ -1050,6 +1053,113 @@ bool bm_query_target_raw_property_value(const Build_Model *model,
     if (!target) return true;
     record = bm_find_raw_property(target->raw_properties, property_name);
     return bm_query_append_joined_raw_record(scratch, out, record);
+}
+
+typedef struct {
+    const Build_Model *model;
+    const BM_Query_Eval_Context *ctx;
+    Arena *scratch;
+} BM_Query_Genex_Data;
+
+static String_View bm_query_genex_current_target_name(const Build_Model *model,
+                                                      const BM_Query_Eval_Context *ctx) {
+    if (!model || !ctx || !bm_target_id_is_valid(ctx->current_target_id)) return nob_sv_from_cstr("");
+    return bm_query_target_name(model, ctx->current_target_id);
+}
+
+static String_View bm_query_genex_target_property_cb(void *userdata,
+                                                     String_View target_name,
+                                                     String_View property_name) {
+    BM_Query_Genex_Data *data = (BM_Query_Genex_Data*)userdata;
+    BM_Target_Id target_id = BM_TARGET_ID_INVALID;
+    String_View out = nob_sv_from_cstr("");
+    if (!data || !data->model || !data->ctx || !data->scratch) return nob_sv_from_cstr("");
+    target_id = bm_query_target_by_name(data->model, target_name);
+    if (!bm_target_id_is_valid(target_id)) return nob_sv_from_cstr("");
+    if (!bm_query_target_modeled_property_value(data->model, target_id, property_name, data->scratch, &out)) {
+        return nob_sv_from_cstr("");
+    }
+    if (out.count > 0) return out;
+    if (!bm_query_target_raw_property_value(data->model, target_id, property_name, data->scratch, &out)) {
+        return nob_sv_from_cstr("");
+    }
+    return out;
+}
+
+static String_View bm_query_genex_target_file_common(void *userdata,
+                                                     String_View target_name,
+                                                     bool linker_file) {
+    BM_Query_Genex_Data *data = (BM_Query_Genex_Data*)userdata;
+    BM_Target_Id target_id = BM_TARGET_ID_INVALID;
+    String_View out = nob_sv_from_cstr("");
+    if (!data || !data->model || !data->ctx || !data->scratch) return nob_sv_from_cstr("");
+    target_id = bm_query_target_by_name(data->model, target_name);
+    if (!bm_target_id_is_valid(target_id)) return nob_sv_from_cstr("");
+    if (linker_file) {
+        if (!bm_query_target_effective_linker_file(data->model,
+                                                   target_id,
+                                                   data->ctx,
+                                                   data->scratch,
+                                                   &out)) {
+            return nob_sv_from_cstr("");
+        }
+    } else if (!bm_query_target_effective_file(data->model,
+                                               target_id,
+                                               data->ctx,
+                                               data->scratch,
+                                               &out)) {
+        return nob_sv_from_cstr("");
+    }
+    return out;
+}
+
+static String_View bm_query_genex_target_file_cb(void *userdata, String_View target_name) {
+    return bm_query_genex_target_file_common(userdata, target_name, false);
+}
+
+static String_View bm_query_genex_target_linker_file_cb(void *userdata, String_View target_name) {
+    return bm_query_genex_target_file_common(userdata, target_name, true);
+}
+
+bool bm_query_resolve_string_with_context(const Build_Model *model,
+                                          const BM_Query_Eval_Context *ctx,
+                                          Arena *scratch,
+                                          String_View raw,
+                                          String_View *out) {
+    BM_Query_Eval_Context normalized = ctx ? *ctx : (BM_Query_Eval_Context){0};
+    BM_Query_Genex_Data data = {0};
+    Genex_Context gx = {0};
+    Genex_Result result = {0};
+    if (out) *out = nob_sv_from_cstr("");
+    if (!model || !scratch || !out) return false;
+    if (raw.count == 0) return true;
+
+    data.model = model;
+    data.ctx = &normalized;
+    data.scratch = scratch;
+
+    gx.arena = scratch;
+    gx.config = normalized.config;
+    gx.current_target_name = bm_query_genex_current_target_name(model, &normalized);
+    gx.platform_id = normalized.platform_id;
+    gx.compile_language = normalized.compile_language;
+    gx.install_prefix = normalized.install_prefix;
+    gx.read_target_property = bm_query_genex_target_property_cb;
+    gx.read_target_file = bm_query_genex_target_file_cb;
+    gx.read_target_linker_file = bm_query_genex_target_linker_file_cb;
+    gx.userdata = &data;
+    gx.link_only_active = normalized.usage_mode == BM_QUERY_USAGE_LINK;
+    gx.build_interface_active = normalized.build_interface_active;
+    gx.build_local_interface_active = normalized.build_local_interface_active;
+    gx.install_interface_active = normalized.install_interface_active;
+    gx.target_name_case_insensitive = false;
+    gx.max_depth = 128;
+    gx.max_target_property_depth = 64;
+
+    result = genex_eval(&gx, raw);
+    if (result.status != GENEX_OK) return false;
+    *out = result.value;
+    return true;
 }
 
 #include "build_model_query_imported.c"
@@ -1738,6 +1848,11 @@ String_View bm_query_install_rule_item_raw(const Build_Model *model, BM_Install_
 String_View bm_query_install_rule_destination(const Build_Model *model, BM_Install_Rule_Id id) {
     const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
     return rule ? rule->destination : (String_View){0};
+}
+
+String_View bm_query_install_rule_rename(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? rule->rename : (String_View){0};
 }
 
 String_View bm_query_install_rule_component(const Build_Model *model, BM_Install_Rule_Id id) {

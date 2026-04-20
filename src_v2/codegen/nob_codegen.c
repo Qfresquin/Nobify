@@ -2,6 +2,7 @@
 
 #include "arena_dyn.h"
 #include "genex.h"
+#include "../genex/genex_internal.h"
 
 #include <ctype.h>
 #include <stdarg.h>
@@ -15,6 +16,10 @@ static BM_Query_Eval_Context cg_make_query_ctx(CG_Context *ctx,
                                                String_View config,
                                                String_View compile_language);
 static bool cg_replay_output_is_clean_safe(CG_Context *ctx, String_View output, bool *out_clean_safe);
+static bool cg_resolve_replay_path_for_config(CG_Context *ctx,
+                                              String_View config,
+                                              String_View raw,
+                                              String_View *out);
 static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out);
 static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out);
 
@@ -146,6 +151,53 @@ static bool cg_scan_configs_from_span(CG_Context *ctx, BM_String_Span values) {
     return true;
 }
 
+static bool cg_scan_configs_from_install_rules(CG_Context *ctx) {
+    if (!ctx || !ctx->model) return false;
+    for (size_t i = 0; i < bm_query_install_rule_count(ctx->model); ++i) {
+        BM_Install_Rule_Id id = (BM_Install_Rule_Id)i;
+        if (!cg_scan_configs_from_string(ctx, bm_query_install_rule_item_raw(ctx->model, id)) ||
+            !cg_scan_configs_from_string(ctx, bm_query_install_rule_destination(ctx->model, id)) ||
+            !cg_scan_configs_from_string(ctx, bm_query_install_rule_rename(ctx->model, id)) ||
+            !cg_scan_configs_from_string(ctx, bm_query_install_rule_archive_destination(ctx->model, id)) ||
+            !cg_scan_configs_from_string(ctx, bm_query_install_rule_library_destination(ctx->model, id)) ||
+            !cg_scan_configs_from_string(ctx, bm_query_install_rule_runtime_destination(ctx->model, id)) ||
+            !cg_scan_configs_from_string(ctx, bm_query_install_rule_includes_destination(ctx->model, id)) ||
+            !cg_scan_configs_from_string(ctx, bm_query_install_rule_public_header_destination(ctx->model, id))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool cg_scan_configs_from_exports(CG_Context *ctx) {
+    if (!ctx || !ctx->model) return false;
+    for (size_t i = 0; i < bm_query_export_count(ctx->model); ++i) {
+        BM_Export_Id id = (BM_Export_Id)i;
+        if (!cg_scan_configs_from_string(ctx, bm_query_export_destination(ctx->model, id)) ||
+            !cg_scan_configs_from_string(ctx, bm_query_export_file_name(ctx->model, id)) ||
+            !cg_scan_configs_from_string(ctx, bm_query_export_output_file_path(ctx->model, id, ctx->scratch)) ||
+            !cg_scan_configs_from_string(ctx, bm_query_export_cxx_modules_directory(ctx->model, id))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool cg_scan_configs_from_replay_actions(CG_Context *ctx) {
+    if (!ctx || !ctx->model) return false;
+    for (size_t i = 0; i < bm_query_replay_action_count(ctx->model); ++i) {
+        BM_Replay_Action_Id id = (BM_Replay_Action_Id)i;
+        if (!cg_scan_configs_from_string(ctx, bm_query_replay_action_working_directory(ctx->model, id)) ||
+            !cg_scan_configs_from_span(ctx, bm_query_replay_action_inputs(ctx->model, id)) ||
+            !cg_scan_configs_from_span(ctx, bm_query_replay_action_outputs(ctx->model, id)) ||
+            !cg_scan_configs_from_span(ctx, bm_query_replay_action_argv(ctx->model, id)) ||
+            !cg_scan_configs_from_span(ctx, bm_query_replay_action_environment(ctx->model, id))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool cg_collect_known_configs(CG_Context *ctx) {
     if (!ctx || !ctx->model) return false;
     if (!cg_scan_configs_from_items(ctx, bm_query_global_include_directories_raw(ctx->model).items) ||
@@ -195,6 +247,12 @@ static bool cg_collect_known_configs(CG_Context *ctx) {
                 return false;
             }
         }
+    }
+
+    if (!cg_scan_configs_from_install_rules(ctx) ||
+        !cg_scan_configs_from_exports(ctx) ||
+        !cg_scan_configs_from_replay_actions(ctx)) {
+        return false;
     }
 
     for (size_t i = 0; i < bm_query_build_step_count(ctx->model); ++i) {
@@ -1156,13 +1214,15 @@ bool cg_eval_string_for_config(CG_Context *ctx,
     gx.current_target_name = bm_query_target_name(ctx->model, current_target_id);
     gx.platform_id = ctx->policy.platform_id;
     gx.compile_language = compile_language;
+    gx.install_prefix = data.eval_ctx.install_prefix;
     gx.read_target_property = cg_genex_target_property_cb;
     gx.read_target_file = cg_genex_target_file_cb;
     gx.read_target_linker_file = cg_genex_target_linker_file_cb;
     gx.userdata = &data;
     gx.link_only_active = usage_mode == BM_QUERY_USAGE_LINK;
-    gx.build_interface_active = true;
-    gx.install_interface_active = false;
+    gx.build_interface_active = data.eval_ctx.build_interface_active;
+    gx.build_local_interface_active = data.eval_ctx.build_local_interface_active;
+    gx.install_interface_active = data.eval_ctx.install_interface_active;
     gx.target_name_case_insensitive = false;
     gx.max_depth = 128;
     gx.max_target_property_depth = 64;
@@ -1171,6 +1231,15 @@ bool cg_eval_string_for_config(CG_Context *ctx,
     if (result.status != GENEX_OK) return false;
     *out = result.value;
     return true;
+}
+
+static bool cg_resolve_model_string_with_query_ctx(CG_Context *ctx,
+                                                   const BM_Query_Eval_Context *qctx,
+                                                   String_View raw,
+                                                   String_View *out) {
+    if (out) *out = nob_sv_from_cstr("");
+    if (!ctx || !qctx || !out) return false;
+    return bm_query_resolve_string_with_context(ctx->model, qctx, ctx->scratch, raw, out);
 }
 
 static BM_Query_Eval_Context cg_make_query_ctx(CG_Context *ctx,
@@ -1185,6 +1254,7 @@ static BM_Query_Eval_Context cg_make_query_ctx(CG_Context *ctx,
     qctx.compile_language = compile_language;
     qctx.platform_id = ctx ? ctx->policy.platform_id : nob_sv_from_cstr("");
     qctx.build_interface_active = true;
+    qctx.build_local_interface_active = true;
     qctx.install_interface_active = false;
     return qctx;
 }
@@ -1902,12 +1972,26 @@ static bool cg_emit_cmd_append_link_tool(CG_Context *ctx,
     return true;
 }
 
+static bool cg_emit_runtime_config_branches_prefix_for_var(CG_Context *ctx,
+                                                           Nob_String_Builder *out,
+                                                           size_t branch_index,
+                                                           const char *config_var);
+
 static bool cg_emit_runtime_config_branches_prefix(CG_Context *ctx,
                                                    Nob_String_Builder *out,
                                                    size_t branch_index) {
+    return cg_emit_runtime_config_branches_prefix_for_var(ctx, out, branch_index, "g_build_config");
+}
+
+static bool cg_emit_runtime_config_branches_prefix_for_var(CG_Context *ctx,
+                                                           Nob_String_Builder *out,
+                                                           size_t branch_index,
+                                                           const char *config_var) {
     if (!ctx || !out) return false;
     if (branch_index < arena_arr_len(ctx->known_configs)) {
-        nob_sb_append_cstr(out, branch_index == 0 ? "        if (config_matches(g_build_config, " : "        } else if (config_matches(g_build_config, ");
+        nob_sb_append_cstr(out, branch_index == 0 ? "        if (config_matches(" : "        } else if (config_matches(");
+        nob_sb_append_cstr(out, config_var ? config_var : "g_build_config");
+        nob_sb_append_cstr(out, ", ");
         if (!cg_sb_append_c_string(out, ctx->known_configs[branch_index])) return false;
         nob_sb_append_cstr(out, ")) {\n");
         return true;
@@ -2491,13 +2575,19 @@ static bool cg_emit_clean_function(CG_Context *ctx, Nob_String_Builder *out) {
         if (bm_query_replay_action_phase(ctx->model, id) != BM_REPLAY_PHASE_CONFIGURE) continue;
         outputs = bm_query_replay_action_outputs(ctx->model, id);
         for (size_t output_index = 0; output_index < outputs.count; ++output_index) {
-            String_View rebased = {0};
-            bool clean_safe = false;
-            if (!cg_replay_output_is_clean_safe(ctx, outputs.items[output_index], &clean_safe)) return false;
-            if (!clean_safe) continue;
-            if (!cg_rebase_path_from_cwd(ctx, outputs.items[output_index], &rebased) ||
-                !cg_collect_unique_path(ctx->scratch, &paths, rebased)) {
-                return false;
+            for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
+                String_View config = branch < arena_arr_len(ctx->known_configs)
+                    ? ctx->known_configs[branch]
+                    : nob_sv_from_cstr("");
+                String_View rebased = {0};
+                bool clean_safe = false;
+                if (!cg_resolve_replay_path_for_config(ctx, config, outputs.items[output_index], &rebased)) {
+                    return false;
+                }
+                if (rebased.count == 0) continue;
+                if (!cg_replay_output_is_clean_safe(ctx, rebased, &clean_safe)) return false;
+                if (!clean_safe) continue;
+                if (!cg_collect_unique_path(ctx->scratch, &paths, rebased)) return false;
             }
         }
     }

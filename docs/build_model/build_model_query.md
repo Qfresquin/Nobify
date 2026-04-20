@@ -11,9 +11,10 @@ Queries should be simple readers over a graph that already carries enough
 semantics for `CMake 3.28` artifact parity.
 
 ## Current gap
-Some effective accessors still compensate for missing typed edges or for list
-and generator-expression payloads that arrived too lossy from upstream. That is
-temporary debt, especially around target-usage reconstruction.
+The shared downstream resolver and typed effective-query path now cover the
+supported genex-preserving surface for `target`, `directory`, `install`,
+`export`, and `replay`. Remaining debt is concentrated in intentional raw
+fallbacks and adjacent rows, not in codegen-specific genex escape hatches.
 
 ## Guarantees
 - Raw accessors return stored frozen facts.

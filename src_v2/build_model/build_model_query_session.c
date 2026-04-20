@@ -175,10 +175,12 @@ static bool bm_query_session_build_effective_key(BM_Target_Id id,
     bm_query_session_key_append_u64(sb, (uint64_t)ctx->usage_mode);
     bm_query_session_key_append_u64(sb, (uint64_t)ctx->current_target_id);
     bm_query_session_key_append_u64(sb, (uint64_t)(ctx->build_interface_active ? 1 : 0));
+    bm_query_session_key_append_u64(sb, (uint64_t)(ctx->build_local_interface_active ? 1 : 0));
     bm_query_session_key_append_u64(sb, (uint64_t)(ctx->install_interface_active ? 1 : 0));
     bm_query_session_key_append_sv(sb, ctx->config);
     bm_query_session_key_append_sv(sb, ctx->platform_id);
     bm_query_session_key_append_sv(sb, ctx->compile_language);
+    bm_query_session_key_append_sv(sb, ctx->install_prefix);
     bm_query_session_finalize_key(sb);
     return true;
 }
@@ -194,10 +196,12 @@ static bool bm_query_session_build_target_file_key(BM_Target_Id id,
     bm_query_session_key_append_u64(sb, (uint64_t)ctx->usage_mode);
     bm_query_session_key_append_u64(sb, (uint64_t)ctx->current_target_id);
     bm_query_session_key_append_u64(sb, (uint64_t)(ctx->build_interface_active ? 1 : 0));
+    bm_query_session_key_append_u64(sb, (uint64_t)(ctx->build_local_interface_active ? 1 : 0));
     bm_query_session_key_append_u64(sb, (uint64_t)(ctx->install_interface_active ? 1 : 0));
     bm_query_session_key_append_sv(sb, ctx->config);
     bm_query_session_key_append_sv(sb, ctx->platform_id);
     bm_query_session_key_append_sv(sb, ctx->compile_language);
+    bm_query_session_key_append_sv(sb, ctx->install_prefix);
     bm_query_session_finalize_key(sb);
     return true;
 }
@@ -211,10 +215,12 @@ static bool bm_query_session_build_imported_lang_key(BM_Target_Id id,
     bm_query_session_key_append_u64(sb, (uint64_t)ctx->usage_mode);
     bm_query_session_key_append_u64(sb, (uint64_t)ctx->current_target_id);
     bm_query_session_key_append_u64(sb, (uint64_t)(ctx->build_interface_active ? 1 : 0));
+    bm_query_session_key_append_u64(sb, (uint64_t)(ctx->build_local_interface_active ? 1 : 0));
     bm_query_session_key_append_u64(sb, (uint64_t)(ctx->install_interface_active ? 1 : 0));
     bm_query_session_key_append_sv(sb, ctx->config);
     bm_query_session_key_append_sv(sb, ctx->platform_id);
     bm_query_session_key_append_sv(sb, ctx->compile_language);
+    bm_query_session_key_append_sv(sb, ctx->install_prefix);
     bm_query_session_finalize_key(sb);
     return true;
 }

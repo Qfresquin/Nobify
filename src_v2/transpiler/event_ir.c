@@ -470,6 +470,7 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
         case EVENT_INSTALL_RULE_ADD:
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.item)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.destination)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.rename)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.component)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.archive_component)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.install_rule_add.library_component)) return false;
@@ -894,12 +895,14 @@ static void event_dump_one(const Event *ev) {
                    ev->as.project_minimum_required.version.data ? ev->as.project_minimum_required.version.data : "");
             break;
         case EVENT_INSTALL_RULE_ADD:
-            printf(" rule_type=%d item=%.*s destination=%.*s export=%.*s component=%.*s archive_component=%.*s library_component=%.*s runtime_component=%.*s public_header_component=%.*s",
+            printf(" rule_type=%d item=%.*s destination=%.*s rename=%.*s export=%.*s component=%.*s archive_component=%.*s library_component=%.*s runtime_component=%.*s public_header_component=%.*s",
                    (int)ev->as.install_rule_add.rule_type,
                    (int)ev->as.install_rule_add.item.count,
                    ev->as.install_rule_add.item.data ? ev->as.install_rule_add.item.data : "",
                    (int)ev->as.install_rule_add.destination.count,
                    ev->as.install_rule_add.destination.data ? ev->as.install_rule_add.destination.data : "",
+                   (int)ev->as.install_rule_add.rename.count,
+                   ev->as.install_rule_add.rename.data ? ev->as.install_rule_add.rename.data : "",
                    (int)ev->as.install_rule_add.export_name.count,
                    ev->as.install_rule_add.export_name.data ? ev->as.install_rule_add.export_name.data : "",
                    (int)ev->as.install_rule_add.component.count,

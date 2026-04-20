@@ -2055,6 +2055,7 @@ static inline bool eval_emit_install_rule_add(EvalExecContext *ctx,
                                               Cmake_Install_Rule_Type rule_type,
                                               String_View item,
                                               String_View destination,
+                                              String_View rename,
                                               String_View component,
                                               String_View archive_component,
                                               String_View library_component,
@@ -2074,6 +2075,7 @@ static inline bool eval_emit_install_rule_add(EvalExecContext *ctx,
     ev.as.install_rule_add.rule_type = rule_type;
     ev.as.install_rule_add.item = sv_copy_to_event_arena(ctx, item);
     ev.as.install_rule_add.destination = sv_copy_to_event_arena(ctx, destination);
+    ev.as.install_rule_add.rename = sv_copy_to_event_arena(ctx, rename);
     ev.as.install_rule_add.component = sv_copy_to_event_arena(ctx, component);
     ev.as.install_rule_add.archive_component = sv_copy_to_event_arena(ctx, archive_component);
     ev.as.install_rule_add.library_component = sv_copy_to_event_arena(ctx, library_component);

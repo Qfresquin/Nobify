@@ -46,6 +46,7 @@ static bool legacy_emit_install_rule(EvalExecContext *ctx,
                                       nob_sv_from_cstr(""),
                                       nob_sv_from_cstr(""),
                                       nob_sv_from_cstr(""),
+                                      nob_sv_from_cstr(""),
                                       nob_sv_from_cstr(""));
 }
 

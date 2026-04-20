@@ -59,10 +59,6 @@ static bool cg_validate_install_rule(CG_Context *ctx, BM_Install_Rule_Id id) {
     String_View item = bm_query_install_rule_item_raw(ctx->model, id);
     if (!ctx) return false;
 
-    if ((kind == BM_INSTALL_RULE_FILE || kind == BM_INSTALL_RULE_PROGRAM || kind == BM_INSTALL_RULE_DIRECTORY) &&
-        !cg_check_no_genex("install rule item", item)) {
-        return false;
-    }
     if (kind == BM_INSTALL_RULE_FILE || kind == BM_INSTALL_RULE_PROGRAM) {
         if (cg_sv_has_prefix(item, "SCRIPT::") ||
             cg_sv_has_prefix(item, "CODE::") ||

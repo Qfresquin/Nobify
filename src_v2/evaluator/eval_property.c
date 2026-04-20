@@ -29,6 +29,11 @@ static bool usage_emit_semantic_error(EvalExecContext *ctx,
     return false;
 }
 
+static bool usage_is_supported_link_target_property(String_View property_name) {
+    return eval_sv_eq_ci_lit(property_name, "LINK_LIBRARIES") ||
+           eval_sv_eq_ci_lit(property_name, "INTERFACE_LINK_LIBRARIES");
+}
+
 static bool usage_expr_is_full_genex(String_View expr) {
     size_t end = 0;
     String_View trimmed = nob_sv_trim(expr);
@@ -266,11 +271,8 @@ static bool usage_parse_item_expr(EvalExecContext *ctx,
         return true;
     }
     if (!usage_parse_genex_head(trimmed, &op, &args_expr)) {
-        return usage_emit_semantic_error(ctx,
-                                         origin,
-                                         property_name,
-                                         nob_sv_from_cstr("unsupported generator expression form in target-usage item"),
-                                         trimmed);
+        *out_terminal = trimmed;
+        return true;
     }
 
     if (eval_sv_eq_ci_lit(op, "BUILD_INTERFACE")) {
@@ -384,11 +386,8 @@ static bool usage_parse_item_expr(EvalExecContext *ctx,
                                      out_terminal);
     }
 
-    return usage_emit_semantic_error(ctx,
-                                     origin,
-                                     property_name,
-                                     nob_sv_from_cstr("unsupported generator expression in target-usage item"),
-                                     trimmed);
+    *out_terminal = trimmed;
+    return true;
 }
 
 static bool eval_try_extract_simple_link_target_name(String_View item, String_View *out_target_name) {
@@ -502,11 +501,15 @@ bool eval_usage_item_semantics_from_raw(EvalExecContext *ctx,
     if (link_family &&
         (out->kind == EVENT_LINK_ITEM_TARGET_PROPERTY_IMPLICIT ||
          out->kind == EVENT_LINK_ITEM_TARGET_PROPERTY_EXPLICIT)) {
-        return usage_emit_semantic_error(ctx,
-                                         origin,
-                                         property_name,
-                                         nob_sv_from_cstr("TARGET_PROPERTY is not supported as a link-library value producer in this phase"),
-                                         raw_item);
+        if (!usage_is_supported_link_target_property(out->property_name)) {
+            return usage_emit_semantic_error(ctx,
+                                             origin,
+                                             property_name,
+                                             nob_sv_from_cstr("TARGET_PROPERTY is only supported for LINK_LIBRARIES and INTERFACE_LINK_LIBRARIES in link-library items"),
+                                             raw_item);
+        }
+        out->value = terminal;
+        return true;
     }
 
     if (terminal.count > 0 && eval_try_extract_simple_link_target_name(terminal, &candidate)) {

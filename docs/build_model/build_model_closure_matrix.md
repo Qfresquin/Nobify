@@ -1,8 +1,3 @@
-# Historical
-
-Superseded by the active `CMake 3.28 parity total -> Nob` documentation reset.
-Not canonical.
-
 # Build Model Closure Matrix
 
 Status: Primary major-work closure matrix for the downstream `Build_Model`.
@@ -12,24 +7,12 @@ This is the matrix to use when the goal is:
 > after implementing all non-boundary rows here, only minor fixes, bug work,
 > and corpus-specific tightening should remain for the `Build_Model`.
 
-Unlike the command-by-command
-[build_model_coverage_matrix.md](./build_model_coverage_matrix.md), this
-document is not an ownership audit. It is a structural closure checklist for
-the big semantic slices that usually force real code changes.
-
-If this matrix still has many `partial` or `open` rows, the project is not
-close to "OpenCV should probably just work" even if many individual command
-rows look green in the command matrix.
 
 ## Overview
 
 - Scope: `Event_Stream -> Build_Model -> Query -> codegen`
 - Goal: identify the remaining major build-model work needed before downstream
   artifact parity stops requiring architectural changes
-- Companion audit:
-  [build_model_coverage_matrix.md](./build_model_coverage_matrix.md)
-- Current supported subset claim:
-  [../codegen/generated_backend_supported_subset.md](../codegen/generated_backend_supported_subset.md)
 
 ## Status Taxonomy
 
@@ -65,7 +48,7 @@ Interpretation rule:
 | Source membership, file sets, and source-file properties | `target`, `build_step` | `closed` | Source membership is now modeled canonically: regular sources, `INTERFACE_SOURCES`, typed file sets, generated status, producer linkage, and source-local compile metadata no longer depend on raw property carry-through. | New source/file-set parity work fits the existing typed source and file-set query surface without new core model shapes. | `strong` |
 | Usage-requirement raw item model | `directory`, `target` | `closed` | Usage requirements are now canonical across direct events and supported property setters: directory/global `LINK_LIBRARIES`, target include/define/option/feature/link families, and `SYSTEM` provenance no longer depend on the raw property bag as their primary downstream source. | Include dirs, defs, opts, link libs, link dirs, link opts, compile features, flags, and provenance fit the stable item model without new families; remaining work is limited to transitive semantics and intentional raw-property boundaries such as custom keys and `APPEND_STRING`. | `strong` |
 | Effective propagation and transitive query semantics | `target`, `directory`, `query` | `closed` | Effective queries now seed closure transitively from global, directory, and target link-library families, resolve aliases/imported targets during traversal, and respect compile-vs-link plus build/install context at edge-selection time. | Usage-requirement propagation for the supported subset fits the existing query-time closure model without new storage or API shape; remaining work belongs to adjacent slices such as broader genex/config expansion, not a redesign of effective query semantics. | `strong` |
-| Generator-expression-carrying downstream preservation | `target`, `directory`, `install`, `export`, `replay` | `open` | This is one of the biggest sources of "looks implemented row-by-row, still fails on real projects." | Artifact-relevant genex context is preserved or resolved downstream strongly enough that codegen does not need evaluator-private escape hatches. | `weak` |
+| Generator-expression-carrying downstream preservation | `target`, `directory`, `install`, `export`, `replay` | `closed` | The remaining work is now operator growth and adjacent-row breadth, not another redesign of how downstream keeps genex context alive. | Supported target/directory usage, modeled install fields including `RENAME`, export path/content emission, and replay operands resolve or preserve genex through build-model query/context so codegen no longer depends on evaluator-private shortcuts for this slice. | `strong` |
 | Config, language, and platform split | `target`, `query`, `replay` | `partial` | Some context-sensitive querying exists, but broad multi-config/platform closure is still a common major-work source. | Per-config, per-language, and per-platform artifact decisions stop forcing new model/query design. | `moderate` |
 | Output naming, prefixes/suffixes, and artifact path resolution | `target`, `query` | `partial` | Core output fields exist, but project-scale artifact naming/layout can still expose missing shape. | Executable/library/archive/runtime file resolution is stable enough that new projects mostly hit bugs, not schema gaps. | `moderate` |
 | Custom command and custom target graph | `build_step` | `partial` | This slice is central for large projects and still tends to uncover ordering/byproduct/detail gaps. | Outputs, byproducts, deps, commands, and ordering semantics are carried without frequent structural additions. | `moderate` |
@@ -81,26 +64,3 @@ Interpretation rule:
 | Dependency materialization and FetchContent closure | `replay`, `package` | `open` | Real-world dependency workflows still exceed the current local-only subset by a large margin. | Most dependency materialization paths needed by real projects fit stable replay/query shapes. | `weak` |
 | Language enablement, toolchain, and cross-compilation-visible state | `project`, `target`, `query`, `replay` | `open` | Large C/C++ projects regularly stress this area, and the current supported claim does not close it. | Toolchain- and language-driven artifact decisions no longer require new build-model semantics. | `weak` |
 | Real-project corpus breadth | `all downstream domains` | `open` | The current proven corpus is still small compared with the ecosystem size. | Broader real-project proof stops revealing major new build-model entity/query gaps. | `moderate` |
-
-## Notes
-
-- This matrix is the one to use for "are we almost done with major build-model
-  changes?"
-- The command-level matrix can stay green-ish while this matrix is still far
-  from closed, because real projects fail on interactions between slices, not
-  only on isolated command ownership.
-- For a complex project such as OpenCV, the risky rows are not just one command
-  like `add_library()`. They are the interaction-heavy slices:
-  generator-expression preservation, multi-config/platform split, source/file
-  metadata, custom-command graph, imported-target resolution, dependency
-  materialization, and toolchain/language behavior.
-- The current supported real-project claim remains the narrower corpus listed
-  in [generated_backend_supported_subset.md](../codegen/generated_backend_supported_subset.md).
-
-## Related Docs
-
-- [Build model coverage matrix](./build_model_coverage_matrix.md)
-- [Build model architecture](./build_model_architecture.md)
-- [Build model query](./build_model_query.md)
-- [Build model replay domain](./build_model_replay.md)
-- [Generated backend supported subset](../codegen/generated_backend_supported_subset.md)

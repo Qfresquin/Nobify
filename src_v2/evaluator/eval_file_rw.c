@@ -34,6 +34,13 @@ static String_View file_replay_join_args_temp(EvalExecContext *ctx, SV_List args
     return nob_sv_from_parts(copy, strlen(copy));
 }
 
+static String_View file_replay_resolve_path_temp(EvalExecContext *ctx,
+                                                 String_View raw_path,
+                                                 String_View base_dir) {
+    if (!ctx) return nob_sv_from_cstr("");
+    return eval_path_resolve_for_cmake_arg(ctx, raw_path, base_dir, true);
+}
+
 static bool file_emit_replay_text_action(EvalExecContext *ctx,
                                          Cmake_Event_Origin origin,
                                          Event_Replay_Opcode opcode,
@@ -261,6 +268,7 @@ static bool file_strings_decode_to_utf8_temp(EvalExecContext *ctx,
 
 void eval_file_handle_write(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
+    String_View replay_path = nob_sv_from_cstr("");
     if (arena_arr_len(args) < 3) {
         eval_file_diag_error(ctx,
                              node,
@@ -273,6 +281,8 @@ void eval_file_handle_write(EvalExecContext *ctx, const Node *node, SV_List args
 
     String_View path = nob_sv_from_cstr("");
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], ctx->binary_dir, &path)) return;
+    replay_path = file_replay_resolve_path_temp(ctx, args[1], ctx->binary_dir);
+    if (eval_should_stop(ctx)) return;
 
     char *path_c = (char*)arena_alloc(eval_temp_arena(ctx), path.count + 1);
     EVAL_OOM_RETURN_VOID_IF_NULL(ctx, path_c);
@@ -317,14 +327,14 @@ void eval_file_handle_write(EvalExecContext *ctx, const Node *node, SV_List args
     (void)file_emit_replay_text_action(ctx,
                                        o,
                                        EVENT_REPLAY_OPCODE_FS_WRITE_TEXT,
-                                       path,
+                                       replay_path.count > 0 ? replay_path : path,
                                        file_replay_join_args_temp(ctx, args, 2),
                                        nob_sv_from_cstr(""));
 }
 
 void eval_file_handle_make_directory(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-    SV_List resolved_paths = NULL;
+    SV_List replay_paths = NULL;
     if (arena_arr_len(args) < 2) {
         eval_file_diag_error(ctx,
                              node,
@@ -337,7 +347,10 @@ void eval_file_handle_make_directory(EvalExecContext *ctx, const Node *node, SV_
 
     for (size_t i = 1; i < arena_arr_len(args); i++) {
         String_View path = nob_sv_from_cstr("");
+        String_View replay_path = nob_sv_from_cstr("");
         if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[i], eval_current_binary_dir(ctx), &path)) return;
+        replay_path = file_replay_resolve_path_temp(ctx, args[i], eval_current_binary_dir(ctx));
+        if (eval_should_stop(ctx)) return;
 
         if (!eval_file_mkdir_p(ctx, path)) {
             eval_file_diag_error(ctx,
@@ -348,10 +361,10 @@ void eval_file_handle_make_directory(EvalExecContext *ctx, const Node *node, SV_
                                  path);
             return;
         }
-        if (!svu_list_push_temp(ctx, &resolved_paths, path)) return;
+        if (!svu_list_push_temp(ctx, &replay_paths, replay_path.count > 0 ? replay_path : path)) return;
         (void)eval_emit_fs_mkdir(ctx, o, path);
     }
-    (void)file_emit_replay_mkdir_action(ctx, o, resolved_paths, arena_arr_len(resolved_paths));
+    (void)file_emit_replay_mkdir_action(ctx, o, replay_paths, arena_arr_len(replay_paths));
 }
 
 void eval_file_handle_read(EvalExecContext *ctx, const Node *node, SV_List args) {

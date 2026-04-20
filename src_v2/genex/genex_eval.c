@@ -130,11 +130,29 @@ static Genex_Result gx_eval_body(const Genex_Context *ctx,
         return gx_result(GENEX_OK, val.value, nob_sv_from_cstr(""));
     }
 
+    if (gx_sv_eq_ci(op, nob_sv_from_cstr("BUILD_LOCAL_INTERFACE"))) {
+        if (!ctx->build_local_interface_active) {
+            return gx_result(GENEX_OK, nob_sv_from_cstr(""), nob_sv_from_cstr(""));
+        }
+        Genex_Result val = gx_eval_inner(ctx, args_expr, depth + 1, stack);
+        if (val.status != GENEX_OK) return gx_result(val.status, raw_expr, val.diag_message);
+        return gx_result(GENEX_OK, val.value, nob_sv_from_cstr(""));
+    }
+
     if (gx_sv_eq_ci(op, nob_sv_from_cstr("INSTALL_INTERFACE"))) {
         if (!ctx->install_interface_active) return gx_result(GENEX_OK, nob_sv_from_cstr(""), nob_sv_from_cstr(""));
         Genex_Result val = gx_eval_inner(ctx, args_expr, depth + 1, stack);
         if (val.status != GENEX_OK) return gx_result(val.status, raw_expr, val.diag_message);
         return gx_result(GENEX_OK, val.value, nob_sv_from_cstr(""));
+    }
+
+    if (gx_sv_eq_ci(op, nob_sv_from_cstr("INSTALL_PREFIX"))) {
+        if (args_expr.count > 0) {
+            return gx_result(GENEX_ERROR,
+                             raw_expr,
+                             gx_copy_cstr_to_arena(ctx->arena, "INSTALL_PREFIX does not accept arguments"));
+        }
+        return gx_result(GENEX_OK, ctx->install_prefix, nob_sv_from_cstr(""));
     }
 
     if (gx_sv_eq_ci(op, nob_sv_from_cstr("LINK_ONLY"))) {
@@ -266,6 +284,39 @@ static Genex_Result gx_eval_body(const Genex_Context *ctx,
         return gx_result(GENEX_OK, branch_eval.value, nob_sv_from_cstr(""));
     }
 
+    if (gx_sv_eq_ci(op, nob_sv_from_cstr("GENEX_EVAL"))) {
+        Genex_Result once = gx_eval_inner(ctx, args_expr, depth + 1, stack);
+        if (once.status != GENEX_OK) return gx_result(once.status, raw_expr, once.diag_message);
+        return gx_eval_inner(ctx, once.value, depth + 1, stack);
+    }
+
+    if (gx_sv_eq_ci(op, nob_sv_from_cstr("TARGET_GENEX_EVAL"))) {
+        Gx_Sv_List args = gx_split_top_level_alloc(ctx, args_expr, ',');
+        Genex_Context nested_ctx = {0};
+        Genex_Result target_eval = {0};
+        Genex_Result nested = {0};
+        if (args_expr.count > 0 && args.count == 0) {
+            return gx_result(GENEX_ERROR,
+                             raw_expr,
+                             gx_copy_cstr_to_arena(ctx->arena, "Out of memory while splitting TARGET_GENEX_EVAL arguments"));
+        }
+        if (args.count != 2) {
+            return gx_result(GENEX_ERROR,
+                             raw_expr,
+                             gx_copy_cstr_to_arena(ctx->arena, "TARGET_GENEX_EVAL expects 2 arguments"));
+        }
+        target_eval = gx_eval_inner(ctx, args.items[0], depth + 1, stack);
+        if (target_eval.status != GENEX_OK) return gx_result(target_eval.status, raw_expr, target_eval.diag_message);
+        nested_ctx = *ctx;
+        nested_ctx.current_target_name = gx_trim(target_eval.value);
+        if (nested_ctx.current_target_name.count == 0) {
+            return gx_result(GENEX_OK, nob_sv_from_cstr(""), nob_sv_from_cstr(""));
+        }
+        nested = gx_eval_inner(&nested_ctx, args.items[1], depth + 1, stack);
+        if (nested.status != GENEX_OK) return gx_result(nested.status, raw_expr, nested.diag_message);
+        return gx_result(GENEX_OK, nested.value, nob_sv_from_cstr(""));
+    }
+
     if (gx_sv_eq_ci(op, nob_sv_from_cstr("TARGET_PROPERTY"))) {
         Gx_Sv_List args = gx_split_top_level_alloc(ctx, args_expr, ',');
         if (args_expr.count > 0 && args.count == 0) {
@@ -319,6 +370,11 @@ static Genex_Result gx_eval_body(const Genex_Context *ctx,
         gx_tp_stack_pop(stack);
         if (nested.status != GENEX_OK) return gx_result(nested.status, raw_expr, nested.diag_message);
         return gx_result(GENEX_OK, nested.value, nob_sv_from_cstr(""));
+    }
+
+    if (gx_sv_eq_ci(op, nob_sv_from_cstr("LINK_LIBRARY")) ||
+        gx_sv_eq_ci(op, nob_sv_from_cstr("LINK_GROUP"))) {
+        return gx_result(GENEX_OK, raw_expr, nob_sv_from_cstr(""));
     }
 
     if (args_expr.count == 0 &&

@@ -2,11 +2,22 @@
 
 static bool cg_build_export_output_file_abs(CG_Context *ctx,
                                             BM_Export_Id export_id,
+                                            String_View config,
                                             String_View *out) {
+    BM_Query_Eval_Context qctx = {0};
     String_View path = {0};
     if (!ctx || !out) return false;
     *out = nob_sv_from_cstr("");
-    path = bm_query_export_output_file_path(ctx->model, export_id, ctx->scratch);
+    qctx = cg_make_query_ctx(ctx, BM_TARGET_ID_INVALID, BM_QUERY_USAGE_COMPILE, config, nob_sv_from_cstr(""));
+    qctx.build_interface_active = true;
+    qctx.build_local_interface_active = false;
+    qctx.install_interface_active = false;
+    if (!cg_resolve_model_string_with_query_ctx(ctx,
+                                                &qctx,
+                                                bm_query_export_output_file_path(ctx->model, export_id, ctx->scratch),
+                                                &path)) {
+        return false;
+    }
     if (path.count == 0) return true;
     if (cg_path_is_abs(path)) return cg_normalize_path_to_arena(ctx->scratch, path, out);
     return cg_absolute_from_cwd(ctx, path, out);
@@ -58,6 +69,7 @@ static bool cg_export_collect_build_interface_values(CG_Context *ctx,
                                                    config,
                                                    nob_sv_from_cstr(""));
     qctx.build_interface_active = true;
+    qctx.build_local_interface_active = false;
     qctx.install_interface_active = false;
     if (!cg_query_effective_values_cached(ctx, target_id, &qctx, family, &values)) return false;
     for (size_t i = 0; i < values.count; ++i) {
@@ -80,6 +92,7 @@ static bool cg_export_collect_build_interface_includes(CG_Context *ctx,
                                                    nob_sv_from_cstr(""));
     BM_Directory_Id owner_dir = BM_DIRECTORY_ID_INVALID;
     qctx.build_interface_active = true;
+    qctx.build_local_interface_active = false;
     qctx.install_interface_active = false;
     owner_dir = bm_query_target_owner_directory(ctx->model, target_id);
     if (!cg_query_effective_items_cached(ctx, target_id, &qctx, CG_EFFECTIVE_INCLUDE_DIRECTORIES, &includes)) {
@@ -111,6 +124,7 @@ static bool cg_export_collect_build_link_libraries(CG_Context *ctx,
                                                    config,
                                                    nob_sv_from_cstr(""));
     qctx.build_interface_active = true;
+    qctx.build_local_interface_active = false;
     qctx.install_interface_active = false;
     if (!cg_query_effective_link_items_cached(ctx, target_id, &qctx, &libs)) return false;
 
@@ -454,22 +468,22 @@ bool cg_emit_export_function(CG_Context *ctx, Nob_String_Builder *out) {
         BM_Export_Kind kind = bm_query_export_kind(ctx->model, export_id);
 
         if (kind == BM_EXPORT_BUILD_TREE) {
-            String_View output_abs = {0};
-            if (!cg_build_export_output_file_abs(ctx, export_id, &output_abs)) return false;
             nob_sb_append_cstr(out, "    {\n");
-            nob_sb_append_cstr(out, "        const char *output_path = ");
-            if (!cg_sb_append_c_string(out, output_abs)) return false;
-            nob_sb_append_cstr(out, ";\n");
-            nob_sb_append_cstr(out, "        if (!ensure_parent_dir(output_path)) return false;\n");
             for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
                 String_View config = branch < arena_arr_len(ctx->known_configs)
                     ? ctx->known_configs[branch]
                     : nob_sv_from_cstr("");
                 String_View export_text = {0};
+                String_View output_abs = {0};
                 if (!cg_build_buildtree_export_file_contents(ctx, export_id, config, &export_text) ||
+                    !cg_build_export_output_file_abs(ctx, export_id, config, &output_abs) ||
                     !cg_emit_runtime_config_branches_prefix(ctx, out, branch)) {
                     return false;
                 }
+                nob_sb_append_cstr(out, "        const char *output_path = ");
+                if (!cg_sb_append_c_string(out, output_abs)) return false;
+                nob_sb_append_cstr(out, ";\n");
+                nob_sb_append_cstr(out, "        if (!ensure_parent_dir(output_path)) return false;\n");
                 nob_sb_append_cstr(out, "        if (!nob_write_entire_file(output_path, ");
                 if (!cg_sb_append_c_string(out, export_text)) return false;
                 nob_sb_append_cstr(out, ", strlen(");

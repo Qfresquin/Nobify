@@ -1053,6 +1053,42 @@ TEST(codegen_configure_replay_supported_effects_and_phase_cli_work) {
     TEST_PASS();
 }
 
+TEST(codegen_configure_replay_resolves_genex_per_runtime_config) {
+    Arena *arena = arena_create(128 * 1024);
+    const char *debug_configure_argv[] = {"--config", "Debug", "configure"};
+    const char *release_configure_argv[] = {"--config", "Release", "configure"};
+    const char *script =
+        "project(Test C)\n"
+        "file(WRITE \"$<IF:$<CONFIG:Debug>,${CMAKE_CURRENT_BINARY_DIR}/cfg/debug.txt,${CMAKE_CURRENT_BINARY_DIR}/cfg/release.txt>\" "
+        "\"$<IF:$<CONFIG:Debug>,debug,release>\")\n"
+        "add_executable(app main.c)\n";
+    Codegen_Test_Config config = {
+        .input_path = "CMakeLists.txt",
+        .output_path = "cfg_genex_nob.c",
+        .source_dir = "cfg_genex_src",
+        .binary_dir = "cfg_genex_build",
+    };
+
+    ASSERT(arena != NULL);
+    ASSERT(codegen_write_text_file("cfg_genex_src/main.c", "int main(void) { return 0; }\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("cfg_genex_nob.c", "cfg_genex_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./cfg_genex_nob_gen", debug_configure_argv, NOB_ARRAY_LEN(debug_configure_argv)));
+    ASSERT(test_ws_host_path_exists("cfg_genex_build/cfg/debug.txt"));
+    ASSERT(!test_ws_host_path_exists("cfg_genex_build/cfg/release.txt"));
+    ASSERT(codegen_text_file_equals(arena, "cfg_genex_build/cfg/debug.txt", "debug"));
+
+    ASSERT(codegen_run_binary_in_dir(".", "./cfg_genex_nob_gen", "clean", NULL));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./cfg_genex_nob_gen", release_configure_argv, NOB_ARRAY_LEN(release_configure_argv)));
+    ASSERT(!test_ws_host_path_exists("cfg_genex_build/cfg/debug.txt"));
+    ASSERT(test_ws_host_path_exists("cfg_genex_build/cfg/release.txt"));
+    ASSERT(codegen_text_file_equals(arena, "cfg_genex_build/cfg/release.txt", "release"));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(codegen_test_phase_auto_builds_registered_targets_and_honors_config_filters) {
     const char *release_test_argv[] = {"--config", "Release", "test", "cfg_only"};
     const char *debug_test_argv[] = {"--config", "Debug", "test", "cfg_only"};
@@ -1588,6 +1624,44 @@ TEST(codegen_install_full_custom_prefix_preserves_program_mode_and_directory_sem
     ASSERT(test_ws_host_path_exists("install_full_prefix/lib/libcore.a"));
     ASSERT(!test_ws_host_path_exists("install_full_build/app"));
     ASSERT(!test_ws_host_path_exists("install_full_build/libcore.a"));
+    TEST_PASS();
+}
+
+TEST(codegen_install_resolves_genex_destinations_and_rename_per_config) {
+    Arena *arena = arena_create(128 * 1024);
+    const char *debug_install_argv[] = {"--config", "Debug", "install", "--prefix", "install_genex_debug_root"};
+    const char *release_install_argv[] = {"--config", "Release", "install", "--prefix", "install_genex_release_root"};
+    const char *script =
+        "project(Test C)\n"
+        "add_library(core STATIC core.c)\n"
+        "install(TARGETS core ARCHIVE DESTINATION \"$<$<CONFIG:Debug>:dbg/>lib\")\n"
+        "install(FILES notice.txt DESTINATION \"$<$<CONFIG:Debug>:dbg/>share\" "
+        "RENAME \"$<IF:$<CONFIG:Debug>,notice-dbg.txt,notice.txt>\")\n";
+    Codegen_Test_Config config = {
+        .input_path = "CMakeLists.txt",
+        .output_path = "install_genex_nob.c",
+        .source_dir = "install_genex_src",
+        .binary_dir = "install_genex_build",
+    };
+
+    ASSERT(arena != NULL);
+    ASSERT(codegen_write_text_file("install_genex_src/core.c", "int core_value(void) { return 11; }\n"));
+    ASSERT(codegen_write_text_file("install_genex_src/notice.txt", "install-genex\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("install_genex_nob.c", "install_genex_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./install_genex_nob_gen", debug_install_argv, NOB_ARRAY_LEN(debug_install_argv)));
+    ASSERT(test_ws_host_path_exists("install_genex_debug_root/dbg/lib/libcore.a"));
+    ASSERT(test_ws_host_path_exists("install_genex_debug_root/dbg/share/notice-dbg.txt"));
+    ASSERT(codegen_text_file_equals(arena, "install_genex_debug_root/dbg/share/notice-dbg.txt", "install-genex\n"));
+
+    ASSERT(codegen_run_binary_in_dir(".", "./install_genex_nob_gen", "clean", NULL));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./install_genex_nob_gen", release_install_argv, NOB_ARRAY_LEN(release_install_argv)));
+    ASSERT(test_ws_host_path_exists("install_genex_release_root/lib/libcore.a"));
+    ASSERT(test_ws_host_path_exists("install_genex_release_root/share/notice.txt"));
+    ASSERT(codegen_text_file_equals(arena, "install_genex_release_root/share/notice.txt", "install-genex\n"));
+
+    arena_destroy(arena);
     TEST_PASS();
 }
 
@@ -2391,6 +2465,108 @@ TEST(codegen_export_targets_writes_build_tree_exports_without_implicit_build) {
     TEST_PASS();
 }
 
+TEST(codegen_export_file_path_resolves_genex_per_config) {
+    const char *debug_export_argv[] = {"--config", "Debug", "export"};
+    const char *release_export_argv[] = {"--config", "Release", "export"};
+    const char *clean_argv[] = {"clean"};
+    const char *script =
+        "project(Test C)\n"
+        "add_library(core STATIC core.c)\n"
+        "export(TARGETS core FILE "
+        "\"${CMAKE_CURRENT_BINARY_DIR}/exports/$<IF:$<CONFIG:Debug>,debug,release>/CoreTargets.cmake\" "
+        "NAMESPACE Demo::)\n";
+    Codegen_Test_Config config = {
+        .input_path = "CMakeLists.txt",
+        .output_path = "export_cfg_nob.c",
+        .source_dir = "export_cfg_src",
+        .binary_dir = "export_cfg_build",
+    };
+
+    ASSERT(codegen_write_text_file("export_cfg_src/core.c", "int core_value(void) { return 3; }\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("export_cfg_nob.c", "export_cfg_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./export_cfg_nob_gen", debug_export_argv, NOB_ARRAY_LEN(debug_export_argv)));
+    ASSERT(test_ws_host_path_exists("export_cfg_build/exports/debug/CoreTargets.cmake"));
+    ASSERT(!test_ws_host_path_exists("export_cfg_build/exports/release/CoreTargets.cmake"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./export_cfg_nob_gen", clean_argv, NOB_ARRAY_LEN(clean_argv)));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./export_cfg_nob_gen", release_export_argv, NOB_ARRAY_LEN(release_export_argv)));
+    ASSERT(test_ws_host_path_exists("export_cfg_build/exports/release/CoreTargets.cmake"));
+
+    TEST_PASS();
+}
+
+TEST(codegen_row51_end_to_end_preserves_usage_install_export_and_replay_genex) {
+    Arena *arena = arena_create(512 * 1024);
+    String_View build_export = {0};
+    String_View install_export = {0};
+    const char *configure_argv[] = {"--config", "Debug", "configure"};
+    const char *export_argv[] = {"--config", "Debug", "export"};
+    const char *install_argv[] = {"--config", "Debug", "install", "--prefix", "row51_e2e_prefix", "--component", "Development"};
+    const char *script =
+        "project(Test LANGUAGES C)\n"
+        "add_library(core STATIC core.c)\n"
+        "set_target_properties(core PROPERTIES\n"
+        "  PUBLIC_HEADER include/core.h\n"
+        "  CUSTOM_INSTALL_INC \"$<INSTALL_INTERFACE:$<INSTALL_PREFIX>/sdk/include>\")\n"
+        "target_include_directories(core PUBLIC\n"
+        "  \"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>\"\n"
+        "  \"$<BUILD_LOCAL_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/local>\"\n"
+        "  \"$<TARGET_GENEX_EVAL:core,$<TARGET_PROPERTY:core,CUSTOM_INSTALL_INC>>\")\n"
+        "file(WRITE \"$<IF:$<CONFIG:Debug>,${CMAKE_CURRENT_BINARY_DIR}/cfg/debug.txt,${CMAKE_CURRENT_BINARY_DIR}/cfg/release.txt>\" "
+        "\"$<IF:$<CONFIG:Debug>,debug,release>\")\n"
+        "install(TARGETS core EXPORT DemoTargets\n"
+        "  ARCHIVE DESTINATION \"$<$<CONFIG:Debug>:dbg/>lib\" COMPONENT Development\n"
+        "  PUBLIC_HEADER DESTINATION \"$<$<CONFIG:Debug>:dbg/>include/demo\" COMPONENT Development)\n"
+        "install(FILES note.txt DESTINATION \"$<$<CONFIG:Debug>:dbg/>share\" "
+        "  RENAME \"$<IF:$<CONFIG:Debug>,note-dbg.txt,note.txt>\" COMPONENT Development)\n"
+        "install(EXPORT DemoTargets DESTINATION \"$<$<CONFIG:Debug>:dbg/>share/cmake/Demo\" "
+        "  FILE DemoTargets.cmake NAMESPACE Demo:: COMPONENT Development)\n"
+        "export(TARGETS core FILE "
+        "\"${CMAKE_CURRENT_BINARY_DIR}/exports/$<IF:$<CONFIG:Debug>,debug,release>/CoreTargets.cmake\" "
+        "NAMESPACE Demo::)\n";
+    Codegen_Test_Config config = {
+        .input_path = "CMakeLists.txt",
+        .output_path = "row51_e2e_nob.c",
+        .source_dir = "row51_e2e_src",
+        .binary_dir = "row51_e2e_build",
+    };
+
+    ASSERT(arena != NULL);
+    ASSERT(codegen_write_text_file("row51_e2e_src/core.c", "int core_value(void) { return 51; }\n"));
+    ASSERT(codegen_write_text_file("row51_e2e_src/include/core.h", "#define CORE_VALUE 51\n"));
+    ASSERT(codegen_write_text_file("row51_e2e_src/note.txt", "row51-note\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("row51_e2e_nob.c", "row51_e2e_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./row51_e2e_nob_gen", configure_argv, NOB_ARRAY_LEN(configure_argv)));
+    ASSERT(test_ws_host_path_exists("row51_e2e_build/cfg/debug.txt"));
+    ASSERT(codegen_text_file_equals(arena, "row51_e2e_build/cfg/debug.txt", "debug"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./row51_e2e_nob_gen", export_argv, NOB_ARRAY_LEN(export_argv)));
+    ASSERT(test_ws_host_path_exists("row51_e2e_build/exports/debug/CoreTargets.cmake"));
+    ASSERT(codegen_load_text_file_to_arena(arena,
+                                           "row51_e2e_build/exports/debug/CoreTargets.cmake",
+                                           &build_export));
+    ASSERT(codegen_sv_contains(build_export, "row51_e2e_src/include"));
+    ASSERT(!codegen_sv_contains(build_export, "row51_e2e_src/local"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./row51_e2e_nob_gen", install_argv, NOB_ARRAY_LEN(install_argv)));
+    ASSERT(test_ws_host_path_exists("row51_e2e_prefix/dbg/lib/libcore.a"));
+    ASSERT(test_ws_host_path_exists("row51_e2e_prefix/dbg/include/demo/core.h"));
+    ASSERT(test_ws_host_path_exists("row51_e2e_prefix/dbg/share/note-dbg.txt"));
+    ASSERT(test_ws_host_path_exists("row51_e2e_prefix/dbg/share/cmake/Demo/DemoTargets.cmake"));
+    ASSERT(codegen_load_text_file_to_arena(arena,
+                                           "row51_e2e_prefix/dbg/share/cmake/Demo/DemoTargets.cmake",
+                                           &install_export));
+    ASSERT(codegen_sv_contains(install_export, "${_IMPORT_PREFIX}/sdk/include"));
+    ASSERT(!codegen_sv_contains(install_export, "$<INSTALL_PREFIX>"));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(codegen_property_setter_usage_requirements_drive_build_and_export_metadata) {
     const char *install_argv[] = {"install", "--prefix", "prop_item_prefix"};
     const char *export_argv[] = {"export"};
@@ -2596,6 +2772,7 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_cxx_static_dependency_uses_cxx_driver_for_link_out_of_source(passed, failed, skipped);
     test_codegen_clean_removes_out_of_source_outputs_but_preserves_binary_root(passed, failed, skipped);
     test_codegen_configure_replay_supported_effects_and_phase_cli_work(passed, failed, skipped);
+    test_codegen_configure_replay_resolves_genex_per_runtime_config(passed, failed, skipped);
     test_codegen_test_phase_auto_builds_registered_targets_and_honors_config_filters(passed, failed, skipped);
     test_codegen_fetchcontent_local_materialization_replays_from_clean_workspace(passed, failed, skipped);
     test_codegen_ctest_local_dashboard_replay_stages_testing_tree(passed, failed, skipped);
@@ -2603,6 +2780,7 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_ctest_coverage_and_memcheck_relative_paths_replay_stage_reports(passed, failed, skipped);
     test_codegen_install_export_and_package_auto_configure_from_clean_workspace(passed, failed, skipped);
     test_codegen_install_full_custom_prefix_preserves_program_mode_and_directory_semantics(passed, failed, skipped);
+    test_codegen_install_resolves_genex_destinations_and_rename_per_config(passed, failed, skipped);
     test_codegen_install_component_selection_and_default_component_fallback_work(passed, failed, skipped);
     test_codegen_ignores_cxx_modules_file_set_metadata_in_compile_inputs(passed, failed, skipped);
     test_codegen_builds_generated_source_from_output_rule_step(passed, failed, skipped);
@@ -2623,6 +2801,8 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_debug_and_optimized_link_items_follow_generated_config(passed, failed, skipped);
     test_codegen_build_steps_resolve_target_file_and_target_linker_file_genex(passed, failed, skipped);
     test_codegen_export_targets_writes_build_tree_exports_without_implicit_build(passed, failed, skipped);
+    test_codegen_export_file_path_resolves_genex_per_config(passed, failed, skipped);
+    test_codegen_row51_end_to_end_preserves_usage_install_export_and_replay_genex(passed, failed, skipped);
     test_codegen_property_setter_usage_requirements_drive_build_and_export_metadata(passed, failed, skipped);
     test_codegen_export_export_set_writes_build_tree_exports_from_install_sets(passed, failed, skipped);
     test_codegen_export_package_writes_registry_and_clean_preserves_it(passed, failed, skipped);

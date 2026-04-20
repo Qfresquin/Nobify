@@ -15,9 +15,11 @@ typedef struct {
     String_View config;
     String_View platform_id;
     String_View compile_language;
+    String_View install_prefix;
     BM_Target_Id current_target_id;
     BM_Query_Usage_Mode usage_mode;
     bool build_interface_active;
+    bool build_local_interface_active;
     bool install_interface_active;
 } BM_Query_Eval_Context;
 
@@ -194,6 +196,11 @@ BM_String_Span bm_query_replay_action_inputs(const Build_Model *model, BM_Replay
 BM_String_Span bm_query_replay_action_outputs(const Build_Model *model, BM_Replay_Action_Id id);
 BM_String_Span bm_query_replay_action_argv(const Build_Model *model, BM_Replay_Action_Id id);
 BM_String_Span bm_query_replay_action_environment(const Build_Model *model, BM_Replay_Action_Id id);
+bool bm_query_resolve_string_with_context(const Build_Model *model,
+                                          const BM_Query_Eval_Context *ctx,
+                                          Arena *scratch,
+                                          String_View raw,
+                                          String_View *out);
 
 bool bm_query_target_effective_include_directories_items(const Build_Model *model,
                                                          BM_Target_Id id,
@@ -409,6 +416,7 @@ BM_Install_Rule_Kind bm_query_install_rule_kind(const Build_Model *model, BM_Ins
 BM_Directory_Id bm_query_install_rule_owner_directory(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_item_raw(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_destination(const Build_Model *model, BM_Install_Rule_Id id);
+String_View bm_query_install_rule_rename(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_component(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_archive_component(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_library_component(const Build_Model *model, BM_Install_Rule_Id id);

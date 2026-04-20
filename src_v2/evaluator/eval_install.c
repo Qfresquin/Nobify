@@ -21,6 +21,7 @@ static bool install_emit_rule(EvalExecContext *ctx,
                               Cmake_Install_Rule_Type rule_type,
                               String_View item,
                               String_View destination,
+                              String_View rename,
                               String_View component,
                               String_View archive_component,
                               String_View library_component,
@@ -40,6 +41,7 @@ static bool install_emit_rule(EvalExecContext *ctx,
                                       rule_type,
                                       item,
                                       destination,
+                                      rename,
                                       component,
                                       archive_component,
                                       library_component,
@@ -256,6 +258,7 @@ static bool install_handle_files_like(EvalExecContext *ctx,
 
     String_View destination = nob_sv_from_cstr("");
     String_View type = nob_sv_from_cstr("");
+    String_View rename = nob_sv_from_cstr("");
     String_View component = nob_sv_from_cstr("");
     for (; i < arena_arr_len(args); i++) {
         if (eval_sv_eq_ci_lit(args[i], "DESTINATION")) {
@@ -280,8 +283,9 @@ static bool install_handle_files_like(EvalExecContext *ctx,
                 return true;
             }
             type = args[++i];
-        } else if (eval_sv_eq_ci_lit(args[i], "RENAME") ||
-                   eval_sv_eq_ci_lit(args[i], "PATTERN") ||
+        } else if (eval_sv_eq_ci_lit(args[i], "RENAME")) {
+            if (i + 1 < arena_arr_len(args)) rename = args[++i];
+        } else if (eval_sv_eq_ci_lit(args[i], "PATTERN") ||
                    eval_sv_eq_ci_lit(args[i], "REGEX")) {
             if (i + 1 < arena_arr_len(args)) i++;
         } else if (eval_sv_eq_ci_lit(args[i], "COMPONENT")) {
@@ -341,6 +345,7 @@ static bool install_handle_files_like(EvalExecContext *ctx,
                                rule_type,
                                items[j],
                                destination,
+                               rename,
                                component,
                                nob_sv_from_cstr(""),
                                nob_sv_from_cstr(""),
@@ -486,6 +491,7 @@ static bool install_handle_targets_like(EvalExecContext *ctx,
                                EV_INSTALL_RULE_TARGET,
                                item,
                                meta.destination,
+                               nob_sv_from_cstr(""),
                                meta.component,
                                meta.archive_component,
                                meta.library_component,
@@ -539,6 +545,7 @@ static bool install_handle_script_code_block(EvalExecContext *ctx,
                                    o,
                                    EV_INSTALL_RULE_FILE,
                                    item,
+                                   nob_sv_from_cstr(""),
                                    nob_sv_from_cstr(""),
                                    nob_sv_from_cstr(""),
                                    nob_sv_from_cstr(""),
@@ -642,6 +649,7 @@ static bool install_handle_export_like(EvalExecContext *ctx,
                                  EV_INSTALL_RULE_FILE,
                                  item,
                                  destination,
+                                 nob_sv_from_cstr(""),
                                  component,
                                  nob_sv_from_cstr(""),
                                  nob_sv_from_cstr(""),
@@ -692,6 +700,7 @@ static bool install_handle_runtime_dependency_set(EvalExecContext *ctx,
                                EV_INSTALL_RULE_TARGET,
                                item,
                                destinations[i],
+                               nob_sv_from_cstr(""),
                                nob_sv_from_cstr(""),
                                nob_sv_from_cstr(""),
                                nob_sv_from_cstr(""),

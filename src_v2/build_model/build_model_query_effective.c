@@ -53,71 +53,345 @@ static bool bm_query_semantic_matches_context(const Event_Link_Item_Metadata *se
     return true;
 }
 
-static bool bm_query_resolve_semantic_target_property(const Build_Model *model,
-                                                      BM_Target_Id owner_target_id,
-                                                      const BM_Query_Eval_Context *ctx,
-                                                      Arena *scratch,
-                                                      const Event_Link_Item_Metadata *semantic,
-                                                      String_View *out) {
-    BM_Target_Id target_id = BM_TARGET_ID_INVALID;
-    String_View value = nob_sv_from_cstr("");
-    if (!out) return false;
-    *out = nob_sv_from_cstr("");
-    if (!model || !semantic || !scratch || !ctx) return false;
+typedef struct {
+    BM_Target_Id target_id;
+    BM_Effective_Query_Kind kind;
+    String_View property_name;
+} BM_Query_Target_Property_Frame;
 
+typedef struct {
+    BM_Query_Target_Property_Frame frames[64];
+    size_t count;
+} BM_Query_Target_Property_Stack;
+
+static bool bm_query_target_property_stack_contains(const BM_Query_Target_Property_Stack *stack,
+                                                    BM_Target_Id target_id,
+                                                    BM_Effective_Query_Kind kind,
+                                                    String_View property_name) {
+    if (!stack) return false;
+    for (size_t i = 0; i < stack->count; ++i) {
+        if (stack->frames[i].target_id != target_id || stack->frames[i].kind != kind) continue;
+        if (bm_sv_eq_ci_query(stack->frames[i].property_name, property_name)) return true;
+    }
+    return false;
+}
+
+static bool bm_query_target_property_stack_push(BM_Query_Target_Property_Stack *stack,
+                                                BM_Target_Id target_id,
+                                                BM_Effective_Query_Kind kind,
+                                                String_View property_name) {
+    if (!stack || stack->count >= NOB_ARRAY_LEN(stack->frames)) return false;
+    stack->frames[stack->count++] = (BM_Query_Target_Property_Frame){
+        .target_id = target_id,
+        .kind = kind,
+        .property_name = property_name,
+    };
+    return true;
+}
+
+static void bm_query_target_property_stack_pop(BM_Query_Target_Property_Stack *stack) {
+    if (stack && stack->count > 0) stack->count--;
+}
+
+static BM_Target_Id bm_query_semantic_target_id(const Build_Model *model,
+                                                BM_Target_Id owner_target_id,
+                                                const BM_Query_Eval_Context *ctx,
+                                                const Event_Link_Item_Metadata *semantic) {
+    BM_Target_Id target_id = BM_TARGET_ID_INVALID;
+    if (!model || !ctx || !semantic) return BM_TARGET_ID_INVALID;
     if (semantic->kind == EVENT_LINK_ITEM_TARGET_PROPERTY_IMPLICIT) {
         target_id = bm_target_id_is_valid(ctx->current_target_id) ? ctx->current_target_id : owner_target_id;
     } else if (semantic->kind == EVENT_LINK_ITEM_TARGET_PROPERTY_EXPLICIT) {
         target_id = bm_find_target_by_name_id(model, semantic->target_name);
-    } else {
+    }
+    if (!bm_target_id_is_valid(target_id)) return BM_TARGET_ID_INVALID;
+    target_id = bm_resolve_alias_target_id(model, target_id);
+    return bm_target_id_is_valid(target_id) ? target_id : BM_TARGET_ID_INVALID;
+}
+
+static bool bm_query_property_effective_kind(String_View property_name, BM_Effective_Query_Kind *out_kind) {
+    if (!out_kind) return false;
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INCLUDE_DIRECTORIES")) ||
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_INCLUDE_DIRECTORIES")) ||
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_SYSTEM_INCLUDE_DIRECTORIES"))) {
+        *out_kind = BM_EFFECTIVE_INCLUDE_DIRECTORIES;
         return true;
     }
-    if (!bm_target_id_is_valid(target_id)) return true;
-    target_id = bm_resolve_alias_target_id(model, target_id);
-    if (!bm_target_id_is_valid(target_id)) return true;
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("COMPILE_DEFINITIONS")) ||
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_COMPILE_DEFINITIONS"))) {
+        *out_kind = BM_EFFECTIVE_COMPILE_DEFINITIONS;
+        return true;
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("COMPILE_OPTIONS")) ||
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_COMPILE_OPTIONS"))) {
+        *out_kind = BM_EFFECTIVE_COMPILE_OPTIONS;
+        return true;
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("COMPILE_FEATURES")) ||
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES"))) {
+        *out_kind = BM_EFFECTIVE_COMPILE_FEATURES;
+        return true;
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("LINK_LIBRARIES")) ||
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_LINK_LIBRARIES"))) {
+        *out_kind = BM_EFFECTIVE_LINK_LIBRARIES;
+        return true;
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("LINK_OPTIONS")) ||
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_LINK_OPTIONS"))) {
+        *out_kind = BM_EFFECTIVE_LINK_OPTIONS;
+        return true;
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("LINK_DIRECTORIES")) ||
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_LINK_DIRECTORIES"))) {
+        *out_kind = BM_EFFECTIVE_LINK_DIRECTORIES;
+        return true;
+    }
+    return false;
+}
 
-    if (!bm_query_target_modeled_property_value(model, target_id, semantic->property_name, scratch, &value)) {
+static bool bm_query_same_family_property_spec(String_View property_name,
+                                               BM_Effective_Query_Kind current_kind,
+                                               BM_Visibility *out_min,
+                                               BM_Visibility *out_max,
+                                               uint32_t *out_required_flags) {
+    BM_Effective_Query_Kind property_kind = BM_EFFECTIVE_INCLUDE_DIRECTORIES;
+    if (!out_min || !out_max || !out_required_flags) return false;
+    *out_min = BM_VISIBILITY_PRIVATE;
+    *out_max = BM_VISIBILITY_INTERFACE;
+    *out_required_flags = 0;
+
+    if (!bm_query_property_effective_kind(property_name, &property_kind) || property_kind != current_kind) {
         return false;
     }
-    if (value.count == 0 &&
-        !bm_query_target_raw_property_value(model, target_id, semantic->property_name, scratch, &value)) {
-        return false;
+
+    if (nob_sv_starts_with(property_name, nob_sv_from_cstr("INTERFACE_"))) {
+        *out_min = BM_VISIBILITY_PUBLIC;
+        *out_max = BM_VISIBILITY_INTERFACE;
+    } else {
+        *out_min = BM_VISIBILITY_PRIVATE;
+        *out_max = BM_VISIBILITY_PUBLIC;
     }
-    *out = value;
+
+    if (current_kind == BM_EFFECTIVE_INCLUDE_DIRECTORIES &&
+        bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_SYSTEM_INCLUDE_DIRECTORIES"))) {
+        *out_required_flags = BM_ITEM_FLAG_SYSTEM;
+    }
     return true;
 }
 
+static BM_String_Item_Span bm_query_target_string_items_for_kind(const BM_Target_Record *target,
+                                                                 BM_Effective_Query_Kind kind) {
+    if (!target) return (BM_String_Item_Span){0};
+    switch (kind) {
+        case BM_EFFECTIVE_INCLUDE_DIRECTORIES:
+            return bm_item_span(target->include_directories);
+        case BM_EFFECTIVE_COMPILE_DEFINITIONS:
+            return bm_item_span(target->compile_definitions);
+        case BM_EFFECTIVE_COMPILE_OPTIONS:
+            return bm_item_span(target->compile_options);
+        case BM_EFFECTIVE_COMPILE_FEATURES:
+            return bm_item_span(target->compile_features);
+        case BM_EFFECTIVE_LINK_OPTIONS:
+            return bm_item_span(target->link_options);
+        case BM_EFFECTIVE_LINK_DIRECTORIES:
+            return bm_item_span(target->link_directories);
+        case BM_EFFECTIVE_LINK_LIBRARIES:
+            break;
+    }
+    return (BM_String_Item_Span){0};
+}
+
+static BM_Link_Item_Span bm_query_target_link_items_for_kind(const BM_Target_Record *target,
+                                                             BM_Effective_Query_Kind kind) {
+    if (!target || kind != BM_EFFECTIVE_LINK_LIBRARIES) return (BM_Link_Item_Span){0};
+    return bm_link_item_span(target->link_libraries);
+}
+
 static bool bm_query_resolve_item_value(const Build_Model *model,
-                                        BM_Target_Id owner_target_id,
                                         const BM_Query_Eval_Context *ctx,
                                         Arena *scratch,
                                         String_View fallback_value,
                                         const Event_Link_Item_Metadata *semantic,
                                         String_View *out) {
+    String_View raw = fallback_value;
     if (!out) return false;
     *out = nob_sv_from_cstr("");
     if (!semantic) {
         *out = fallback_value;
         return true;
     }
-    if (semantic->kind == EVENT_LINK_ITEM_TARGET_PROPERTY_IMPLICIT ||
-        semantic->kind == EVENT_LINK_ITEM_TARGET_PROPERTY_EXPLICIT) {
-        return bm_query_resolve_semantic_target_property(model, owner_target_id, ctx, scratch, semantic, out);
+    if (semantic->value.count > 0) raw = semantic->value;
+    return bm_query_resolve_string_with_context(model, ctx, scratch, raw, out);
+}
+
+static bool bm_eval_item_span_impl(const Build_Model *model,
+                                   BM_Target_Id owner_target_id,
+                                   const BM_Query_Eval_Context *ctx,
+                                   Arena *scratch,
+                                   BM_String_Item_Span raw_items,
+                                   BM_Effective_Query_Kind current_kind,
+                                   BM_Query_Target_Property_Stack *stack,
+                                   BM_String_Item_Span *out);
+
+static bool bm_eval_link_item_span_impl(const Build_Model *model,
+                                        BM_Target_Id owner_target_id,
+                                        const BM_Query_Eval_Context *ctx,
+                                        Arena *scratch,
+                                        BM_Link_Item_Span raw_items,
+                                        BM_Query_Target_Property_Stack *stack,
+                                        BM_Link_Item_Span *out);
+
+static bool bm_query_expand_same_family_string_property(const Build_Model *model,
+                                                        BM_Target_Id owner_target_id,
+                                                        const BM_Query_Eval_Context *ctx,
+                                                        Arena *scratch,
+                                                        const Event_Link_Item_Metadata *semantic,
+                                                        BM_Effective_Query_Kind current_kind,
+                                                        BM_Query_Target_Property_Stack *stack,
+                                                        BM_String_Item_View **out_items) {
+    const BM_Target_Record *target = NULL;
+    BM_String_Item_View *selected = NULL;
+    BM_String_Item_Span evaluated = {0};
+    BM_String_Item_Span source = {0};
+    BM_Visibility min_visibility = BM_VISIBILITY_PRIVATE;
+    BM_Visibility max_visibility = BM_VISIBILITY_INTERFACE;
+    uint32_t required_flags = 0;
+    BM_Target_Id target_id = BM_TARGET_ID_INVALID;
+    if (!model || !ctx || !scratch || !semantic || !out_items) return false;
+    if (!bm_query_same_family_property_spec(semantic->property_name,
+                                            current_kind,
+                                            &min_visibility,
+                                            &max_visibility,
+                                            &required_flags)) {
+        return false;
     }
-    if (semantic->value.count > 0) {
-        *out = semantic->value;
-        return true;
+
+    target_id = bm_query_semantic_target_id(model, owner_target_id, ctx, semantic);
+    if (!bm_target_id_is_valid(target_id)) return true;
+    if (bm_query_target_property_stack_contains(stack, target_id, current_kind, semantic->property_name)) {
+        return false;
     }
-    *out = fallback_value;
+    if (!bm_query_target_property_stack_push(stack, target_id, current_kind, semantic->property_name)) {
+        return false;
+    }
+
+    target = bm_model_target(model, target_id);
+    source = bm_query_target_string_items_for_kind(target, current_kind);
+    for (size_t i = 0; i < source.count; ++i) {
+        BM_String_Item_View item = source.items[i];
+        if (item.visibility < min_visibility || item.visibility > max_visibility) continue;
+        if ((item.flags & required_flags) != required_flags) continue;
+        if (!arena_arr_push(scratch, selected, item)) {
+            bm_query_target_property_stack_pop(stack);
+            return false;
+        }
+    }
+
+    if (!bm_eval_item_span_impl(model,
+                                target_id,
+                                ctx,
+                                scratch,
+                                (BM_String_Item_Span){.items = selected, .count = arena_arr_len(selected)},
+                                current_kind,
+                                stack,
+                                &evaluated)) {
+        bm_query_target_property_stack_pop(stack);
+        return false;
+    }
+
+    for (size_t i = 0; i < evaluated.count; ++i) {
+        if (!arena_arr_push(scratch, *out_items, evaluated.items[i])) {
+            bm_query_target_property_stack_pop(stack);
+            return false;
+        }
+    }
+
+    bm_query_target_property_stack_pop(stack);
     return true;
 }
 
-static bool bm_eval_item_span(const Build_Model *model,
-                              BM_Target_Id owner_target_id,
-                              const BM_Query_Eval_Context *ctx,
-                              Arena *scratch,
-    BM_String_Item_Span raw_items,
-    BM_String_Item_Span *out) {
+static bool bm_query_expand_same_family_link_property(const Build_Model *model,
+                                                      BM_Target_Id owner_target_id,
+                                                      const BM_Query_Eval_Context *ctx,
+                                                      Arena *scratch,
+                                                      const Event_Link_Item_Metadata *semantic,
+                                                      BM_Query_Target_Property_Stack *stack,
+                                                      BM_Link_Item_View **out_items) {
+    const BM_Target_Record *target = NULL;
+    BM_Link_Item_View *selected = NULL;
+    BM_Link_Item_Span evaluated = {0};
+    BM_Link_Item_Span source = {0};
+    BM_Visibility min_visibility = BM_VISIBILITY_PRIVATE;
+    BM_Visibility max_visibility = BM_VISIBILITY_INTERFACE;
+    uint32_t required_flags = 0;
+    BM_Target_Id target_id = BM_TARGET_ID_INVALID;
+    if (!model || !ctx || !scratch || !semantic || !out_items) return false;
+    if (!bm_query_same_family_property_spec(semantic->property_name,
+                                            BM_EFFECTIVE_LINK_LIBRARIES,
+                                            &min_visibility,
+                                            &max_visibility,
+                                            &required_flags)) {
+        return false;
+    }
+    (void)required_flags;
+
+    target_id = bm_query_semantic_target_id(model, owner_target_id, ctx, semantic);
+    if (!bm_target_id_is_valid(target_id)) return true;
+    if (bm_query_target_property_stack_contains(stack,
+                                                target_id,
+                                                BM_EFFECTIVE_LINK_LIBRARIES,
+                                                semantic->property_name)) {
+        return false;
+    }
+    if (!bm_query_target_property_stack_push(stack,
+                                             target_id,
+                                             BM_EFFECTIVE_LINK_LIBRARIES,
+                                             semantic->property_name)) {
+        return false;
+    }
+
+    target = bm_model_target(model, target_id);
+    source = bm_query_target_link_items_for_kind(target, BM_EFFECTIVE_LINK_LIBRARIES);
+    for (size_t i = 0; i < source.count; ++i) {
+        BM_Link_Item_View item = source.items[i];
+        if (item.visibility < min_visibility || item.visibility > max_visibility) continue;
+        if (!arena_arr_push(scratch, selected, item)) {
+            bm_query_target_property_stack_pop(stack);
+            return false;
+        }
+    }
+
+    if (!bm_eval_link_item_span_impl(model,
+                                     target_id,
+                                     ctx,
+                                     scratch,
+                                     (BM_Link_Item_Span){.items = selected, .count = arena_arr_len(selected)},
+                                     stack,
+                                     &evaluated)) {
+        bm_query_target_property_stack_pop(stack);
+        return false;
+    }
+
+    for (size_t i = 0; i < evaluated.count; ++i) {
+        if (!arena_arr_push(scratch, *out_items, evaluated.items[i])) {
+            bm_query_target_property_stack_pop(stack);
+            return false;
+        }
+    }
+
+    bm_query_target_property_stack_pop(stack);
+    return true;
+}
+
+static bool bm_eval_item_span_impl(const Build_Model *model,
+                                   BM_Target_Id owner_target_id,
+                                   const BM_Query_Eval_Context *ctx,
+                                   Arena *scratch,
+                                   BM_String_Item_Span raw_items,
+                                   BM_Effective_Query_Kind current_kind,
+                                   BM_Query_Target_Property_Stack *stack,
+                                   BM_String_Item_Span *out) {
     BM_String_Item_View *items = NULL;
     BM_Query_Eval_Context default_ctx = {0};
     if (!out) return false;
@@ -131,8 +405,25 @@ static bool bm_eval_item_span(const Build_Model *model,
         BM_String_Item_View item = raw_items.items[i];
         String_View resolved = nob_sv_from_cstr("");
         if (!bm_query_semantic_matches_context(&item.semantic, &default_ctx)) continue;
+        if (item.semantic.kind == EVENT_LINK_ITEM_TARGET_PROPERTY_IMPLICIT ||
+            item.semantic.kind == EVENT_LINK_ITEM_TARGET_PROPERTY_EXPLICIT) {
+            BM_Effective_Query_Kind property_kind = BM_EFFECTIVE_INCLUDE_DIRECTORIES;
+            if (bm_query_property_effective_kind(item.semantic.property_name, &property_kind) &&
+                property_kind == current_kind) {
+                if (!bm_query_expand_same_family_string_property(model,
+                                                                 owner_target_id,
+                                                                 &default_ctx,
+                                                                 scratch,
+                                                                 &item.semantic,
+                                                                 current_kind,
+                                                                 stack,
+                                                                 &items)) {
+                    return false;
+                }
+                continue;
+            }
+        }
         if (!bm_query_resolve_item_value(model,
-                                         owner_target_id,
                                          &default_ctx,
                                          scratch,
                                          item.value,
@@ -150,12 +441,24 @@ static bool bm_eval_item_span(const Build_Model *model,
     return true;
 }
 
-static bool bm_eval_link_item_span(const Build_Model *model,
-                                   BM_Target_Id owner_target_id,
-                                   const BM_Query_Eval_Context *ctx,
-                                   Arena *scratch,
-                                   BM_Link_Item_Span raw_items,
-                                   BM_Link_Item_Span *out) {
+static bool bm_eval_item_span(const Build_Model *model,
+                              BM_Target_Id owner_target_id,
+                              const BM_Query_Eval_Context *ctx,
+                              Arena *scratch,
+                              BM_String_Item_Span raw_items,
+                              BM_Effective_Query_Kind current_kind,
+                              BM_String_Item_Span *out) {
+    BM_Query_Target_Property_Stack stack = {0};
+    return bm_eval_item_span_impl(model, owner_target_id, ctx, scratch, raw_items, current_kind, &stack, out);
+}
+
+static bool bm_eval_link_item_span_impl(const Build_Model *model,
+                                        BM_Target_Id owner_target_id,
+                                        const BM_Query_Eval_Context *ctx,
+                                        Arena *scratch,
+                                        BM_Link_Item_Span raw_items,
+                                        BM_Query_Target_Property_Stack *stack,
+                                        BM_Link_Item_Span *out) {
     BM_Link_Item_View *items = NULL;
     BM_Query_Eval_Context default_ctx = {0};
     if (!out) return false;
@@ -169,8 +472,24 @@ static bool bm_eval_link_item_span(const Build_Model *model,
         BM_Link_Item_View item = raw_items.items[i];
         String_View resolved = nob_sv_from_cstr("");
         if (!bm_query_semantic_matches_context(&item.semantic, &default_ctx)) continue;
+        if (item.semantic.kind == EVENT_LINK_ITEM_TARGET_PROPERTY_IMPLICIT ||
+            item.semantic.kind == EVENT_LINK_ITEM_TARGET_PROPERTY_EXPLICIT) {
+            BM_Effective_Query_Kind property_kind = BM_EFFECTIVE_INCLUDE_DIRECTORIES;
+            if (bm_query_property_effective_kind(item.semantic.property_name, &property_kind) &&
+                property_kind == BM_EFFECTIVE_LINK_LIBRARIES) {
+                if (!bm_query_expand_same_family_link_property(model,
+                                                               owner_target_id,
+                                                               &default_ctx,
+                                                               scratch,
+                                                               &item.semantic,
+                                                               stack,
+                                                               &items)) {
+                    return false;
+                }
+                continue;
+            }
+        }
         if (!bm_query_resolve_item_value(model,
-                                         owner_target_id,
                                          &default_ctx,
                                          scratch,
                                          item.value,
@@ -193,6 +512,16 @@ static bool bm_eval_link_item_span(const Build_Model *model,
     out->items = items;
     out->count = arena_arr_len(items);
     return true;
+}
+
+static bool bm_eval_link_item_span(const Build_Model *model,
+                                   BM_Target_Id owner_target_id,
+                                   const BM_Query_Eval_Context *ctx,
+                                   Arena *scratch,
+                                   BM_Link_Item_Span raw_items,
+                                   BM_Link_Item_Span *out) {
+    BM_Query_Target_Property_Stack stack = {0};
+    return bm_eval_link_item_span_impl(model, owner_target_id, ctx, scratch, raw_items, &stack, out);
 }
 
 static String_View bm_query_dirname_sv(String_View path) {
@@ -420,6 +749,7 @@ static bool bm_query_target_effective_items_common(const Build_Model *model,
                            ctx,
                            scratch,
                            (BM_String_Item_Span){.items = raw_items, .count = arena_arr_len(raw_items)},
+                           kind,
                            &evaluated)) {
         return false;
     }

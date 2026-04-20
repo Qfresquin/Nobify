@@ -19,6 +19,7 @@ bool bm_builder_handle_install_event(BM_Builder *builder, const Event *ev) {
             rule.resolved_target_id = BM_TARGET_ID_INVALID;
             if (!bm_copy_string(builder->arena, ev->as.install_rule_add.item, &rule.item) ||
                 !bm_copy_string(builder->arena, ev->as.install_rule_add.destination, &rule.destination) ||
+                !bm_copy_string(builder->arena, ev->as.install_rule_add.rename, &rule.rename) ||
                 !bm_copy_string(builder->arena, ev->as.install_rule_add.component, &rule.component) ||
                 !bm_copy_string(builder->arena, ev->as.install_rule_add.archive_component, &rule.archive_component) ||
                 !bm_copy_string(builder->arena, ev->as.install_rule_add.library_component, &rule.library_component) ||
