@@ -44,6 +44,16 @@ static const BM_Imported_Config_Record *bm_select_imported_config_record(const B
     return bm_find_imported_config_record(target, nob_sv_from_cstr(""));
 }
 
+static bool bm_query_push_unique_imported_config(Arena *scratch,
+                                                 String_View **configs,
+                                                 String_View config) {
+    if (!scratch || !configs || config.count == 0) return true;
+    for (size_t i = 0; i < arena_arr_len(*configs); ++i) {
+        if (bm_sv_eq_ci_query((*configs)[i], config)) return true;
+    }
+    return arena_arr_push(scratch, *configs, config);
+}
+
 static bool bm_query_target_local_file_internal(const Build_Model *model,
                                                 BM_Target_Id id,
                                                 const BM_Query_Eval_Context *ctx,
@@ -190,5 +200,33 @@ bool bm_query_target_imported_link_languages(const Build_Model *model,
         if (!arena_arr_push(scratch, copy, config_record->link_languages[i])) return false;
     }
     *out = bm_string_span(copy);
+    return true;
+}
+
+bool bm_query_target_imported_known_configurations(const Build_Model *model,
+                                                   BM_Target_Id id,
+                                                   Arena *scratch,
+                                                   BM_String_Span *out) {
+    BM_Target_Id resolved_id = bm_resolve_alias_target_id(model, id);
+    const BM_Target_Record *target = bm_model_target(model, resolved_id);
+    String_View *configs = NULL;
+    if (!out) return false;
+    *out = (BM_String_Span){0};
+    if (!scratch || !target) return false;
+
+    for (size_t i = 0; i < arena_arr_len(target->imported_configs); ++i) {
+        if (!bm_query_push_unique_imported_config(scratch, &configs, target->imported_configs[i].config)) return false;
+    }
+    for (size_t i = 0; i < arena_arr_len(target->imported_config_maps); ++i) {
+        if (!bm_query_push_unique_imported_config(scratch, &configs, target->imported_config_maps[i].config)) return false;
+        for (size_t j = 0; j < arena_arr_len(target->imported_config_maps[i].mapped_configs); ++j) {
+            if (!bm_query_push_unique_imported_config(scratch,
+                                                      &configs,
+                                                      target->imported_config_maps[i].mapped_configs[j])) {
+                return false;
+            }
+        }
+    }
+    *out = bm_string_span(configs);
     return true;
 }

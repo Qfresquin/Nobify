@@ -1199,6 +1199,14 @@ BM_String_Span bm_query_project_languages(const Build_Model *model) {
     return span;
 }
 
+BM_String_Span bm_query_known_configurations(const Build_Model *model) {
+    BM_String_Span span = {0};
+    if (!model) return span;
+    span.items = model->known_configurations;
+    span.count = arena_arr_len(model->known_configurations);
+    return span;
+}
+
 BM_Directory_Id bm_query_root_directory(const Build_Model *model) {
     return model ? model->root_directory_id : BM_DIRECTORY_ID_INVALID;
 }

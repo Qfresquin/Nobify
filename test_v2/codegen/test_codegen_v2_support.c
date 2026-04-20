@@ -275,6 +275,13 @@ static bool codegen_render_or_write_script(const char *script,
 
     ok = test_semantic_pipeline_fixture_from_script(&fixture, script, &pipeline_config);
     if (!ok || !fixture.build.freeze_ok || !fixture.build.model || diag_has_errors()) {
+        nob_log(NOB_ERROR,
+                "codegen test support: fixture=%s freeze_ok=%s model=%s diag_errors=%s input=%s",
+                ok ? "ok" : "fail",
+                fixture.build.freeze_ok ? "ok" : "fail",
+                fixture.build.model ? "present" : "missing",
+                diag_has_errors() ? "yes" : "no",
+                effective_input_path ? effective_input_path : "<null>");
         arena_destroy(codegen_arena);
         test_semantic_pipeline_fixture_destroy(&fixture);
         return false;
@@ -290,6 +297,9 @@ static bool codegen_render_or_write_script(const char *script,
             .backend = config ? config->backend : NOB_CODEGEN_BACKEND_AUTO,
         };
         if (!codegen_fill_host_tool_paths(codegen_arena, &opts)) {
+            nob_log(NOB_ERROR,
+                    "codegen test support: failed to resolve host tool paths for %s",
+                    effective_input_path ? effective_input_path : "<null>");
             arena_destroy(codegen_arena);
             test_semantic_pipeline_fixture_destroy(&fixture);
             return false;
@@ -297,6 +307,15 @@ static bool codegen_render_or_write_script(const char *script,
         ok = write_file
             ? nob_codegen_write_file(fixture.build.model, codegen_arena, &opts)
             : nob_codegen_render(fixture.build.model, codegen_arena, &opts, out);
+        if (!ok) {
+            nob_log(NOB_ERROR,
+                    "codegen test support: %s failed for input=%s output=%s source_dir=%s binary_dir=%s",
+                    write_file ? "write" : "render",
+                    effective_input_path ? effective_input_path : "<null>",
+                    effective_output_path ? effective_output_path : "<null>",
+                    effective_source_dir ? effective_source_dir : "<null>",
+                    effective_binary_dir ? effective_binary_dir : "<null>");
+        }
     }
 
     arena_destroy(codegen_arena);
@@ -402,7 +421,14 @@ static bool codegen_compile_generated_nob_with_flags(const char *generated_path,
                                                      bool warnings_as_errors) {
     Nob_Cmd cmd = {0};
     bool ok = false;
-    if (s_codegen_repo_root[0] == '\0' || !generated_path || !output_path) return false;
+    if (s_codegen_repo_root[0] == '\0' || !generated_path || !output_path) {
+        nob_log(NOB_ERROR,
+                "codegen test support: cannot compile generated nob repo_root=%s generated=%s output=%s",
+                s_codegen_repo_root[0] == '\0' ? "<unset>" : s_codegen_repo_root,
+                generated_path ? generated_path : "<null>",
+                output_path ? output_path : "<null>");
+        return false;
+    }
     nob_cmd_append(&cmd, "cc");
     nob_cmd_append(&cmd,
                    "-D_GNU_SOURCE",
@@ -431,8 +457,15 @@ bool codegen_write_text_file(const char *path, const char *text) {
     const char *dir = NULL;
     if (!path || !text) return false;
     dir = nob_temp_dir_name(path);
-    if (dir && strcmp(dir, ".") != 0 && !codegen_mkdirs(dir)) return false;
-    return nob_write_entire_file(path, text, strlen(text));
+    if (dir && strcmp(dir, ".") != 0 && !codegen_mkdirs(dir)) {
+        nob_log(NOB_ERROR, "codegen test support: failed to create input directory %s", dir);
+        return false;
+    }
+    if (!nob_write_entire_file(path, text, strlen(text))) {
+        nob_log(NOB_ERROR, "codegen test support: failed to write input script %s", path);
+        return false;
+    }
+    return true;
 }
 
 bool codegen_run_binary_in_dir(const char *dir,

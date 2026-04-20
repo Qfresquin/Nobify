@@ -545,6 +545,7 @@ typedef struct {
     size_t next_replay_action_id;
     size_t next_export_id;
     size_t next_cpack_package_id;
+    Event_Replay_Phase replay_phase_floor;
 } Eval_File_State;
 
 typedef struct {
@@ -961,6 +962,19 @@ static inline Eval_File_State *eval_file_slice(EvalExecContext *ctx) {
 
 static inline const Eval_File_State *eval_file_slice_const(const EvalExecContext *ctx) {
     return ctx ? &ctx->file_state : NULL;
+}
+
+static inline Event_Replay_Phase eval_replay_phase_for_filesystem_effect(EvalExecContext *ctx,
+                                                                         Event_Replay_Phase phase) {
+    const Eval_File_State *state = eval_file_slice_const(ctx);
+    if (!state || phase != EVENT_REPLAY_PHASE_CONFIGURE) return phase;
+    return state->replay_phase_floor == EVENT_REPLAY_PHASE_TEST ? EVENT_REPLAY_PHASE_TEST : phase;
+}
+
+static inline void eval_promote_replay_phase_floor(EvalExecContext *ctx, Event_Replay_Phase phase) {
+    Eval_File_State *state = eval_file_slice(ctx);
+    if (!state) return;
+    if (phase == EVENT_REPLAY_PHASE_TEST) state->replay_phase_floor = EVENT_REPLAY_PHASE_TEST;
 }
 
 static inline Eval_Process_State *eval_process_slice(EvalExecContext *ctx) {

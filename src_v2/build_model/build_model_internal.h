@@ -386,6 +386,7 @@ struct Build_Model {
     Arena *arena;
     bool testing_enabled;
     BM_Project_Record project;
+    String_View *known_configurations;
     BM_Global_Property_State global_properties;
     BM_Directory_Record *directories;
     BM_Directory_Id root_directory_id;

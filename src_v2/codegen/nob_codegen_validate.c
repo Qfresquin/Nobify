@@ -226,16 +226,20 @@ bool cg_validate_model_for_backend(CG_Context *ctx) {
                   opcode == BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE));
         } else if (phase == BM_REPLAY_PHASE_TEST) {
             supported =
-                kind == BM_REPLAY_ACTION_TEST_DRIVER &&
-                (opcode == BM_REPLAY_OPCODE_NONE ||
-                 opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY ||
-                 opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL ||
-                 opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF ||
-                 opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF ||
-                 opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST ||
-                 opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP ||
-                 opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL ||
-                 opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL);
+                (kind == BM_REPLAY_ACTION_TEST_DRIVER &&
+                 (opcode == BM_REPLAY_OPCODE_NONE ||
+                  opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY ||
+                  opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL ||
+                  opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF ||
+                  opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF ||
+                  opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST ||
+                  opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP ||
+                  opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL ||
+                  opcode == BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL)) ||
+                (kind == BM_REPLAY_ACTION_FILESYSTEM &&
+                 (opcode == BM_REPLAY_OPCODE_FS_MKDIR ||
+                  opcode == BM_REPLAY_OPCODE_FS_WRITE_TEXT ||
+                  opcode == BM_REPLAY_OPCODE_FS_APPEND_TEXT));
         }
         if (!supported) {
             nob_log(NOB_ERROR,

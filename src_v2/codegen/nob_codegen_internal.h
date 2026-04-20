@@ -176,6 +176,11 @@ const CG_Target_Info *cg_target_info(const CG_Context *ctx, BM_Target_Id id);
 const CG_Build_Step_Info *cg_build_step_info(const CG_Context *ctx, BM_Build_Step_Id id);
 
 bool cg_sb_append_c_string(Nob_String_Builder *sb, String_View sv);
+bool cg_absolute_from_cwd(CG_Context *ctx, String_View path, String_View *out);
+bool cg_relative_path_to_arena(Arena *scratch,
+                               String_View from_dir_abs,
+                               String_View to_path_abs,
+                               String_View *out);
 bool cg_rebase_path_from_cwd(CG_Context *ctx, String_View in, String_View *out);
 bool cg_rebase_path_from_generation_cwd(CG_Context *ctx, String_View in, String_View *out);
 bool cg_emit_cmd_append_sv(Nob_String_Builder *out, const char *cmd_var, String_View arg);

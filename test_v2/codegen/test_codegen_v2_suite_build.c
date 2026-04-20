@@ -1252,6 +1252,114 @@ TEST(codegen_ctest_local_dashboard_replay_stages_testing_tree) {
     TEST_PASS();
 }
 
+TEST(codegen_ctest_external_project_same_build_dir_replays_locally) {
+    Arena *arena = arena_create(128 * 1024);
+    String_View tag_file = {0};
+    String_View memcheck_args = {0};
+    size_t tag_len = 0;
+    char tag_dir[_TINYDIR_PATH_MAX] = {0};
+    const char *test_argv[] = {"test"};
+    const char *script =
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "set(CTEST_SOURCE_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}/project_src\")\n"
+        "set(CTEST_BINARY_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}\")\n"
+        "file(MAKE_DIRECTORY \"${CTEST_SOURCE_DIRECTORY}/memcheck_work\")\n"
+        "set(COVERAGE_COMMAND \"/bin/sh;${CTEST_SOURCE_DIRECTORY}/tools/coverage.sh\")\n"
+        "set(CTEST_MEMORYCHECK_COMMAND \"${CTEST_SOURCE_DIRECTORY}/tools/memcheck.sh\")\n"
+        "set(CTEST_MEMORYCHECK_TYPE Valgrind)\n"
+        "ctest_empty_binary_directory(\"${CTEST_BINARY_DIRECTORY}\")\n"
+        "ctest_start(Experimental \"${CTEST_SOURCE_DIRECTORY}\" \"${CTEST_BINARY_DIRECTORY}\" QUIET)\n"
+        "ctest_configure(QUIET)\n"
+        "ctest_build(QUIET)\n"
+        "ctest_test(QUIET)\n"
+        "ctest_coverage(LABELS core ui APPEND QUIET)\n"
+        "ctest_memcheck(APPEND QUIET)\n";
+    Codegen_Test_Config config = {
+        .input_path = "CMakeLists.txt",
+        .output_path = "ctest_same_build_nob.c",
+        .source_dir = "ctest_same_build_src",
+        .binary_dir = "ctest_same_build_build",
+    };
+
+    ASSERT(arena != NULL);
+    if (!codegen_host_cmake_available()) {
+        arena_destroy(arena);
+        TEST_SKIP("requires host cmake for local ctest replay");
+    }
+
+    ASSERT(codegen_write_text_file(
+        "ctest_same_build_src/project_src/CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(C3ExternalSameBuild C)\n"
+        "enable_testing()\n"
+        "add_executable(ext_helper src/main.c)\n"
+        "add_test(NAME pass\n"
+        "  COMMAND /bin/sh \"${CMAKE_CURRENT_SOURCE_DIR}/tools/test_runner.sh\" pass\n"
+        "  WORKING_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}/memcheck_work\")\n"
+        "set_source_files_properties(\"${CMAKE_CURRENT_SOURCE_DIR}/src/main.c\" PROPERTIES LABELS \"core;ui\")\n"
+        "set_source_files_properties(\"${CMAKE_CURRENT_SOURCE_DIR}/src/net.c\" PROPERTIES LABELS infra)\n"));
+    ASSERT(codegen_write_text_file(
+        "ctest_same_build_src/project_src/src/main.c",
+        "int main(void) { return 0; }\n"));
+    ASSERT(codegen_write_text_file(
+        "ctest_same_build_src/project_src/src/net.c",
+        "int net(void) { return 0; }\n"));
+    ASSERT(codegen_write_text_file(
+        "ctest_same_build_src/project_src/tools/coverage.sh",
+        "#!/bin/sh\n"
+        "pwd > coverage.pwd\n"
+        "printf 'coverage ok\\n'\n"
+        "exit 0\n"));
+    ASSERT(codegen_write_text_file(
+        "ctest_same_build_src/project_src/tools/test_runner.sh",
+        "#!/bin/sh\n"
+        "mode=\"$1\"\n"
+        "pwd > \"test-${mode}.pwd\"\n"
+        "printf '%s\\n' \"$mode\"\n"
+        "exit 0\n"));
+    ASSERT(codegen_write_text_file(
+        "ctest_same_build_src/project_src/tools/memcheck.sh",
+        "#!/bin/sh\n"
+        "printf '%s\\n' \"$*\" >> memcheck-args.log\n"
+        "pwd >> memcheck-cwd.log\n"
+        "while [ \"$#\" -gt 0 ] && [ \"$1\" != \"--\" ]; do shift; done\n"
+        "if [ \"$#\" -gt 0 ]; then shift; fi\n"
+        "\"$@\"\n"
+        "exit $?\n"));
+    ASSERT(codegen_test_make_executable("ctest_same_build_src/project_src/tools/coverage.sh"));
+    ASSERT(codegen_test_make_executable("ctest_same_build_src/project_src/tools/test_runner.sh"));
+    ASSERT(codegen_test_make_executable("ctest_same_build_src/project_src/tools/memcheck.sh"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("ctest_same_build_nob.c", "ctest_same_build_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./ctest_same_build_nob_gen", test_argv, NOB_ARRAY_LEN(test_argv)));
+    ASSERT(test_ws_host_path_exists("ctest_same_build_build/ext_helper"));
+    ASSERT(test_ws_host_path_exists("ctest_same_build_build/coverage.pwd"));
+    ASSERT(test_ws_host_path_exists("ctest_same_build_build/Testing/TAG"));
+    ASSERT(test_ws_host_path_exists("ctest_same_build_src/project_src/memcheck_work/test-pass.pwd"));
+    ASSERT(test_ws_host_path_exists("ctest_same_build_src/project_src/memcheck_work/memcheck-args.log"));
+
+    ASSERT(codegen_load_text_file_to_arena(arena,
+                                           "ctest_same_build_build/Testing/TAG",
+                                           &tag_file));
+    while (tag_len < tag_file.count && tag_file.data[tag_len] != '\n' && tag_file.data[tag_len] != '\r') tag_len++;
+    ASSERT(tag_len > 0);
+    ASSERT(snprintf(tag_dir,
+                    sizeof(tag_dir),
+                    "ctest_same_build_build/Testing/%.*s",
+                    (int)tag_len,
+                    tag_file.data) < (int)sizeof(tag_dir));
+    ASSERT(test_ws_host_path_exists(tag_dir));
+
+    ASSERT(codegen_load_text_file_to_arena(arena,
+                                           "ctest_same_build_src/project_src/memcheck_work/memcheck-args.log",
+                                           &memcheck_args));
+    ASSERT(codegen_sv_contains(memcheck_args, "test_runner.sh"));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(codegen_ctest_coverage_and_memcheck_local_replay_stage_reports) {
     Arena *arena = arena_create(128 * 1024);
     String_View tag_file = {0};
@@ -2776,6 +2884,7 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_test_phase_auto_builds_registered_targets_and_honors_config_filters(passed, failed, skipped);
     test_codegen_fetchcontent_local_materialization_replays_from_clean_workspace(passed, failed, skipped);
     test_codegen_ctest_local_dashboard_replay_stages_testing_tree(passed, failed, skipped);
+    test_codegen_ctest_external_project_same_build_dir_replays_locally(passed, failed, skipped);
     test_codegen_ctest_coverage_and_memcheck_local_replay_stage_reports(passed, failed, skipped);
     test_codegen_ctest_coverage_and_memcheck_relative_paths_replay_stage_reports(passed, failed, skipped);
     test_codegen_install_export_and_package_auto_configure_from_clean_workspace(passed, failed, skipped);

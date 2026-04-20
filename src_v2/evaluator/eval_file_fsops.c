@@ -1,4 +1,5 @@
 #include "eval_file_internal.h"
+#include "eval_cmake_path_internal.h"
 #include "eval_expr.h"
 #include "sv_utils.h"
 #include "arena_dyn.h"
@@ -41,7 +42,7 @@ static bool file_fsops_emit_append_replay(EvalExecContext *ctx,
                                   origin,
                                   EVENT_REPLAY_ACTION_FILESYSTEM,
                                   EVENT_REPLAY_OPCODE_FS_APPEND_TEXT,
-                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_replay_phase_for_filesystem_effect(ctx, EVENT_REPLAY_PHASE_CONFIGURE),
                                   eval_current_binary_dir(ctx),
                                   &action_key) ||
         !eval_emit_replay_action_add_output(ctx, origin, action_key, path) ||
@@ -364,61 +365,7 @@ static bool file_emit_result_code(EvalExecContext *ctx, String_View out_var, int
 
 static String_View file_relativize_temp(EvalExecContext *ctx, String_View full, String_View base) {
     if (!ctx) return nob_sv_from_cstr("");
-    full = eval_file_cmk_path_normalize_temp(ctx, full);
-    base = eval_file_cmk_path_normalize_temp(ctx, base);
-
-    char *f = eval_sv_to_cstr_temp(ctx, full);
-    char *b = eval_sv_to_cstr_temp(ctx, base);
-    EVAL_OOM_RETURN_IF_NULL(ctx, f, nob_sv_from_cstr(""));
-    EVAL_OOM_RETURN_IF_NULL(ctx, b, nob_sv_from_cstr(""));
-
-    bool ci = false;
-#if defined(_WIN32)
-    ci = true;
-#endif
-
-    size_t i = 0;
-    size_t shared = 0;
-    while (f[i] && b[i]) {
-        char fc = f[i];
-        char bc = b[i];
-        if (ci) {
-            fc = (char)tolower((unsigned char)fc);
-            bc = (char)tolower((unsigned char)bc);
-        }
-        if (fc != bc) break;
-        if (fc == '/') shared = i + 1;
-        i++;
-    }
-    if (f[i] == '\0' && b[i] == '\0') return nob_sv_from_cstr(".");
-
-    size_t ups = 0;
-    for (size_t j = shared; b[j] != '\0'; j++) {
-        if (b[j] == '/') ups++;
-    }
-    if (shared < strlen(b)) ups++;
-
-    size_t remain = strlen(f + shared);
-    size_t cap = (ups * 3) + remain + 1;
-    char *out = (char*)arena_alloc(eval_temp_arena(ctx), cap);
-    EVAL_OOM_RETURN_IF_NULL(ctx, out, nob_sv_from_cstr(""));
-
-    size_t off = 0;
-    for (size_t k = 0; k < ups; k++) {
-        out[off++] = '.';
-        out[off++] = '.';
-        out[off++] = '/';
-    }
-    if (remain > 0) {
-        memcpy(out + off, f + shared, remain);
-        off += remain;
-    } else if (off > 0) {
-        off--;
-    } else {
-        out[off++] = '.';
-    }
-    out[off] = '\0';
-    return nob_sv_from_cstr(out);
+    return cmk_path_relativize_temp(ctx, full, base);
 }
 
 static String_View file_convert_path_list_temp(EvalExecContext *ctx, String_View in, bool to_cmake) {

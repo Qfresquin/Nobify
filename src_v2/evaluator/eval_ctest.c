@@ -441,6 +441,11 @@ static String_View ctest_binary_root(EvalExecContext *ctx);
 static String_View ctest_source_root(EvalExecContext *ctx);
 static String_View ctest_get_session_field(EvalExecContext *ctx, const char *field_name);
 static bool ctest_append_command_tokens_temp(EvalExecContext *ctx, String_View raw, SV_List *out_argv);
+static String_View ctest_default_source_setting(EvalExecContext *ctx);
+static String_View ctest_default_binary_setting(EvalExecContext *ctx);
+static bool ctest_normalize_command_tokens_temp(EvalExecContext *ctx,
+                                                String_View base_dir,
+                                                SV_List *argv);
 static bool ctest_path_exists(EvalExecContext *ctx, String_View path);
 static bool ctest_resolve_files(EvalExecContext *ctx,
                                 const Node *node,
@@ -478,6 +483,8 @@ static bool ctest_set_field(EvalExecContext *ctx,
     return eval_var_set_current(ctx, nob_sv_from_cstr(buf), value);
 }
 
+static bool ctest_append_command_tokens_temp(EvalExecContext *ctx, String_View raw, SV_List *out_argv);
+
 static bool ctest_paths_match_normalized(EvalExecContext *ctx, String_View lhs, String_View rhs) {
     if (!ctx) return false;
     lhs = eval_sv_path_normalize_temp(ctx, lhs);
@@ -488,13 +495,192 @@ static bool ctest_paths_match_normalized(EvalExecContext *ctx, String_View lhs, 
 }
 
 static bool __attribute__((unused)) ctest_path_is_self_source_dir(EvalExecContext *ctx, String_View path) {
+    String_View self_source = {0};
     if (!ctx) return false;
-    return ctest_paths_match_normalized(ctx, path, ctest_source_root(ctx));
+    self_source = ctest_default_source_setting(ctx);
+    if (eval_should_stop(ctx)) return false;
+    return ctest_paths_match_normalized(ctx, path, self_source);
 }
 
 static bool __attribute__((unused)) ctest_path_is_self_binary_dir(EvalExecContext *ctx, String_View path) {
+    String_View self_binary = {0};
     if (!ctx) return false;
-    return ctest_paths_match_normalized(ctx, path, ctest_binary_root(ctx));
+    self_binary = ctest_default_binary_setting(ctx);
+    if (eval_should_stop(ctx)) return false;
+    return ctest_paths_match_normalized(ctx, path, self_binary);
+}
+
+static bool __attribute__((unused)) ctest_session_targets_self_project(EvalExecContext *ctx,
+                                                                       String_View source_dir,
+                                                                       String_View build_dir) {
+    if (!ctx) return false;
+    return ctest_path_is_self_source_dir(ctx, source_dir) &&
+           ctest_path_is_self_binary_dir(ctx, build_dir);
+}
+
+static bool ctest_sb_append_bracket_literal(Nob_String_Builder *sb, String_View value) {
+    if (!sb) return false;
+    nob_sb_append_cstr(sb, "[==[");
+    nob_sb_append_buf(sb, value.data ? value.data : "", value.count);
+    nob_sb_append_cstr(sb, "]==]");
+    return true;
+}
+
+static bool ctest_sb_append_set_bracket_literal(Nob_String_Builder *sb,
+                                                const char *name,
+                                                String_View value) {
+    if (!sb || !name) return false;
+    nob_sb_append_cstr(sb, "set(");
+    nob_sb_append_cstr(sb, name);
+    nob_sb_append_cstr(sb, " ");
+    if (!ctest_sb_append_bracket_literal(sb, value)) return false;
+    nob_sb_append_cstr(sb, ")\n");
+    return true;
+}
+
+static bool ctest_append_driver_command_tokens(EvalExecContext *ctx, SV_List *out_argv) {
+    String_View command = {0};
+    if (!ctx || !out_argv) return false;
+    command = eval_var_get_visible(ctx, nob_sv_from_cstr("CTEST_COMMAND"));
+    if (command.count == 0) command = nob_sv_from_cstr("ctest");
+    return ctest_append_command_tokens_temp(ctx, command, out_argv) && arena_arr_len(*out_argv) > 0;
+}
+
+static bool ctest_run_driver_command(EvalExecContext *ctx,
+                                     String_View working_directory,
+                                     const SV_List *argv,
+                                     Eval_Process_Run_Result *out_proc) {
+    Eval_Process_Run_Request req = {0};
+    if (!ctx || !argv || arena_arr_len(*argv) == 0 || !out_proc) return false;
+    memset(out_proc, 0, sizeof(*out_proc));
+    req.argv = *argv;
+    req.argc = arena_arr_len(*argv);
+    req.working_directory = working_directory;
+    return eval_process_run_capture(ctx, &req, out_proc);
+}
+
+static bool ctest_execute_external_test_side_effects(EvalExecContext *ctx,
+                                                     const Ctest_Test_Request *req,
+                                                     Eval_Process_Run_Result *out_proc) {
+    SV_List argv = {0};
+    if (!ctx || !req || !out_proc) return false;
+    if (!ctest_append_driver_command_tokens(ctx, &argv) ||
+        !svu_list_push_temp(ctx, &argv, nob_sv_from_cstr("--test-dir")) ||
+        !svu_list_push_temp(ctx, &argv, req->core.resolved_build)) {
+        return false;
+    }
+    if (req->output_junit.count > 0 &&
+        (!svu_list_push_temp(ctx, &argv, nob_sv_from_cstr("--output-junit")) ||
+         !svu_list_push_temp(ctx, &argv, req->output_junit))) {
+        return false;
+    }
+    if (req->schedule_random &&
+        !svu_list_push_temp(ctx, &argv, nob_sv_from_cstr("--schedule-random"))) {
+        return false;
+    }
+    return ctest_run_driver_command(ctx, req->core.resolved_build, &argv, out_proc);
+}
+
+static bool ctest_execute_external_memcheck_side_effects(EvalExecContext *ctx,
+                                                         const Ctest_Memcheck_Request *req,
+                                                         Eval_Process_Run_Result *out_proc) {
+    Nob_String_Builder script = {0};
+    SV_List argv = {0};
+    SV_List prefix_argv = {0};
+    String_View prefix_options = {0};
+    String_View script_path = {0};
+    if (!ctx || !req || !out_proc) return false;
+
+    if (!ctest_append_command_tokens_temp(ctx, req->backend_command, &prefix_argv) ||
+        !ctest_append_command_tokens_temp(ctx, req->backend_options, &prefix_argv) ||
+        !ctest_append_command_tokens_temp(ctx, req->backend_sanitizer_options, &prefix_argv)) {
+        return false;
+    }
+    if (!ctest_normalize_command_tokens_temp(ctx, req->core.resolved_build, &prefix_argv)) return false;
+    if (arena_arr_len(prefix_argv) == 0) return false;
+    if (arena_arr_len(prefix_argv) > 1) {
+        prefix_options = eval_sv_join_semi_temp(ctx, prefix_argv + 1, arena_arr_len(prefix_argv) - 1);
+        if (eval_should_stop(ctx)) return false;
+    }
+
+    script_path = eval_sv_path_join(eval_temp_arena(ctx),
+                                    req->core.resolved_build,
+                                    nob_sv_from_cstr(".nob/eval-ctest-external-memcheck.cmake"));
+    if (eval_should_stop(ctx) || script_path.count == 0 ||
+        !eval_mkdirs_for_parent(ctx, script_path)) {
+        nob_sb_free(script);
+        return false;
+    }
+
+    nob_sb_append_cstr(&script, "cmake_minimum_required(VERSION 3.28)\n");
+    if (!ctest_sb_append_set_bracket_literal(&script,
+                                             "CTEST_SOURCE_DIRECTORY",
+                                             ctest_get_session_field(ctx, "SOURCE")) ||
+        !ctest_sb_append_set_bracket_literal(&script,
+                                             "CTEST_BINARY_DIRECTORY",
+                                             req->core.resolved_build) ||
+        !ctest_sb_append_set_bracket_literal(&script,
+                                             "CTEST_MEMORYCHECK_COMMAND",
+                                             prefix_argv[0]) ||
+        !ctest_sb_append_set_bracket_literal(&script,
+                                             "CTEST_MEMORYCHECK_TYPE",
+                                             req->backend_type) ||
+        !ctest_sb_append_set_bracket_literal(&script,
+                                             "CTEST_MEMORYCHECK_COMMAND_OPTIONS",
+                                             prefix_options) ||
+        !ctest_sb_append_set_bracket_literal(&script,
+                                             "CTEST_MEMORYCHECK_SANITIZER_OPTIONS",
+                                             nob_sv_from_cstr("")) ||
+        !ctest_sb_append_set_bracket_literal(&script,
+                                             "CTEST_MEMORYCHECK_SUPPRESSIONS_FILE",
+                                             req->suppression_file) ||
+        !ctest_sb_append_set_bracket_literal(&script,
+                                             "CTEST_RESOURCE_SPEC_FILE",
+                                             req->resource_spec_file) ||
+        !ctest_sb_append_set_bracket_literal(&script,
+                                             "CTEST_TEST_LOAD",
+                                             req->test_load)) {
+        nob_sb_free(script);
+        return false;
+    }
+    nob_sb_append_cstr(&script,
+                       "if(EXISTS \"${CTEST_BINARY_DIRECTORY}/Testing/TAG\")\n"
+                       "  ctest_start(APPEND QUIET)\n"
+                       "else()\n"
+                       "  ctest_start(Experimental \"${CTEST_SOURCE_DIRECTORY}\" "
+                       "\"${CTEST_BINARY_DIRECTORY}\" QUIET)\n"
+                       "endif()\n");
+    nob_sb_append_cstr(&script, "ctest_memcheck(BUILD ");
+    if (!ctest_sb_append_bracket_literal(&script, req->core.resolved_build)) {
+        nob_sb_free(script);
+        return false;
+    }
+    nob_sb_append_cstr(&script, " APPEND QUIET");
+    if (req->output_junit.count > 0) {
+        nob_sb_append_cstr(&script, " OUTPUT_JUNIT ");
+        if (!ctest_sb_append_bracket_literal(&script, req->output_junit)) {
+            nob_sb_free(script);
+            return false;
+        }
+    }
+    nob_sb_append_cstr(&script, ")\n");
+
+    if (!eval_write_text_file(ctx,
+                              script_path,
+                              nob_sv_from_parts(script.items ? script.items : "", script.count),
+                              false)) {
+        nob_sb_free(script);
+        return false;
+    }
+    nob_sb_free(script);
+
+    if (!ctest_append_driver_command_tokens(ctx, &argv) ||
+        !svu_list_push_temp(ctx, &argv, nob_sv_from_cstr("-S")) ||
+        !svu_list_push_temp(ctx, &argv, script_path) ||
+        !svu_list_push_temp(ctx, &argv, nob_sv_from_cstr("-VV"))) {
+        return false;
+    }
+    return ctest_run_driver_command(ctx, req->core.resolved_build, &argv, out_proc);
 }
 
 static bool ctest_begin_test_driver_action(EvalExecContext *ctx,
@@ -504,6 +690,7 @@ static bool ctest_begin_test_driver_action(EvalExecContext *ctx,
                                            String_View *out_action_key) {
     if (out_action_key) *out_action_key = nob_sv_from_cstr("");
     if (!ctx || !out_action_key) return false;
+    eval_promote_replay_phase_floor(ctx, EVENT_REPLAY_PHASE_TEST);
     return eval_begin_replay_action(ctx,
                                     origin,
                                     EVENT_REPLAY_ACTION_TEST_DRIVER,
@@ -676,6 +863,7 @@ static bool ctest_emit_replay_coverage_local(EvalExecContext *ctx,
     for (size_t i = 1; i < arena_arr_len(command_argv); ++i) {
         if (!svu_list_push_temp(ctx, &replay_argv, command_argv[i])) return false;
     }
+    if (!ctest_normalize_command_tokens_temp(ctx, req->build_dir, &replay_argv)) return false;
 
     if (!ctest_begin_test_driver_action(ctx,
                                         origin,
@@ -737,6 +925,9 @@ static bool ctest_emit_replay_memcheck_local(EvalExecContext *ctx,
                                                                   req->suppression_file))) {
             return false;
         }
+    }
+    if (!ctest_normalize_command_tokens_temp(ctx, req->core.resolved_build, &backend_prefix_argv)) {
+        return false;
     }
 
     track = ctest_get_session_field(ctx, "TRACK");
@@ -3838,6 +4029,81 @@ static bool ctest_append_command_tokens_temp(EvalExecContext *ctx, String_View r
     return true;
 }
 
+static bool ctest_token_looks_like_path(String_View token) {
+    if (token.count == 0 || eval_sv_is_abs_path(token)) return false;
+    if (token.data[0] == '.') return true;
+    for (size_t i = 0; i < token.count; ++i) {
+        if (token.data[i] == '/' || token.data[i] == '\\') return true;
+    }
+    return false;
+}
+
+static String_View ctest_token_basename(String_View token) {
+    size_t start = 0;
+    for (size_t i = 0; i < token.count; ++i) {
+        if (token.data[i] == '/' || token.data[i] == '\\') start = i + 1;
+    }
+    return nob_sv_from_parts(token.data + start, token.count - start);
+}
+
+static bool ctest_command_uses_script_launcher(String_View token) {
+    String_View base = ctest_token_basename(token);
+    return eval_sv_eq_ci_lit(base, "sh") ||
+           eval_sv_eq_ci_lit(base, "bash") ||
+           eval_sv_eq_ci_lit(base, "dash") ||
+           eval_sv_eq_ci_lit(base, "zsh") ||
+           eval_sv_eq_ci_lit(base, "python") ||
+           eval_sv_eq_ci_lit(base, "python3") ||
+           eval_sv_eq_ci_lit(base, "python.exe") ||
+           eval_sv_eq_ci_lit(base, "perl") ||
+           eval_sv_eq_ci_lit(base, "ruby") ||
+           eval_sv_eq_ci_lit(base, "node") ||
+           eval_sv_eq_ci_lit(base, "cmd") ||
+           eval_sv_eq_ci_lit(base, "cmd.exe") ||
+           eval_sv_eq_ci_lit(base, "powershell") ||
+           eval_sv_eq_ci_lit(base, "pwsh");
+}
+
+static bool ctest_resolve_command_token_from_base(EvalExecContext *ctx,
+                                                  String_View base_dir,
+                                                  String_View token,
+                                                  String_View *out_token) {
+    String_View candidate = {0};
+    if (!ctx || !out_token) return false;
+    *out_token = token;
+    if (!ctest_token_looks_like_path(token)) return true;
+
+    candidate = eval_sv_path_normalize_temp(ctx, token);
+    if (eval_should_stop(ctx)) return false;
+    if (ctest_path_exists(ctx, candidate)) {
+        *out_token = ctest_absolutize_session_dir(ctx, candidate);
+        if (eval_should_stop(ctx)) return false;
+        return true;
+    }
+
+    if (base_dir.count == 0) return true;
+
+    candidate = eval_sv_path_join(eval_temp_arena(ctx), base_dir, token);
+    candidate = eval_sv_path_normalize_temp(ctx, candidate);
+    if (eval_should_stop(ctx)) return false;
+    if (!ctest_path_exists(ctx, candidate)) return true;
+
+    *out_token = ctest_absolutize_session_dir(ctx, candidate);
+    if (eval_should_stop(ctx)) return false;
+    return true;
+}
+
+static bool ctest_normalize_command_tokens_temp(EvalExecContext *ctx,
+                                                String_View base_dir,
+                                                SV_List *argv) {
+    if (!ctx || !argv || arena_arr_len(*argv) == 0) return false;
+    if (!ctest_resolve_command_token_from_base(ctx, base_dir, (*argv)[0], &(*argv)[0])) return false;
+    if (arena_arr_len(*argv) > 1 && ctest_command_uses_script_launcher((*argv)[0])) {
+        if (!ctest_resolve_command_token_from_base(ctx, base_dir, (*argv)[1], &(*argv)[1])) return false;
+    }
+    return true;
+}
+
 static bool ctest_path_is_within(String_View path, String_View root) {
     if (root.count == 0) return false;
     if (path.count < root.count) return false;
@@ -4198,6 +4464,8 @@ static bool ctest_memcheck_fail(EvalExecContext *ctx,
 static bool ctest_execute_memcheck_request(EvalExecContext *ctx,
                                            const Node *node,
                                            const Ctest_Memcheck_Request *req) {
+    Ctest_Test_Plan_Entry_List plan = NULL;
+    bool has_local_plan = false;
     if (!ctx || !node || !req) return false;
 
     if (req->start.count > 0 &&
@@ -4283,9 +4551,30 @@ static bool ctest_execute_memcheck_request(EvalExecContext *ctx,
         return false;
     }
 
-    Ctest_Test_Plan_Entry_List plan = NULL;
     if (!ctest_collect_test_plan_from_stream(ctx, &plan)) return false;
     if (eval_sv_eq_ci_lit(req->schedule_random, "ON")) ctest_test_sort_plan_randomized(plan);
+    has_local_plan = arena_arr_len(plan) > 0;
+
+    /*
+     * Prefer the modeled local test plan whenever we have one. If the stream
+     * does not carry any replayable tests for this session, stage side effects
+     * through the host ctest path even when the session directories point
+     * inside the current project tree.
+     */
+    if (!has_local_plan) {
+        Eval_Process_Run_Result proc = {0};
+        if (!ctest_execute_external_memcheck_side_effects(ctx, req, &proc)) return false;
+        if (!proc.started || proc.timed_out || proc.exit_code != 0) {
+            String_View detail = proc.stderr_text.count > 0 ? proc.stderr_text
+                                : proc.result_text.count > 0 ? proc.result_text
+                                                             : nob_sv_from_cstr("external ctest memcheck invocation failed");
+            return ctest_memcheck_fail(ctx,
+                                       node,
+                                       req,
+                                       nob_sv_from_cstr("ctest_memcheck() failed to run external ctest for staged side effects"),
+                                       detail);
+        }
+    }
 
     size_t start_index = 1;
     size_t end_index = arena_arr_len(plan);
@@ -4369,6 +4658,7 @@ static bool ctest_execute_memcheck_request(EvalExecContext *ctx,
                     return false;
                 }
             }
+            if (!ctest_normalize_command_tokens_temp(ctx, req->core.resolved_build, &argv)) return false;
             if (!svu_list_push_temp(ctx, &argv, nob_sv_from_cstr("--"))) return false;
             if (!ctest_append_command_tokens_temp(ctx, plan[i].command, &argv)) return false;
             if (arena_arr_len(argv) == 0) {
@@ -5071,8 +5361,25 @@ static bool ctest_execute_test_request(EvalExecContext *ctx,
     }
 
     Ctest_Test_Plan_Entry_List plan = NULL;
+    bool has_local_plan = false;
     if (!ctest_collect_test_plan_from_stream(ctx, &plan)) return false;
     if (req->schedule_random) ctest_test_sort_plan_randomized(plan);
+    has_local_plan = arena_arr_len(plan) > 0;
+
+    if (!has_local_plan) {
+        Eval_Process_Run_Result proc = {0};
+        if (!ctest_execute_external_test_side_effects(ctx, req, &proc)) return false;
+        if (!proc.started || proc.timed_out || proc.exit_code != 0) {
+            String_View detail = proc.stderr_text.count > 0 ? proc.stderr_text
+                                : proc.result_text.count > 0 ? proc.result_text
+                                                             : nob_sv_from_cstr("external ctest invocation failed");
+            return ctest_test_fail(ctx,
+                                   node,
+                                   req,
+                                   nob_sv_from_cstr("ctest_test() failed to run external ctest for staged side effects"),
+                                   detail);
+        }
+    }
 
     SV_List planned_names = {0};
     for (size_t i = 0; i < arena_arr_len(plan); i++) {
@@ -5702,6 +6009,7 @@ static bool ctest_execute_coverage_request(EvalExecContext *ctx,
     for (size_t i = 1; i < arena_arr_len(command_argv); i++) {
         if (!svu_list_push_temp(ctx, &argv, command_argv[i])) return false;
     }
+    if (!ctest_normalize_command_tokens_temp(ctx, req->build_dir, &argv)) return false;
 
     Eval_Process_Run_Request process_req = {
         .argv = argv,

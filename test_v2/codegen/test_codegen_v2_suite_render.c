@@ -1,5 +1,7 @@
 #include "test_codegen_v2_common.h"
 
+#include "build_model_internal.h"
+
 TEST(codegen_simple_executable_generates_compilable_nob) {
     Nob_String_Builder sb = {0};
     Codegen_Test_Config config = {
@@ -289,6 +291,63 @@ TEST(codegen_render_multi_config_mixed_language_and_imported_queries_stay_stable
     TEST_PASS();
 }
 
+TEST(codegen_render_imported_config_branches_do_not_depend_on_imported_raw_property_suffixes) {
+    Test_Semantic_Pipeline_Config pipeline_config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *codegen_arena = arena_create(512 * 1024);
+    Nob_String_Builder sb = {0};
+    Nob_Codegen_Options opts = {
+        .input_path = nob_sv_from_cstr("render_imported_src/CMakeLists.txt"),
+        .output_path = nob_sv_from_cstr("render_imported_nob.c"),
+        .source_root = nob_sv_from_cstr("render_imported_src"),
+        .binary_root = nob_sv_from_cstr("render_imported_build"),
+    };
+    Build_Model *mutable_model = NULL;
+    BM_Target_Id ext_id = BM_TARGET_ID_INVALID;
+
+    ASSERT(codegen_arena != NULL);
+    test_semantic_pipeline_config_init(&pipeline_config);
+    pipeline_config.current_file = "render_imported_src/CMakeLists.txt";
+    pipeline_config.source_dir = nob_sv_from_cstr("render_imported_src");
+    pipeline_config.binary_dir = nob_sv_from_cstr("render_imported_build");
+    pipeline_config.override_enable_export_host_effects = true;
+    pipeline_config.enable_export_host_effects = false;
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C CXX)\n"
+        "add_library(ext SHARED IMPORTED)\n"
+        "set_target_properties(ext PROPERTIES\n"
+        "  IMPORTED_LOCATION imports/libbase.so\n"
+        "  IMPORTED_LOCATION_DEBUG imports/libdebug.so\n"
+        "  IMPORTED_IMPLIB_DEBUG imports/libdebug_link.so\n"
+        "  MAP_IMPORTED_CONFIG_RELWITHDEBINFO Debug\n"
+        "  IMPORTED_LINK_INTERFACE_LANGUAGES_DEBUG \"CXX;C\")\n"
+        "add_executable(app main.c main.cpp)\n"
+        "target_link_libraries(app PRIVATE ext)\n",
+        &pipeline_config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    mutable_model = (Build_Model*)fixture.build.model;
+    ext_id = bm_query_target_by_name(fixture.build.model, nob_sv_from_cstr("ext"));
+    ASSERT(ext_id != BM_TARGET_ID_INVALID);
+    mutable_model->targets[ext_id].raw_properties = NULL;
+
+    ASSERT(nob_codegen_render(fixture.build.model, codegen_arena, &opts, &sb));
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items ? sb.items : "");
+    ASSERT(strstr(output, "RELWITHDEBINFO") != NULL);
+    ASSERT(strstr(output, "imports/libdebug_link.so") != NULL);
+    ASSERT(strstr(output, "config_matches(g_build_config") != NULL);
+
+    nob_sb_free(sb);
+    arena_destroy(codegen_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 void run_codegen_v2_render_tests(int *passed, int *failed, int *skipped) {
     test_codegen_simple_executable_generates_compilable_nob(passed, failed, skipped);
     test_codegen_static_interface_alias_usage_propagates_flags(passed, failed, skipped);
@@ -299,4 +358,5 @@ void run_codegen_v2_render_tests(int *passed, int *failed, int *skipped) {
     test_codegen_export_only_render_does_not_emit_install_only_helpers(passed, failed, skipped);
     test_codegen_generated_nob_compiles_cleanly_with_werror_for_representative_paths(passed, failed, skipped);
     test_codegen_render_multi_config_mixed_language_and_imported_queries_stay_stable(passed, failed, skipped);
+    test_codegen_render_imported_config_branches_do_not_depend_on_imported_raw_property_suffixes(passed, failed, skipped);
 }

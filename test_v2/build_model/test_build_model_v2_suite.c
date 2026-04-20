@@ -7,6 +7,9 @@
 #include "arena.h"
 #include "build_model_query.h"
 
+#include <ctype.h>
+#include <sys/stat.h>
+
 static bool build_model_mkdirs(const char *path) {
     char buf[_TINYDIR_PATH_MAX] = {0};
     size_t len = 0;
@@ -31,6 +34,10 @@ static bool build_model_write_text_file(const char *path, const char *text) {
     dir = nob_temp_dir_name(path);
     if (dir && strcmp(dir, ".") != 0 && !build_model_mkdirs(dir)) return false;
     return nob_write_entire_file(path, text, strlen(text));
+}
+
+static bool build_model_make_executable(const char *path) {
+    return path && chmod(path, 0755) == 0;
 }
 
 static bool build_model_sv_contains(String_View haystack, String_View needle) {
@@ -93,6 +100,25 @@ static bool build_model_string_span_contains(BM_String_Span span, const char *ne
     String_View needle_sv = nob_sv_from_cstr(needle ? needle : "");
     for (size_t i = 0; i < span.count; ++i) {
         if (nob_sv_eq(span.items[i], needle_sv)) return true;
+    }
+    return false;
+}
+
+static bool build_model_string_span_contains_ci(BM_String_Span span, const char *needle) {
+    String_View needle_sv = nob_sv_from_cstr(needle ? needle : "");
+    for (size_t i = 0; i < span.count; ++i) {
+        if (span.items[i].count != needle_sv.count) continue;
+        {
+            bool same = true;
+            for (size_t j = 0; j < needle_sv.count; ++j) {
+                if (tolower((unsigned char)span.items[i].data[j]) !=
+                    tolower((unsigned char)needle_sv.data[j])) {
+                    same = false;
+                    break;
+                }
+            }
+            if (same) return true;
+        }
     }
     return false;
 }
@@ -199,6 +225,27 @@ static size_t build_model_count_link_item_occurrences(BM_Link_Item_Span span, co
         if (nob_sv_eq(span.items[i].value, needle_sv)) count++;
     }
     return count;
+}
+
+static BM_Replay_Action_Id build_model_find_replay_action_by_output_and_content(const Build_Model *model,
+                                                                                BM_Replay_Opcode opcode,
+                                                                                const char *output_path,
+                                                                                const char *argv_substring) {
+    String_View output_sv = nob_sv_from_cstr(output_path ? output_path : "");
+    String_View argv_sv = nob_sv_from_cstr(argv_substring ? argv_substring : "");
+    size_t count = bm_query_replay_action_count(model);
+    for (size_t i = 0; i < count; ++i) {
+        BM_Replay_Action_Id id = (BM_Replay_Action_Id)i;
+        BM_String_Span outputs = {0};
+        BM_String_Span argv = {0};
+        if (bm_query_replay_action_opcode(model, id) != opcode) continue;
+        outputs = bm_query_replay_action_outputs(model, id);
+        argv = bm_query_replay_action_argv(model, id);
+        if (outputs.count == 0 || !build_model_sv_contains(outputs.items[0], output_sv)) continue;
+        if (argv.count == 0 || !build_model_sv_contains(argv.items[0], argv_sv)) continue;
+        return id;
+    }
+    return BM_REPLAY_ACTION_ID_INVALID;
 }
 
 TEST(build_model_builder_directory_scope_events) {
@@ -1919,6 +1966,119 @@ TEST(build_model_ctest_local_memcheck_relative_command_surface) {
     TEST_PASS();
 }
 
+TEST(build_model_ctest_external_project_query_preserves_post_memcheck_exists_surface) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_Replay_Action_Id test_flag_id = BM_REPLAY_ACTION_ID_INVALID;
+    BM_Replay_Action_Id memcheck_flag_id = BM_REPLAY_ACTION_ID_INVALID;
+    BM_String_Span test_flag_argv = {0};
+    BM_String_Span memcheck_flag_argv = {0};
+
+    ASSERT(build_model_write_text_file("ctest_query_surface/source/project_src/CMakeLists.txt",
+                                       "cmake_minimum_required(VERSION 3.28)\n"
+                                       "project(NobDiffCtestExtended NONE)\n"
+                                       "enable_testing()\n"
+                                       "add_test(NAME pass\n"
+                                       "  COMMAND /bin/sh \"${CMAKE_CURRENT_SOURCE_DIR}/tools/test_runner.sh\" pass\n"
+                                       "  WORKING_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}/memcheck_work\")\n"
+                                       "set_source_files_properties(\"${CMAKE_CURRENT_SOURCE_DIR}/src/main.c\" PROPERTIES LABELS \"core;ui\")\n"
+                                       "set_source_files_properties(\"${CMAKE_CURRENT_SOURCE_DIR}/src/net.c\" PROPERTIES LABELS infra)\n"));
+    ASSERT(build_model_write_text_file("ctest_query_surface/source/project_src/src/main.c",
+                                       "int main(void) { return 0; }\n"));
+    ASSERT(build_model_write_text_file("ctest_query_surface/source/project_src/src/net.c",
+                                       "int net(void) { return 0; }\n"));
+    ASSERT(build_model_write_text_file("ctest_query_surface/source/project_src/tools/coverage.sh",
+                                       "#!/bin/sh\n"
+                                       "pwd > coverage.pwd\n"
+                                       "printf 'coverage ok\\n'\n"
+                                       "exit 0\n"));
+    ASSERT(build_model_write_text_file("ctest_query_surface/source/project_src/tools/test_runner.sh",
+                                       "#!/bin/sh\n"
+                                       "mode=\"$1\"\n"
+                                       "pwd > \"test-${mode}.pwd\"\n"
+                                       "printf '%s\\n' \"$mode\"\n"
+                                       "exit 0\n"));
+    ASSERT(build_model_write_text_file("ctest_query_surface/source/project_src/tools/memcheck.sh",
+                                       "#!/bin/sh\n"
+                                       "printf '%s\\n' \"$*\" >> memcheck-args.log\n"
+                                       "pwd >> memcheck-cwd.log\n"
+                                       "while [ \"$#\" -gt 0 ] && [ \"$1\" != \"--\" ]; do shift; done\n"
+                                       "if [ \"$#\" -gt 0 ]; then shift; fi\n"
+                                       "\"$@\"\n"
+                                       "exit $?\n"));
+    ASSERT(build_model_make_executable("ctest_query_surface/source/project_src/tools/coverage.sh"));
+    ASSERT(build_model_make_executable("ctest_query_surface/source/project_src/tools/test_runner.sh"));
+    ASSERT(build_model_make_executable("ctest_query_surface/source/project_src/tools/memcheck.sh"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "ctest_query_surface/source/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("ctest_query_surface/source");
+    config.binary_dir = nob_sv_from_cstr("ctest_query_surface/build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "set(CTEST_SOURCE_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}/project_src\")\n"
+        "set(CTEST_BINARY_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}\")\n"
+        "set(CMAKE_GENERATOR \"Unix Makefiles\")\n"
+        "set(CTEST_CMAKE_GENERATOR \"${CMAKE_GENERATOR}\")\n"
+        "file(RELATIVE_PATH _source_from_build \"${CTEST_BINARY_DIRECTORY}\" \"${CTEST_SOURCE_DIRECTORY}\")\n"
+        "file(MAKE_DIRECTORY \"${CTEST_SOURCE_DIRECTORY}/memcheck_work\")\n"
+        "set(COVERAGE_COMMAND \"/bin/sh;${_source_from_build}/tools/coverage.sh\")\n"
+        "set(CTEST_MEMORYCHECK_COMMAND \"${CTEST_SOURCE_DIRECTORY}/tools/memcheck.sh\")\n"
+        "set(CTEST_MEMORYCHECK_TYPE Valgrind)\n"
+        "ctest_empty_binary_directory(\"${CTEST_BINARY_DIRECTORY}\")\n"
+        "ctest_start(Experimental \"${CTEST_SOURCE_DIRECTORY}\" \"${CTEST_BINARY_DIRECTORY}\" QUIET)\n"
+        "ctest_configure(QUIET)\n"
+        "ctest_build(QUIET)\n"
+        "ctest_test(QUIET)\n"
+        "ctest_coverage(LABELS core ui APPEND QUIET)\n"
+        "ctest_memcheck(APPEND QUIET)\n"
+        "set(_report \"${CTEST_BINARY_DIRECTORY}/__oracle/ctest_extended_report.txt\")\n"
+        "if(EXISTS \"${CTEST_SOURCE_DIRECTORY}/memcheck_work/test-pass.pwd\")\n"
+        "  file(APPEND \"${_report}\" \"TEST_WORKDIR_EXISTS=1\\n\")\n"
+        "else()\n"
+        "  file(APPEND \"${_report}\" \"TEST_WORKDIR_EXISTS=0\\n\")\n"
+        "endif()\n"
+        "if(EXISTS \"${CTEST_SOURCE_DIRECTORY}/memcheck_work/memcheck-args.log\")\n"
+        "  file(APPEND \"${_report}\" \"MEMCHECK_ARGS_EXISTS=1\\n\")\n"
+        "else()\n"
+        "  file(APPEND \"${_report}\" \"MEMCHECK_ARGS_EXISTS=0\\n\")\n"
+        "endif()\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.builder_ok);
+    ASSERT(fixture.build.validate_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    test_flag_id = build_model_find_replay_action_by_output_and_content(
+        model,
+        BM_REPLAY_OPCODE_FS_APPEND_TEXT,
+        "__oracle/ctest_extended_report.txt",
+        "TEST_WORKDIR_EXISTS=");
+    memcheck_flag_id = build_model_find_replay_action_by_output_and_content(
+        model,
+        BM_REPLAY_OPCODE_FS_APPEND_TEXT,
+        "__oracle/ctest_extended_report.txt",
+        "MEMCHECK_ARGS_EXISTS=");
+
+    ASSERT(test_flag_id != BM_REPLAY_ACTION_ID_INVALID);
+    ASSERT(memcheck_flag_id != BM_REPLAY_ACTION_ID_INVALID);
+
+    test_flag_argv = bm_query_replay_action_argv(model, test_flag_id);
+    memcheck_flag_argv = bm_query_replay_action_argv(model, memcheck_flag_id);
+    ASSERT(test_flag_argv.count >= 1);
+    ASSERT(memcheck_flag_argv.count >= 1);
+    ASSERT(build_model_string_equals_at(test_flag_argv, 0, "TEST_WORKDIR_EXISTS=1\n"));
+    ASSERT(build_model_string_equals_at(memcheck_flag_argv, 0, "MEMCHECK_ARGS_EXISTS=1\n"));
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 TEST(build_model_replay_actions_reject_malformed_ordering) {
     Arena *arena = arena_create(2 * 1024 * 1024);
     Arena *validate_arena = arena_create(512 * 1024);
@@ -2510,6 +2670,91 @@ TEST(build_model_imported_target_queries_resolve_configs_and_mapped_locations) {
     ASSERT(effective_file.count == 0);
 
     arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_imported_target_known_configurations_are_stable_and_deduped) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id ext_id = BM_TARGET_ID_INVALID;
+    BM_String_Span known_configs = {0};
+
+    ASSERT(query_arena != NULL);
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "imported_known_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("imported_known_src");
+    config.binary_dir = nob_sv_from_cstr("imported_known_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "add_library(ext SHARED IMPORTED)\n"
+        "set_target_properties(ext PROPERTIES\n"
+        "  IMPORTED_LOCATION imports/libbase.so\n"
+        "  IMPORTED_LOCATION_DEBUG imports/libdebug.so\n"
+        "  IMPORTED_LOCATION_RELEASE imports/librelease.so\n"
+        "  MAP_IMPORTED_CONFIG_RELWITHDEBINFO Debug\n"
+        "  MAP_IMPORTED_CONFIG_MINSIZEREL Release)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    ext_id = bm_query_target_by_name(model, nob_sv_from_cstr("ext"));
+    ASSERT(ext_id != BM_TARGET_ID_INVALID);
+
+    ASSERT(bm_query_target_imported_known_configurations(model, ext_id, query_arena, &known_configs));
+    ASSERT(known_configs.count == 4);
+    ASSERT(build_model_string_span_contains_ci(known_configs, "Debug"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "Release"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "RelWithDebInfo"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "MinSizeRel"));
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_known_configuration_catalog_surfaces_supported_row52_domains) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    BM_String_Span known_configs = {0};
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "known_configs_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("known_configs_src");
+    config.binary_dir = nob_sv_from_cstr("known_configs_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "add_library(iface INTERFACE)\n"
+        "target_compile_definitions(iface INTERFACE\n"
+        "  \"$<$<CONFIG:Debug>:DBG_CFG>\"\n"
+        "  \"$<$<CONFIG:Release>:REL_CFG>\")\n"
+        "add_library(ext SHARED IMPORTED)\n"
+        "set_target_properties(ext PROPERTIES\n"
+        "  IMPORTED_LOCATION imports/libbase.so\n"
+        "  IMPORTED_LOCATION_DEBUG imports/libdebug.so\n"
+        "  MAP_IMPORTED_CONFIG_RELWITHDEBINFO Debug)\n"
+        "file(GENERATE OUTPUT \"$<IF:$<CONFIG:Profile>,${CMAKE_CURRENT_BINARY_DIR}/cfg/profile.txt,${CMAKE_CURRENT_BINARY_DIR}/cfg/other.txt>\" CONTENT \"cfg\")\n"
+        "add_test(NAME smoke COMMAND helper CONFIGURATIONS MinSizeRel)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    known_configs = bm_query_known_configurations(fixture.build.model);
+    ASSERT(build_model_string_span_contains_ci(known_configs, "Debug"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "Release"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "RelWithDebInfo"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "MinSizeRel"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "Profile"));
+
     test_semantic_pipeline_fixture_destroy(&fixture);
     TEST_PASS();
 }
@@ -4174,6 +4419,7 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_replay_actions_accept_c5_ctest_coverage_and_memcheck_queries(passed, failed, skipped);
     test_build_model_ctest_memcheck_preserves_registered_test_command_surface(passed, failed, skipped);
     test_build_model_ctest_local_memcheck_relative_command_surface(passed, failed, skipped);
+    test_build_model_ctest_external_project_query_preserves_post_memcheck_exists_surface(passed, failed, skipped);
     test_build_model_replay_actions_reject_malformed_ordering(passed, failed, skipped);
     test_build_model_context_aware_queries_expand_usage_requirements_and_target_property_genex(passed, failed, skipped);
     test_build_model_context_queries_support_build_local_install_prefix_target_genex_eval_and_link_literals(passed, failed, skipped);
@@ -4181,6 +4427,8 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_effective_queries_follow_global_directory_and_transitive_link_library_seeds(passed, failed, skipped);
     test_build_model_platform_context_and_typed_platform_properties_are_queryable(passed, failed, skipped);
     test_build_model_imported_target_queries_resolve_configs_and_mapped_locations(passed, failed, skipped);
+    test_build_model_imported_target_known_configurations_are_stable_and_deduped(passed, failed, skipped);
+    test_build_model_known_configuration_catalog_surfaces_supported_row52_domains(passed, failed, skipped);
     test_build_model_preserves_imported_global_across_property_orderings(passed, failed, skipped);
     test_build_model_alias_and_unknown_target_identity_queries_are_canonical(passed, failed, skipped);
     test_build_model_source_membership_file_sets_and_source_properties_are_canonical(passed, failed, skipped);

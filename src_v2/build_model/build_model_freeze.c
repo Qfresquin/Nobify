@@ -1370,6 +1370,197 @@ static bool bm_clone_cpack(const Build_Model_Draft *draft, Build_Model *model, A
     return true;
 }
 
+static bool bm_known_configs_push_unique_ci(Arena *arena, String_View **configs, String_View config) {
+    if (!arena || !configs || config.count == 0) return true;
+    for (size_t i = 0; i < arena_arr_len(*configs); ++i) {
+        if ((*configs)[i].count == config.count) {
+            bool same = true;
+            for (size_t j = 0; j < config.count; ++j) {
+                if (tolower((unsigned char)(*configs)[i].data[j]) != tolower((unsigned char)config.data[j])) {
+                    same = false;
+                    break;
+                }
+            }
+            if (same) return true;
+        }
+    }
+    return arena_arr_push(arena, *configs, config);
+}
+
+static bool bm_known_configs_scan_string(Arena *arena, String_View **configs, String_View value) {
+    const char *needle = "$<CONFIG:";
+    size_t needle_len = strlen(needle);
+    if (!arena || !configs || value.count < needle_len) return true;
+    for (size_t i = 0; i + needle_len <= value.count; ++i) {
+        if (memcmp(value.data + i, needle, needle_len) != 0) continue;
+        i += needle_len;
+        {
+            size_t start = i;
+            for (; i < value.count && value.data[i] != '>'; ++i) {
+                if (value.data[i] == ',' || value.data[i] == ';') {
+                    String_View config = nob_sv_trim(nob_sv_from_parts(value.data + start, i - start));
+                    if (!bm_known_configs_push_unique_ci(arena, configs, config)) return false;
+                    start = i + 1;
+                }
+            }
+            if (i <= value.count) {
+                String_View config = nob_sv_trim(nob_sv_from_parts(value.data + start, i - start));
+                if (!bm_known_configs_push_unique_ci(arena, configs, config)) return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool bm_known_configs_scan_string_array(Arena *arena, String_View **configs, const String_View *values) {
+    for (size_t i = 0; i < arena_arr_len(values); ++i) {
+        if (!bm_known_configs_scan_string(arena, configs, values[i])) return false;
+    }
+    return true;
+}
+
+static bool bm_known_configs_scan_item_array(Arena *arena, String_View **configs, const BM_String_Item_View *items) {
+    for (size_t i = 0; i < arena_arr_len(items); ++i) {
+        if (!bm_known_configs_scan_string(arena, configs, items[i].value)) return false;
+    }
+    return true;
+}
+
+static bool bm_known_configs_scan_link_item_array(Arena *arena,
+                                                  String_View **configs,
+                                                  const BM_Link_Item_View *items) {
+    for (size_t i = 0; i < arena_arr_len(items); ++i) {
+        if (!bm_known_configs_scan_string(arena, configs, items[i].value)) return false;
+    }
+    return true;
+}
+
+static bool bm_known_configs_scan_raw_properties(Arena *arena,
+                                                 String_View **configs,
+                                                 const BM_Raw_Property_Record *raw_properties) {
+    for (size_t i = 0; i < arena_arr_len(raw_properties); ++i) {
+        if (!bm_known_configs_scan_string_array(arena, configs, raw_properties[i].items)) return false;
+    }
+    return true;
+}
+
+static bool bm_collect_known_configurations(Build_Model *model, Arena *arena) {
+    String_View *configs = NULL;
+    if (!model || !arena) return false;
+
+    if (!bm_known_configs_scan_item_array(arena, &configs, model->global_properties.include_directories) ||
+        !bm_known_configs_scan_item_array(arena, &configs, model->global_properties.system_include_directories) ||
+        !bm_known_configs_scan_item_array(arena, &configs, model->global_properties.compile_definitions) ||
+        !bm_known_configs_scan_item_array(arena, &configs, model->global_properties.compile_options) ||
+        !bm_known_configs_scan_item_array(arena, &configs, model->global_properties.link_options) ||
+        !bm_known_configs_scan_item_array(arena, &configs, model->global_properties.link_directories) ||
+        !bm_known_configs_scan_link_item_array(arena, &configs, model->global_properties.link_libraries) ||
+        !bm_known_configs_scan_raw_properties(arena, &configs, model->global_properties.raw_properties)) {
+        return false;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(model->directories); ++i) {
+        const BM_Directory_Record *directory = &model->directories[i];
+        if (!bm_known_configs_scan_item_array(arena, &configs, directory->include_directories) ||
+            !bm_known_configs_scan_item_array(arena, &configs, directory->system_include_directories) ||
+            !bm_known_configs_scan_link_item_array(arena, &configs, directory->link_libraries) ||
+            !bm_known_configs_scan_item_array(arena, &configs, directory->link_directories) ||
+            !bm_known_configs_scan_item_array(arena, &configs, directory->compile_definitions) ||
+            !bm_known_configs_scan_item_array(arena, &configs, directory->compile_options) ||
+            !bm_known_configs_scan_item_array(arena, &configs, directory->link_options) ||
+            !bm_known_configs_scan_raw_properties(arena, &configs, directory->raw_properties)) {
+            return false;
+        }
+    }
+
+    for (size_t i = 0; i < arena_arr_len(model->targets); ++i) {
+        const BM_Target_Record *target = &model->targets[i];
+        if (!bm_known_configs_scan_item_array(arena, &configs, target->include_directories) ||
+            !bm_known_configs_scan_item_array(arena, &configs, target->compile_definitions) ||
+            !bm_known_configs_scan_item_array(arena, &configs, target->compile_options) ||
+            !bm_known_configs_scan_item_array(arena, &configs, target->compile_features) ||
+            !bm_known_configs_scan_link_item_array(arena, &configs, target->link_libraries) ||
+            !bm_known_configs_scan_item_array(arena, &configs, target->link_options) ||
+            !bm_known_configs_scan_item_array(arena, &configs, target->link_directories) ||
+            !bm_known_configs_scan_raw_properties(arena, &configs, target->raw_properties)) {
+            return false;
+        }
+        for (size_t src = 0; src < arena_arr_len(target->source_records); ++src) {
+            if (!bm_known_configs_scan_item_array(arena, &configs, target->source_records[src].compile_definitions) ||
+                !bm_known_configs_scan_item_array(arena, &configs, target->source_records[src].compile_options) ||
+                !bm_known_configs_scan_item_array(arena, &configs, target->source_records[src].include_directories) ||
+                !bm_known_configs_scan_raw_properties(arena, &configs, target->source_records[src].raw_properties)) {
+                return false;
+            }
+        }
+        for (size_t imported = 0; imported < arena_arr_len(target->imported_configs); ++imported) {
+            if (!bm_known_configs_push_unique_ci(arena, &configs, target->imported_configs[imported].config)) return false;
+        }
+        for (size_t map = 0; map < arena_arr_len(target->imported_config_maps); ++map) {
+            if (!bm_known_configs_push_unique_ci(arena, &configs, target->imported_config_maps[map].config)) return false;
+            for (size_t mapped = 0; mapped < arena_arr_len(target->imported_config_maps[map].mapped_configs); ++mapped) {
+                if (!bm_known_configs_push_unique_ci(arena,
+                                                     &configs,
+                                                     target->imported_config_maps[map].mapped_configs[mapped])) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    for (size_t i = 0; i < arena_arr_len(model->tests); ++i) {
+        for (size_t config = 0; config < arena_arr_len(model->tests[i].configurations); ++config) {
+            if (!bm_known_configs_push_unique_ci(arena, &configs, model->tests[i].configurations[config])) return false;
+        }
+    }
+
+    for (size_t i = 0; i < arena_arr_len(model->install_rules); ++i) {
+        const BM_Install_Rule_Record *rule = &model->install_rules[i];
+        if (!bm_known_configs_scan_string(arena, &configs, rule->item) ||
+            !bm_known_configs_scan_string(arena, &configs, rule->destination) ||
+            !bm_known_configs_scan_string(arena, &configs, rule->rename) ||
+            !bm_known_configs_scan_string(arena, &configs, rule->archive_destination) ||
+            !bm_known_configs_scan_string(arena, &configs, rule->library_destination) ||
+            !bm_known_configs_scan_string(arena, &configs, rule->runtime_destination) ||
+            !bm_known_configs_scan_string(arena, &configs, rule->includes_destination) ||
+            !bm_known_configs_scan_string(arena, &configs, rule->public_header_destination)) {
+            return false;
+        }
+    }
+
+    for (size_t i = 0; i < arena_arr_len(model->exports); ++i) {
+        const BM_Export_Record *record = &model->exports[i];
+        if (!bm_known_configs_scan_string(arena, &configs, record->output_file_path) ||
+            !bm_known_configs_scan_string(arena, &configs, record->destination) ||
+            !bm_known_configs_scan_string(arena, &configs, record->file_name) ||
+            !bm_known_configs_scan_string(arena, &configs, record->cxx_modules_directory)) {
+            return false;
+        }
+    }
+
+    for (size_t i = 0; i < arena_arr_len(model->replay_actions); ++i) {
+        const BM_Replay_Action_Record *action = &model->replay_actions[i];
+        if (!bm_known_configs_scan_string(arena, &configs, action->working_directory) ||
+            !bm_known_configs_scan_string_array(arena, &configs, action->inputs) ||
+            !bm_known_configs_scan_string_array(arena, &configs, action->outputs) ||
+            !bm_known_configs_scan_string_array(arena, &configs, action->argv) ||
+            !bm_known_configs_scan_string_array(arena, &configs, action->environment)) {
+            return false;
+        }
+    }
+
+    for (size_t i = 0; i < arena_arr_len(model->build_steps); ++i) {
+        for (size_t cmd = 0; cmd < arena_arr_len(model->build_steps[i].commands); ++cmd) {
+            if (!bm_known_configs_scan_string_array(arena, &configs, model->build_steps[i].commands[cmd].argv)) {
+                return false;
+            }
+        }
+    }
+
+    model->known_configurations = configs;
+    return true;
+}
+
 const Build_Model *bm_freeze_draft(const Build_Model_Draft *draft,
                                    Arena *out_arena,
                                    Diag_Sink *sink) {
@@ -1408,7 +1599,8 @@ const Build_Model *bm_freeze_draft(const Build_Model_Draft *draft,
         !bm_resolve_target_source_records(draft, model, out_arena) ||
         !bm_apply_generated_source_marks(draft, model) ||
         !bm_apply_source_property_mutations(draft, model, out_arena) ||
-        !bm_populate_target_file_sets(model, out_arena)) {
+        !bm_populate_target_file_sets(model, out_arena) ||
+        !bm_collect_known_configurations(model, out_arena)) {
         return NULL;
     }
 

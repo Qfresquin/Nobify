@@ -5,6 +5,7 @@
 #include "../genex/genex_internal.h"
 
 #include <ctype.h>
+#include <inttypes.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -88,183 +89,17 @@ static bool cg_push_unique_config(CG_Context *ctx, String_View config) {
     return arena_arr_push(ctx->scratch, ctx->known_configs, nob_sv_from_parts(copy, config.count));
 }
 
-static bool cg_scan_configs_from_string(CG_Context *ctx, String_View value) {
-    const char *needle = "$<CONFIG:";
-    size_t needle_len = strlen(needle);
-    if (!ctx || value.count < needle_len) return true;
-    for (size_t i = 0; i + needle_len <= value.count; ++i) {
-        if (memcmp(value.data + i, needle, needle_len) != 0) continue;
-        i += needle_len;
-        {
-            size_t start = i;
-            for (; i < value.count && value.data[i] != '>'; ++i) {
-                if (value.data[i] == ',' || value.data[i] == ';') {
-                    String_View config = nob_sv_trim(nob_sv_from_parts(value.data + start, i - start));
-                    if (!cg_push_unique_config(ctx, config)) return false;
-                    start = i + 1;
-                }
-            }
-            if (i <= value.count) {
-                String_View config = nob_sv_trim(nob_sv_from_parts(value.data + start, i - start));
-                if (!cg_push_unique_config(ctx, config)) return false;
-            }
-        }
-    }
-    return true;
-}
-
 static bool cg_ends_with(String_View sv, const char *suffix) {
     return nob_sv_end_with(sv, suffix);
 }
 
-static bool cg_collect_config_from_property_suffix(CG_Context *ctx,
-                                                   String_View property_name,
-                                                   const char *prefix) {
-    String_View prefix_sv = nob_sv_from_cstr(prefix);
-    if (!ctx || property_name.count <= prefix_sv.count) return true;
-    if (!cg_sv_has_prefix(property_name, prefix)) return true;
-    return cg_push_unique_config(ctx, nob_sv_from_parts(property_name.data + prefix_sv.count,
-                                                        property_name.count - prefix_sv.count));
-}
-
-static bool cg_scan_configs_from_items(CG_Context *ctx, const BM_String_Item_View *items) {
-    if (!ctx) return false;
-    for (size_t i = 0; i < arena_arr_len(items); ++i) {
-        if (!cg_scan_configs_from_string(ctx, items[i].value)) return false;
-    }
-    return true;
-}
-
-static bool cg_scan_configs_from_link_items(CG_Context *ctx, const BM_Link_Item_View *items) {
-    if (!ctx) return false;
-    for (size_t i = 0; i < arena_arr_len(items); ++i) {
-        if (!cg_scan_configs_from_string(ctx, items[i].value)) return false;
-    }
-    return true;
-}
-
-static bool cg_scan_configs_from_span(CG_Context *ctx, BM_String_Span values) {
-    if (!ctx) return false;
-    for (size_t i = 0; i < values.count; ++i) {
-        if (!cg_scan_configs_from_string(ctx, values.items[i])) return false;
-    }
-    return true;
-}
-
-static bool cg_scan_configs_from_install_rules(CG_Context *ctx) {
-    if (!ctx || !ctx->model) return false;
-    for (size_t i = 0; i < bm_query_install_rule_count(ctx->model); ++i) {
-        BM_Install_Rule_Id id = (BM_Install_Rule_Id)i;
-        if (!cg_scan_configs_from_string(ctx, bm_query_install_rule_item_raw(ctx->model, id)) ||
-            !cg_scan_configs_from_string(ctx, bm_query_install_rule_destination(ctx->model, id)) ||
-            !cg_scan_configs_from_string(ctx, bm_query_install_rule_rename(ctx->model, id)) ||
-            !cg_scan_configs_from_string(ctx, bm_query_install_rule_archive_destination(ctx->model, id)) ||
-            !cg_scan_configs_from_string(ctx, bm_query_install_rule_library_destination(ctx->model, id)) ||
-            !cg_scan_configs_from_string(ctx, bm_query_install_rule_runtime_destination(ctx->model, id)) ||
-            !cg_scan_configs_from_string(ctx, bm_query_install_rule_includes_destination(ctx->model, id)) ||
-            !cg_scan_configs_from_string(ctx, bm_query_install_rule_public_header_destination(ctx->model, id))) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static bool cg_scan_configs_from_exports(CG_Context *ctx) {
-    if (!ctx || !ctx->model) return false;
-    for (size_t i = 0; i < bm_query_export_count(ctx->model); ++i) {
-        BM_Export_Id id = (BM_Export_Id)i;
-        if (!cg_scan_configs_from_string(ctx, bm_query_export_destination(ctx->model, id)) ||
-            !cg_scan_configs_from_string(ctx, bm_query_export_file_name(ctx->model, id)) ||
-            !cg_scan_configs_from_string(ctx, bm_query_export_output_file_path(ctx->model, id, ctx->scratch)) ||
-            !cg_scan_configs_from_string(ctx, bm_query_export_cxx_modules_directory(ctx->model, id))) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static bool cg_scan_configs_from_replay_actions(CG_Context *ctx) {
-    if (!ctx || !ctx->model) return false;
-    for (size_t i = 0; i < bm_query_replay_action_count(ctx->model); ++i) {
-        BM_Replay_Action_Id id = (BM_Replay_Action_Id)i;
-        if (!cg_scan_configs_from_string(ctx, bm_query_replay_action_working_directory(ctx->model, id)) ||
-            !cg_scan_configs_from_span(ctx, bm_query_replay_action_inputs(ctx->model, id)) ||
-            !cg_scan_configs_from_span(ctx, bm_query_replay_action_outputs(ctx->model, id)) ||
-            !cg_scan_configs_from_span(ctx, bm_query_replay_action_argv(ctx->model, id)) ||
-            !cg_scan_configs_from_span(ctx, bm_query_replay_action_environment(ctx->model, id))) {
-            return false;
-        }
-    }
-    return true;
-}
-
 static bool cg_collect_known_configs(CG_Context *ctx) {
+    BM_String_Span known_configs = {0};
     if (!ctx || !ctx->model) return false;
-    if (!cg_scan_configs_from_items(ctx, bm_query_global_include_directories_raw(ctx->model).items) ||
-        !cg_scan_configs_from_items(ctx, bm_query_global_system_include_directories_raw(ctx->model).items) ||
-        !cg_scan_configs_from_items(ctx, bm_query_global_compile_definitions_raw(ctx->model).items) ||
-        !cg_scan_configs_from_items(ctx, bm_query_global_compile_options_raw(ctx->model).items) ||
-        !cg_scan_configs_from_items(ctx, bm_query_global_link_options_raw(ctx->model).items) ||
-        !cg_scan_configs_from_items(ctx, bm_query_global_link_directories_raw(ctx->model).items) ||
-        !cg_scan_configs_from_link_items(ctx, bm_query_global_link_libraries_raw(ctx->model).items)) {
-        return false;
+    known_configs = bm_query_known_configurations(ctx->model);
+    for (size_t i = 0; i < known_configs.count; ++i) {
+        if (!cg_push_unique_config(ctx, known_configs.items[i])) return false;
     }
-
-    for (size_t i = 0; i < bm_query_directory_count(ctx->model); ++i) {
-        BM_Directory_Id id = (BM_Directory_Id)i;
-        if (!cg_scan_configs_from_items(ctx, bm_query_directory_include_directories_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_items(ctx, bm_query_directory_system_include_directories_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_link_items(ctx, bm_query_directory_link_libraries_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_items(ctx, bm_query_directory_link_directories_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_items(ctx, bm_query_directory_compile_definitions_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_items(ctx, bm_query_directory_compile_options_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_items(ctx, bm_query_directory_link_options_raw(ctx->model, id).items)) {
-            return false;
-        }
-    }
-
-    for (size_t i = 0; i < bm_query_target_count(ctx->model); ++i) {
-        BM_Target_Id id = (BM_Target_Id)i;
-        if (!cg_scan_configs_from_items(ctx, bm_query_target_include_directories_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_items(ctx, bm_query_target_compile_definitions_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_items(ctx, bm_query_target_compile_options_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_items(ctx, bm_query_target_compile_features_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_link_items(ctx, bm_query_target_link_libraries_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_items(ctx, bm_query_target_link_options_raw(ctx->model, id).items) ||
-            !cg_scan_configs_from_items(ctx, bm_query_target_link_directories_raw(ctx->model, id).items)) {
-            return false;
-        }
-        for (size_t prop = 0; prop < bm_query_target_raw_property_count(ctx->model, id); ++prop) {
-            String_View prop_name = bm_query_target_raw_property_name(ctx->model, id, prop);
-            if (!cg_collect_config_from_property_suffix(ctx, prop_name, "IMPORTED_LOCATION_") ||
-                !cg_collect_config_from_property_suffix(ctx, prop_name, "IMPORTED_IMPLIB_") ||
-                !cg_collect_config_from_property_suffix(ctx, prop_name, "MAP_IMPORTED_CONFIG_") ||
-                !cg_collect_config_from_property_suffix(ctx, prop_name, "IMPORTED_LINK_INTERFACE_LANGUAGES_")) {
-                return false;
-            }
-            if (!cg_scan_configs_from_string(ctx, prop_name)) return false;
-            if (!cg_scan_configs_from_span(ctx, bm_query_target_raw_property_items(ctx->model, id, prop_name))) {
-                return false;
-            }
-        }
-    }
-
-    if (!cg_scan_configs_from_install_rules(ctx) ||
-        !cg_scan_configs_from_exports(ctx) ||
-        !cg_scan_configs_from_replay_actions(ctx)) {
-        return false;
-    }
-
-    for (size_t i = 0; i < bm_query_build_step_count(ctx->model); ++i) {
-        BM_Build_Step_Id id = (BM_Build_Step_Id)i;
-        for (size_t cmd = 0; cmd < bm_query_build_step_command_count(ctx->model, id); ++cmd) {
-            BM_String_Span argv = bm_query_build_step_command_argv(ctx->model, id, cmd);
-            for (size_t arg = 0; arg < argv.count; ++arg) {
-                if (!cg_scan_configs_from_string(ctx, argv.items[arg])) return false;
-            }
-        }
-    }
-
     return true;
 }
 
@@ -450,7 +285,7 @@ static bool cg_join_paths_to_arena(Arena *scratch, String_View lhs, String_View 
     return cg_normalize_path_to_arena(scratch, nob_sv_from_cstr(copy), out);
 }
 
-static bool cg_absolute_from_cwd(CG_Context *ctx, String_View path, String_View *out) {
+bool cg_absolute_from_cwd(CG_Context *ctx, String_View path, String_View *out) {
     if (!ctx || !out) return false;
     if (cg_path_is_abs(path)) return cg_normalize_path_to_arena(ctx->scratch, path, out);
     return cg_join_paths_to_arena(ctx->scratch, ctx->cwd_abs, path, out);
@@ -482,10 +317,10 @@ static bool cg_absolute_from_base(CG_Context *ctx,
     return cg_join_paths_to_arena(ctx->scratch, base_abs, path, out);
 }
 
-static bool cg_relative_path_to_arena(Arena *scratch,
-                                      String_View from_dir_abs,
-                                      String_View to_path_abs,
-                                      String_View *out) {
+bool cg_relative_path_to_arena(Arena *scratch,
+                               String_View from_dir_abs,
+                               String_View to_path_abs,
+                               String_View *out) {
     String_View *from_segments = NULL;
     String_View *to_segments = NULL;
     size_t common = 0;
@@ -2865,7 +2700,10 @@ bool nob_codegen_render(const Build_Model *model,
     if (!out || !opts) return false;
     out->count = 0;
 
-    if (!cg_init_context(&ctx, model, scratch, opts)) return false;
+    if (!cg_init_context(&ctx, model, scratch, opts)) {
+        nob_log(NOB_ERROR, "codegen: failed to initialize render context");
+        return false;
+    }
 
     nob_sb_append_cstr(out,
         "#define NOB_IMPLEMENTATION\n"
@@ -2889,15 +2727,22 @@ bool nob_codegen_render(const Build_Model *model,
     if (!cg_emit_target_forward_decls(&ctx, out) ||
         !cg_emit_step_forward_decls(&ctx, out) ||
         !cg_emit_support_helpers(&ctx, out)) {
+        nob_log(NOB_ERROR, "codegen: failed while emitting forward declarations or support helpers");
         return false;
     }
 
     for (size_t i = 0; i < ctx.build_step_count; ++i) {
-        if (!cg_emit_step_function(&ctx, &ctx.build_steps[i], out)) return false;
+        if (!cg_emit_step_function(&ctx, &ctx.build_steps[i], out)) {
+            nob_log(NOB_ERROR, "codegen: failed while emitting build step %" PRIu64, (uint64_t)ctx.build_steps[i].id);
+            return false;
+        }
     }
 
     for (size_t i = 0; i < ctx.target_count; ++i) {
-        if (!cg_emit_target_function(&ctx, &ctx.targets[i], out)) return false;
+        if (!cg_emit_target_function(&ctx, &ctx.targets[i], out)) {
+            nob_log(NOB_ERROR, "codegen: failed while emitting target %" PRIu64, (uint64_t)ctx.targets[i].id);
+            return false;
+        }
     }
 
     if (!cg_emit_configure_functions(&ctx, out) ||
@@ -2908,6 +2753,7 @@ bool nob_codegen_render(const Build_Model *model,
         !cg_emit_export_function(&ctx, out) ||
         !cg_emit_package_function(&ctx, out) ||
         !cg_emit_main(&ctx, out)) {
+        nob_log(NOB_ERROR, "codegen: failed while emitting top-level command functions");
         return false;
     }
 
@@ -2924,12 +2770,16 @@ bool nob_codegen_write_file(const Build_Model *model,
     out_path = nob_temp_sv_to_cstr(opts->output_path);
     if (!out_path) return false;
     out_dir = nob_temp_dir_name(out_path);
-    if (out_dir && strcmp(out_dir, ".") != 0 && !cg_host_ensure_dir(out_dir)) return false;
+    if (out_dir && strcmp(out_dir, ".") != 0 && !cg_host_ensure_dir(out_dir)) {
+        nob_log(NOB_ERROR, "codegen: failed to create output directory %s", out_dir);
+        return false;
+    }
     if (!nob_codegen_render(model, scratch, opts, &sb)) {
         nob_sb_free(sb);
         return false;
     }
     bool ok = nob_write_entire_file(out_path, sb.items ? sb.items : "", sb.count);
+    if (!ok) nob_log(NOB_ERROR, "codegen: failed to write generated file %s", out_path);
     nob_sb_free(sb);
     return ok;
 }

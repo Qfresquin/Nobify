@@ -91,7 +91,7 @@ static bool legacy_emit_replay_make_directory(EvalExecContext *ctx,
                                   origin,
                                   EVENT_REPLAY_ACTION_FILESYSTEM,
                                   EVENT_REPLAY_OPCODE_FS_MKDIR,
-                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_replay_phase_for_filesystem_effect(ctx, EVENT_REPLAY_PHASE_CONFIGURE),
                                   eval_current_binary_dir(ctx),
                                   &action_key)) {
         return false;
@@ -192,7 +192,7 @@ static bool legacy_emit_replay_write_file(EvalExecContext *ctx,
                                   origin,
                                   EVENT_REPLAY_ACTION_FILESYSTEM,
                                   opcode,
-                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_replay_phase_for_filesystem_effect(ctx, EVENT_REPLAY_PHASE_CONFIGURE),
                                   eval_current_binary_dir(ctx),
                                   &action_key) ||
         !eval_emit_replay_action_add_output(ctx, origin, action_key, req->path) ||

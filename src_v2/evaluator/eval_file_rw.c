@@ -53,7 +53,7 @@ static bool file_emit_replay_text_action(EvalExecContext *ctx,
                                   origin,
                                   EVENT_REPLAY_ACTION_FILESYSTEM,
                                   opcode,
-                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_replay_phase_for_filesystem_effect(ctx, EVENT_REPLAY_PHASE_CONFIGURE),
                                   eval_current_binary_dir(ctx),
                                   &action_key) ||
         !eval_emit_replay_action_add_output(ctx, origin, action_key, path) ||
@@ -76,7 +76,7 @@ static bool file_emit_replay_mkdir_action(EvalExecContext *ctx,
                                   origin,
                                   EVENT_REPLAY_ACTION_FILESYSTEM,
                                   EVENT_REPLAY_OPCODE_FS_MKDIR,
-                                  EVENT_REPLAY_PHASE_CONFIGURE,
+                                  eval_replay_phase_for_filesystem_effect(ctx, EVENT_REPLAY_PHASE_CONFIGURE),
                                   eval_current_binary_dir(ctx),
                                   &action_key)) {
         return false;

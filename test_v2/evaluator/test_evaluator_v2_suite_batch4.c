@@ -1,5 +1,6 @@
 #include "test_evaluator_v2_support.h"
 #include "test_fs.h"
+#include "test_host_fixture_support.h"
 
 typedef enum {
     CTEST_SUBMIT_MOCK_REMOTE_SUCCESS_AFTER_TIMEOUT = 0,
@@ -62,9 +63,24 @@ typedef struct {
     bool saw_xml_flag;
     bool saw_mode_flag;
     bool saw_mode_value;
+    bool saw_path_arg;
     bool args_in_expected_order;
     char working_directory[512];
+    char path_arg[512];
 } Ctest_Coverage_Mock_Process_Data;
+
+typedef struct {
+    size_t call_count;
+    bool saw_configure_tool;
+    bool saw_build_tool;
+    bool saw_test_tool;
+    bool saw_coverage_tool;
+    char configure_working_directory[512];
+    char build_working_directory[512];
+    char test_working_directory[512];
+    char coverage_working_directory[512];
+    char coverage_path_arg[512];
+} Ctest_Coverage_Full_Flow_Mock_Process_Data;
 
 typedef struct {
     size_t call_count;
@@ -375,6 +391,14 @@ static bool ctest_coverage_mock_process_run(void *user_data,
         nob_sv_eq(request->argv[2], nob_sv_from_cstr("--xml")) &&
         nob_sv_eq(request->argv[3], nob_sv_from_cstr("--mode")) &&
         nob_sv_eq(request->argv[4], nob_sv_from_cstr("scan"));
+    if (request->argc > 1 && request->argv[1].count > 0) {
+        size_t n = request->argv[1].count < sizeof(data->path_arg) - 1
+            ? request->argv[1].count
+            : sizeof(data->path_arg) - 1;
+        memcpy(data->path_arg, request->argv[1].data, n);
+        data->path_arg[n] = '\0';
+        data->saw_path_arg = true;
+    }
     for (size_t i = 1; i < request->argc; i++) {
         if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--fast"))) data->saw_fast_flag = true;
         if (nob_sv_eq(request->argv[i], nob_sv_from_cstr("--xml"))) data->saw_xml_flag = true;
@@ -392,6 +416,92 @@ static bool ctest_coverage_mock_process_run(void *user_data,
 
     out_result->exit_code = 0;
     out_result->stdout_text = nob_sv_from_cstr("Covered: 42\n");
+    return true;
+}
+
+static bool ctest_coverage_full_flow_mock_process_run(void *user_data,
+                                                      Arena *scratch_arena,
+                                                      const Eval_Process_Run_Request *request,
+                                                      Eval_Process_Run_Result *out_result) {
+    Ctest_Coverage_Full_Flow_Mock_Process_Data *data =
+        (Ctest_Coverage_Full_Flow_Mock_Process_Data*)user_data;
+    (void)scratch_arena;
+    if (!data || !request || !out_result || request->argc == 0) return false;
+
+    memset(out_result, 0, sizeof(*out_result));
+    out_result->started = true;
+    data->call_count++;
+
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("configure-tool"))) {
+        data->saw_configure_tool = true;
+        if (request->working_directory.count > 0) {
+            size_t n = request->working_directory.count < sizeof(data->configure_working_directory) - 1
+                ? request->working_directory.count
+                : sizeof(data->configure_working_directory) - 1;
+            memcpy(data->configure_working_directory, request->working_directory.data, n);
+            data->configure_working_directory[n] = '\0';
+        }
+        out_result->exit_code = 0;
+        out_result->result_text = nob_sv_from_cstr("0");
+        out_result->stdout_text = nob_sv_from_cstr("Configuring done\nGenerating done\n");
+        return true;
+    }
+
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("build-tool"))) {
+        data->saw_build_tool = true;
+        if (request->working_directory.count > 0) {
+            size_t n = request->working_directory.count < sizeof(data->build_working_directory) - 1
+                ? request->working_directory.count
+                : sizeof(data->build_working_directory) - 1;
+            memcpy(data->build_working_directory, request->working_directory.data, n);
+            data->build_working_directory[n] = '\0';
+        }
+        out_result->exit_code = 0;
+        out_result->result_text = nob_sv_from_cstr("0");
+        out_result->stdout_text = nob_sv_from_cstr("Built target all\n");
+        return true;
+    }
+
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("test-pass"))) {
+        data->saw_test_tool = true;
+        if (request->working_directory.count > 0) {
+            size_t n = request->working_directory.count < sizeof(data->test_working_directory) - 1
+                ? request->working_directory.count
+                : sizeof(data->test_working_directory) - 1;
+            memcpy(data->test_working_directory, request->working_directory.data, n);
+            data->test_working_directory[n] = '\0';
+        }
+        out_result->exit_code = 0;
+        out_result->result_text = nob_sv_from_cstr("0");
+        out_result->stdout_text = nob_sv_from_cstr("pass output\n");
+        return true;
+    }
+
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("coverage-tool"))) {
+        data->saw_coverage_tool = true;
+        if (request->working_directory.count > 0) {
+            size_t n = request->working_directory.count < sizeof(data->coverage_working_directory) - 1
+                ? request->working_directory.count
+                : sizeof(data->coverage_working_directory) - 1;
+            memcpy(data->coverage_working_directory, request->working_directory.data, n);
+            data->coverage_working_directory[n] = '\0';
+        }
+        if (request->argc > 1 && request->argv[1].count > 0) {
+            size_t n = request->argv[1].count < sizeof(data->coverage_path_arg) - 1
+                ? request->argv[1].count
+                : sizeof(data->coverage_path_arg) - 1;
+            memcpy(data->coverage_path_arg, request->argv[1].data, n);
+            data->coverage_path_arg[n] = '\0';
+        }
+        out_result->exit_code = 0;
+        out_result->result_text = nob_sv_from_cstr("0");
+        out_result->stdout_text = nob_sv_from_cstr("Covered: 42\n");
+        return true;
+    }
+
+    out_result->exit_code = 127;
+    out_result->result_text = nob_sv_from_cstr("127");
+    out_result->stderr_text = nob_sv_from_cstr("unexpected process");
     return true;
 }
 
@@ -2147,6 +2257,220 @@ TEST(evaluator_ctest_update_executes_documented_command_and_stages_submit_part) 
     nob_sb_free(manifest_sb);
 
     eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_coverage_with_absolute_env_dirs_preserves_relative_tool_surface) {
+    Arena *temp_arena = arena_create(3 * 1024 * 1024);
+    Arena *event_arena = arena_create(3 * 1024 * 1024);
+    Cmake_Event_Stream *stream = NULL;
+    Eval_Test_Runtime *ctx = NULL;
+    Eval_Test_Init init = {0};
+    EvalServices services = {0};
+    Ctest_Coverage_Mock_Process_Data mock = {0};
+    Test_Host_Env_Guard source_guard = {0};
+    Test_Host_Env_Guard binary_guard = {0};
+    bool source_guard_active = false;
+    bool binary_guard_active = false;
+    const char *cwd = NULL;
+    char source_abs[512] = {0};
+    char binary_abs[512] = {0};
+    String_View stored_command = {0};
+
+    ASSERT(temp_arena && event_arena);
+    ASSERT(nob_mkdir_if_not_exists("ctest_abs_env_path_case"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_abs_env_path_case/source"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_abs_env_path_case/source/project_src"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_abs_env_path_case/source/project_src/src"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_abs_env_path_case/source/project_src/tools"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_abs_env_path_case/build"));
+    ASSERT(nob_write_entire_file("ctest_abs_env_path_case/source/project_src/src/main.c",
+                                 "int main(void) { return 0; }\n",
+                                 strlen("int main(void) { return 0; }\n")));
+
+    cwd = nob_get_current_dir_temp();
+    ASSERT(cwd != NULL);
+    ASSERT(snprintf(source_abs,
+                    sizeof(source_abs),
+                    "%s/ctest_abs_env_path_case/source",
+                    cwd) < (int)sizeof(source_abs));
+    ASSERT(snprintf(binary_abs,
+                    sizeof(binary_abs),
+                    "%s/ctest_abs_env_path_case/build",
+                    cwd) < (int)sizeof(binary_abs));
+    ASSERT(test_host_env_guard_begin(&source_guard, "NOB_DIFF_SOURCE_DIR", source_abs));
+    source_guard_active = true;
+    ASSERT(test_host_env_guard_begin(&binary_guard, "NOB_DIFF_BINARY_DIR", binary_abs));
+    binary_guard_active = true;
+
+    stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    services.user_data = &mock;
+    services.process_run_capture = ctest_coverage_mock_process_run;
+
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.services = &services;
+    ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    {
+        Ast_Root root = parse_cmake(
+            temp_arena,
+            "if(\"$ENV{NOB_DIFF_SOURCE_DIR}\" STREQUAL \"\")\n"
+            "  set(_nob_diff_source_dir \"${CMAKE_CURRENT_LIST_DIR}\")\n"
+            "else()\n"
+            "  set(_nob_diff_source_dir \"$ENV{NOB_DIFF_SOURCE_DIR}\")\n"
+            "endif()\n"
+            "if(\"$ENV{NOB_DIFF_BINARY_DIR}\" STREQUAL \"\")\n"
+            "  set(_nob_diff_binary_dir \"${CMAKE_CURRENT_BINARY_DIR}\")\n"
+            "else()\n"
+            "  set(_nob_diff_binary_dir \"$ENV{NOB_DIFF_BINARY_DIR}\")\n"
+            "endif()\n"
+            "set(CMAKE_SOURCE_DIR \"${_nob_diff_source_dir}\")\n"
+            "set(CMAKE_BINARY_DIR \"${_nob_diff_binary_dir}\")\n"
+            "set(CMAKE_CURRENT_SOURCE_DIR \"${_nob_diff_source_dir}\")\n"
+            "set(CMAKE_CURRENT_BINARY_DIR \"${_nob_diff_binary_dir}\")\n"
+            "cmake_minimum_required(VERSION 3.28)\n"
+            "set(CTEST_SOURCE_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}/project_src\")\n"
+            "set(CTEST_BINARY_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}\")\n"
+            "file(RELATIVE_PATH _source_from_build \"${CTEST_BINARY_DIRECTORY}\" \"${CTEST_SOURCE_DIRECTORY}\")\n"
+            "set(COVERAGE_COMMAND \"coverage-tool;${_source_from_build}/tools/coverage.sh\")\n"
+            "set_source_files_properties(\"${CTEST_SOURCE_DIRECTORY}/src/main.c\" PROPERTIES LABELS \"core;ui\")\n"
+            "ctest_start(Experimental \"${CTEST_SOURCE_DIRECTORY}\" \"${CTEST_BINARY_DIRECTORY}\" QUIET)\n"
+            "ctest_coverage(LABELS core ui APPEND QUIET)\n");
+        ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+    }
+
+    ASSERT(mock.call_count == 1);
+    ASSERT(mock.saw_coverage_tool);
+    ASSERT(mock.saw_path_arg);
+    ASSERT(strcmp(mock.path_arg, "../source/project_src/tools/coverage.sh") == 0);
+    ASSERT(strstr(mock.working_directory, "ctest_abs_env_path_case/build") != NULL);
+    stored_command = eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_coverage::COVERAGE_COMMAND"));
+    ASSERT(nob_sv_eq(stored_command,
+                     nob_sv_from_cstr("coverage-tool;../source/project_src/tools/coverage.sh")));
+
+    eval_test_destroy(ctx);
+    if (binary_guard_active) test_host_env_guard_cleanup(&binary_guard);
+    if (source_guard_active) test_host_env_guard_cleanup(&source_guard);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_ctest_coverage_after_configure_build_test_preserves_relative_tool_surface) {
+    Arena *temp_arena = arena_create(3 * 1024 * 1024);
+    Arena *event_arena = arena_create(3 * 1024 * 1024);
+    Cmake_Event_Stream *stream = NULL;
+    Eval_Test_Runtime *ctx = NULL;
+    Eval_Test_Init init = {0};
+    EvalServices services = {0};
+    Ctest_Coverage_Full_Flow_Mock_Process_Data mock = {0};
+    Test_Host_Env_Guard source_guard = {0};
+    Test_Host_Env_Guard binary_guard = {0};
+    bool source_guard_active = false;
+    bool binary_guard_active = false;
+    const char *cwd = NULL;
+    char source_abs[512] = {0};
+    char binary_abs[512] = {0};
+
+    ASSERT(temp_arena && event_arena);
+    ASSERT(nob_mkdir_if_not_exists("ctest_abs_env_flow_case"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_abs_env_flow_case/source"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_abs_env_flow_case/source/project_src"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_abs_env_flow_case/source/project_src/src"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_abs_env_flow_case/source/project_src/tools"));
+    ASSERT(nob_mkdir_if_not_exists("ctest_abs_env_flow_case/build"));
+    ASSERT(nob_write_entire_file("ctest_abs_env_flow_case/source/project_src/src/main.c",
+                                 "int main(void) { return 0; }\n",
+                                 strlen("int main(void) { return 0; }\n")));
+
+    cwd = nob_get_current_dir_temp();
+    ASSERT(cwd != NULL);
+    ASSERT(snprintf(source_abs,
+                    sizeof(source_abs),
+                    "%s/ctest_abs_env_flow_case/source",
+                    cwd) < (int)sizeof(source_abs));
+    ASSERT(snprintf(binary_abs,
+                    sizeof(binary_abs),
+                    "%s/ctest_abs_env_flow_case/build",
+                    cwd) < (int)sizeof(binary_abs));
+    ASSERT(test_host_env_guard_begin(&source_guard, "NOB_DIFF_SOURCE_DIR", source_abs));
+    source_guard_active = true;
+    ASSERT(test_host_env_guard_begin(&binary_guard, "NOB_DIFF_BINARY_DIR", binary_abs));
+    binary_guard_active = true;
+
+    stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    services.user_data = &mock;
+    services.process_run_capture = ctest_coverage_full_flow_mock_process_run;
+
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.services = &services;
+    ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    {
+        Ast_Root root = parse_cmake(
+            temp_arena,
+            "if(\"$ENV{NOB_DIFF_SOURCE_DIR}\" STREQUAL \"\")\n"
+            "  set(_nob_diff_source_dir \"${CMAKE_CURRENT_LIST_DIR}\")\n"
+            "else()\n"
+            "  set(_nob_diff_source_dir \"$ENV{NOB_DIFF_SOURCE_DIR}\")\n"
+            "endif()\n"
+            "if(\"$ENV{NOB_DIFF_BINARY_DIR}\" STREQUAL \"\")\n"
+            "  set(_nob_diff_binary_dir \"${CMAKE_CURRENT_BINARY_DIR}\")\n"
+            "else()\n"
+            "  set(_nob_diff_binary_dir \"$ENV{NOB_DIFF_BINARY_DIR}\")\n"
+            "endif()\n"
+            "set(CMAKE_SOURCE_DIR \"${_nob_diff_source_dir}\")\n"
+            "set(CMAKE_BINARY_DIR \"${_nob_diff_binary_dir}\")\n"
+            "set(CMAKE_CURRENT_SOURCE_DIR \"${_nob_diff_source_dir}\")\n"
+            "set(CMAKE_CURRENT_BINARY_DIR \"${_nob_diff_binary_dir}\")\n"
+            "cmake_minimum_required(VERSION 3.28)\n"
+            "enable_testing()\n"
+            "set(CTEST_SOURCE_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}/project_src\")\n"
+            "set(CTEST_BINARY_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}\")\n"
+            "file(MAKE_DIRECTORY \"${CTEST_BINARY_DIRECTORY}\")\n"
+            "file(RELATIVE_PATH _source_from_build \"${CTEST_BINARY_DIRECTORY}\" \"${CTEST_SOURCE_DIRECTORY}\")\n"
+            "set(CMAKE_COMMAND configure-tool)\n"
+            "set(CTEST_BUILD_COMMAND build-tool)\n"
+            "set(COVERAGE_COMMAND \"coverage-tool;${_source_from_build}/tools/coverage.sh\")\n"
+            "add_test(NAME pass COMMAND test-pass --alpha)\n"
+            "set_source_files_properties(\"${CTEST_SOURCE_DIRECTORY}/src/main.c\" PROPERTIES LABELS \"core;ui\")\n"
+            "ctest_empty_binary_directory(\"${CTEST_BINARY_DIRECTORY}\")\n"
+            "ctest_start(Experimental \"${CTEST_SOURCE_DIRECTORY}\" \"${CTEST_BINARY_DIRECTORY}\" QUIET)\n"
+            "ctest_configure(QUIET)\n"
+            "ctest_build(QUIET)\n"
+            "ctest_test(QUIET)\n"
+            "ctest_coverage(LABELS core ui APPEND QUIET)\n");
+        ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+    }
+
+    ASSERT(mock.saw_configure_tool);
+    ASSERT(mock.saw_build_tool);
+    ASSERT(mock.saw_test_tool);
+    ASSERT(mock.saw_coverage_tool);
+    ASSERT(strcmp(mock.coverage_path_arg, "../source/project_src/tools/coverage.sh") == 0);
+    ASSERT(strstr(mock.coverage_working_directory, "ctest_abs_env_flow_case/build") != NULL);
+
+    eval_test_destroy(ctx);
+    if (binary_guard_active) test_host_env_guard_cleanup(&binary_guard);
+    if (source_guard_active) test_host_env_guard_cleanup(&source_guard);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -5185,6 +5509,8 @@ void run_evaluator_v2_batch4(int *passed, int *failed, int *skipped) {
     test_evaluator_ctest_build_executes_documented_command_and_stages_submit_part(passed, failed, skipped);
     test_evaluator_ctest_test_executes_plan_and_stages_test_xml_without_submitting_junit(passed, failed, skipped);
     test_evaluator_ctest_coverage_executes_documented_command_order_and_stages_submit_part(passed, failed, skipped);
+    test_evaluator_ctest_coverage_with_absolute_env_dirs_preserves_relative_tool_surface(passed, failed, skipped);
+    test_evaluator_ctest_coverage_after_configure_build_test_preserves_relative_tool_surface(passed, failed, skipped);
     test_evaluator_ctest_update_executes_documented_command_and_stages_submit_part(passed, failed, skipped);
     test_evaluator_ctest_coverage_captures_missing_command_without_fatal_error(passed, failed, skipped);
     test_evaluator_ctest_run_script_returns_last_script_status(passed, failed, skipped);

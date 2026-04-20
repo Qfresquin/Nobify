@@ -62,6 +62,7 @@ size_t bm_query_cpack_package_count(const Build_Model *model);
 String_View bm_query_project_name(const Build_Model *model);
 String_View bm_query_project_version(const Build_Model *model);
 BM_String_Span bm_query_project_languages(const Build_Model *model);
+BM_String_Span bm_query_known_configurations(const Build_Model *model);
 
 BM_Directory_Id bm_query_root_directory(const Build_Model *model);
 BM_Directory_Id bm_query_directory_parent(const Build_Model *model, BM_Directory_Id id);
@@ -391,6 +392,10 @@ bool bm_query_target_imported_link_languages(const Build_Model *model,
                                              const BM_Query_Eval_Context *ctx,
                                              Arena *scratch,
                                              BM_String_Span *out);
+bool bm_query_target_imported_known_configurations(const Build_Model *model,
+                                                   BM_Target_Id id,
+                                                   Arena *scratch,
+                                                   BM_String_Span *out);
 bool bm_query_session_target_effective_file(BM_Query_Session *session,
                                             BM_Target_Id id,
                                             const BM_Query_Eval_Context *ctx,

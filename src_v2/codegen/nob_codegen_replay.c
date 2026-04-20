@@ -52,6 +52,15 @@ static bool cg_resolve_replay_path_for_config(CG_Context *ctx,
     return cg_rebase_path_from_cwd(ctx, resolved, out);
 }
 
+static bool cg_rebase_replay_archive_input_from_render_cwd(CG_Context *ctx,
+                                                           String_View resolved_input,
+                                                           String_View *out) {
+    String_View input_abs = {0};
+    if (!ctx || !out) return false;
+    if (!cg_absolute_from_cwd(ctx, resolved_input, &input_abs)) return false;
+    return cg_relative_path_to_arena(ctx->scratch, ctx->cwd_abs, input_abs, out);
+}
+
 static bool cg_resolve_replay_span_for_config(CG_Context *ctx,
                                               String_View config,
                                               BM_String_Span raw_values,
@@ -60,8 +69,19 @@ static bool cg_resolve_replay_span_for_config(CG_Context *ctx,
     if (!ctx || !out_values) return false;
     for (size_t i = 0; i < raw_values.count; ++i) {
         String_View resolved = {0};
-        if (!cg_resolve_replay_string_for_config(ctx, config, raw_values.items[i], &resolved) ||
-            !arena_arr_push(ctx->scratch, *out_values, resolved)) {
+        if (!cg_resolve_replay_string_for_config(ctx, config, raw_values.items[i], &resolved)) {
+            nob_log(NOB_ERROR,
+                    "codegen: failed to resolve replay operand for config `%s` at index %zu: `%s`",
+                    nob_temp_sv_to_cstr(config),
+                    i,
+                    nob_temp_sv_to_cstr(raw_values.items[i]));
+            return false;
+        }
+        if (!arena_arr_push(ctx->scratch, *out_values, resolved)) {
+            nob_log(NOB_ERROR,
+                    "codegen: failed to store replay operand for config `%s` at index %zu",
+                    nob_temp_sv_to_cstr(config),
+                    i);
             return false;
         }
     }
@@ -714,16 +734,22 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
                     nob_sb_append_cstr(out, "        static const char *paths[] = {");
                     for (size_t input_index = 0; input_index < inputs.count; ++input_index) {
                         String_View input_path = {0};
-                        if (!cg_rebase_path_from_cwd(ctx, resolved_inputs[input_index], &input_path)) return false;
+                        if (!cg_rebase_replay_archive_input_from_render_cwd(ctx,
+                                                                            resolved_inputs[input_index],
+                                                                            &input_path)) {
+                            return false;
+                        }
                         if (input_index > 0) nob_sb_append_cstr(out, ", ");
                         if (!cg_sb_append_c_string(out, input_path)) return false;
                     }
                     nob_sb_append_cstr(out, "};\n        if (!replay_archive_create_paxr(");
                     {
-                        String_View output_path = {0};
                         String_View input_cwd = {0};
-                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &output_path)) return false;
-                        if (!cg_rebase_path_from_cwd(ctx, ctx->cwd_abs, &input_cwd)) return false;
+                        String_View output_path = {0};
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &output_path) ||
+                            !cg_rebase_path_from_cwd(ctx, ctx->cwd_abs, &input_cwd)) {
+                            return false;
+                        }
                         if (!cg_sb_append_c_string(out, output_path)) return false;
                         nob_sb_append_cstr(out, ", ");
                         if (!cg_sb_append_c_string(out, input_cwd)) return false;
@@ -848,6 +874,7 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
 static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
     size_t test_count = 0;
     size_t test_driver_count = 0;
+    size_t test_replay_count = 0;
     String_View generated_source_dir = {0};
     String_View generated_binary_dir = {0};
     if (!ctx || !out) return false;
@@ -855,12 +882,17 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
     test_count = bm_query_test_count(ctx->model);
     if (!cg_rebase_path_from_cwd(ctx, ctx->source_root_abs, &generated_source_dir) ||
         !cg_rebase_path_from_cwd(ctx, ctx->binary_root_abs, &generated_binary_dir)) {
+        nob_log(NOB_ERROR,
+                "codegen: failed to rebase generated test roots source=`%s` binary=`%s`",
+                nob_temp_sv_to_cstr(ctx->source_root_abs),
+                nob_temp_sv_to_cstr(ctx->binary_root_abs));
         return false;
     }
     for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
         BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
-        if (bm_query_replay_action_phase(ctx->model, id) == BM_REPLAY_PHASE_TEST &&
-            bm_query_replay_action_kind(ctx->model, id) == BM_REPLAY_ACTION_TEST_DRIVER) {
+        if (bm_query_replay_action_phase(ctx->model, id) != BM_REPLAY_PHASE_TEST) continue;
+        test_replay_count++;
+        if (bm_query_replay_action_kind(ctx->model, id) == BM_REPLAY_ACTION_TEST_DRIVER) {
             test_driver_count++;
         }
     }
@@ -1130,18 +1162,6 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    nob_sb_free(sb);\n"
         "    return joined;\n"
         "}\n\n"
-        "static char *test_join_cstr_array(const char *const *items, size_t count, const char *separator) {\n"
-        "    Nob_String_Builder sb = {0};\n"
-        "    size_t separator_len = separator ? strlen(separator) : 0u;\n"
-        "    char *joined = NULL;\n"
-        "    for (size_t i = 0; i < count; ++i) {\n"
-        "        if (i > 0 && separator_len > 0) nob_sb_append_buf(&sb, separator, separator_len);\n"
-        "        nob_sb_append_cstr(&sb, items[i] ? items[i] : \"\");\n"
-        "    }\n"
-        "    joined = test_strdup_n(sb.items ? sb.items : \"\", sb.count);\n"
-        "    nob_sb_free(sb);\n"
-        "    return joined;\n"
-        "}\n\n"
         "static void generated_memcheck_result_clear(Nob_Generated_Memcheck_Result *result) {\n"
         "    if (!result) return;\n"
         "    free(result->command);\n"
@@ -1316,6 +1336,14 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    return test_write_text_file(ctest_tag_file(build_dir), nob_temp_sprintf(\"%s\\n\", ctest_tag_name()));\n"
         "}\n\n");
 
+    size_t default_build_target_count = 0;
+
+    for (size_t i = 0; i < ctx->target_count; ++i) {
+        const CG_Target_Info *info = &ctx->targets[i];
+        if (info->alias || info->imported || info->exclude_from_all || !info->emits_artifact) continue;
+        default_build_target_count++;
+    }
+
     for (size_t test_index = 0; test_index < test_count; ++test_index) {
         BM_Test_Id id = (BM_Test_Id)test_index;
         BM_String_Span configs = bm_query_test_configurations(ctx->model, id);
@@ -1388,6 +1416,12 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "static size_t generated_test_count(void) {\n"
         "    return ");
     nob_sb_append_cstr(out, nob_temp_sprintf("%zu", test_count));
+    nob_sb_append_cstr(out,
+        "u;\n"
+        "}\n\n"
+        "static size_t generated_default_build_target_count(void) {\n"
+        "    return ");
+    nob_sb_append_cstr(out, nob_temp_sprintf("%zu", default_build_target_count));
     nob_sb_append_cstr(out,
         "u;\n"
         "}\n\n"
@@ -1785,6 +1819,21 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    free(stderr_text);\n"
         "    return ok;\n"
         "}\n\n"
+        "static const char *ctest_session_source_dir_for_build(const char *build_dir);\n"
+        "static bool ctest_session_targets_generated_backend(const char *build_dir);\n"
+        "static bool ctest_execute_memcheck_external(const char *source_dir,\n"
+        "                                           const char *build_dir,\n"
+        "                                           const char *output_junit,\n"
+        "                                           const char *model,\n"
+        "                                           bool append_mode,\n"
+        "                                           const char *backend_type,\n"
+        "                                           const char *resource_spec_file,\n"
+        "                                           const char *suppression_file,\n"
+        "                                           const char *const *prefix_argv,\n"
+        "                                           size_t prefix_count,\n"
+        "                                           const char *const *selected_names,\n"
+        "                                           size_t selected_count,\n"
+        "                                           const char *config_filter);\n\n"
         "static bool __attribute__((unused)) ctest_execute_memcheck_local(const char *build_dir,\n"
         "                                                                const char *output_junit,\n"
         "                                                                const char *model,\n"
@@ -1821,6 +1870,21 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    int stop_time_seconds = test_parse_stop_time_seconds(stop_time, &stop_time_ok);\n"
         "    bool ok = true;\n"
         "    if (!stop_time_ok) return false;\n"
+        "    if (!ctest_session_targets_generated_backend(build_dir)) {\n"
+        "        return ctest_execute_memcheck_external(ctest_session_source_dir_for_build(build_dir),\n"
+        "                                               build_dir,\n"
+        "                                               output_junit,\n"
+        "                                               model,\n"
+        "                                               append_mode,\n"
+        "                                               backend_type,\n"
+        "                                               resource_spec_file,\n"
+        "                                               suppression_file,\n"
+        "                                               prefix_argv,\n"
+        "                                               prefix_count,\n"
+        "                                               selected_names,\n"
+        "                                               selected_count,\n"
+        "                                               config_filter);\n"
+        "    }\n"
         "    if (!test_parse_repeat_mode_and_count(repeat_text, &repeat_mode, &repeat_count)) return false;\n"
         "    if (!test_parse_optional_index(start_text, 1u, &start_index)) return false;\n"
         "    if (!test_parse_optional_index(end_text, total_tests, &end_index)) return false;\n"
@@ -2105,13 +2169,49 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    rhs = ctest_skip_dot_prefixes(rhs);\n"
         "    return strcmp(lhs ? lhs : \"\", rhs ? rhs : \"\") == 0;\n"
         "}\n\n"
+        "static bool __attribute__((unused)) ctest_path_is_within_or_equal(const char *root,\n"
+        "                                                                  const char *candidate) {\n"
+        "    size_t root_len = 0u;\n"
+        "    root = ctest_skip_dot_prefixes(root);\n"
+        "    candidate = ctest_skip_dot_prefixes(candidate);\n"
+        "    if (!root || !candidate) return false;\n"
+        "    root_len = strlen(root);\n"
+        "    if (root_len == 0u) return candidate[0] == '\\0';\n"
+        "    if (strncmp(root, candidate, root_len) != 0) return false;\n"
+        "    if (candidate[root_len] == '\\0') return true;\n"
+        "    return candidate[root_len] == '/';\n"
+        "}\n\n"
+        "static bool __attribute__((unused)) ctest_generated_backend_has_local_surface(void) {\n"
+        "    return generated_test_count() > 0u || generated_default_build_target_count() > 0u;\n"
+        "}\n\n"
         "static bool __attribute__((unused)) ctest_targets_generated_backend(const char *source_dir,\n"
         "                                                                    const char *build_dir) {\n"
-        "    return ctest_paths_match(source_dir, ctest_generated_source_dir()) &&\n"
-        "           ctest_paths_match(build_dir, ctest_generated_binary_dir());\n"
+        "    return ctest_generated_backend_has_local_surface() &&\n"
+        "           ctest_path_is_within_or_equal(ctest_generated_source_dir(), source_dir) &&\n"
+        "           ctest_path_is_within_or_equal(ctest_generated_binary_dir(), build_dir);\n"
         "}\n\n"
         "static bool __attribute__((unused)) ctest_build_dir_is_generated_backend(const char *build_dir) {\n"
-        "    return ctest_paths_match(build_dir, ctest_generated_binary_dir());\n"
+        "    return ctest_generated_backend_has_local_surface() &&\n"
+        "           ctest_path_is_within_or_equal(ctest_generated_binary_dir(), build_dir);\n"
+        "}\n\n"
+        "static const char *g_ctest_session_source_dir = NULL;\n"
+        "static const char *g_ctest_session_build_dir = NULL;\n\n"
+        "static void __attribute__((unused)) ctest_update_session_context(const char *source_dir,\n"
+        "                                                                const char *build_dir) {\n"
+        "    g_ctest_session_source_dir = source_dir;\n"
+        "    g_ctest_session_build_dir = build_dir;\n"
+        "}\n\n"
+        "static bool __attribute__((unused)) ctest_session_matches_build_dir(const char *build_dir) {\n"
+        "    return g_ctest_session_build_dir && ctest_paths_match(build_dir, g_ctest_session_build_dir);\n"
+        "}\n\n"
+        "static const char * __attribute__((unused)) ctest_session_source_dir_for_build(const char *build_dir) {\n"
+        "    if (!ctest_session_matches_build_dir(build_dir)) return NULL;\n"
+        "    return g_ctest_session_source_dir ? g_ctest_session_source_dir : \"\";\n"
+        "}\n\n"
+        "static bool __attribute__((unused)) ctest_session_targets_generated_backend(const char *build_dir) {\n"
+        "    const char *source_dir = ctest_session_source_dir_for_build(build_dir);\n"
+        "    if (!source_dir) return ctest_build_dir_is_generated_backend(build_dir);\n"
+        "    return ctest_targets_generated_backend(source_dir, build_dir);\n"
         "}\n\n"
         "static bool __attribute__((unused)) ctest_execute_configure_local(const char *source_dir,\n"
         "                                                                 const char *build_dir) {\n"
@@ -2159,6 +2259,151 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    nob_sb_free(sb);\n"
         "    return copy;\n"
         "}\n\n"
+        "static void __attribute__((unused)) test_append_cmake_escaped(Nob_String_Builder *sb, const char *text) {\n"
+        "    if (!sb || !text) return;\n"
+        "    while (*text) {\n"
+        "        if (*text == '\\\\' || *text == '\"' || *text == '$') nob_sb_append(sb, '\\\\');\n"
+        "        nob_sb_append(sb, *text++);\n"
+        "    }\n"
+        "}\n\n"
+        "static bool __attribute__((unused)) ctest_script_append_set_quoted(Nob_String_Builder *sb,\n"
+        "                                                                   const char *name,\n"
+        "                                                                   const char *value) {\n"
+        "    if (!sb || !name) return false;\n"
+        "    nob_sb_append_cstr(sb, \"set(\");\n"
+        "    nob_sb_append_cstr(sb, name);\n"
+        "    nob_sb_append_cstr(sb, \" \\\"\");\n"
+        "    test_append_cmake_escaped(sb, value ? value : \"\");\n"
+        "    nob_sb_append_cstr(sb, \"\\\")\\n\");\n"
+        "    return true;\n"
+        "}\n\n"
+        "static bool __attribute__((unused)) ctest_execute_memcheck_external(const char *source_dir,\n"
+        "                                                                   const char *build_dir,\n"
+        "                                                                   const char *output_junit,\n"
+        "                                                                   const char *model,\n"
+        "                                                                   bool append_mode,\n"
+        "                                                                   const char *backend_type,\n"
+        "                                                                   const char *resource_spec_file,\n"
+        "                                                                   const char *suppression_file,\n"
+        "                                                                   const char *const *prefix_argv,\n"
+        "                                                                   size_t prefix_count,\n"
+        "                                                                   const char *const *selected_names,\n"
+        "                                                                   size_t selected_count,\n"
+        "                                                                   const char *config_filter) {\n"
+        "    Nob_String_Builder options = {0};\n"
+        "    Nob_String_Builder script = {0};\n"
+        "    Nob_Cmd cmd = {0};\n"
+        "    char *options_text = NULL;\n"
+        "    char *selected_regex = NULL;\n"
+        "    const char *script_path = NULL;\n"
+        "    bool ok = false;\n"
+        "    if (!source_dir || source_dir[0] == '\\0' || !build_dir || build_dir[0] == '\\0' ||\n"
+        "        !prefix_argv || prefix_count == 0u || !prefix_argv[0] || prefix_argv[0][0] == '\\0') {\n"
+        "        return false;\n"
+        "    }\n"
+        "    for (size_t i = 1; i < prefix_count; ++i) {\n"
+        "        if (i > 1u) nob_sb_append(&options, ';');\n"
+        "        nob_sb_append_cstr(&options, prefix_argv[i] ? prefix_argv[i] : \"\");\n"
+        "    }\n"
+        "    if (options.count > 0u) nob_sb_append(&options, ';');\n"
+        "    nob_sb_append_cstr(&options, \"--\");\n"
+        "    options_text = (char *)malloc(options.count + 1u);\n"
+        "    if (!options_text) {\n"
+        "        nob_sb_free(options);\n"
+        "        return false;\n"
+        "    }\n"
+        "    if (options.count > 0u && options.items) memcpy(options_text, options.items, options.count);\n"
+        "    options_text[options.count] = '\\0';\n"
+        "    if (selected_count > 0u) {\n"
+        "        selected_regex = ctest_selected_names_regex(selected_names, selected_count);\n"
+        "        if (!selected_regex) {\n"
+        "            free(options_text);\n"
+        "            nob_sb_free(options);\n"
+        "            return false;\n"
+        "        }\n"
+        "    }\n"
+        "    script_path = nob_temp_sprintf(\"%s/.nob/ctest-external-memcheck.cmake\", build_dir);\n"
+        "    nob_sb_append_cstr(&script, \"cmake_minimum_required(VERSION 3.28)\\n\");\n"
+        "    if (!ctest_script_append_set_quoted(&script, \"CTEST_SOURCE_DIRECTORY\", source_dir) ||\n"
+        "        !ctest_script_append_set_quoted(&script, \"CTEST_BINARY_DIRECTORY\", build_dir) ||\n"
+        "        !ctest_script_append_set_quoted(&script, \"CTEST_MEMORYCHECK_COMMAND\", prefix_argv[0]) ||\n"
+        "        !ctest_script_append_set_quoted(&script,\n"
+        "                                        \"CTEST_MEMORYCHECK_TYPE\",\n"
+        "                                        (backend_type && backend_type[0] != '\\0') ? backend_type : \"Generic\")) {\n"
+        "        free(options_text);\n"
+        "        free(selected_regex);\n"
+        "        nob_sb_free(options);\n"
+        "        nob_sb_free(script);\n"
+        "        return false;\n"
+        "    }\n"
+        "    if (options.count > 0u &&\n"
+        "        !ctest_script_append_set_quoted(&script,\n"
+        "                                        \"CTEST_MEMORYCHECK_COMMAND_OPTIONS\",\n"
+        "                                        options_text ? options_text : \"\")) {\n"
+        "        free(options_text);\n"
+        "        free(selected_regex);\n"
+        "        nob_sb_free(options);\n"
+        "        nob_sb_free(script);\n"
+        "        return false;\n"
+        "    }\n"
+        "    if (config_filter && config_filter[0] != '\\0' &&\n"
+        "        !ctest_script_append_set_quoted(&script, \"CTEST_CONFIGURATION_TYPE\", config_filter)) {\n"
+        "        free(options_text);\n"
+        "        free(selected_regex);\n"
+        "        nob_sb_free(options);\n"
+        "        nob_sb_free(script);\n"
+        "        return false;\n"
+        "    }\n"
+        "    if (resource_spec_file && resource_spec_file[0] != '\\0' &&\n"
+        "        !ctest_script_append_set_quoted(&script, \"CTEST_RESOURCE_SPEC_FILE\", resource_spec_file)) {\n"
+        "        free(options_text);\n"
+        "        free(selected_regex);\n"
+        "        nob_sb_free(options);\n"
+        "        nob_sb_free(script);\n"
+        "        return false;\n"
+        "    }\n"
+        "    if (suppression_file && suppression_file[0] != '\\0' &&\n"
+        "        !ctest_script_append_set_quoted(&script,\n"
+        "                                        \"CTEST_MEMORYCHECK_SUPPRESSIONS_FILE\",\n"
+        "                                        suppression_file)) {\n"
+        "        free(options_text);\n"
+        "        free(selected_regex);\n"
+        "        nob_sb_free(options);\n"
+        "        nob_sb_free(script);\n"
+        "        return false;\n"
+        "    }\n"
+        "    nob_sb_append_cstr(&script, \"ctest_start(\");\n"
+        "    test_append_cmake_escaped(&script, (model && model[0] != '\\0') ? model : \"Experimental\");\n"
+        "    nob_sb_append_cstr(&script, \" \\\"${CTEST_SOURCE_DIRECTORY}\\\" \\\"${CTEST_BINARY_DIRECTORY}\\\" QUIET)\\n\");\n"
+        "    nob_sb_append_cstr(&script, \"ctest_memcheck(\");\n"
+        "    if (append_mode) nob_sb_append_cstr(&script, \"APPEND \");\n"
+        "    nob_sb_append_cstr(&script, \"QUIET\");\n"
+        "    if (selected_regex && selected_regex[0] != '\\0') {\n"
+        "        nob_sb_append_cstr(&script, \" INCLUDE \\\"\");\n"
+        "        test_append_cmake_escaped(&script, selected_regex);\n"
+        "        nob_sb_append_cstr(&script, \"\\\"\");\n"
+        "    }\n"
+        "    if (output_junit && output_junit[0] != '\\0') {\n"
+        "        nob_sb_append_cstr(&script, \" OUTPUT_JUNIT \\\"\");\n"
+        "        test_append_cmake_escaped(&script, output_junit);\n"
+        "        nob_sb_append_cstr(&script, \"\\\"\");\n"
+        "    }\n"
+        "    nob_sb_append_cstr(&script, \")\\n\");\n"
+        "    if (!test_write_buffer_file(script_path, script.items ? script.items : \"\", script.count)) {\n"
+        "        free(selected_regex);\n"
+        "        nob_sb_free(options);\n"
+        "        nob_sb_free(script);\n"
+        "        return false;\n"
+        "    }\n"
+        "    nob_cmd_append(&cmd, resolve_ctest_bin(), \"-S\", script_path, \"-VV\");\n"
+        "    ok = nob_cmd_run(&cmd);\n"
+        "    nob_cmd_free(cmd);\n"
+        "    free(options_text);\n"
+        "    free(selected_regex);\n"
+        "    nob_sb_free(options);\n"
+        "    nob_sb_free(script);\n"
+        "    return ok;\n"
+        "}\n\n"
         "static bool __attribute__((unused)) ctest_execute_test_local(const char *build_dir,\n"
         "                                                            const char *const *selected_names,\n"
         "                                                            size_t selected_count,\n"
@@ -2200,15 +2445,17 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "                                                             bool append_mode) {\n"
         "    (void)model;\n"
         "    (void)track;\n"
+        "    ctest_update_session_context(source_dir, build_dir);\n"
         "    if (!ctest_prepare_tree(build_dir, append_mode)) return false;\n"
         "    return test_write_text_file(nob_temp_sprintf(\"%s/Start.txt\", ctest_tag_dir(build_dir)),\n"
         "                                nob_temp_sprintf(\"source=%s\\nbuild=%s\\n\", source_dir ? source_dir : \"\", build_dir ? build_dir : \"\"));\n"
         "}\n\n"
         "static bool __attribute__((unused)) ctest_execute_configure_self(const char *source_dir, const char *build_dir) {\n"
+        "    ctest_update_session_context(source_dir, build_dir);\n"
         "    if (ctest_targets_generated_backend(source_dir, build_dir)) {\n"
-        "        if (!configure_all(true)) return false;\n"
+            "        if (!configure_all(true)) return false;\n"
         "    } else if (!ctest_execute_configure_local(source_dir, build_dir)) {\n"
-        "        return false;\n"
+            "        return false;\n"
         "    }\n"
         "    if (!ctest_prepare_tree(build_dir, true)) return false;\n"
         "    if (!test_write_text_file(nob_temp_sprintf(\"%s/Configure.xml\", ctest_tag_dir(build_dir)),\n"
@@ -2222,7 +2469,7 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "static bool __attribute__((unused)) ctest_execute_build_self(const char *build_dir, const char *configuration, const char *target) {\n"
         "    const char *prev_config = g_build_config;\n"
         "    bool ok = false;\n"
-        "    if (ctest_build_dir_is_generated_backend(build_dir)) {\n"
+        "    if (ctest_session_targets_generated_backend(build_dir)) {\n"
         "        if (configuration && configuration[0] != '\\0') g_build_config = configuration;\n"
         "        if (!ensure_configured()) {\n"
         "            g_build_config = prev_config;\n"
@@ -2249,7 +2496,7 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "                                                      const char *config_filter,\n"
         "                                                      const char *output_junit,\n"
         "                                                      bool schedule_random) {\n"
-        "    if (!ctest_build_dir_is_generated_backend(build_dir)) {\n"
+        "    if (!ctest_session_targets_generated_backend(build_dir)) {\n"
         "        return ctest_execute_test_local(build_dir,\n"
         "                                        selected_names,\n"
         "                                        selected_count,\n"
@@ -2289,7 +2536,7 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    (void)selected_count;\n"
         "    (void)config_filter;\n");
 
-    if (test_driver_count == 0) {
+    if (test_replay_count == 0) {
         nob_sb_append_cstr(out, "    return true;\n");
     } else {
         for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
@@ -2298,10 +2545,7 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
             BM_String_Span inputs = {0};
             BM_String_Span outputs = {0};
             BM_String_Span argv = {0};
-            if (bm_query_replay_action_phase(ctx->model, id) != BM_REPLAY_PHASE_TEST ||
-                bm_query_replay_action_kind(ctx->model, id) != BM_REPLAY_ACTION_TEST_DRIVER) {
-                continue;
-            }
+            if (bm_query_replay_action_phase(ctx->model, id) != BM_REPLAY_PHASE_TEST) continue;
             inputs = bm_query_replay_action_inputs(ctx->model, id);
             outputs = bm_query_replay_action_outputs(ctx->model, id);
             argv = bm_query_replay_action_argv(ctx->model, id);
@@ -2315,6 +2559,10 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
                     !cg_resolve_replay_span_for_config(ctx, config, outputs, &resolved_outputs) ||
                     !cg_resolve_replay_span_for_config(ctx, config, argv, &resolved_argv) ||
                     !cg_emit_runtime_config_branches_prefix_for_var(ctx, out, branch, "config_filter")) {
+                    nob_log(NOB_ERROR,
+                            "codegen: failed to prepare test-driver replay action %u for config `%s`",
+                            (unsigned)id,
+                            nob_temp_sv_to_cstr(config));
                     return false;
                 }
                 switch (opcode) {
@@ -2400,7 +2648,13 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
                         break;
                     case BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL: {
                         String_View build_dir = {0};
-                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &build_dir)) return false;
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &build_dir)) {
+                            nob_log(NOB_ERROR,
+                                    "codegen: failed to rebase ctest coverage build dir for replay action %u: `%s`",
+                                    (unsigned)id,
+                                    nob_temp_sv_to_cstr(resolved_outputs[0]));
+                            return false;
+                        }
                         nob_sb_append_cstr(out, "        if (!ctest_execute_coverage_local(");
                         if (!cg_sb_append_c_string(out, build_dir)) return false;
                         nob_sb_append_cstr(out, ", ");
@@ -2414,7 +2668,14 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
                             nob_sb_append_cstr(out, "(const char *const[]){");
                             for (size_t i = 0; i < inputs.count; ++i) {
                                 String_View path = {0};
-                                if (!cg_rebase_path_from_cwd(ctx, resolved_inputs[i], &path)) return false;
+                                if (!cg_rebase_path_from_cwd(ctx, resolved_inputs[i], &path)) {
+                                    nob_log(NOB_ERROR,
+                                            "codegen: failed to rebase ctest coverage input %zu for replay action %u: `%s`",
+                                            i,
+                                            (unsigned)id,
+                                            nob_temp_sv_to_cstr(resolved_inputs[i]));
+                                    return false;
+                                }
                                 if (i > 0) nob_sb_append_cstr(out, ", ");
                                 if (!cg_sb_append_c_string(out, path)) return false;
                             }
@@ -2445,17 +2706,35 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
                         String_View output_junit = {0};
                         String_View resource_spec = {0};
                         String_View suppression_file = {0};
-                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &build_dir)) return false;
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &build_dir)) {
+                            nob_log(NOB_ERROR,
+                                    "codegen: failed to rebase ctest memcheck build dir for replay action %u: `%s`",
+                                    (unsigned)id,
+                                    nob_temp_sv_to_cstr(resolved_outputs[0]));
+                            return false;
+                        }
                         if (resolved_outputs[1].count > 0 &&
                             !cg_rebase_path_from_cwd(ctx, resolved_outputs[1], &output_junit)) {
+                            nob_log(NOB_ERROR,
+                                    "codegen: failed to rebase ctest memcheck junit output for replay action %u: `%s`",
+                                    (unsigned)id,
+                                    nob_temp_sv_to_cstr(resolved_outputs[1]));
                             return false;
                         }
                         if (resolved_inputs[0].count > 0 &&
                             !cg_rebase_path_from_cwd(ctx, resolved_inputs[0], &resource_spec)) {
+                            nob_log(NOB_ERROR,
+                                    "codegen: failed to rebase ctest memcheck resource spec for replay action %u: `%s`",
+                                    (unsigned)id,
+                                    nob_temp_sv_to_cstr(resolved_inputs[0]));
                             return false;
                         }
                         if (resolved_inputs[1].count > 0 &&
                             !cg_rebase_path_from_cwd(ctx, resolved_inputs[1], &suppression_file)) {
+                            nob_log(NOB_ERROR,
+                                    "codegen: failed to rebase ctest memcheck suppression file for replay action %u: `%s`",
+                                    (unsigned)id,
+                                    nob_temp_sv_to_cstr(resolved_inputs[1]));
                             return false;
                         }
                         nob_sb_append_cstr(out, "        if (!ctest_execute_memcheck_local(");
@@ -2517,11 +2796,42 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
                         break;
                     }
 
+                    case BM_REPLAY_OPCODE_FS_MKDIR:
+                        for (size_t output_index = 0; output_index < outputs.count; ++output_index) {
+                            String_View path = {0};
+                            if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[output_index], &path)) return false;
+                            nob_sb_append_cstr(out, "        if (!ensure_dir(");
+                            if (!cg_sb_append_c_string(out, path)) return false;
+                            nob_sb_append_cstr(out, ")) return false;\n");
+                        }
+                        break;
+
+                    case BM_REPLAY_OPCODE_FS_WRITE_TEXT: {
+                        String_View output_path = {0};
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &output_path)) return false;
+                        nob_sb_append_cstr(out, "        if (!replay_write_text(");
+                        if (!cg_sb_append_c_string(out, output_path)) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[1])) return false;
+                        nob_sb_append_cstr(out, ")) return false;\n");
+                        break;
+                    }
+
+                    case BM_REPLAY_OPCODE_FS_APPEND_TEXT: {
+                        String_View output_path = {0};
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &output_path)) return false;
+                        nob_sb_append_cstr(out, "        if (!replay_append_text(");
+                        if (!cg_sb_append_c_string(out, output_path)) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                        nob_sb_append_cstr(out, ")) return false;\n");
+                        break;
+                    }
+
                     case BM_REPLAY_OPCODE_NONE:
                         break;
-                    case BM_REPLAY_OPCODE_FS_MKDIR:
-                    case BM_REPLAY_OPCODE_FS_WRITE_TEXT:
-                    case BM_REPLAY_OPCODE_FS_APPEND_TEXT:
                     case BM_REPLAY_OPCODE_FS_COPY_FILE:
                     case BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL:
                     case BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR:
@@ -2550,6 +2860,20 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    if (!build_selected_test_targets(selected_names, selected_count, config_filter)) return false;\n");
     if (test_driver_count > 0) {
         nob_sb_append_cstr(out,
+            "    if (!run_test_driver_replay(selected_names, selected_count, config_filter)) return false;\n"
+            "    return true;\n");
+    } else if (test_replay_count > 0) {
+        nob_sb_append_cstr(out,
+            "    if (!run_registered_tests(true,\n"
+            "                               selected_names,\n"
+            "                               selected_count,\n"
+            "                               config_filter,\n"
+            "                               NULL,\n"
+            "                               NULL,\n"
+            "                               false,\n"
+            "                               false,\n"
+            "                               false,\n"
+            "                               false)) return false;\n"
             "    if (!run_test_driver_replay(selected_names, selected_count, config_filter)) return false;\n"
             "    return true;\n");
     } else {

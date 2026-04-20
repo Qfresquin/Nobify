@@ -46,6 +46,8 @@ typedef Test_Case_Dsl_Case EGD_Parsed_Case;
 
 #define EGD_ENV_CMAKE_BIN "NOB_DIFF_CMAKE_BIN"
 #define EGD_ENV_CTEST_BIN "NOB_DIFF_CTEST_BIN"
+#define EGD_ENV_SOURCE_DIR "NOB_DIFF_SOURCE_DIR"
+#define EGD_ENV_BINARY_DIR "NOB_DIFF_BINARY_DIR"
 
 enum {
     EGD_PHASE_CONFIGURE = 1u << 0,
@@ -863,6 +865,32 @@ static bool egd_host_program_available(const char *program) {
     return program && test_ws_host_program_in_path(program, path);
 }
 
+static bool egd_copy_string(const char *src, char out[_TINYDIR_PATH_MAX]) {
+    int n = 0;
+    if (!src || !out) return false;
+    n = snprintf(out, _TINYDIR_PATH_MAX, "%s", src);
+    return n >= 0 && n < _TINYDIR_PATH_MAX;
+}
+
+static bool egd_path_is_absolute(const char *path) {
+    if (!path || path[0] == '\0') return false;
+#if defined(_WIN32)
+    if (path[0] == '/' || path[0] == '\\') return true;
+    return isalpha((unsigned char)path[0]) && path[1] == ':';
+#else
+    return path[0] == '/';
+#endif
+}
+
+static bool egd_resolve_absolute_path(const char *cwd,
+                                      const char *raw_path,
+                                      char out[_TINYDIR_PATH_MAX]) {
+    if (!raw_path || raw_path[0] == '\0' || !out) return false;
+    if (egd_path_is_absolute(raw_path)) return egd_copy_string(raw_path, out);
+    if (!cwd || cwd[0] == '\0') return false;
+    return test_fs_join_path(cwd, raw_path, out);
+}
+
 static bool egd_path_is_executable(const char *path) {
     if (!path || path[0] == '\0') return false;
 #if defined(_WIN32)
@@ -907,7 +935,8 @@ static bool egd_case_uses_ctest_oracle(const EGD_Case_Def *case_def,
     return case_def &&
            parsed_case &&
            parsed_case->mode == EGD_MODE_SCRIPT &&
-           strcmp(case_def->command_family, "ctest_*") == 0;
+           case_def->source_pack_path &&
+           strcmp(case_def->source_pack_path, EGD_PACK_CTEST) == 0;
 }
 
 static const char *egd_package_extension(const char *generator) {
@@ -1143,6 +1172,10 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
     char cmake_archive[_TINYDIR_PATH_MAX] = {0};
     char nob_archive[_TINYDIR_PATH_MAX] = {0};
     char ctest_bin[_TINYDIR_PATH_MAX] = {0};
+    char cmake_src_abs[_TINYDIR_PATH_MAX] = {0};
+    char nob_src_abs[_TINYDIR_PATH_MAX] = {0};
+    char cmake_build_abs[_TINYDIR_PATH_MAX] = {0};
+    char nob_build_abs[_TINYDIR_PATH_MAX] = {0};
     const char *configure_argv[] = {"", "-S", cmake_src, "-B", cmake_build};
     const char *script_cmake_argv[] = {"", "-P", ""};
     const char *script_ctest_argv[] = {"", "-S", "", "-VV"};
@@ -1157,6 +1190,7 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
     size_t nob_run_argc = 0;
     Codegen_Test_Config config = {0};
     bool ok = false;
+    const char *workspace_cwd = NULL;
 
     if (!arena || !case_def || !summary) {
         arena_destroy(arena);
@@ -1176,6 +1210,11 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
             case_def->case_name,
             parsed.mode == EGD_MODE_SCRIPT ? "script" : "project",
             egd_classification_name(case_def->classification));
+    workspace_cwd = nob_get_current_dir_temp();
+    if (!workspace_cwd) {
+        arena_destroy(arena);
+        return false;
+    }
 
     if (snprintf(cmake_src, sizeof(cmake_src), "%s_cmake_side/source", case_def->case_name) >= (int)sizeof(cmake_src) ||
         snprintf(nob_src, sizeof(nob_src), "%s_nob_side/source", case_def->case_name) >= (int)sizeof(nob_src) ||
@@ -1192,6 +1231,13 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
         arena_destroy(arena);
         return false;
     }
+    if (!egd_resolve_absolute_path(workspace_cwd, cmake_src, cmake_src_abs) ||
+        !egd_resolve_absolute_path(workspace_cwd, nob_src, nob_src_abs) ||
+        !egd_resolve_absolute_path(workspace_cwd, cmake_build, cmake_build_abs) ||
+        !egd_resolve_absolute_path(workspace_cwd, nob_build, nob_build_abs)) {
+        arena_destroy(arena);
+        return false;
+    }
 
     if (!egd_materialize_case_fixtures(&parsed, cmake_src, cmake_build) ||
         !egd_materialize_case_fixtures(&parsed, nob_src, nob_build) ||
@@ -1201,7 +1247,29 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
         return false;
     }
 
-    if (!egd_confirm_case_modeled(script_text.data, nob_script, nob_src, nob_build)) {
+    {
+        Test_Host_Env_Guard modeled_source_dir_env = {0};
+        Test_Host_Env_Guard modeled_binary_dir_env = {0};
+        bool modeled_source_dir_env_active = false;
+        bool modeled_binary_dir_env_active = false;
+        if (egd_case_uses_ctest_oracle(case_def, &parsed)) {
+            if (!test_host_env_guard_begin(&modeled_source_dir_env, EGD_ENV_SOURCE_DIR, nob_src_abs)) {
+                arena_destroy(arena);
+                return false;
+            }
+            modeled_source_dir_env_active = true;
+            if (!test_host_env_guard_begin(&modeled_binary_dir_env, EGD_ENV_BINARY_DIR, nob_build_abs)) {
+                if (modeled_source_dir_env_active) test_host_env_guard_cleanup(&modeled_source_dir_env);
+                arena_destroy(arena);
+                return false;
+            }
+            modeled_binary_dir_env_active = true;
+        }
+        ok = egd_confirm_case_modeled(script_text.data, nob_script, nob_src, nob_build);
+        if (modeled_binary_dir_env_active) test_host_env_guard_cleanup(&modeled_binary_dir_env);
+        if (modeled_source_dir_env_active) test_host_env_guard_cleanup(&modeled_source_dir_env);
+    }
+    if (!ok) {
         arena_destroy(arena);
         return false;
     }
@@ -1278,13 +1346,21 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
     {
         Test_Host_Env_Guard cmake_env = {0};
         Test_Host_Env_Guard ctest_env = {0};
+        Test_Host_Env_Guard cmake_source_dir_env = {0};
+        Test_Host_Env_Guard cmake_binary_dir_env = {0};
         Test_Host_Env_Guard nob_codegen_cmake_env = {0};
         Test_Host_Env_Guard nob_codegen_ctest_env = {0};
+        Test_Host_Env_Guard nob_codegen_source_dir_env = {0};
+        Test_Host_Env_Guard nob_codegen_binary_dir_env = {0};
         bool configured = false;
         bool cmake_env_active = false;
         bool ctest_env_active = false;
+        bool cmake_source_dir_env_active = false;
+        bool cmake_binary_dir_env_active = false;
         bool nob_codegen_cmake_env_active = false;
         bool nob_codegen_ctest_env_active = false;
+        bool nob_codegen_source_dir_env_active = false;
+        bool nob_codegen_binary_dir_env_active = false;
 
         if (parsed.mode == EGD_MODE_SCRIPT) {
             if (!script_cmake_argv[2] || script_cmake_argv[2][0] == '\0') {
@@ -1297,13 +1373,39 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
             }
             cmake_env_active = true;
             if (egd_case_uses_ctest_oracle(case_def, &parsed)) {
-                if (!script_ctest_argv[2] || script_ctest_argv[2][0] == '\0' ||
-                    !test_host_env_guard_begin(&ctest_env, EGD_ENV_CTEST_BIN, ctest_bin)) {
+                if (!script_ctest_argv[2] || script_ctest_argv[2][0] == '\0') {
+                    if (cmake_env_active) test_host_env_guard_cleanup(&cmake_env);
+                    arena_destroy(arena);
+                    return false;
+                }
+                if (!test_host_env_guard_begin(&ctest_env, EGD_ENV_CTEST_BIN, ctest_bin)) {
                     if (cmake_env_active) test_host_env_guard_cleanup(&cmake_env);
                     arena_destroy(arena);
                     return false;
                 }
                 ctest_env_active = true;
+                if (!test_host_env_guard_begin(&cmake_source_dir_env,
+                                               EGD_ENV_SOURCE_DIR,
+                                               cmake_src_abs)) {
+                    if (ctest_env_active) test_host_env_guard_cleanup(&ctest_env);
+                    if (cmake_env_active) test_host_env_guard_cleanup(&cmake_env);
+                    ctest_env_active = false;
+                    arena_destroy(arena);
+                    return false;
+                }
+                cmake_source_dir_env_active = true;
+                if (!test_host_env_guard_begin(&cmake_binary_dir_env,
+                                               EGD_ENV_BINARY_DIR,
+                                               cmake_build_abs)) {
+                    if (cmake_source_dir_env_active) test_host_env_guard_cleanup(&cmake_source_dir_env);
+                    if (ctest_env_active) test_host_env_guard_cleanup(&ctest_env);
+                    if (cmake_env_active) test_host_env_guard_cleanup(&cmake_env);
+                    cmake_source_dir_env_active = false;
+                    ctest_env_active = false;
+                    arena_destroy(arena);
+                    return false;
+                }
+                cmake_binary_dir_env_active = true;
                 configured = egd_run_argv_in_dir(cmake_src,
                                                  script_ctest_argv,
                                                  NOB_ARRAY_LEN(script_ctest_argv));
@@ -1316,6 +1418,8 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
             configured = egd_run_argv_in_dir(".", configure_argv, NOB_ARRAY_LEN(configure_argv));
         }
 
+        if (cmake_source_dir_env_active) test_host_env_guard_cleanup(&cmake_source_dir_env);
+        if (cmake_binary_dir_env_active) test_host_env_guard_cleanup(&cmake_binary_dir_env);
         if (ctest_env_active) test_host_env_guard_cleanup(&ctest_env);
         if (cmake_env_active) test_host_env_guard_cleanup(&cmake_env);
         if (parsed.mode == EGD_MODE_SCRIPT) {
@@ -1331,14 +1435,46 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
                     return false;
                 }
                 nob_codegen_ctest_env_active = true;
+                if (!test_host_env_guard_begin(&nob_codegen_source_dir_env,
+                                               EGD_ENV_SOURCE_DIR,
+                                               nob_src_abs)) {
+                    if (nob_codegen_ctest_env_active) test_host_env_guard_cleanup(&nob_codegen_ctest_env);
+                    test_host_env_guard_cleanup(&nob_codegen_cmake_env);
+                    nob_codegen_ctest_env_active = false;
+                    arena_destroy(arena);
+                    return false;
+                }
+                nob_codegen_source_dir_env_active = true;
+                if (!test_host_env_guard_begin(&nob_codegen_binary_dir_env,
+                                               EGD_ENV_BINARY_DIR,
+                                               nob_build_abs)) {
+                    if (nob_codegen_source_dir_env_active) {
+                        test_host_env_guard_cleanup(&nob_codegen_source_dir_env);
+                    }
+                    if (nob_codegen_ctest_env_active) test_host_env_guard_cleanup(&nob_codegen_ctest_env);
+                    test_host_env_guard_cleanup(&nob_codegen_cmake_env);
+                    nob_codegen_source_dir_env_active = false;
+                    nob_codegen_ctest_env_active = false;
+                    arena_destroy(arena);
+                    return false;
+                }
+                nob_codegen_binary_dir_env_active = true;
             }
         }
         bool wrote_codegen = codegen_write_script_with_config(script_text.data, &config);
+        bool compiled_codegen = false;
+        if (nob_codegen_source_dir_env_active) test_host_env_guard_cleanup(&nob_codegen_source_dir_env);
+        if (nob_codegen_binary_dir_env_active) test_host_env_guard_cleanup(&nob_codegen_binary_dir_env);
         if (nob_codegen_ctest_env_active) test_host_env_guard_cleanup(&nob_codegen_ctest_env);
         if (nob_codegen_cmake_env_active) test_host_env_guard_cleanup(&nob_codegen_cmake_env);
-        if (!configured ||
-            !wrote_codegen ||
-            !codegen_compile_generated_nob(generated_nob, generated_bin)) {
+        compiled_codegen = wrote_codegen && codegen_compile_generated_nob(generated_nob, generated_bin);
+        if (!configured || !wrote_codegen || !compiled_codegen) {
+            nob_log(NOB_ERROR,
+                    "evaluator->codegen diff case %s failed in setup: configured=%s wrote_codegen=%s compiled_codegen=%s",
+                    case_def->case_name,
+                    configured ? "yes" : "no",
+                    wrote_codegen ? "yes" : "no",
+                    compiled_codegen ? "yes" : "no");
             arena_destroy(arena);
             return false;
         }
