@@ -54,6 +54,9 @@ typedef struct {
     String_View diag_message;
 } Genex_Result;
 
+bool genex_collect_known_configs(const Genex_Context *ctx,
+                                 String_View input,
+                                 String_View **out_configs);
 Genex_Result genex_eval(const Genex_Context *ctx, String_View input);
 
 #endif // GENEX_H_

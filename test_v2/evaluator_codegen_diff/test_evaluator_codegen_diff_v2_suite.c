@@ -139,6 +139,7 @@ typedef struct {
     const Test_Manifest_Request *manifest_requests;
     size_t manifest_request_count;
     const char *package_generator;
+    const char *nob_config;
 } EGD_Case_Def;
 
 typedef struct {
@@ -272,6 +273,26 @@ static const EGD_Observed_Output s_egd_configure_host_effect_outputs[] = {
     {"downloaded_text", "replay/downloaded.txt", EGD_DIFF_FILE_TEXT},
 };
 
+static const Test_Manifest_Request s_egd_row52_split_manifests[] = {
+    {TEST_MANIFEST_CAPTURE_TREE, "row52_build_tree", "artifacts"},
+    {TEST_MANIFEST_CAPTURE_FILE_TEXT, "row52_config_report", "reports/config-RelWithDebInfo.txt"},
+};
+
+static const EGD_Observed_Output s_egd_row52_split_outputs[] = {
+    {"row52_build_tree", "artifacts", EGD_DIFF_TREE},
+    {"row52_config_report", "reports/config-RelWithDebInfo.txt", EGD_DIFF_FILE_TEXT},
+};
+
+static const Test_Manifest_Request s_egd_row52_catalog_manifests[] = {
+    {TEST_MANIFEST_CAPTURE_TREE, "row52_catalog_build_tree", "artifacts"},
+    {TEST_MANIFEST_CAPTURE_FILE_TEXT, "row52_catalog_report", "reports/profile.txt"},
+};
+
+static const EGD_Observed_Output s_egd_row52_catalog_outputs[] = {
+    {"row52_catalog_build_tree", "artifacts", EGD_DIFF_TREE},
+    {"row52_catalog_report", "reports/profile.txt", EGD_DIFF_FILE_TEXT},
+};
+
 static const Test_Manifest_Request s_egd_fetchcontent_local_manifests[] = {
     {TEST_MANIFEST_CAPTURE_TREE, "fetchcontent_tree", "fc_base"},
     {TEST_MANIFEST_CAPTURE_FILE_TEXT, "saved_marker", "fc_base/saveddep-build/from_saved.txt"},
@@ -340,6 +361,8 @@ static const EGD_Case_Def s_egd_cases[] = {
     {"export_host_effect_target_and_export_file_surface", EGD_PACK_EXPORT, "export", "standalone export files", EGD_CLASS_PARITY_PASS, EGD_PARITY_EXPORT_FILES, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_EXPORT, EGD_TOOL_CMAKE, "build-model.export", "positive standalone export parity through explicit export command", NULL, "workload.codegen.export-files", s_egd_export_outputs, NOB_ARRAY_LEN(s_egd_export_outputs), s_egd_export_manifests, NOB_ARRAY_LEN(s_egd_export_manifests), NULL},
     {"backend_configure_generation_supported_surface", EGD_PACK_SEEDS, "write_file|make_directory|file(WRITE|APPEND|MAKE_DIRECTORY)|configure_file", "configure materialization parity", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE, "build-model.replay.configure", "positive configure replay parity for deterministic text and directory materialization", NULL, "workload.codegen.configure-materialization", s_egd_configure_generation_outputs, NOB_ARRAY_LEN(s_egd_configure_generation_outputs), s_egd_configure_generation_manifests, NOB_ARRAY_LEN(s_egd_configure_generation_manifests), NULL},
     {"backend_configure_host_effect_supported_surface", EGD_PACK_SEEDS, "file(DOWNLOAD|ARCHIVE_CREATE|ARCHIVE_EXTRACT|GENERATE|LOCK)", "configure host-effect parity", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE | EGD_TOOL_TAR, "build-model.replay.configure", "positive configure replay parity for supported deterministic host effects", NULL, "workload.codegen.configure-host-effects", s_egd_configure_host_effect_outputs, NOB_ARRAY_LEN(s_egd_configure_host_effect_outputs), s_egd_configure_host_effect_manifests, NOB_ARRAY_LEN(s_egd_configure_host_effect_manifests), NULL},
+    {"backend_row52_config_language_platform_surface", EGD_PACK_SEEDS, "target_link_libraries|file(GENERATE)", "config/language/platform split parity", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE, "build-model.query.config-split", "focused row-52 parity for runtime-configured imported mapping, mixed-language compile usage, and platform-sensitive compile decisions", NULL, "workload.codegen.row52-config-split", s_egd_row52_split_outputs, NOB_ARRAY_LEN(s_egd_row52_split_outputs), s_egd_row52_split_manifests, NOB_ARRAY_LEN(s_egd_row52_split_manifests), NULL, "RelWithDebInfo"},
+    {"backend_row52_config_catalog_strequal_surface", EGD_PACK_SEEDS, "file(GENERATE)", "config catalog parity", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE, "build-model.query.config-split", "focused row-52 parity for config branches discovered through STREQUAL against $<CONFIG>", NULL, "workload.codegen.row52-config-catalog", s_egd_row52_catalog_outputs, NOB_ARRAY_LEN(s_egd_row52_catalog_outputs), s_egd_row52_catalog_manifests, NOB_ARRAY_LEN(s_egd_row52_catalog_manifests), NULL, "Profile"},
     {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package TGZ", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_TAR | EGD_TOOL_GZIP, "build-model.package", "positive full-package parity for TGZ", NULL, "workload.codegen.package-tgz", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "TGZ"},
     {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package TXZ", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_TAR | EGD_TOOL_XZ, "build-model.package", "positive full-package parity for TXZ", NULL, "workload.codegen.package-txz", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "TXZ"},
     {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package ZIP", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_PYTHON, "build-model.package", "positive full-package parity for ZIP", NULL, "workload.codegen.package-zip", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "ZIP"},
@@ -606,6 +629,7 @@ static bool egd_case_metadata_is_valid(const EGD_Case_Def *case_def,
     } else if (case_def->package_generator != NULL) {
         return false;
     }
+    if (case_def->nob_config && case_def->nob_config[0] == '\0') return false;
 
     for (size_t i = 0; i < case_def->observed_output_count; ++i) {
         if (!egd_observed_output_is_valid(&case_def->observed_outputs[i])) return false;
@@ -1148,6 +1172,29 @@ static bool egd_compare_manifests(Arena *arena,
     return test_manifest_assert_equal(arena, subject, "cmake manifest", "nob manifest", expected, actual);
 }
 
+static bool egd_build_nob_argv(const char *nob_config,
+                               const char *const *base_argv,
+                               size_t base_argc,
+                               const char **storage,
+                               size_t storage_cap,
+                               const char ***out_argv,
+                               size_t *out_argc) {
+    size_t argc = 0;
+    if (!storage || !out_argv || !out_argc) return false;
+    if (nob_config && nob_config[0] != '\0') {
+        if (argc + 2 > storage_cap) return false;
+        storage[argc++] = "--config";
+        storage[argc++] = nob_config;
+    }
+    for (size_t i = 0; i < base_argc; ++i) {
+        if (argc + 1 > storage_cap) return false;
+        storage[argc++] = base_argv[i];
+    }
+    *out_argv = argc > 0 ? storage : NULL;
+    *out_argc = argc;
+    return true;
+}
+
 static bool egd_run_case(const EGD_Case_Def *case_def,
                          EGD_Case_Summary *summary) {
     Arena *arena = arena_create(8 * 1024 * 1024);
@@ -1181,13 +1228,22 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
     const char *script_ctest_argv[] = {"", "-S", "", "-VV"};
     const char *build_argv[] = {"", "--build", cmake_build};
     const char *install_argv[] = {"", "--install", cmake_build, "--prefix", cmake_install};
-    const char *nob_build_argv[] = {NULL};
-    const char *nob_test_argv[] = {"test"};
-    const char *nob_install_argv[] = {"install", "--prefix", nob_install};
-    const char *nob_export_argv[] = {"export"};
-    const char *nob_package_argv[] = {"package", "--generator", NULL};
-    const char *const *nob_run_argv = nob_build_argv;
+    const char *nob_test_base_argv[] = {"test"};
+    const char *nob_install_base_argv[] = {"install", "--prefix", nob_install};
+    const char *nob_export_base_argv[] = {"export"};
+    const char *nob_package_base_argv[] = {"package", "--generator", NULL};
+    const char *nob_run_storage[8] = {0};
+    const char *nob_install_storage[8] = {0};
+    const char *nob_export_storage[8] = {0};
+    const char *nob_package_storage[8] = {0};
+    const char *const *nob_run_argv = NULL;
+    const char *const *nob_install_argv = NULL;
+    const char *const *nob_export_argv = NULL;
+    const char *const *nob_package_argv = NULL;
     size_t nob_run_argc = 0;
+    size_t nob_install_argc = 0;
+    size_t nob_export_argc = 0;
+    size_t nob_package_argc = 0;
     Codegen_Test_Config config = {0};
     bool ok = false;
     const char *workspace_cwd = NULL;
@@ -1339,8 +1395,53 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
     script_ctest_argv[2] = "CMakeLists.txt";
 
     if ((case_def->phase_mask & EGD_PHASE_TEST) != 0u) {
-        nob_run_argv = nob_test_argv;
-        nob_run_argc = NOB_ARRAY_LEN(nob_test_argv);
+        if (!egd_build_nob_argv(case_def->nob_config,
+                                nob_test_base_argv,
+                                NOB_ARRAY_LEN(nob_test_base_argv),
+                                nob_run_storage,
+                                NOB_ARRAY_LEN(nob_run_storage),
+                                &nob_run_argv,
+                                &nob_run_argc)) {
+            arena_destroy(arena);
+            return false;
+        }
+    } else if (!egd_build_nob_argv(case_def->nob_config,
+                                   NULL,
+                                   0,
+                                   nob_run_storage,
+                                   NOB_ARRAY_LEN(nob_run_storage),
+                                   &nob_run_argv,
+                                   &nob_run_argc)) {
+        arena_destroy(arena);
+        return false;
+    }
+    if (!egd_build_nob_argv(case_def->nob_config,
+                            nob_install_base_argv,
+                            NOB_ARRAY_LEN(nob_install_base_argv),
+                            nob_install_storage,
+                            NOB_ARRAY_LEN(nob_install_storage),
+                            &nob_install_argv,
+                            &nob_install_argc) ||
+        !egd_build_nob_argv(case_def->nob_config,
+                            nob_export_base_argv,
+                            NOB_ARRAY_LEN(nob_export_base_argv),
+                            nob_export_storage,
+                            NOB_ARRAY_LEN(nob_export_storage),
+                            &nob_export_argv,
+                            &nob_export_argc)) {
+        arena_destroy(arena);
+        return false;
+    }
+    nob_package_base_argv[2] = case_def->package_generator;
+    if (!egd_build_nob_argv(case_def->nob_config,
+                            nob_package_base_argv,
+                            NOB_ARRAY_LEN(nob_package_base_argv),
+                            nob_package_storage,
+                            NOB_ARRAY_LEN(nob_package_storage),
+                            &nob_package_argv,
+                            &nob_package_argc)) {
+        arena_destroy(arena);
+        return false;
     }
 
     {
@@ -1503,7 +1604,7 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
                  codegen_run_binary_in_dir_argv(nob_temp_dir_name(generated_nob),
                                                 nob_temp_sprintf("./%s", nob_temp_file_name(generated_bin)),
                                                 nob_install_argv,
-                                                NOB_ARRAY_LEN(nob_install_argv)) &&
+                                                nob_install_argc) &&
                  egd_compare_manifests(arena,
                                        case_def->signature,
                                        case_def->case_name,
@@ -1517,7 +1618,7 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
             ok = codegen_run_binary_in_dir_argv(nob_temp_dir_name(generated_nob),
                                                 nob_temp_sprintf("./%s", nob_temp_file_name(generated_bin)),
                                                 nob_export_argv,
-                                                NOB_ARRAY_LEN(nob_export_argv)) &&
+                                                nob_export_argc) &&
                  egd_compare_manifests(arena,
                                        case_def->signature,
                                        case_def->case_name,
@@ -1535,12 +1636,11 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
 
             {
                 const char *cpack_argv[] = {cpack_bin, "-G", case_def->package_generator};
-                nob_package_argv[2] = case_def->package_generator;
                 if (!egd_run_argv_in_dir(cmake_build, cpack_argv, NOB_ARRAY_LEN(cpack_argv)) ||
                     !codegen_run_binary_in_dir_argv(nob_temp_dir_name(generated_nob),
                                                     nob_temp_sprintf("./%s", nob_temp_file_name(generated_bin)),
                                                     nob_package_argv,
-                                                    NOB_ARRAY_LEN(nob_package_argv))) {
+                                                    nob_package_argc)) {
                     arena_destroy(arena);
                     return false;
                 }

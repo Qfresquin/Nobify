@@ -34,6 +34,14 @@ static size_t codegen_count_substr(String_View sv, const char *needle) {
     return count;
 }
 
+static void codegen_init_event(Event *ev, Event_Kind kind, size_t line) {
+    *ev = (Event){0};
+    ev->h.kind = kind;
+    ev->h.origin.file_path = nob_sv_from_cstr("CMakeLists.txt");
+    ev->h.origin.line = line;
+    ev->h.origin.col = 1;
+}
+
 static bool codegen_mkdirs(const char *path) {
     char buf[_TINYDIR_PATH_MAX] = {0};
     size_t len = 0;
@@ -1055,6 +1063,7 @@ TEST(codegen_configure_replay_supported_effects_and_phase_cli_work) {
 
 TEST(codegen_configure_replay_resolves_genex_per_runtime_config) {
     Arena *arena = arena_create(128 * 1024);
+    String_View generated = {0};
     const char *debug_configure_argv[] = {"--config", "Debug", "configure"};
     const char *release_configure_argv[] = {"--config", "Release", "configure"};
     const char *script =
@@ -1073,6 +1082,8 @@ TEST(codegen_configure_replay_resolves_genex_per_runtime_config) {
     ASSERT(codegen_write_text_file("cfg_genex_src/main.c", "int main(void) { return 0; }\n"));
     ASSERT(codegen_write_script_with_config(script, &config));
     ASSERT(codegen_compile_generated_nob("cfg_genex_nob.c", "cfg_genex_nob_gen"));
+    ASSERT(codegen_load_text_file_to_arena(arena, "cfg_genex_nob.c", &generated));
+    ASSERT(!codegen_sv_contains(generated, "$<"));
 
     ASSERT(codegen_run_binary_in_dir_argv(".", "./cfg_genex_nob_gen", debug_configure_argv, NOB_ARRAY_LEN(debug_configure_argv)));
     ASSERT(test_ws_host_path_exists("cfg_genex_build/cfg/debug.txt"));
@@ -1084,6 +1095,36 @@ TEST(codegen_configure_replay_resolves_genex_per_runtime_config) {
     ASSERT(!test_ws_host_path_exists("cfg_genex_build/cfg/debug.txt"));
     ASSERT(test_ws_host_path_exists("cfg_genex_build/cfg/release.txt"));
     ASSERT(codegen_text_file_equals(arena, "cfg_genex_build/cfg/release.txt", "release"));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(codegen_configure_replay_discovers_strequal_config_catalog_branches) {
+    Arena *arena = arena_create(128 * 1024);
+    const char *profile_configure_argv[] = {"--config", "Profile", "configure"};
+    const char *script =
+        "project(Test C)\n"
+        "file(GENERATE OUTPUT "
+        "\"${CMAKE_CURRENT_BINARY_DIR}/cfg/$<$<STREQUAL:$<CONFIG>,Profile>:profile>$<$<NOT:$<STREQUAL:$<CONFIG>,Profile>>:other>.txt\" "
+        "CONTENT \"$<$<STREQUAL:$<CONFIG>,Profile>:profile>$<$<NOT:$<STREQUAL:$<CONFIG>,Profile>>:other>\")\n"
+        "add_executable(app main.c)\n";
+    Codegen_Test_Config config = {
+        .input_path = "CMakeLists.txt",
+        .output_path = "cfg_strequal_nob.c",
+        .source_dir = "cfg_strequal_src",
+        .binary_dir = "cfg_strequal_build",
+    };
+
+    ASSERT(arena != NULL);
+    ASSERT(codegen_write_text_file("cfg_strequal_src/main.c", "int main(void) { return 0; }\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("cfg_strequal_nob.c", "cfg_strequal_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./cfg_strequal_nob_gen", profile_configure_argv, NOB_ARRAY_LEN(profile_configure_argv)));
+    ASSERT(test_ws_host_path_exists("cfg_strequal_build/cfg/profile.txt"));
+    ASSERT(!test_ws_host_path_exists("cfg_strequal_build/cfg/other.txt"));
+    ASSERT(codegen_text_file_equals(arena, "cfg_strequal_build/cfg/profile.txt", "profile"));
 
     arena_destroy(arena);
     TEST_PASS();
@@ -1135,6 +1176,95 @@ TEST(codegen_test_phase_auto_builds_registered_targets_and_honors_config_filters
     ASSERT(codegen_run_binary_in_dir_argv(".", "./test_phase_nob_gen", smoke_test_argv, NOB_ARRAY_LEN(smoke_test_argv)));
     ASSERT(test_ws_host_path_exists("test_phase_build/app"));
     ASSERT(test_ws_host_path_exists("test_phase_build/smoke.txt"));
+    TEST_PASS();
+}
+
+TEST(codegen_test_replay_resolves_filesystem_operands_per_config_filter) {
+    Arena *arena = arena_create(128 * 1024);
+    Arena *validate_arena = arena_create(64 * 1024);
+    Arena *model_arena = arena_create(256 * 1024);
+    Arena *codegen_arena = arena_create(512 * 1024);
+    Test_Semantic_Pipeline_Build_Result build = {0};
+    Event_Stream *stream = NULL;
+    Event ev = {0};
+    Nob_String_Builder sb = {0};
+    String_View generated = {0};
+    const char *debug_test_argv[] = {"--config", "Debug", "test"};
+    const char *release_test_argv[] = {"--config", "Release", "test"};
+    Nob_Codegen_Options opts = {
+        .input_path = nob_sv_from_cstr("test_replay_src/CMakeLists.txt"),
+        .output_path = nob_sv_from_cstr("test_replay_nob.c"),
+        .source_root = nob_sv_from_cstr("test_replay_src"),
+        .binary_root = nob_sv_from_cstr("test_replay_build"),
+    };
+
+    ASSERT(arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
+    ASSERT(codegen_arena != NULL);
+
+    stream = event_stream_create(arena);
+    ASSERT(stream != NULL);
+
+    codegen_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr("test_replay_src");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr("test_replay_build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    codegen_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 2);
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("test_fs_write");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_FILESYSTEM;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_FS_WRITE_TEXT;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_TEST;
+    ev.as.replay_action_declare.working_directory = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    codegen_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 3);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("test_fs_write");
+    ev.as.replay_action_add_output.path =
+        nob_sv_from_cstr("test_replay_build/replay/$<IF:$<CONFIG:Debug>,debug,$<IF:$<CONFIG:Release>,release,other>>.txt");
+    ASSERT(event_stream_push(stream, &ev));
+
+    codegen_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 4);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("test_fs_write");
+    ev.as.replay_action_add_argv.arg_index = 0;
+    ev.as.replay_action_add_argv.value =
+        nob_sv_from_cstr("$<IF:$<CONFIG:Debug>,debug,$<IF:$<CONFIG:Release>,release,other>>");
+    ASSERT(event_stream_push(stream, &ev));
+
+    codegen_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 5);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("test_fs_write");
+    ev.as.replay_action_add_argv.arg_index = 1;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("");
+    ASSERT(event_stream_push(stream, &ev));
+
+    codegen_init_event(&ev, EVENT_DIRECTORY_LEAVE, 6);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr("test_replay_src");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr("test_replay_build");
+    ASSERT(event_stream_push(stream, &ev));
+
+    ASSERT(test_semantic_pipeline_build_model_from_stream(arena, validate_arena, model_arena, stream, &build));
+    ASSERT(build.builder_ok);
+    ASSERT(build.validate_ok);
+    ASSERT(build.freeze_ok);
+    ASSERT(build.model != NULL);
+    ASSERT(nob_codegen_render(build.model, codegen_arena, &opts, &sb));
+    ASSERT(nob_write_entire_file("test_replay_nob.c", sb.items ? sb.items : "", sb.count));
+    ASSERT(codegen_load_text_file_to_arena(arena, "test_replay_nob.c", &generated));
+    ASSERT(!codegen_sv_contains(generated, "$<"));
+    ASSERT(codegen_compile_generated_nob("test_replay_nob.c", "test_replay_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./test_replay_nob_gen", debug_test_argv, NOB_ARRAY_LEN(debug_test_argv)));
+    ASSERT(codegen_text_file_equals(arena, "test_replay_build/replay/debug.txt", "debug"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./test_replay_nob_gen", release_test_argv, NOB_ARRAY_LEN(release_test_argv)));
+    ASSERT(codegen_text_file_equals(arena, "test_replay_build/replay/release.txt", "release"));
+
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
+    arena_destroy(codegen_arena);
     TEST_PASS();
 }
 
@@ -2508,6 +2638,143 @@ TEST(codegen_debug_and_optimized_link_items_follow_generated_config) {
     TEST_PASS();
 }
 
+TEST(codegen_runtime_config_maps_imported_target_file_and_mixed_language_usage) {
+    Arena *arena = arena_create(128 * 1024);
+    String_View report = {0};
+    const char *build_argv[] = {"--config", "RelWithDebInfo"};
+    const char *script =
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING \"\" FORCE)\n"
+        "project(Test LANGUAGES C CXX)\n"
+        "add_library(iface INTERFACE)\n"
+        "target_compile_definitions(iface INTERFACE\n"
+        "  \"$<$<CONFIG:RelWithDebInfo>:CFG_RELWITHDEBINFO>\"\n"
+        "  \"$<$<COMPILE_LANGUAGE:C>:LANG_C>\"\n"
+        "  \"$<$<COMPILE_LANGUAGE:CXX>:LANG_CXX>\"\n"
+        "  \"$<$<PLATFORM_ID:Linux>:PLATFORM_LINUX>\")\n"
+        "add_library(ext SHARED IMPORTED)\n"
+        "set_target_properties(ext PROPERTIES\n"
+        "  IMPORTED_LOCATION \"${CMAKE_CURRENT_SOURCE_DIR}/imports/libbase.so\"\n"
+        "  IMPORTED_LOCATION_DEBUG \"${CMAKE_CURRENT_SOURCE_DIR}/imports/libdebug.so\"\n"
+        "  MAP_IMPORTED_CONFIG_RELWITHDEBINFO Debug)\n"
+        "file(GENERATE OUTPUT \"${CMAKE_CURRENT_BINARY_DIR}/reports/config-$<CONFIG>.txt\"\n"
+        "  CONTENT \"$<TARGET_FILE_NAME:ext>\\n\")\n"
+        "add_executable(app src/c_part.c src/main.cpp)\n"
+        "target_link_libraries(app PRIVATE iface)\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n";
+    Codegen_Test_Config config = {
+        .input_path = "row52_runtime_src/CMakeLists.txt",
+        .output_path = "row52_runtime_nob.c",
+        .source_dir = "row52_runtime_src",
+        .binary_dir = "row52_runtime_build",
+    };
+
+    ASSERT(arena != NULL);
+    ASSERT(codegen_write_text_file(
+        "row52_runtime_src/src/c_part.c",
+        "#ifndef LANG_C\n"
+        "#error LANG_C missing\n"
+        "#endif\n"
+        "#ifdef LANG_CXX\n"
+        "#error LANG_CXX leaked into C\n"
+        "#endif\n"
+        "#ifndef CFG_RELWITHDEBINFO\n"
+        "#error CFG_RELWITHDEBINFO missing\n"
+        "#endif\n"
+        "#if defined(__linux__) && !defined(PLATFORM_LINUX)\n"
+        "#error PLATFORM_LINUX missing\n"
+        "#endif\n"
+        "int c_marker(void) { return 17; }\n"));
+    ASSERT(codegen_write_text_file(
+        "row52_runtime_src/src/main.cpp",
+        "extern \"C\" int c_marker(void);\n"
+        "#ifndef LANG_CXX\n"
+        "#error LANG_CXX missing\n"
+        "#endif\n"
+        "#ifdef LANG_C\n"
+        "#error LANG_C leaked into CXX\n"
+        "#endif\n"
+        "#ifndef CFG_RELWITHDEBINFO\n"
+        "#error CFG_RELWITHDEBINFO missing\n"
+        "#endif\n"
+        "#if defined(__linux__) && !defined(PLATFORM_LINUX)\n"
+        "#error PLATFORM_LINUX missing\n"
+        "#endif\n"
+        "int main(void) { return c_marker() == 17 ? 0 : 1; }\n"));
+    ASSERT(codegen_write_text_file("row52_runtime_src/imports/libbase.so", "base\n"));
+    ASSERT(codegen_write_text_file("row52_runtime_src/imports/libdebug.so", "debug\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("row52_runtime_nob.c", "row52_runtime_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./row52_runtime_nob_gen", build_argv, NOB_ARRAY_LEN(build_argv)));
+    ASSERT(test_ws_host_path_exists("row52_runtime_build/artifacts/bin/app"));
+    ASSERT(test_ws_host_path_exists("row52_runtime_build/reports/config-RelWithDebInfo.txt"));
+    ASSERT(codegen_load_text_file_to_arena(arena, "row52_runtime_build/reports/config-RelWithDebInfo.txt", &report));
+    ASSERT(nob_sv_eq(report, nob_sv_from_cstr("libdebug.so\n")));
+    ASSERT(codegen_run_binary_in_dir(".", "row52_runtime_build/artifacts/bin/app", NULL, NULL));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(codegen_config_mapped_imported_cxx_link_language_comes_from_build_model_query) {
+    Arena *arena = arena_create(128 * 1024);
+    String_View generated = {0};
+    const char *rel_build_argv[] = {"--config", "RelWithDebInfo", "app"};
+    const char *script =
+        "project(Test LANGUAGES C)\n"
+        "add_library(ext STATIC IMPORTED)\n"
+        "set_target_properties(ext PROPERTIES\n"
+        "  IMPORTED_LOCATION_DEBUG imports/libdebug.a\n"
+        "  IMPORTED_LINK_INTERFACE_LANGUAGES_DEBUG CXX\n"
+        "  MAP_IMPORTED_CONFIG_RELWITHDEBINFO Debug)\n"
+        "add_executable(app main.c)\n"
+        "target_compile_definitions(app PRIVATE \"$<$<CONFIG:RelWithDebInfo>:USE_EXT>\")\n"
+        "target_link_libraries(app PRIVATE \"$<$<CONFIG:RelWithDebInfo>:ext>\")\n";
+    Codegen_Test_Config config = {
+        .input_path = "row52_link_lang_src/CMakeLists.txt",
+        .output_path = "row52_link_lang_nob.c",
+        .source_dir = "row52_link_lang_src",
+        .binary_dir = "row52_link_lang_build",
+    };
+    ASSERT(arena != NULL);
+
+    ASSERT(codegen_write_text_file(
+        "row52_link_lang_src/imports/ext.cpp",
+        "#include <string>\n"
+        "extern \"C\" int ext_value(void) {\n"
+        "    static std::string value = \"query-link-language\";\n"
+        "    return value.size() > 0 ? 42 : 0;\n"
+        "}\n"));
+    ASSERT(codegen_write_text_file(
+        "row52_link_lang_src/main.c",
+        "#ifdef USE_EXT\n"
+        "int ext_value(void);\n"
+        "#endif\n"
+        "int main(void) {\n"
+        "#ifdef USE_EXT\n"
+        "    return ext_value() == 42 ? 0 : 1;\n"
+        "#else\n"
+        "    return 0;\n"
+        "#endif\n"
+        "}\n"));
+    ASSERT(codegen_build_static_archive("row52_link_lang_src", "c++", "imports/ext.cpp", "imports/libdebug.a"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_load_text_file_to_arena(arena, "row52_link_lang_nob.c", &generated));
+    ASSERT(codegen_count_substr(generated, "append_toolchain_cmd(&link_cmd, true);") == 1);
+    ASSERT(codegen_count_substr(generated, "append_toolchain_cmd(&link_cmd, false);") >= 1);
+    ASSERT(codegen_compile_generated_nob("row52_link_lang_nob.c", "row52_link_lang_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir(".", "./row52_link_lang_nob_gen", "app", NULL));
+    ASSERT(codegen_run_binary_in_dir(".", "row52_link_lang_build/app", NULL, NULL));
+    ASSERT(codegen_run_binary_in_dir(".", "./row52_link_lang_nob_gen", "clean", NULL));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./row52_link_lang_nob_gen", rel_build_argv, NOB_ARRAY_LEN(rel_build_argv)));
+    ASSERT(codegen_run_binary_in_dir(".", "row52_link_lang_build/app", NULL, NULL));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(codegen_build_steps_resolve_target_file_and_target_linker_file_genex) {
     if (!codegen_host_cmake_available()) {
         TEST_SKIP("requires local cmake for ${CMAKE_COMMAND} runtime steps");
@@ -2881,7 +3148,9 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_clean_removes_out_of_source_outputs_but_preserves_binary_root(passed, failed, skipped);
     test_codegen_configure_replay_supported_effects_and_phase_cli_work(passed, failed, skipped);
     test_codegen_configure_replay_resolves_genex_per_runtime_config(passed, failed, skipped);
+    test_codegen_configure_replay_discovers_strequal_config_catalog_branches(passed, failed, skipped);
     test_codegen_test_phase_auto_builds_registered_targets_and_honors_config_filters(passed, failed, skipped);
+    test_codegen_test_replay_resolves_filesystem_operands_per_config_filter(passed, failed, skipped);
     test_codegen_fetchcontent_local_materialization_replays_from_clean_workspace(passed, failed, skipped);
     test_codegen_ctest_local_dashboard_replay_stages_testing_tree(passed, failed, skipped);
     test_codegen_ctest_external_project_same_build_dir_replays_locally(passed, failed, skipped);
@@ -2900,6 +3169,8 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_uses_embedded_cmake_for_runtime_steps_without_cmake_on_path(passed, failed, skipped);
     test_codegen_custom_target_dependency_runs_and_clean_removes_step_stamps(passed, failed, skipped);
     test_codegen_target_hooks_run_at_pre_link_and_post_build_boundaries(passed, failed, skipped);
+    test_codegen_runtime_config_maps_imported_target_file_and_mixed_language_usage(passed, failed, skipped);
+    test_codegen_config_mapped_imported_cxx_link_language_comes_from_build_model_query(passed, failed, skipped);
     test_codegen_render_explicit_linux_posix_policy_preserves_linux_artifact_rules(passed, failed, skipped);
     test_codegen_render_darwin_posix_policy_uses_dylib_and_bundle_rules(passed, failed, skipped);
     test_codegen_render_windows_msvc_policy_plans_dll_import_lib_and_msvc_tools(passed, failed, skipped);

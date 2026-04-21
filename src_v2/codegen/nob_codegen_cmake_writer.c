@@ -331,24 +331,9 @@ static bool cg_collect_target_link_languages(CG_Context *ctx,
     *out = nob_sv_from_cstr("");
 
     for (size_t i = 0; i < bm_query_target_source_count(ctx->model, target_id); ++i) {
-        String_View language = nob_sv_trim(bm_query_target_source_language(ctx->model, target_id, i));
-        if (language.count == 0 || !bm_query_target_source_is_compile_input(ctx->model, target_id, i)) continue;
+        String_View language = bm_query_target_source_effective_language(ctx->model, target_id, i);
+        if (language.count == 0) continue;
         if (!cg_collect_unique_path(ctx->scratch, &languages, language)) return false;
-    }
-
-    if (arena_arr_len(languages) == 0) {
-        for (size_t i = 0; i < bm_query_target_source_count(ctx->model, target_id); ++i) {
-            CG_Source_Lang lang = CG_SOURCE_LANG_C;
-            String_View source_language = nob_sv_trim(bm_query_target_source_language(ctx->model, target_id, i));
-            String_View source_path = bm_query_target_source_effective(ctx->model, target_id, i);
-            if (!bm_query_target_source_is_compile_input(ctx->model, target_id, i)) continue;
-            if (source_language.count > 0) {
-                if (!cg_parse_source_language(source_language, &lang)) continue;
-            } else {
-                if (cg_is_header_like(source_path) || !cg_classify_source_lang(source_path, &lang)) continue;
-            }
-            if (!cg_collect_unique_path(ctx->scratch, &languages, cg_compile_language_sv(lang))) return false;
-        }
     }
 
     return cg_join_sv_list(ctx->scratch, languages, out);

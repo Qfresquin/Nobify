@@ -131,6 +131,84 @@ file(LOCK "${CMAKE_CURRENT_BINARY_DIR}/replay/lock_dir" DIRECTORY)
 file(LOCK "${CMAKE_CURRENT_BINARY_DIR}/replay/lock_dir" DIRECTORY RELEASE)
 #@@ENDCASE
 
+#@@CASE backend_row52_config_language_platform_surface
+#@@OUTCOME SUCCESS
+#@@FILE_TEXT source/src/c_part.c
+#ifndef LANG_C
+#error LANG_C missing
+#endif
+#ifdef LANG_CXX
+#error LANG_CXX leaked into C
+#endif
+#ifndef CFG_RELWITHDEBINFO
+#error CFG_RELWITHDEBINFO missing
+#endif
+#if defined(__linux__) && !defined(PLATFORM_LINUX)
+#error PLATFORM_LINUX missing
+#endif
+int c_marker(void) { return 17; }
+#@@END_FILE_TEXT
+#@@FILE_TEXT source/src/main.cpp
+extern "C" int c_marker(void);
+#ifndef LANG_CXX
+#error LANG_CXX missing
+#endif
+#ifdef LANG_C
+#error LANG_C leaked into CXX
+#endif
+#ifndef CFG_RELWITHDEBINFO
+#error CFG_RELWITHDEBINFO missing
+#endif
+#if defined(__linux__) && !defined(PLATFORM_LINUX)
+#error PLATFORM_LINUX missing
+#endif
+int main(void) { return c_marker() == 17 ? 0 : 1; }
+#@@END_FILE_TEXT
+#@@FILE_TEXT source/imports/libbase.so
+base
+#@@END_FILE_TEXT
+#@@FILE_TEXT source/imports/libdebug.so
+debug
+#@@END_FILE_TEXT
+cmake_minimum_required(VERSION 3.28)
+set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
+project(Row52 LANGUAGES C CXX)
+add_library(iface INTERFACE)
+target_compile_definitions(iface INTERFACE
+  "$<$<CONFIG:RelWithDebInfo>:CFG_RELWITHDEBINFO>"
+  "$<$<COMPILE_LANGUAGE:C>:LANG_C>"
+  "$<$<COMPILE_LANGUAGE:CXX>:LANG_CXX>"
+  "$<$<PLATFORM_ID:Linux>:PLATFORM_LINUX>")
+add_library(ext SHARED IMPORTED)
+set_target_properties(ext PROPERTIES
+  IMPORTED_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/imports/libbase.so"
+  IMPORTED_LOCATION_DEBUG "${CMAKE_CURRENT_SOURCE_DIR}/imports/libdebug.so"
+  MAP_IMPORTED_CONFIG_RELWITHDEBINFO Debug)
+file(GENERATE
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/reports/config-$<CONFIG>.txt"
+  CONTENT "$<TARGET_FILE_NAME:ext>\n")
+add_executable(app src/c_part.c src/main.cpp)
+target_link_libraries(app PRIVATE iface)
+set_target_properties(app PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/artifacts/bin")
+#@@ENDCASE
+
+#@@CASE backend_row52_config_catalog_strequal_surface
+#@@OUTCOME SUCCESS
+#@@FILE_TEXT source/src/main.c
+int main(void) { return 0; }
+#@@END_FILE_TEXT
+cmake_minimum_required(VERSION 3.28)
+set(CMAKE_BUILD_TYPE Profile CACHE STRING "" FORCE)
+project(Row52Catalog LANGUAGES C)
+file(GENERATE
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/reports/$<$<STREQUAL:$<CONFIG>,Profile>:profile>$<$<NOT:$<STREQUAL:$<CONFIG>,Profile>>:other>.txt"
+  CONTENT "$<$<STREQUAL:$<CONFIG>,Profile>:profile>$<$<NOT:$<STREQUAL:$<CONFIG>,Profile>>:other>\n")
+add_executable(app src/main.c)
+set_target_properties(app PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/artifacts/bin")
+#@@ENDCASE
+
 #@@CASE backend_reject_target_precompile_headers
 #@@OUTCOME SUCCESS
 #@@FILE_TEXT source/src/main.c

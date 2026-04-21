@@ -1,4 +1,5 @@
 #include "build_model_internal.h"
+#include "genex.h"
 
 static bool bm_freeze_check_invariants(const Build_Model_Draft *draft, Diag_Sink *sink) {
     if (draft->has_semantic_entities && draft->root_directory_id == BM_DIRECTORY_ID_INVALID) {
@@ -704,12 +705,34 @@ static BM_Imported_Config_Map_Record *bm_imported_config_map_ensure(Arena *arena
     return &arena_arr_last(target->imported_config_maps);
 }
 
+static String_View bm_freeze_trim_current_dir_prefixes(String_View path) {
+    while (path.count >= 2 &&
+           path.data[0] == '.' &&
+           (path.data[1] == '/' || path.data[1] == '\\')) {
+        path.data += 2;
+        path.count -= 2;
+    }
+    return path;
+}
+
+static bool bm_freeze_path_has_prefix(String_View path, String_View prefix) {
+    path = bm_freeze_trim_current_dir_prefixes(path);
+    prefix = bm_freeze_trim_current_dir_prefixes(prefix);
+    if (prefix.count == 0 || path.count < prefix.count) return false;
+    if (!nob_sv_starts_with(path, prefix)) return false;
+    if (path.count == prefix.count) return true;
+    return path.data[prefix.count] == '/' || path.data[prefix.count] == '\\';
+}
+
 static bool bm_imported_config_set_path(Arena *arena,
                                         String_View source_dir,
                                         String_View raw_value,
                                         String_View *dest) {
     if (!dest) return false;
     if (dest->count > 0) return true;
+    if (bm_path_is_abs(raw_value) || bm_freeze_path_has_prefix(raw_value, source_dir)) {
+        return bm_normalize_path(arena, raw_value, dest);
+    }
     return bm_path_rebase(arena, source_dir, raw_value, dest);
 }
 
@@ -1388,28 +1411,10 @@ static bool bm_known_configs_push_unique_ci(Arena *arena, String_View **configs,
 }
 
 static bool bm_known_configs_scan_string(Arena *arena, String_View **configs, String_View value) {
-    const char *needle = "$<CONFIG:";
-    size_t needle_len = strlen(needle);
-    if (!arena || !configs || value.count < needle_len) return true;
-    for (size_t i = 0; i + needle_len <= value.count; ++i) {
-        if (memcmp(value.data + i, needle, needle_len) != 0) continue;
-        i += needle_len;
-        {
-            size_t start = i;
-            for (; i < value.count && value.data[i] != '>'; ++i) {
-                if (value.data[i] == ',' || value.data[i] == ';') {
-                    String_View config = nob_sv_trim(nob_sv_from_parts(value.data + start, i - start));
-                    if (!bm_known_configs_push_unique_ci(arena, configs, config)) return false;
-                    start = i + 1;
-                }
-            }
-            if (i <= value.count) {
-                String_View config = nob_sv_trim(nob_sv_from_parts(value.data + start, i - start));
-                if (!bm_known_configs_push_unique_ci(arena, configs, config)) return false;
-            }
-        }
-    }
-    return true;
+    Genex_Context gx = {0};
+    if (!arena || !configs) return false;
+    gx.arena = arena;
+    return genex_collect_known_configs(&gx, value, configs);
 }
 
 static bool bm_known_configs_scan_string_array(Arena *arena, String_View **configs, const String_View *values) {

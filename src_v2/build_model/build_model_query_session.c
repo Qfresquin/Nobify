@@ -25,6 +25,11 @@ typedef struct {
     BM_String_Span value;
 } BM_Query_Session_Imported_Link_Lang_Entry;
 
+typedef struct {
+    char *key;
+    String_View value;
+} BM_Query_Session_Effective_Link_Lang_Entry;
+
 struct BM_Query_Session {
     Arena *arena;
     const Build_Model *model;
@@ -34,6 +39,7 @@ struct BM_Query_Session {
     BM_Query_Session_Effective_Value_Entry *effective_value_cache;
     BM_Query_Session_Target_File_Entry *target_file_cache;
     BM_Query_Session_Imported_Link_Lang_Entry *imported_link_lang_cache;
+    BM_Query_Session_Effective_Link_Lang_Entry *effective_link_lang_cache;
 };
 
 static BM_Query_Eval_Context bm_query_session_normalize_effective_ctx(BM_Target_Id id,
@@ -59,6 +65,7 @@ static void bm_query_session_cleanup(void *userdata) {
     stbds_shfree(session->effective_value_cache);
     stbds_shfree(session->target_file_cache);
     stbds_shfree(session->imported_link_lang_cache);
+    stbds_shfree(session->effective_link_lang_cache);
 }
 
 static void bm_query_session_key_append_u64(Nob_String_Builder *sb, uint64_t value) {
@@ -211,6 +218,25 @@ static bool bm_query_session_build_imported_lang_key(BM_Target_Id id,
                                                      Nob_String_Builder *sb) {
     if (!ctx || !sb) return false;
     nob_sb_append_cstr(sb, "imported_langs|");
+    bm_query_session_key_append_u64(sb, (uint64_t)id);
+    bm_query_session_key_append_u64(sb, (uint64_t)ctx->usage_mode);
+    bm_query_session_key_append_u64(sb, (uint64_t)ctx->current_target_id);
+    bm_query_session_key_append_u64(sb, (uint64_t)(ctx->build_interface_active ? 1 : 0));
+    bm_query_session_key_append_u64(sb, (uint64_t)(ctx->build_local_interface_active ? 1 : 0));
+    bm_query_session_key_append_u64(sb, (uint64_t)(ctx->install_interface_active ? 1 : 0));
+    bm_query_session_key_append_sv(sb, ctx->config);
+    bm_query_session_key_append_sv(sb, ctx->platform_id);
+    bm_query_session_key_append_sv(sb, ctx->compile_language);
+    bm_query_session_key_append_sv(sb, ctx->install_prefix);
+    bm_query_session_finalize_key(sb);
+    return true;
+}
+
+static bool bm_query_session_build_effective_link_lang_key(BM_Target_Id id,
+                                                           const BM_Query_Eval_Context *ctx,
+                                                           Nob_String_Builder *sb) {
+    if (!ctx || !sb) return false;
+    nob_sb_append_cstr(sb, "effective_link_lang|");
     bm_query_session_key_append_u64(sb, (uint64_t)id);
     bm_query_session_key_append_u64(sb, (uint64_t)ctx->usage_mode);
     bm_query_session_key_append_u64(sb, (uint64_t)ctx->current_target_id);
@@ -495,6 +521,54 @@ static bool bm_query_session_imported_link_languages_cached(BM_Query_Session *se
     return true;
 }
 
+static bool bm_query_session_effective_link_language_cached(BM_Query_Session *session,
+                                                            BM_Target_Id id,
+                                                            const BM_Query_Eval_Context *ctx,
+                                                            bool count_stats,
+                                                            String_View *out) {
+    BM_Query_Session_Effective_Link_Lang_Entry *entry = NULL;
+    BM_Query_Eval_Context normalized = bm_query_session_normalize_effective_ctx(id, BM_QUERY_USAGE_LINK, ctx);
+    Arena *temp = NULL;
+    String_View computed = {0};
+    String_View cached = {0};
+    Nob_String_Builder key = {0};
+    if (!session || !out) return false;
+    *out = nob_sv_from_cstr("");
+
+    if (!bm_query_session_build_effective_link_lang_key(id, &normalized, &key)) return false;
+    entry = stbds_shgetp_null(session->effective_link_lang_cache, key.items ? key.items : "");
+    if (entry) {
+        if (count_stats) session->stats.effective_link_language_hits++;
+        *out = entry->value;
+        nob_sb_free(key);
+        return true;
+    }
+
+    if (count_stats) session->stats.effective_link_language_misses++;
+    temp = arena_create(64 * 1024);
+    if (!temp) {
+        nob_sb_free(key);
+        return false;
+    }
+
+    if (!bm_query_target_effective_link_language(session->model, id, &normalized, temp, &computed) ||
+        !bm_query_session_copy_string(session->arena, computed, &cached)) {
+        arena_destroy(temp);
+        nob_sb_free(key);
+        return false;
+    }
+
+    stbds_shput(session->effective_link_lang_cache,
+                key.items ? key.items : "",
+                cached);
+    entry = stbds_shgetp_null(session->effective_link_lang_cache, key.items ? key.items : "");
+    arena_destroy(temp);
+    nob_sb_free(key);
+    if (!entry) return false;
+    *out = entry->value;
+    return true;
+}
+
 BM_Query_Session *bm_query_session_create(Arena *arena, const Build_Model *model) {
     BM_Query_Session *session = NULL;
     if (!arena || !model) return NULL;
@@ -508,6 +582,7 @@ BM_Query_Session *bm_query_session_create(Arena *arena, const Build_Model *model
     stbds_sh_new_arena(session->effective_value_cache);
     stbds_sh_new_arena(session->target_file_cache);
     stbds_sh_new_arena(session->imported_link_lang_cache);
+    stbds_sh_new_arena(session->effective_link_lang_cache);
     return session;
 }
 
@@ -697,4 +772,11 @@ bool bm_query_session_target_imported_link_languages(BM_Query_Session *session,
                                                      const BM_Query_Eval_Context *ctx,
                                                      BM_String_Span *out) {
     return bm_query_session_imported_link_languages_cached(session, id, ctx, true, out);
+}
+
+bool bm_query_session_target_effective_link_language(BM_Query_Session *session,
+                                                     BM_Target_Id id,
+                                                     const BM_Query_Eval_Context *ctx,
+                                                     String_View *out) {
+    return bm_query_session_effective_link_language_cached(session, id, ctx, true, out);
 }

@@ -11,6 +11,13 @@ typedef enum {
     BM_QUERY_USAGE_LINK,
 } BM_Query_Usage_Mode;
 
+typedef enum {
+    BM_REPLAY_OPERAND_INPUTS = 0,
+    BM_REPLAY_OPERAND_OUTPUTS,
+    BM_REPLAY_OPERAND_ARGV,
+    BM_REPLAY_OPERAND_ENVIRONMENT,
+} BM_Replay_Operand_Family;
+
 typedef struct {
     String_View config;
     String_View platform_id;
@@ -32,6 +39,8 @@ typedef struct {
     size_t target_file_misses;
     size_t imported_link_language_hits;
     size_t imported_link_language_misses;
+    size_t effective_link_language_hits;
+    size_t effective_link_language_misses;
 } BM_Query_Session_Stats;
 
 BM_Query_Session *bm_query_session_create(Arena *arena, const Build_Model *model);
@@ -109,6 +118,7 @@ bool bm_query_target_source_generated(const Build_Model *model, BM_Target_Id id,
 bool bm_query_target_source_is_compile_input(const Build_Model *model, BM_Target_Id id, size_t source_index);
 bool bm_query_target_source_header_file_only(const Build_Model *model, BM_Target_Id id, size_t source_index);
 String_View bm_query_target_source_language(const Build_Model *model, BM_Target_Id id, size_t source_index);
+String_View bm_query_target_source_effective_language(const Build_Model *model, BM_Target_Id id, size_t source_index);
 BM_String_Item_Span bm_query_target_source_compile_definitions(const Build_Model *model, BM_Target_Id id, size_t source_index);
 BM_String_Item_Span bm_query_target_source_compile_options(const Build_Model *model, BM_Target_Id id, size_t source_index);
 BM_String_Item_Span bm_query_target_source_include_directories(const Build_Model *model, BM_Target_Id id, size_t source_index);
@@ -197,6 +207,12 @@ BM_String_Span bm_query_replay_action_inputs(const Build_Model *model, BM_Replay
 BM_String_Span bm_query_replay_action_outputs(const Build_Model *model, BM_Replay_Action_Id id);
 BM_String_Span bm_query_replay_action_argv(const Build_Model *model, BM_Replay_Action_Id id);
 BM_String_Span bm_query_replay_action_environment(const Build_Model *model, BM_Replay_Action_Id id);
+bool bm_query_replay_action_resolved_operands(const Build_Model *model,
+                                              BM_Replay_Action_Id id,
+                                              BM_Replay_Operand_Family family,
+                                              const BM_Query_Eval_Context *ctx,
+                                              Arena *scratch,
+                                              BM_String_Span *out);
 bool bm_query_resolve_string_with_context(const Build_Model *model,
                                           const BM_Query_Eval_Context *ctx,
                                           Arena *scratch,
@@ -392,6 +408,11 @@ bool bm_query_target_imported_link_languages(const Build_Model *model,
                                              const BM_Query_Eval_Context *ctx,
                                              Arena *scratch,
                                              BM_String_Span *out);
+bool bm_query_target_effective_link_language(const Build_Model *model,
+                                             BM_Target_Id id,
+                                             const BM_Query_Eval_Context *ctx,
+                                             Arena *scratch,
+                                             String_View *out);
 bool bm_query_target_imported_known_configurations(const Build_Model *model,
                                                    BM_Target_Id id,
                                                    Arena *scratch,
@@ -408,6 +429,10 @@ bool bm_query_session_target_imported_link_languages(BM_Query_Session *session,
                                                      BM_Target_Id id,
                                                      const BM_Query_Eval_Context *ctx,
                                                      BM_String_Span *out);
+bool bm_query_session_target_effective_link_language(BM_Query_Session *session,
+                                                     BM_Target_Id id,
+                                                     const BM_Query_Eval_Context *ctx,
+                                                     String_View *out);
 
 bool bm_query_testing_enabled(const Build_Model *model);
 String_View bm_query_test_name(const Build_Model *model, BM_Test_Id id);

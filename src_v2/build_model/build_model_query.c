@@ -812,6 +812,53 @@ static const BM_Target_Source_Record *bm_query_target_source_record(const Build_
     return &target->source_records[source_index];
 }
 
+static bool bm_query_sv_ends_with_ci(String_View sv, const char *suffix) {
+    size_t suffix_len = suffix ? strlen(suffix) : 0;
+    if (!suffix || suffix_len == 0 || sv.count < suffix_len) return false;
+    return bm_sv_eq_ci_query(nob_sv_from_parts(sv.data + sv.count - suffix_len, suffix_len),
+                             nob_sv_from_parts(suffix, suffix_len));
+}
+
+static bool bm_query_source_path_is_header_like(String_View path) {
+    return bm_query_sv_ends_with_ci(path, ".h") ||
+           bm_query_sv_ends_with_ci(path, ".hh") ||
+           bm_query_sv_ends_with_ci(path, ".hpp") ||
+           bm_query_sv_ends_with_ci(path, ".hxx") ||
+           bm_query_sv_ends_with_ci(path, ".inl") ||
+           bm_query_sv_ends_with_ci(path, ".inc");
+}
+
+static String_View bm_query_source_language_from_path(String_View path) {
+    if (bm_query_sv_ends_with_ci(path, ".c")) return nob_sv_from_cstr("C");
+    if (bm_query_sv_ends_with_ci(path, ".cc") ||
+        bm_query_sv_ends_with_ci(path, ".cpp") ||
+        bm_query_sv_ends_with_ci(path, ".cxx") ||
+        bm_query_sv_ends_with_ci(path, ".c++")) {
+        return nob_sv_from_cstr("CXX");
+    }
+    return nob_sv_from_cstr("");
+}
+
+static String_View bm_query_target_source_record_effective_language(const BM_Target_Source_Record *source) {
+    String_View language = nob_sv_from_cstr("");
+    if (!source ||
+        source->visibility == BM_VISIBILITY_INTERFACE ||
+        source->kind != BM_TARGET_SOURCE_REGULAR ||
+        source->header_file_only ||
+        bm_query_source_path_is_header_like(source->effective_path)) {
+        return nob_sv_from_cstr("");
+    }
+
+    language = nob_sv_trim(source->language);
+    if (language.count > 0) {
+        if (bm_sv_eq_ci_query(language, nob_sv_from_cstr("C"))) return nob_sv_from_cstr("C");
+        if (bm_sv_eq_ci_query(language, nob_sv_from_cstr("CXX"))) return nob_sv_from_cstr("CXX");
+        return nob_sv_from_cstr("");
+    }
+
+    return bm_query_source_language_from_path(source->effective_path);
+}
+
 static const BM_Target_File_Set_Record *bm_query_target_file_set_record(const Build_Model *model,
                                                                         BM_Target_Id id,
                                                                         size_t file_set_index) {
@@ -1164,6 +1211,140 @@ bool bm_query_resolve_string_with_context(const Build_Model *model,
 
 #include "build_model_query_imported.c"
 #include "build_model_query_effective.c"
+
+static bool bm_query_link_language_is_cxx(String_View language) {
+    return bm_sv_eq_ci_query(nob_sv_trim(language), nob_sv_from_cstr("CXX"));
+}
+
+static bool bm_query_link_language_is_c(String_View language) {
+    return bm_sv_eq_ci_query(nob_sv_trim(language), nob_sv_from_cstr("C"));
+}
+
+static bool bm_query_target_link_item_target_id(const Build_Model *model,
+                                                BM_Link_Item_View item,
+                                                BM_Target_Id *out) {
+    BM_Target_Id id = BM_TARGET_ID_INVALID;
+    if (out) *out = BM_TARGET_ID_INVALID;
+    if (!model || !out) return false;
+    if (bm_target_id_is_valid(item.target_id)) {
+        id = item.target_id;
+    } else if (item.semantic.kind == EVENT_LINK_ITEM_TARGET_REF && item.semantic.target_name.count > 0) {
+        id = bm_find_target_by_name_id(model, item.semantic.target_name);
+    } else {
+        id = bm_find_target_by_name_id(model, item.value);
+    }
+    if (!bm_target_id_is_valid(id)) return false;
+    id = bm_resolve_alias_target_id(model, id);
+    if (!bm_target_id_is_valid(id)) return false;
+    *out = id;
+    return true;
+}
+
+static bool bm_query_target_effective_link_language_impl(const Build_Model *model,
+                                                         BM_Target_Id id,
+                                                         const BM_Query_Eval_Context *ctx,
+                                                         Arena *scratch,
+                                                         uint8_t *visiting,
+                                                         String_View *out) {
+    BM_Target_Id resolved_id = BM_TARGET_ID_INVALID;
+    const BM_Target_Record *target = NULL;
+    bool saw_c = false;
+    BM_Query_Eval_Context link_ctx = {0};
+    if (out) *out = nob_sv_from_cstr("");
+    if (!model || !scratch || !visiting || !out) return false;
+
+    resolved_id = bm_resolve_alias_target_id(model, id);
+    target = bm_model_target(model, resolved_id);
+    if (!target) return false;
+    if (visiting[resolved_id]) return true;
+    visiting[resolved_id] = 1;
+
+    link_ctx = ctx ? *ctx : bm_default_query_eval_context(resolved_id, BM_QUERY_USAGE_LINK);
+    link_ctx.current_target_id = bm_target_id_is_valid(link_ctx.current_target_id)
+        ? link_ctx.current_target_id
+        : resolved_id;
+    link_ctx.usage_mode = BM_QUERY_USAGE_LINK;
+    link_ctx.compile_language = nob_sv_from_cstr("");
+
+    if (target->imported) {
+        BM_String_Span languages = {0};
+        if (!bm_query_target_imported_link_languages(model, resolved_id, &link_ctx, scratch, &languages)) {
+            visiting[resolved_id] = 0;
+            return false;
+        }
+        for (size_t i = 0; i < languages.count; ++i) {
+            if (bm_query_link_language_is_cxx(languages.items[i])) {
+                *out = nob_sv_from_cstr("CXX");
+                visiting[resolved_id] = 0;
+                return true;
+            }
+            if (bm_query_link_language_is_c(languages.items[i])) saw_c = true;
+        }
+        if (saw_c) *out = nob_sv_from_cstr("C");
+        visiting[resolved_id] = 0;
+        return true;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(target->source_records); ++i) {
+        String_View language = bm_query_target_source_record_effective_language(&target->source_records[i]);
+        if (bm_query_link_language_is_cxx(language)) {
+            *out = nob_sv_from_cstr("CXX");
+            visiting[resolved_id] = 0;
+            return true;
+        }
+        if (bm_query_link_language_is_c(language)) saw_c = true;
+    }
+
+    {
+        BM_Link_Item_Span link_items = {0};
+        if (!bm_query_target_effective_link_libraries_items_with_context(model,
+                                                                         resolved_id,
+                                                                         &link_ctx,
+                                                                         scratch,
+                                                                         &link_items)) {
+            visiting[resolved_id] = 0;
+            return false;
+        }
+        for (size_t i = 0; i < link_items.count; ++i) {
+            BM_Target_Id dep_id = BM_TARGET_ID_INVALID;
+            String_View dep_language = nob_sv_from_cstr("");
+            if (!bm_query_target_link_item_target_id(model, link_items.items[i], &dep_id)) continue;
+            if (!bm_query_target_effective_link_language_impl(model,
+                                                              dep_id,
+                                                              &link_ctx,
+                                                              scratch,
+                                                              visiting,
+                                                              &dep_language)) {
+                visiting[resolved_id] = 0;
+                return false;
+            }
+            if (bm_query_link_language_is_cxx(dep_language)) {
+                *out = nob_sv_from_cstr("CXX");
+                visiting[resolved_id] = 0;
+                return true;
+            }
+            if (bm_query_link_language_is_c(dep_language)) saw_c = true;
+        }
+    }
+
+    if (saw_c) *out = nob_sv_from_cstr("C");
+    visiting[resolved_id] = 0;
+    return true;
+}
+
+bool bm_query_target_effective_link_language(const Build_Model *model,
+                                             BM_Target_Id id,
+                                             const BM_Query_Eval_Context *ctx,
+                                             Arena *scratch,
+                                             String_View *out) {
+    uint8_t *visiting = NULL;
+    if (out) *out = nob_sv_from_cstr("");
+    if (!model || !scratch || !out) return false;
+    visiting = arena_alloc_array_zero(scratch, uint8_t, arena_arr_len(model->targets));
+    if (!visiting && arena_arr_len(model->targets) > 0) return false;
+    return bm_query_target_effective_link_language_impl(model, id, ctx, scratch, visiting, out);
+}
+
 #include "build_model_query_session.c"
 
 bool bm_model_has_project(const Build_Model *model) { return model ? model->project.present : false; }
@@ -1425,6 +1606,13 @@ bool bm_query_target_source_header_file_only(const Build_Model *model, BM_Target
 String_View bm_query_target_source_language(const Build_Model *model, BM_Target_Id id, size_t source_index) {
     const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
     return source ? source->language : nob_sv_from_cstr("");
+}
+
+String_View bm_query_target_source_effective_language(const Build_Model *model,
+                                                      BM_Target_Id id,
+                                                      size_t source_index) {
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    return bm_query_target_source_record_effective_language(source);
 }
 
 BM_String_Item_Span bm_query_target_source_compile_definitions(const Build_Model *model, BM_Target_Id id, size_t source_index) {
@@ -1802,6 +1990,56 @@ BM_String_Span bm_query_replay_action_argv(const Build_Model *model, BM_Replay_A
 BM_String_Span bm_query_replay_action_environment(const Build_Model *model, BM_Replay_Action_Id id) {
     const BM_Replay_Action_Record *action = bm_model_replay_action(model, id);
     return action ? bm_string_span(action->environment) : (BM_String_Span){0};
+}
+
+static bool bm_query_replay_action_raw_operands(const BM_Replay_Action_Record *action,
+                                                BM_Replay_Operand_Family family,
+                                                BM_String_Span *out) {
+    if (!out) return false;
+    *out = (BM_String_Span){0};
+    if (!action) return true;
+    switch (family) {
+        case BM_REPLAY_OPERAND_INPUTS:
+            *out = bm_string_span(action->inputs);
+            return true;
+        case BM_REPLAY_OPERAND_OUTPUTS:
+            *out = bm_string_span(action->outputs);
+            return true;
+        case BM_REPLAY_OPERAND_ARGV:
+            *out = bm_string_span(action->argv);
+            return true;
+        case BM_REPLAY_OPERAND_ENVIRONMENT:
+            *out = bm_string_span(action->environment);
+            return true;
+    }
+    return false;
+}
+
+bool bm_query_replay_action_resolved_operands(const Build_Model *model,
+                                              BM_Replay_Action_Id id,
+                                              BM_Replay_Operand_Family family,
+                                              const BM_Query_Eval_Context *ctx,
+                                              Arena *scratch,
+                                              BM_String_Span *out) {
+    const BM_Replay_Action_Record *action = NULL;
+    BM_String_Span raw = {0};
+    String_View *items = NULL;
+    if (!model || !scratch || !out) return false;
+    *out = (BM_String_Span){0};
+    action = bm_model_replay_action(model, id);
+    if (!bm_query_replay_action_raw_operands(action, family, &raw)) return false;
+
+    for (size_t i = 0; i < raw.count; ++i) {
+        String_View resolved = {0};
+        if (!bm_query_resolve_string_with_context(model, ctx, scratch, raw.items[i], &resolved) ||
+            !arena_arr_push(scratch, items, resolved)) {
+            return false;
+        }
+    }
+
+    out->items = items;
+    out->count = arena_arr_len(items);
+    return true;
 }
 
 bool bm_query_testing_enabled(const Build_Model *model) {

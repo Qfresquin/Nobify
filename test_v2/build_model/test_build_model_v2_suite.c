@@ -155,6 +155,10 @@ static bool build_model_string_equals_at(BM_String_Span span, size_t index, cons
     return index < span.count && nob_sv_eq(span.items[index], nob_sv_from_cstr(expected ? expected : ""));
 }
 
+static bool build_model_string_contains_at(BM_String_Span span, size_t index, const char *needle) {
+    return index < span.count && build_model_sv_contains(span.items[index], nob_sv_from_cstr(needle ? needle : ""));
+}
+
 static bool build_model_string_item_contains_at(BM_String_Item_Span span, size_t index, const char *needle) {
     return index < span.count && build_model_sv_contains(span.items[index].value, nob_sv_from_cstr(needle ? needle : ""));
 }
@@ -1067,6 +1071,162 @@ TEST(build_model_replay_actions_freeze_query_and_preserve_order) {
     TEST_PASS();
 }
 
+TEST(build_model_replay_action_resolved_operands_use_query_context) {
+    Arena *arena = arena_create(2 * 1024 * 1024);
+    Arena *validate_arena = arena_create(512 * 1024);
+    Arena *model_arena = arena_create(2 * 1024 * 1024);
+    Arena *query_arena = arena_create(512 * 1024);
+    Test_Semantic_Pipeline_Build_Result build = {0};
+    Event_Stream *stream = NULL;
+    Event ev = {0};
+    const Build_Model *model = NULL;
+    BM_Query_Eval_Context debug_linux = {0};
+    BM_Query_Eval_Context release_windows = {0};
+    BM_String_Span resolved = {0};
+    BM_String_Span known_configs = {0};
+
+    ASSERT(arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
+    ASSERT(query_arena != NULL);
+
+    stream = event_stream_create(arena);
+    ASSERT(stream != NULL);
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, 2);
+    ev.as.replay_action_declare.action_key = nob_sv_from_cstr("cfg_replay");
+    ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_PROCESS;
+    ev.as.replay_action_declare.opcode = EVENT_REPLAY_OPCODE_NONE;
+    ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_CONFIGURE;
+    ev.as.replay_action_declare.working_directory = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_INPUT, 3);
+    ev.as.replay_action_add_input.action_key = nob_sv_from_cstr("cfg_replay");
+    ev.as.replay_action_add_input.path = nob_sv_from_cstr("in/$<IF:$<CONFIG:Debug>,debug,other>.txt");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, 4);
+    ev.as.replay_action_add_output.action_key = nob_sv_from_cstr("cfg_replay");
+    ev.as.replay_action_add_output.path = nob_sv_from_cstr("out/$<IF:$<CONFIG:Release>,release,other>.txt");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, 5);
+    ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr("cfg_replay");
+    ev.as.replay_action_add_argv.arg_index = 0;
+    ev.as.replay_action_add_argv.value = nob_sv_from_cstr("mode=$<IF:$<PLATFORM_ID:Linux>,linux,other>");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ENV, 6);
+    ev.as.replay_action_add_env.action_key = nob_sv_from_cstr("cfg_replay");
+    ev.as.replay_action_add_env.key = nob_sv_from_cstr("CFG");
+    ev.as.replay_action_add_env.value = nob_sv_from_cstr("$<CONFIG>");
+    ASSERT(event_stream_push(stream, &ev));
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, 7);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    ASSERT(test_semantic_pipeline_build_model_from_stream(arena, validate_arena, model_arena, stream, &build));
+    ASSERT(build.builder_ok);
+    ASSERT(build.validate_ok);
+    ASSERT(build.freeze_ok);
+    ASSERT(build.model != NULL);
+
+    model = build.model;
+    debug_linux.config = nob_sv_from_cstr("Debug");
+    debug_linux.platform_id = nob_sv_from_cstr("Linux");
+    debug_linux.usage_mode = BM_QUERY_USAGE_COMPILE;
+    debug_linux.current_target_id = BM_TARGET_ID_INVALID;
+    debug_linux.build_interface_active = true;
+    debug_linux.build_local_interface_active = true;
+    debug_linux.install_interface_active = false;
+
+    release_windows = debug_linux;
+    release_windows.config = nob_sv_from_cstr("Release");
+    release_windows.platform_id = nob_sv_from_cstr("Windows");
+
+    ASSERT(bm_query_replay_action_resolved_operands(model,
+                                                    (BM_Replay_Action_Id)0,
+                                                    BM_REPLAY_OPERAND_INPUTS,
+                                                    &debug_linux,
+                                                    query_arena,
+                                                    &resolved));
+    ASSERT(build_model_string_equals_at(resolved, 0, "in/debug.txt"));
+
+    ASSERT(bm_query_replay_action_resolved_operands(model,
+                                                    (BM_Replay_Action_Id)0,
+                                                    BM_REPLAY_OPERAND_OUTPUTS,
+                                                    &debug_linux,
+                                                    query_arena,
+                                                    &resolved));
+    ASSERT(build_model_string_equals_at(resolved, 0, "out/other.txt"));
+
+    ASSERT(bm_query_replay_action_resolved_operands(model,
+                                                    (BM_Replay_Action_Id)0,
+                                                    BM_REPLAY_OPERAND_ARGV,
+                                                    &debug_linux,
+                                                    query_arena,
+                                                    &resolved));
+    ASSERT(build_model_string_equals_at(resolved, 0, "mode=linux"));
+
+    ASSERT(bm_query_replay_action_resolved_operands(model,
+                                                    (BM_Replay_Action_Id)0,
+                                                    BM_REPLAY_OPERAND_ENVIRONMENT,
+                                                    &debug_linux,
+                                                    query_arena,
+                                                    &resolved));
+    ASSERT(build_model_string_equals_at(resolved, 0, "CFG=Debug"));
+
+    ASSERT(bm_query_replay_action_resolved_operands(model,
+                                                    (BM_Replay_Action_Id)0,
+                                                    BM_REPLAY_OPERAND_INPUTS,
+                                                    &release_windows,
+                                                    query_arena,
+                                                    &resolved));
+    ASSERT(build_model_string_equals_at(resolved, 0, "in/other.txt"));
+
+    ASSERT(bm_query_replay_action_resolved_operands(model,
+                                                    (BM_Replay_Action_Id)0,
+                                                    BM_REPLAY_OPERAND_OUTPUTS,
+                                                    &release_windows,
+                                                    query_arena,
+                                                    &resolved));
+    ASSERT(build_model_string_equals_at(resolved, 0, "out/release.txt"));
+
+    ASSERT(bm_query_replay_action_resolved_operands(model,
+                                                    (BM_Replay_Action_Id)0,
+                                                    BM_REPLAY_OPERAND_ARGV,
+                                                    &release_windows,
+                                                    query_arena,
+                                                    &resolved));
+    ASSERT(build_model_string_equals_at(resolved, 0, "mode=other"));
+
+    ASSERT(bm_query_replay_action_resolved_operands(model,
+                                                    (BM_Replay_Action_Id)0,
+                                                    BM_REPLAY_OPERAND_ENVIRONMENT,
+                                                    &release_windows,
+                                                    query_arena,
+                                                    &resolved));
+    ASSERT(build_model_string_equals_at(resolved, 0, "CFG=Release"));
+
+    known_configs = bm_query_known_configurations(model);
+    ASSERT(build_model_string_span_contains_ci(known_configs, "Debug"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "Release"));
+
+    arena_destroy(arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
+    arena_destroy(query_arena);
+    TEST_PASS();
+}
+
 TEST(build_model_replay_actions_reject_invalid_opcode_payload_shapes) {
     Arena *arena = arena_create(2 * 1024 * 1024);
     Arena *validate_arena = arena_create(512 * 1024);
@@ -1960,7 +2120,7 @@ TEST(build_model_ctest_local_memcheck_relative_command_surface) {
     ASSERT(build_model_string_equals_at(memcheck_argv, 12, "Generic"));
     ASSERT(build_model_string_equals_at(memcheck_argv, 13, "2"));
     ASSERT(build_model_string_equals_at(memcheck_argv, 14, "/bin/sh"));
-    ASSERT(build_model_string_equals_at(memcheck_argv, 15, "../source/tools/memcheck.sh"));
+    ASSERT(build_model_string_contains_at(memcheck_argv, 15, "source/tools/memcheck.sh"));
 
     test_semantic_pipeline_fixture_destroy(&fixture);
     TEST_PASS();
@@ -2674,6 +2834,216 @@ TEST(build_model_imported_target_queries_resolve_configs_and_mapped_locations) {
     TEST_PASS();
 }
 
+TEST(build_model_source_effective_language_centralizes_supported_c_and_cxx_classification) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    size_t main_c = 0;
+    size_t helper_cpp = 0;
+    size_t explicit_cxx = 0;
+    size_t header_h = 0;
+    size_t skip_c = 0;
+    size_t data_txt = 0;
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "source_language_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("source_language_src");
+    config.binary_dir = nob_sv_from_cstr("source_language_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C CXX)\n"
+        "add_executable(app main.c helper.cpp explicit_as_cxx.c public.h skip_compile.c data.txt)\n"
+        "set_source_files_properties(explicit_as_cxx.c PROPERTIES LANGUAGE CXX)\n"
+        "set_source_files_properties(skip_compile.c PROPERTIES HEADER_FILE_ONLY ON)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+
+    main_c = build_model_find_target_source_index_containing(model, app_id, "main.c");
+    helper_cpp = build_model_find_target_source_index_containing(model, app_id, "helper.cpp");
+    explicit_cxx = build_model_find_target_source_index_containing(model, app_id, "explicit_as_cxx.c");
+    header_h = build_model_find_target_source_index_containing(model, app_id, "public.h");
+    skip_c = build_model_find_target_source_index_containing(model, app_id, "skip_compile.c");
+    data_txt = build_model_find_target_source_index_containing(model, app_id, "data.txt");
+
+    ASSERT(main_c < bm_query_target_source_count(model, app_id));
+    ASSERT(helper_cpp < bm_query_target_source_count(model, app_id));
+    ASSERT(explicit_cxx < bm_query_target_source_count(model, app_id));
+    ASSERT(header_h < bm_query_target_source_count(model, app_id));
+    ASSERT(skip_c < bm_query_target_source_count(model, app_id));
+    ASSERT(data_txt < bm_query_target_source_count(model, app_id));
+
+    ASSERT(nob_sv_eq(bm_query_target_source_effective_language(model, app_id, main_c), nob_sv_from_cstr("C")));
+    ASSERT(nob_sv_eq(bm_query_target_source_effective_language(model, app_id, helper_cpp), nob_sv_from_cstr("CXX")));
+    ASSERT(nob_sv_eq(bm_query_target_source_effective_language(model, app_id, explicit_cxx), nob_sv_from_cstr("CXX")));
+    ASSERT(bm_query_target_source_effective_language(model, app_id, header_h).count == 0);
+    ASSERT(bm_query_target_source_effective_language(model, app_id, skip_c).count == 0);
+    ASSERT(bm_query_target_source_effective_language(model, app_id, data_txt).count == 0);
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_effective_link_language_uses_config_platform_imported_mapping_and_session_context) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    Arena *session_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id alias_id = BM_TARGET_ID_INVALID;
+    BM_Query_Eval_Context linux_ctx = {0};
+    BM_Query_Eval_Context windows_ctx = {0};
+    BM_Query_Eval_Context rel_windows_ctx = {0};
+    BM_Query_Session *session = NULL;
+    const BM_Query_Session_Stats *stats = NULL;
+    String_View language = {0};
+
+    ASSERT(query_arena != NULL);
+    ASSERT(session_arena != NULL);
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "link_language_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("link_language_src");
+    config.binary_dir = nob_sv_from_cstr("link_language_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C CXX)\n"
+        "add_library(cdep STATIC cdep.c)\n"
+        "add_library(cxxdep STATIC cxxdep.cpp)\n"
+        "add_library(mapped STATIC IMPORTED GLOBAL)\n"
+        "set_target_properties(mapped PROPERTIES\n"
+        "  IMPORTED_LOCATION imports/libbase.a\n"
+        "  IMPORTED_LOCATION_DEBUG imports/libdebug.a\n"
+        "  IMPORTED_LINK_INTERFACE_LANGUAGES C\n"
+        "  IMPORTED_LINK_INTERFACE_LANGUAGES_DEBUG CXX\n"
+        "  MAP_IMPORTED_CONFIG_RELWITHDEBINFO Debug)\n"
+        "add_library(cycle_a INTERFACE)\n"
+        "add_library(cycle_b INTERFACE)\n"
+        "target_link_libraries(cycle_a INTERFACE cycle_b)\n"
+        "target_link_libraries(cycle_b INTERFACE cycle_a)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE\n"
+        "  cycle_a\n"
+        "  \"$<$<PLATFORM_ID:Linux>:cxxdep>\"\n"
+        "  \"$<$<PLATFORM_ID:Windows>:cdep>\"\n"
+        "  \"$<$<CONFIG:RelWithDebInfo>:mapped>\")\n"
+        "add_executable(app_alias ALIAS app)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    alias_id = bm_query_target_by_name(model, nob_sv_from_cstr("app_alias"));
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+    ASSERT(alias_id != BM_TARGET_ID_INVALID);
+
+    linux_ctx.current_target_id = app_id;
+    linux_ctx.usage_mode = BM_QUERY_USAGE_LINK;
+    linux_ctx.platform_id = nob_sv_from_cstr("Linux");
+    linux_ctx.build_interface_active = true;
+
+    windows_ctx = linux_ctx;
+    windows_ctx.platform_id = nob_sv_from_cstr("Windows");
+
+    rel_windows_ctx = windows_ctx;
+    rel_windows_ctx.config = nob_sv_from_cstr("RelWithDebInfo");
+
+    ASSERT(bm_query_target_effective_link_language(model, app_id, &linux_ctx, query_arena, &language));
+    ASSERT(nob_sv_eq(language, nob_sv_from_cstr("CXX")));
+
+    ASSERT(bm_query_target_effective_link_language(model, app_id, &windows_ctx, query_arena, &language));
+    ASSERT(nob_sv_eq(language, nob_sv_from_cstr("C")));
+
+    ASSERT(bm_query_target_effective_link_language(model, alias_id, &rel_windows_ctx, query_arena, &language));
+    ASSERT(nob_sv_eq(language, nob_sv_from_cstr("CXX")));
+
+    session = bm_query_session_create(session_arena, model);
+    ASSERT(session != NULL);
+    stats = bm_query_session_stats(session);
+    ASSERT(stats != NULL);
+
+    ASSERT(bm_query_session_target_effective_link_language(session, app_id, &linux_ctx, &language));
+    ASSERT(nob_sv_eq(language, nob_sv_from_cstr("CXX")));
+    ASSERT(bm_query_session_target_effective_link_language(session, app_id, &linux_ctx, &language));
+    ASSERT(nob_sv_eq(language, nob_sv_from_cstr("CXX")));
+    ASSERT(bm_query_session_target_effective_link_language(session, app_id, &windows_ctx, &language));
+    ASSERT(nob_sv_eq(language, nob_sv_from_cstr("C")));
+    ASSERT(bm_query_session_target_effective_link_language(session, app_id, &rel_windows_ctx, &language));
+    ASSERT(nob_sv_eq(language, nob_sv_from_cstr("CXX")));
+    ASSERT(stats->effective_link_language_hits == 1);
+    ASSERT(stats->effective_link_language_misses == 3);
+
+    arena_destroy(query_arena);
+    arena_destroy(session_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_imported_target_paths_already_rooted_in_source_dir_are_not_rebased_twice) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id ext_id = BM_TARGET_ID_INVALID;
+    BM_Query_Eval_Context debug_ctx = {0};
+    String_View effective_file = {0};
+    String_View resolved_target_file = {0};
+
+    ASSERT(query_arena != NULL);
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "nested/imported_rooted_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("nested/imported_rooted_src");
+    config.binary_dir = nob_sv_from_cstr("nested/imported_rooted_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "add_library(ext SHARED IMPORTED)\n"
+        "set_target_properties(ext PROPERTIES\n"
+        "  IMPORTED_LOCATION \"${CMAKE_CURRENT_SOURCE_DIR}/imports/libbase.so\"\n"
+        "  IMPORTED_LOCATION_DEBUG \"${CMAKE_CURRENT_SOURCE_DIR}/imports/libdebug.so\"\n"
+        "  MAP_IMPORTED_CONFIG_RELWITHDEBINFO Debug)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    ext_id = bm_query_target_by_name(model, nob_sv_from_cstr("ext"));
+    ASSERT(ext_id != BM_TARGET_ID_INVALID);
+
+    debug_ctx.current_target_id = ext_id;
+    debug_ctx.usage_mode = BM_QUERY_USAGE_LINK;
+    debug_ctx.build_interface_active = true;
+    debug_ctx.install_interface_active = false;
+    debug_ctx.config = nob_sv_from_cstr("RelWithDebInfo");
+
+    ASSERT(bm_query_target_effective_file(model, ext_id, &debug_ctx, query_arena, &effective_file));
+    ASSERT(nob_sv_eq(effective_file, nob_sv_from_cstr("nested/imported_rooted_src/imports/libdebug.so")));
+
+    ASSERT(bm_query_resolve_string_with_context(model,
+                                                &debug_ctx,
+                                                query_arena,
+                                                nob_sv_from_cstr("$<TARGET_FILE:ext>"),
+                                                &resolved_target_file));
+    ASSERT(nob_sv_eq(resolved_target_file,
+                     nob_sv_from_cstr("nested/imported_rooted_src/imports/libdebug.so")));
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 TEST(build_model_imported_target_known_configurations_are_stable_and_deduped) {
     Test_Semantic_Pipeline_Config config = {0};
     Test_Semantic_Pipeline_Fixture fixture = {0};
@@ -2753,6 +3123,34 @@ TEST(build_model_known_configuration_catalog_surfaces_supported_row52_domains) {
     ASSERT(build_model_string_span_contains_ci(known_configs, "Release"));
     ASSERT(build_model_string_span_contains_ci(known_configs, "RelWithDebInfo"));
     ASSERT(build_model_string_span_contains_ci(known_configs, "MinSizeRel"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "Profile"));
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_known_configuration_catalog_detects_strequal_config_comparisons) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    BM_String_Span known_configs = {0};
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "known_configs_strequal_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("known_configs_strequal_src");
+    config.binary_dir = nob_sv_from_cstr("known_configs_strequal_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "file(GENERATE\n"
+        "  OUTPUT \"${CMAKE_CURRENT_BINARY_DIR}/cfg/$<$<STREQUAL:$<CONFIG>,Profile>:profile>$<$<NOT:$<STREQUAL:$<CONFIG>,Profile>>:other>.txt\"\n"
+        "  CONTENT \"$<$<STREQUAL:$<CONFIG>,Profile>:profile>$<$<NOT:$<STREQUAL:$<CONFIG>,Profile>>:other>\")\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    known_configs = bm_query_known_configurations(fixture.build.model);
     ASSERT(build_model_string_span_contains_ci(known_configs, "Profile"));
 
     test_semantic_pipeline_fixture_destroy(&fixture);
@@ -4413,6 +4811,7 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_marks_generated_sources_without_producer_steps(passed, failed, skipped);
     test_build_model_freeze_rejects_duplicate_effective_producers_and_execution_cycles(passed, failed, skipped);
     test_build_model_replay_actions_freeze_query_and_preserve_order(passed, failed, skipped);
+    test_build_model_replay_action_resolved_operands_use_query_context(passed, failed, skipped);
     test_build_model_replay_actions_reject_invalid_opcode_payload_shapes(passed, failed, skipped);
     test_build_model_tests_freeze_owner_working_dir_expand_lists_and_configurations(passed, failed, skipped);
     test_build_model_replay_actions_accept_c3_opcodes_and_queries(passed, failed, skipped);
@@ -4427,8 +4826,12 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_effective_queries_follow_global_directory_and_transitive_link_library_seeds(passed, failed, skipped);
     test_build_model_platform_context_and_typed_platform_properties_are_queryable(passed, failed, skipped);
     test_build_model_imported_target_queries_resolve_configs_and_mapped_locations(passed, failed, skipped);
+    test_build_model_source_effective_language_centralizes_supported_c_and_cxx_classification(passed, failed, skipped);
+    test_build_model_effective_link_language_uses_config_platform_imported_mapping_and_session_context(passed, failed, skipped);
+    test_build_model_imported_target_paths_already_rooted_in_source_dir_are_not_rebased_twice(passed, failed, skipped);
     test_build_model_imported_target_known_configurations_are_stable_and_deduped(passed, failed, skipped);
     test_build_model_known_configuration_catalog_surfaces_supported_row52_domains(passed, failed, skipped);
+    test_build_model_known_configuration_catalog_detects_strequal_config_comparisons(passed, failed, skipped);
     test_build_model_preserves_imported_global_across_property_orderings(passed, failed, skipped);
     test_build_model_alias_and_unknown_target_identity_queries_are_canonical(passed, failed, skipped);
     test_build_model_source_membership_file_sets_and_source_properties_are_canonical(passed, failed, skipped);

@@ -29,27 +29,43 @@ static BM_Query_Eval_Context cg_make_replay_eval_ctx(CG_Context *ctx, String_Vie
     return qctx;
 }
 
-static bool cg_resolve_replay_string_for_config(CG_Context *ctx,
-                                                String_View config,
-                                                String_View raw,
-                                                String_View *out) {
+static bool cg_resolve_replay_operands_for_config(CG_Context *ctx,
+                                                  BM_Replay_Action_Id id,
+                                                  BM_Replay_Operand_Family family,
+                                                  String_View config,
+                                                  const String_View **out_values) {
     BM_Query_Eval_Context qctx = cg_make_replay_eval_ctx(ctx, config);
-    return cg_resolve_model_string_with_query_ctx(ctx, &qctx, raw, out);
+    BM_String_Span resolved = {0};
+    if (out_values) *out_values = NULL;
+    if (!ctx || !out_values) return false;
+    if (!bm_query_replay_action_resolved_operands(ctx->model, id, family, &qctx, ctx->scratch, &resolved)) {
+        nob_log(NOB_ERROR,
+                "codegen: failed to resolve replay operands for action %u family %u config `%s`",
+                (unsigned)id,
+                (unsigned)family,
+                nob_temp_sv_to_cstr(config));
+        return false;
+    }
+    *out_values = resolved.items;
+    return true;
 }
 
 static bool cg_resolve_replay_path_for_config(CG_Context *ctx,
+                                              BM_Replay_Action_Id id,
+                                              BM_Replay_Operand_Family family,
+                                              size_t operand_index,
                                               String_View config,
-                                              String_View raw,
                                               String_View *out) {
-    String_View resolved = {0};
+    const String_View *resolved = NULL;
     if (!ctx || !out) return false;
     *out = nob_sv_from_cstr("");
-    if (!cg_resolve_replay_string_for_config(ctx, config, raw, &resolved)) return false;
-    if (resolved.count == 0) {
-        *out = resolved;
+    if (!cg_resolve_replay_operands_for_config(ctx, id, family, config, &resolved)) return false;
+    if (operand_index >= arena_arr_len(resolved)) return false;
+    if (resolved[operand_index].count == 0) {
+        *out = resolved[operand_index];
         return true;
     }
-    return cg_rebase_path_from_cwd(ctx, resolved, out);
+    return cg_rebase_path_from_cwd(ctx, resolved[operand_index], out);
 }
 
 static bool cg_rebase_replay_archive_input_from_render_cwd(CG_Context *ctx,
@@ -59,33 +75,6 @@ static bool cg_rebase_replay_archive_input_from_render_cwd(CG_Context *ctx,
     if (!ctx || !out) return false;
     if (!cg_absolute_from_cwd(ctx, resolved_input, &input_abs)) return false;
     return cg_relative_path_to_arena(ctx->scratch, ctx->cwd_abs, input_abs, out);
-}
-
-static bool cg_resolve_replay_span_for_config(CG_Context *ctx,
-                                              String_View config,
-                                              BM_String_Span raw_values,
-                                              String_View **out_values) {
-    if (out_values) *out_values = NULL;
-    if (!ctx || !out_values) return false;
-    for (size_t i = 0; i < raw_values.count; ++i) {
-        String_View resolved = {0};
-        if (!cg_resolve_replay_string_for_config(ctx, config, raw_values.items[i], &resolved)) {
-            nob_log(NOB_ERROR,
-                    "codegen: failed to resolve replay operand for config `%s` at index %zu: `%s`",
-                    nob_temp_sv_to_cstr(config),
-                    i,
-                    nob_temp_sv_to_cstr(raw_values.items[i]));
-            return false;
-        }
-        if (!arena_arr_push(ctx->scratch, *out_values, resolved)) {
-            nob_log(NOB_ERROR,
-                    "codegen: failed to store replay operand for config `%s` at index %zu",
-                    nob_temp_sv_to_cstr(config),
-                    i);
-            return false;
-        }
-    }
-    return true;
 }
 
 static bool cg_emit_replay_configure_helpers(CG_Context *ctx, Nob_String_Builder *out) {
@@ -118,26 +107,18 @@ static bool cg_emit_replay_configure_helpers(CG_Context *ctx, Nob_String_Builder
                 needs_apply_mode = true;
                 needs_copy_file = true;
                 break;
-            case BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL: {
-                BM_String_Span argv = bm_query_replay_action_argv(ctx->model, id);
+            case BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL:
                 needs_download = true;
-                if (argv.count >= 2 && argv.items[0].count > 0 && argv.items[1].count > 0) {
-                    needs_sha256 = true;
-                }
+                needs_sha256 = true;
                 break;
-            }
             case BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR:
                 needs_fetchcontent_source_dir = true;
                 break;
-            case BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE: {
-                BM_String_Span argv = bm_query_replay_action_argv(ctx->model, id);
+            case BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE:
                 needs_fetchcontent_local_archive = true;
                 needs_tar = true;
-                if (argv.count >= 3 && argv.items[1].count > 0 && argv.items[2].count > 0) {
-                    needs_sha256 = true;
-                }
+                needs_sha256 = true;
                 break;
-            }
             case BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR:
             case BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR:
                 needs_tar = true;
@@ -596,7 +577,20 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
         BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
         if (bm_query_replay_action_phase(ctx->model, id) == BM_REPLAY_PHASE_CONFIGURE) {
             configure_count++;
-            if (bm_query_replay_action_outputs(ctx->model, id).count > 0) has_output_guards = true;
+            for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
+                const String_View *outputs = NULL;
+                String_View config = branch < arena_arr_len(ctx->known_configs)
+                    ? ctx->known_configs[branch]
+                    : nob_sv_from_cstr("");
+                if (!cg_resolve_replay_operands_for_config(ctx,
+                                                           id,
+                                                           BM_REPLAY_OPERAND_OUTPUTS,
+                                                           config,
+                                                           &outputs)) {
+                    return false;
+                }
+                if (arena_arr_len(outputs) > 0) has_output_guards = true;
+            }
         }
     }
 
@@ -615,11 +609,19 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
             if (!cg_emit_runtime_config_branches_prefix(ctx, out, branch)) return false;
             for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
                 BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
+                const String_View *outputs = NULL;
                 if (bm_query_replay_action_phase(ctx->model, id) != BM_REPLAY_PHASE_CONFIGURE) continue;
-                BM_String_Span outputs = bm_query_replay_action_outputs(ctx->model, id);
-                for (size_t output_index = 0; output_index < outputs.count; ++output_index) {
+                if (!cg_resolve_replay_operands_for_config(ctx, id, BM_REPLAY_OPERAND_OUTPUTS, config, &outputs)) return false;
+                for (size_t output_index = 0; output_index < arena_arr_len(outputs); ++output_index) {
                     String_View path = {0};
-                    if (!cg_resolve_replay_path_for_config(ctx, config, outputs.items[output_index], &path)) return false;
+                    if (!cg_resolve_replay_path_for_config(ctx,
+                                                           id,
+                                                           BM_REPLAY_OPERAND_OUTPUTS,
+                                                           output_index,
+                                                           config,
+                                                           &path)) {
+                        return false;
+                    }
                     if (path.count == 0) continue;
                     nob_sb_append_cstr(out, "        if (!nob_file_exists(");
                     if (!cg_sb_append_c_string(out, path)) return false;
@@ -638,30 +640,23 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
     for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
         BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
         BM_Replay_Opcode opcode = bm_query_replay_action_opcode(ctx->model, id);
-        BM_String_Span inputs = {0};
-        BM_String_Span outputs = {0};
-        BM_String_Span argv = {0};
         if (bm_query_replay_action_phase(ctx->model, id) != BM_REPLAY_PHASE_CONFIGURE) continue;
-
-        inputs = bm_query_replay_action_inputs(ctx->model, id);
-        outputs = bm_query_replay_action_outputs(ctx->model, id);
-        argv = bm_query_replay_action_argv(ctx->model, id);
 
         nob_sb_append_cstr(out, "    {\n");
         for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
             String_View config = branch < arena_arr_len(ctx->known_configs) ? ctx->known_configs[branch] : nob_sv_from_cstr("");
-            String_View *resolved_inputs = NULL;
-            String_View *resolved_outputs = NULL;
-            String_View *resolved_argv = NULL;
-            if (!cg_resolve_replay_span_for_config(ctx, config, inputs, &resolved_inputs) ||
-                !cg_resolve_replay_span_for_config(ctx, config, outputs, &resolved_outputs) ||
-                !cg_resolve_replay_span_for_config(ctx, config, argv, &resolved_argv) ||
+            const String_View *resolved_inputs = NULL;
+            const String_View *resolved_outputs = NULL;
+            const String_View *resolved_argv = NULL;
+            if (!cg_resolve_replay_operands_for_config(ctx, id, BM_REPLAY_OPERAND_INPUTS, config, &resolved_inputs) ||
+                !cg_resolve_replay_operands_for_config(ctx, id, BM_REPLAY_OPERAND_OUTPUTS, config, &resolved_outputs) ||
+                !cg_resolve_replay_operands_for_config(ctx, id, BM_REPLAY_OPERAND_ARGV, config, &resolved_argv) ||
                 !cg_emit_runtime_config_branches_prefix(ctx, out, branch)) {
                 return false;
             }
             switch (opcode) {
                 case BM_REPLAY_OPCODE_FS_MKDIR:
-                    for (size_t output_index = 0; output_index < outputs.count; ++output_index) {
+                    for (size_t output_index = 0; output_index < arena_arr_len(resolved_outputs); ++output_index) {
                         String_View path = {0};
                         if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[output_index], &path)) return false;
                         nob_sb_append_cstr(out, "        if (!ensure_dir(");
@@ -732,7 +727,7 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
 
                 case BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR:
                     nob_sb_append_cstr(out, "        static const char *paths[] = {");
-                    for (size_t input_index = 0; input_index < inputs.count; ++input_index) {
+                    for (size_t input_index = 0; input_index < arena_arr_len(resolved_inputs); ++input_index) {
                         String_View input_path = {0};
                         if (!cg_rebase_replay_archive_input_from_render_cwd(ctx,
                                                                             resolved_inputs[input_index],
@@ -2542,22 +2537,16 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
             BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
             BM_Replay_Opcode opcode = bm_query_replay_action_opcode(ctx->model, id);
-            BM_String_Span inputs = {0};
-            BM_String_Span outputs = {0};
-            BM_String_Span argv = {0};
             if (bm_query_replay_action_phase(ctx->model, id) != BM_REPLAY_PHASE_TEST) continue;
-            inputs = bm_query_replay_action_inputs(ctx->model, id);
-            outputs = bm_query_replay_action_outputs(ctx->model, id);
-            argv = bm_query_replay_action_argv(ctx->model, id);
             nob_sb_append_cstr(out, "    {\n");
             for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
                 String_View config = branch < arena_arr_len(ctx->known_configs) ? ctx->known_configs[branch] : nob_sv_from_cstr("");
-                String_View *resolved_inputs = NULL;
-                String_View *resolved_outputs = NULL;
-                String_View *resolved_argv = NULL;
-                if (!cg_resolve_replay_span_for_config(ctx, config, inputs, &resolved_inputs) ||
-                    !cg_resolve_replay_span_for_config(ctx, config, outputs, &resolved_outputs) ||
-                    !cg_resolve_replay_span_for_config(ctx, config, argv, &resolved_argv) ||
+                const String_View *resolved_inputs = NULL;
+                const String_View *resolved_outputs = NULL;
+                const String_View *resolved_argv = NULL;
+                if (!cg_resolve_replay_operands_for_config(ctx, id, BM_REPLAY_OPERAND_INPUTS, config, &resolved_inputs) ||
+                    !cg_resolve_replay_operands_for_config(ctx, id, BM_REPLAY_OPERAND_OUTPUTS, config, &resolved_outputs) ||
+                    !cg_resolve_replay_operands_for_config(ctx, id, BM_REPLAY_OPERAND_ARGV, config, &resolved_argv) ||
                     !cg_emit_runtime_config_branches_prefix_for_var(ctx, out, branch, "config_filter")) {
                     nob_log(NOB_ERROR,
                             "codegen: failed to prepare test-driver replay action %u for config `%s`",
@@ -2664,9 +2653,9 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
                         nob_sb_append_cstr(out, ", ");
                         nob_sb_append_cstr(out, cg_sv_eq_lit(resolved_argv[2], "1") ? "true" : "false");
                         nob_sb_append_cstr(out, ", ");
-                        if (inputs.count > 0) {
+                        if (arena_arr_len(resolved_inputs) > 0) {
                             nob_sb_append_cstr(out, "(const char *const[]){");
-                            for (size_t i = 0; i < inputs.count; ++i) {
+                            for (size_t i = 0; i < arena_arr_len(resolved_inputs); ++i) {
                                 String_View path = {0};
                                 if (!cg_rebase_path_from_cwd(ctx, resolved_inputs[i], &path)) {
                                     nob_log(NOB_ERROR,
@@ -2684,11 +2673,11 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
                             nob_sb_append_cstr(out, "NULL");
                         }
                         nob_sb_append_cstr(out, ", ");
-                        nob_sb_append_cstr(out, nob_temp_sprintf("%zu", inputs.count));
+                        nob_sb_append_cstr(out, nob_temp_sprintf("%zu", arena_arr_len(resolved_inputs)));
                         nob_sb_append_cstr(out, ", ");
-                        if (argv.count > 4) {
+                        if (arena_arr_len(resolved_argv) > 4) {
                             nob_sb_append_cstr(out, "(const char *const[]){");
-                            for (size_t i = 4; i < argv.count; ++i) {
+                            for (size_t i = 4; i < arena_arr_len(resolved_argv); ++i) {
                                 if (i > 4) nob_sb_append_cstr(out, ", ");
                                 if (!cg_sb_append_c_string(out, resolved_argv[i])) return false;
                             }
@@ -2697,7 +2686,11 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
                             nob_sb_append_cstr(out, "NULL");
                         }
                         nob_sb_append_cstr(out, ", ");
-                        nob_sb_append_cstr(out, nob_temp_sprintf("%zu", argv.count > 4 ? argv.count - 4 : 0));
+                        nob_sb_append_cstr(out,
+                                           nob_temp_sprintf("%zu",
+                                                            arena_arr_len(resolved_argv) > 4
+                                                                ? arena_arr_len(resolved_argv) - 4
+                                                                : 0));
                         nob_sb_append_cstr(out, ")) return false;\n");
                         break;
                     }
@@ -2780,9 +2773,9 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
                             nob_sb_append_cstr(out, "\"\"");
                         }
                         nob_sb_append_cstr(out, ", ");
-                        if (argv.count > 14) {
+                        if (arena_arr_len(resolved_argv) > 14) {
                             nob_sb_append_cstr(out, "(const char *const[]){");
-                            for (size_t i = 14; i < argv.count; ++i) {
+                            for (size_t i = 14; i < arena_arr_len(resolved_argv); ++i) {
                                 if (i > 14) nob_sb_append_cstr(out, ", ");
                                 if (!cg_sb_append_c_string(out, resolved_argv[i])) return false;
                             }
@@ -2791,13 +2784,17 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
                             nob_sb_append_cstr(out, "NULL");
                         }
                         nob_sb_append_cstr(out, ", ");
-                        nob_sb_append_cstr(out, nob_temp_sprintf("%zu", argv.count > 14 ? argv.count - 14 : 0));
+                        nob_sb_append_cstr(out,
+                                           nob_temp_sprintf("%zu",
+                                                            arena_arr_len(resolved_argv) > 14
+                                                                ? arena_arr_len(resolved_argv) - 14
+                                                                : 0));
                         nob_sb_append_cstr(out, ", selected_names, selected_count, config_filter)) return false;\n");
                         break;
                     }
 
                     case BM_REPLAY_OPCODE_FS_MKDIR:
-                        for (size_t output_index = 0; output_index < outputs.count; ++output_index) {
+                        for (size_t output_index = 0; output_index < arena_arr_len(resolved_outputs); ++output_index) {
                             String_View path = {0};
                             if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[output_index], &path)) return false;
                             nob_sb_append_cstr(out, "        if (!ensure_dir(");
@@ -2870,8 +2867,6 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
             "                               config_filter,\n"
             "                               NULL,\n"
             "                               NULL,\n"
-            "                               false,\n"
-            "                               false,\n"
             "                               false,\n"
             "                               false)) return false;\n"
             "    if (!run_test_driver_replay(selected_names, selected_count, config_filter)) return false;\n"

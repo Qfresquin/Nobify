@@ -10,16 +10,22 @@
 #include <stdio.h>
 #include <string.h>
 
-static bool cg_target_needs_cxx_linker_recursive(CG_Context *ctx, BM_Target_Id id, bool *out);
 static BM_Query_Eval_Context cg_make_query_ctx(CG_Context *ctx,
                                                BM_Target_Id current_target_id,
                                                BM_Query_Usage_Mode usage_mode,
                                                String_View config,
                                                String_View compile_language);
 static bool cg_replay_output_is_clean_safe(CG_Context *ctx, String_View output, bool *out_clean_safe);
+static bool cg_resolve_replay_operands_for_config(CG_Context *ctx,
+                                                  BM_Replay_Action_Id id,
+                                                  BM_Replay_Operand_Family family,
+                                                  String_View config,
+                                                  const String_View **out_values);
 static bool cg_resolve_replay_path_for_config(CG_Context *ctx,
+                                              BM_Replay_Action_Id id,
+                                              BM_Replay_Operand_Family family,
+                                              size_t operand_index,
                                               String_View config,
-                                              String_View raw,
                                               String_View *out);
 static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out);
 static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out);
@@ -101,26 +107,6 @@ static bool cg_collect_known_configs(CG_Context *ctx) {
         if (!cg_push_unique_config(ctx, known_configs.items[i])) return false;
     }
     return true;
-}
-
-static bool cg_is_header_like(String_View sv) {
-    return cg_ends_with(sv, ".h") ||
-           cg_ends_with(sv, ".hh") ||
-           cg_ends_with(sv, ".hpp") ||
-           cg_ends_with(sv, ".hxx") ||
-           cg_ends_with(sv, ".inl") ||
-           cg_ends_with(sv, ".inc");
-}
-
-static bool cg_is_c_source(String_View sv) {
-    return cg_ends_with(sv, ".c");
-}
-
-static bool cg_is_cxx_source(String_View sv) {
-    return cg_ends_with(sv, ".cc") ||
-           cg_ends_with(sv, ".cpp") ||
-           cg_ends_with(sv, ".cxx") ||
-           cg_ends_with(sv, ".c++");
 }
 
 static bool cg_is_link_file_like(String_View sv) {
@@ -514,20 +500,7 @@ static bool cg_check_no_genex(const char *what, String_View sv) {
     return false;
 }
 
-static bool cg_classify_source_lang(String_View src, CG_Source_Lang *out_lang) {
-    if (out_lang) *out_lang = CG_SOURCE_LANG_C;
-    if (cg_is_c_source(src)) {
-        if (out_lang) *out_lang = CG_SOURCE_LANG_C;
-        return true;
-    }
-    if (cg_is_cxx_source(src)) {
-        if (out_lang) *out_lang = CG_SOURCE_LANG_CXX;
-        return true;
-    }
-    return false;
-}
-
-static bool cg_parse_source_language(String_View language, CG_Source_Lang *out_lang) {
+static bool cg_source_lang_from_effective_language(String_View language, CG_Source_Lang *out_lang) {
     if (out_lang) *out_lang = CG_SOURCE_LANG_C;
     if (cg_sv_eq_ci(language, nob_sv_from_cstr("C"))) {
         if (out_lang) *out_lang = CG_SOURCE_LANG_C;
@@ -695,13 +668,6 @@ static bool cg_init_targets(CG_Context *ctx) {
         ctx->targets[i].state_path = ctx->targets[resolved].state_path;
     }
 
-    for (size_t i = 0; i < ctx->target_count; ++i) {
-        bool needs_cxx_linker = false;
-        if (!cg_target_needs_cxx_linker_recursive(ctx, (BM_Target_Id)i, &needs_cxx_linker)) return false;
-        ctx->targets[i].needs_cxx_linker = needs_cxx_linker;
-        ctx->targets[i].needs_cxx_linker_known = true;
-    }
-
     return true;
 }
 
@@ -754,26 +720,6 @@ static bool cg_init_build_steps(CG_Context *ctx) {
         if (!cg_compute_step_sentinel_path(ctx, id, &info->sentinel_path, &info->uses_stamp)) return false;
     }
     return true;
-}
-
-static bool cg_resolve_link_item_target(CG_Context *ctx, String_View item, BM_Target_Id *out) {
-    BM_Target_Id id = bm_query_target_by_name(ctx->model, item);
-    if (out) *out = BM_TARGET_ID_INVALID;
-    if (!bm_target_id_is_valid(id)) return false;
-    id = cg_resolve_alias_target(ctx, id);
-    if (!bm_target_id_is_valid(id)) return false;
-    if (out) *out = id;
-    return true;
-}
-
-static bool cg_resolve_link_item_target_view(CG_Context *ctx, BM_Link_Item_View item, BM_Target_Id *out) {
-    if (out) *out = BM_TARGET_ID_INVALID;
-    if (!ctx || !out) return false;
-    if (bm_target_id_is_valid(item.target_id)) {
-        *out = cg_resolve_alias_target(ctx, item.target_id);
-        return bm_target_id_is_valid(*out);
-    }
-    return cg_resolve_link_item_target(ctx, item.value, out);
 }
 
 bool cg_resolve_link_item_ref(CG_Context *ctx,
@@ -1183,159 +1129,22 @@ static bool cg_collect_standard_arg(CG_Context *ctx,
     return true;
 }
 
-static bool cg_target_has_cxx_sources(CG_Context *ctx, BM_Target_Id id, bool *out) {
-    if (out) *out = false;
-    if (!ctx || !out) return false;
-
-    for (size_t i = 0; i < bm_query_target_source_count(ctx->model, id); ++i) {
-        String_View source_language = nob_sv_trim(bm_query_target_source_language(ctx->model, id, i));
-        String_View source_path = bm_query_target_source_effective(ctx->model, id, i);
-        CG_Source_Lang lang = CG_SOURCE_LANG_C;
-        if (!bm_query_target_source_is_compile_input(ctx->model, id, i)) continue;
-        if (source_language.count > 0) {
-            if (!cg_parse_source_language(source_language, &lang)) continue;
-        } else {
-            if (cg_is_header_like(source_path)) continue;
-            if (!cg_classify_source_lang(source_path, &lang)) continue;
-        }
-        if (lang == CG_SOURCE_LANG_CXX) {
-            *out = true;
-            return true;
-        }
-    }
-
-    return true;
-}
-
-static bool cg_target_needs_cxx_linker_recursive(CG_Context *ctx, BM_Target_Id id, bool *out) {
-    const CG_Target_Info *info = NULL;
-    BM_Link_Item_Span libs = {0};
-    if (out) *out = false;
-    if (!ctx || !out) return false;
-
-    info = cg_target_info(ctx, id);
-    if (!info) return false;
-    if (info->needs_cxx_linker_known) {
-        *out = info->needs_cxx_linker;
-        return true;
-    }
-
-    ctx->targets[id].needs_cxx_linker_known = true;
-    ctx->targets[id].needs_cxx_linker = false;
-
-    if (info->alias) {
-        bool resolved_needs_cxx = false;
-        if (!bm_target_id_is_valid(info->resolved_id)) return false;
-        if (!cg_target_needs_cxx_linker_recursive(ctx, info->resolved_id, &resolved_needs_cxx)) return false;
-        ctx->targets[id].needs_cxx_linker = resolved_needs_cxx;
-        *out = resolved_needs_cxx;
-        return true;
-    }
-
-    if (!info->imported && !cg_target_has_cxx_sources(ctx, id, &ctx->targets[id].needs_cxx_linker)) {
-        return false;
-    }
-    if (ctx->targets[id].needs_cxx_linker) {
-        *out = true;
-        return true;
-    }
-
-    libs = bm_query_target_link_libraries_raw(ctx->model, id);
-    for (size_t i = 0; i < libs.count; ++i) {
-        BM_Target_Id dep_id = BM_TARGET_ID_INVALID;
-        bool dep_needs_cxx = false;
-        if (!cg_resolve_link_item_target_view(ctx, libs.items[i], &dep_id)) continue;
-        if (!cg_target_needs_cxx_linker_recursive(ctx, dep_id, &dep_needs_cxx)) return false;
-        if (dep_needs_cxx) {
-            ctx->targets[id].needs_cxx_linker = true;
-            *out = true;
-            return true;
-        }
-    }
-
-    *out = ctx->targets[id].needs_cxx_linker;
-    return true;
-}
-
-static bool cg_string_span_contains_ci(BM_String_Span values, const char *needle) {
-    String_View needle_sv = nob_sv_from_cstr(needle);
-    for (size_t i = 0; i < values.count; ++i) {
-        if (cg_sv_eq_ci(values.items[i], needle_sv)) return true;
-    }
-    return false;
-}
-
-static bool cg_target_needs_cxx_linker_for_config_impl(CG_Context *ctx,
-                                                       BM_Target_Id id,
-                                                       String_View config,
-                                                       uint8_t *visiting,
-                                                       bool *out) {
-    BM_Query_Eval_Context qctx = {0};
-    BM_Link_Item_Span libs = {0};
-    const CG_Target_Info *info = NULL;
-    if (out) *out = false;
-    if (!ctx || !out || !visiting || !bm_target_id_is_valid(id)) return false;
-
-    id = cg_resolve_alias_target(ctx, id);
-    if (!bm_target_id_is_valid(id)) return false;
-    if (visiting[id]) return true;
-    visiting[id] = 1;
-
-    info = cg_target_info(ctx, id);
-    if (!info) return false;
-
-    if (info->imported) {
-        BM_String_Span langs = {0};
-        qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
-        if (!cg_query_imported_link_languages_cached(ctx, id, &qctx, &langs)) return false;
-        *out = cg_string_span_contains_ci(langs, "CXX");
-        visiting[id] = 0;
-        return true;
-    }
-
-    if (!cg_target_has_cxx_sources(ctx, id, out)) {
-        visiting[id] = 0;
-        return false;
-    }
-    if (*out) {
-        visiting[id] = 0;
-        return true;
-    }
-
-    qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
-    if (!cg_query_effective_link_items_cached(ctx, id, &qctx, &libs)) {
-        visiting[id] = 0;
-        return false;
-    }
-    for (size_t i = 0; i < libs.count; ++i) {
-        CG_Resolved_Target_Ref dep = {0};
-        bool dep_needs_cxx = false;
-        if (!cg_resolve_link_item_ref(ctx, &qctx, libs.items[i], &dep)) continue;
-        if (!cg_target_needs_cxx_linker_for_config_impl(ctx, dep.target_id, config, visiting, &dep_needs_cxx)) {
-            visiting[id] = 0;
-            return false;
-        }
-        if (dep_needs_cxx) {
-            *out = true;
-            visiting[id] = 0;
-            return true;
-        }
-    }
-
-    visiting[id] = 0;
-    return true;
-}
-
 static bool cg_target_needs_cxx_linker_for_config(CG_Context *ctx,
                                                   BM_Target_Id id,
                                                   String_View config,
                                                   bool *out) {
-    uint8_t *visiting = NULL;
+    BM_Query_Eval_Context qctx = {0};
+    String_View link_language = nob_sv_from_cstr("");
     if (out) *out = false;
-    if (!ctx || !out) return false;
-    visiting = arena_alloc_array_zero(ctx->scratch, uint8_t, ctx->target_count);
-    if (!visiting && ctx->target_count > 0) return false;
-    return cg_target_needs_cxx_linker_for_config_impl(ctx, id, config, visiting, out);
+    if (!ctx || !out || !bm_target_id_is_valid(id)) return false;
+
+    id = cg_resolve_alias_target(ctx, id);
+    if (!bm_target_id_is_valid(id)) return false;
+
+    qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
+    if (!cg_query_effective_link_language_cached(ctx, id, &qctx, &link_language)) return false;
+    *out = cg_sv_eq_ci(link_language, nob_sv_from_cstr("CXX"));
+    return true;
 }
 
 static bool cg_collect_build_dependencies(CG_Context *ctx, BM_Target_Id id, BM_Target_Id **out) {
@@ -1404,32 +1213,34 @@ static bool cg_collect_compile_sources(CG_Context *ctx, BM_Target_Id id, CG_Sour
 
     for (size_t i = 0; i < source_count; ++i) {
         String_View src = bm_query_target_source_effective(ctx->model, id, i);
-        String_View source_language = nob_sv_trim(bm_query_target_source_language(ctx->model, id, i));
+        String_View source_language = bm_query_target_source_effective_language(ctx->model, id, i);
+        String_View raw_source_language = nob_sv_trim(bm_query_target_source_language(ctx->model, id, i));
         String_View rebased = {0};
         CG_Source_Lang lang = CG_SOURCE_LANG_C;
         bool dup = false;
 
         if (!bm_query_target_source_is_compile_input(ctx->model, id, i)) continue;
         if (!cg_check_no_genex("target source", src)) return false;
-        if (source_language.count > 0) {
-            if (!cg_parse_source_language(source_language, &lang)) {
+        if (source_language.count == 0) {
+            if (raw_source_language.count > 0) {
                 nob_log(NOB_ERROR,
                         "codegen: unsupported source LANGUAGE on target '%.*s': %.*s",
                         (int)bm_query_target_name(ctx->model, id).count,
                         bm_query_target_name(ctx->model, id).data ? bm_query_target_name(ctx->model, id).data : "",
-                        (int)source_language.count,
-                        source_language.data ? source_language.data : "");
+                        (int)raw_source_language.count,
+                        raw_source_language.data ? raw_source_language.data : "");
                 return false;
             }
-        } else {
-            if (cg_is_header_like(src)) continue;
-            if (!cg_classify_source_lang(src, &lang)) {
-                nob_log(NOB_ERROR, "codegen: unsupported source language on target '%.*s': %.*s",
-                        (int)bm_query_target_name(ctx->model, id).count,
-                        bm_query_target_name(ctx->model, id).data ? bm_query_target_name(ctx->model, id).data : "",
-                        (int)src.count, src.data ? src.data : "");
-                return false;
-            }
+            continue;
+        }
+        if (!cg_source_lang_from_effective_language(source_language, &lang)) {
+            nob_log(NOB_ERROR,
+                    "codegen: unsupported effective source language on target '%.*s': %.*s",
+                    (int)bm_query_target_name(ctx->model, id).count,
+                    bm_query_target_name(ctx->model, id).data ? bm_query_target_name(ctx->model, id).data : "",
+                    (int)source_language.count,
+                    source_language.data ? source_language.data : "");
+            return false;
         }
 
         if (!cg_rebase_path_from_cwd(ctx, src, &rebased)) return false;
@@ -2406,17 +2217,28 @@ static bool cg_emit_clean_function(CG_Context *ctx, Nob_String_Builder *out) {
 
     for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
         BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
-        BM_String_Span outputs = {0};
         if (bm_query_replay_action_phase(ctx->model, id) != BM_REPLAY_PHASE_CONFIGURE) continue;
-        outputs = bm_query_replay_action_outputs(ctx->model, id);
-        for (size_t output_index = 0; output_index < outputs.count; ++output_index) {
-            for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
-                String_View config = branch < arena_arr_len(ctx->known_configs)
-                    ? ctx->known_configs[branch]
-                    : nob_sv_from_cstr("");
+        for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
+            const String_View *outputs = NULL;
+            String_View config = branch < arena_arr_len(ctx->known_configs)
+                ? ctx->known_configs[branch]
+                : nob_sv_from_cstr("");
+            if (!cg_resolve_replay_operands_for_config(ctx,
+                                                       id,
+                                                       BM_REPLAY_OPERAND_OUTPUTS,
+                                                       config,
+                                                       &outputs)) {
+                return false;
+            }
+            for (size_t output_index = 0; output_index < arena_arr_len(outputs); ++output_index) {
                 String_View rebased = {0};
                 bool clean_safe = false;
-                if (!cg_resolve_replay_path_for_config(ctx, config, outputs.items[output_index], &rebased)) {
+                if (!cg_resolve_replay_path_for_config(ctx,
+                                                       id,
+                                                       BM_REPLAY_OPERAND_OUTPUTS,
+                                                       output_index,
+                                                       config,
+                                                       &rebased)) {
                     return false;
                 }
                 if (rebased.count == 0) continue;

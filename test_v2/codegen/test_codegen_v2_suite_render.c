@@ -154,6 +154,30 @@ TEST(codegen_render_emits_ctest_coverage_and_memcheck_helpers) {
     TEST_PASS();
 }
 
+TEST(codegen_render_test_driver_replay_resolves_config_genex_operands) {
+    Nob_String_Builder sb = {0};
+    ASSERT(codegen_render_script(
+        "project(Test NONE)\n"
+        "enable_testing()\n"
+        "set(CTEST_SOURCE_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}\")\n"
+        "set(CTEST_BINARY_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}/ctest-build\")\n"
+        "file(MAKE_DIRECTORY \"${CTEST_BINARY_DIRECTORY}\")\n"
+        "ctest_start(Experimental \"${CTEST_SOURCE_DIRECTORY}\" \"${CTEST_BINARY_DIRECTORY}\" QUIET)\n"
+        "ctest_test(OUTPUT_JUNIT \"$<IF:$<CONFIG:Debug>,reports/debug.xml,$<IF:$<CONFIG:Release>,reports/release.xml,reports/other.xml>>\" QUIET)\n",
+        "CMakeLists.txt",
+        "nob.c",
+        &sb));
+
+    char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items ? sb.items : "");
+    ASSERT(strstr(output, "$<") == NULL);
+    ASSERT(strstr(output, "reports/debug.xml") != NULL);
+    ASSERT(strstr(output, "reports/release.xml") != NULL);
+    ASSERT(strstr(output, "config_matches(config_filter, \"Debug\")") != NULL);
+    ASSERT(strstr(output, "config_matches(config_filter, \"Release\")") != NULL);
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
 TEST(codegen_export_only_render_does_not_emit_install_only_helpers) {
     Nob_String_Builder sb = {0};
     ASSERT(codegen_render_script(
@@ -355,6 +379,7 @@ void run_codegen_v2_render_tests(int *passed, int *failed, int *skipped) {
     test_codegen_runtime_emits_only_helpers_needed_for_simple_builds(passed, failed, skipped);
     test_codegen_render_emits_configure_and_build_cli_for_replay_models(passed, failed, skipped);
     test_codegen_render_emits_ctest_coverage_and_memcheck_helpers(passed, failed, skipped);
+    test_codegen_render_test_driver_replay_resolves_config_genex_operands(passed, failed, skipped);
     test_codegen_export_only_render_does_not_emit_install_only_helpers(passed, failed, skipped);
     test_codegen_generated_nob_compiles_cleanly_with_werror_for_representative_paths(passed, failed, skipped);
     test_codegen_render_multi_config_mixed_language_and_imported_queries_stay_stable(passed, failed, skipped);

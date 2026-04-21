@@ -86,6 +86,15 @@ bool cg_query_imported_link_languages_cached(CG_Context *ctx,
     return bm_query_session_target_imported_link_languages(ctx->query_session, id, qctx, out);
 }
 
+bool cg_query_effective_link_language_cached(CG_Context *ctx,
+                                             BM_Target_Id id,
+                                             const BM_Query_Eval_Context *qctx,
+                                             String_View *out) {
+    if (!ctx || !qctx || !out || !ctx->query_session) return false;
+    *out = nob_sv_from_cstr("");
+    return bm_query_session_target_effective_link_language(ctx->query_session, id, qctx, out);
+}
+
 bool cg_resolve_target_ref(CG_Context *ctx,
                            const BM_Query_Eval_Context *qctx,
                            String_View item,
