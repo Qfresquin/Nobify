@@ -237,6 +237,8 @@ static size_t bm_exec_node_index(const Build_Model *model,
 static bool bm_exec_visit_node(const Build_Model *model,
                                BM_Exec_Node_Kind kind,
                                size_t id,
+                               const BM_Query_Eval_Context *ctx,
+                               Arena *scratch,
                                uint8_t *colors,
                                Diag_Sink *sink,
                                bool *had_error);
@@ -246,6 +248,8 @@ static bool bm_exec_visit_edge(const Build_Model *model,
                                size_t from_id,
                                BM_Exec_Node_Kind to_kind,
                                size_t to_id,
+                               const BM_Query_Eval_Context *ctx,
+                               Arena *scratch,
                                uint8_t *colors,
                                Diag_Sink *sink,
                                bool *had_error) {
@@ -261,94 +265,107 @@ static bool bm_exec_visit_edge(const Build_Model *model,
         return true;
     }
     if (colors[to_index] == 2) return true;
-    return bm_exec_visit_node(model, to_kind, to_id, colors, sink, had_error);
+    return bm_exec_visit_node(model, to_kind, to_id, ctx, scratch, colors, sink, had_error);
+}
+
+static bool bm_exec_visit_order_span(const Build_Model *model,
+                                     BM_Target_Id owner_id,
+                                     BM_Build_Order_Node_Span span,
+                                     const BM_Query_Eval_Context *ctx,
+                                     Arena *scratch,
+                                     uint8_t *colors,
+                                     Diag_Sink *sink,
+                                     bool *had_error) {
+    for (size_t i = 0; i < span.count; ++i) {
+        const BM_Build_Order_Node *node = &span.items[i];
+        if (node->kind == BM_BUILD_ORDER_NODE_TARGET) {
+            if (!bm_exec_visit_edge(model,
+                                    BM_EXEC_NODE_TARGET,
+                                    owner_id,
+                                    BM_EXEC_NODE_TARGET,
+                                    node->target_id,
+                                    ctx,
+                                    scratch,
+                                    colors,
+                                    sink,
+                                    had_error)) {
+                return false;
+            }
+        } else if (!bm_exec_visit_edge(model,
+                                       BM_EXEC_NODE_TARGET,
+                                       owner_id,
+                                       BM_EXEC_NODE_STEP,
+                                       node->step_id,
+                                       ctx,
+                                       scratch,
+                                       colors,
+                                       sink,
+                                       had_error)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static bool bm_exec_visit_target(const Build_Model *model,
                                  BM_Target_Id id,
+                                 const BM_Query_Eval_Context *ctx,
+                                 Arena *scratch,
                                  uint8_t *colors,
                                  Diag_Sink *sink,
                                  bool *had_error) {
-    const BM_Target_Record *target = &model->targets[id];
-    for (size_t i = 0; i < arena_arr_len(target->explicit_dependency_ids); ++i) {
-        if (!bm_exec_visit_edge(model,
-                                BM_EXEC_NODE_TARGET,
-                                id,
-                                BM_EXEC_NODE_TARGET,
-                                target->explicit_dependency_ids[i],
-                                colors,
-                                sink,
-                                had_error)) {
-            return false;
-        }
-    }
-
-    for (size_t i = 0; i < arena_arr_len(target->source_records); ++i) {
-        BM_Build_Step_Id producer_id = target->source_records[i].producer_step_id;
-        if (producer_id == BM_BUILD_STEP_ID_INVALID) continue;
-        if (!bm_exec_visit_edge(model,
-                                BM_EXEC_NODE_TARGET,
-                                id,
-                                BM_EXEC_NODE_STEP,
-                                producer_id,
-                                colors,
-                                sink,
-                                had_error)) {
-            return false;
-        }
-    }
-
-    for (size_t i = 0; i < arena_arr_len(model->build_steps); ++i) {
-        const BM_Build_Step_Record *step = &model->build_steps[i];
-        bool attached = false;
-        if (step->owner_target_id != id) continue;
-        if (target->kind == BM_TARGET_UTILITY) {
-            attached = step->kind == BM_BUILD_STEP_CUSTOM_TARGET;
-        } else {
-            attached = step->kind == BM_BUILD_STEP_TARGET_PRE_BUILD ||
-                       step->kind == BM_BUILD_STEP_TARGET_PRE_LINK ||
-                       step->kind == BM_BUILD_STEP_TARGET_POST_BUILD;
-        }
-        if (!attached) continue;
-        if (!bm_exec_visit_edge(model,
-                                BM_EXEC_NODE_TARGET,
-                                id,
-                                BM_EXEC_NODE_STEP,
-                                step->id,
-                                colors,
-                                sink,
-                                had_error)) {
-            return false;
-        }
-    }
-
-    return true;
+    BM_Target_Build_Order_View view = {0};
+    BM_Query_Eval_Context qctx = ctx ? *ctx : (BM_Query_Eval_Context){0};
+    if (!scratch) return false;
+    if (!bm_target_id_is_valid(qctx.current_target_id)) qctx.current_target_id = id;
+    qctx.usage_mode = BM_QUERY_USAGE_LINK;
+    if (!bm_query_target_effective_build_order_view(model, id, &qctx, scratch, &view)) return false;
+    return bm_exec_visit_order_span(model, id, view.explicit_prerequisites, &qctx, scratch, colors, sink, had_error) &&
+           bm_exec_visit_order_span(model, id, view.pre_build_steps, &qctx, scratch, colors, sink, had_error) &&
+           bm_exec_visit_order_span(model, id, view.generated_source_steps, &qctx, scratch, colors, sink, had_error) &&
+           bm_exec_visit_order_span(model, id, view.link_prerequisites, &qctx, scratch, colors, sink, had_error) &&
+           bm_exec_visit_order_span(model, id, view.pre_link_steps, &qctx, scratch, colors, sink, had_error) &&
+           bm_exec_visit_order_span(model, id, view.post_build_steps, &qctx, scratch, colors, sink, had_error) &&
+           bm_exec_visit_order_span(model, id, view.custom_target_steps, &qctx, scratch, colors, sink, had_error);
 }
 
 static bool bm_exec_visit_step(const Build_Model *model,
                                BM_Build_Step_Id id,
+                               const BM_Query_Eval_Context *ctx,
+                               Arena *scratch,
                                uint8_t *colors,
                                Diag_Sink *sink,
                                bool *had_error) {
-    const BM_Build_Step_Record *step = &model->build_steps[id];
-    for (size_t i = 0; i < arena_arr_len(step->resolved_target_dependencies); ++i) {
+    BM_Build_Step_Effective_View view = {0};
+    BM_Query_Eval_Context qctx = ctx ? *ctx : (BM_Query_Eval_Context){0};
+    const BM_Build_Step_Record *step = NULL;
+    if (!model || !scratch || (size_t)id >= arena_arr_len(model->build_steps)) return false;
+    step = &model->build_steps[id];
+    qctx.current_target_id = step->owner_target_id;
+    qctx.usage_mode = BM_QUERY_USAGE_LINK;
+    if (!bm_query_build_step_effective_view(model, id, &qctx, scratch, &view)) return false;
+    for (size_t i = 0; i < view.target_dependencies.count; ++i) {
         if (!bm_exec_visit_edge(model,
                                 BM_EXEC_NODE_STEP,
                                 id,
                                 BM_EXEC_NODE_TARGET,
-                                step->resolved_target_dependencies[i],
+                                view.target_dependencies.items[i],
+                                &qctx,
+                                scratch,
                                 colors,
                                 sink,
                                 had_error)) {
             return false;
         }
     }
-    for (size_t i = 0; i < arena_arr_len(step->resolved_producer_dependencies); ++i) {
+    for (size_t i = 0; i < view.producer_dependencies.count; ++i) {
         if (!bm_exec_visit_edge(model,
                                 BM_EXEC_NODE_STEP,
                                 id,
                                 BM_EXEC_NODE_STEP,
-                                step->resolved_producer_dependencies[i],
+                                view.producer_dependencies.items[i],
+                                &qctx,
+                                scratch,
                                 colors,
                                 sink,
                                 had_error)) {
@@ -361,24 +378,27 @@ static bool bm_exec_visit_step(const Build_Model *model,
 static bool bm_exec_visit_node(const Build_Model *model,
                                BM_Exec_Node_Kind kind,
                                size_t id,
+                               const BM_Query_Eval_Context *ctx,
+                               Arena *scratch,
                                uint8_t *colors,
                                Diag_Sink *sink,
                                bool *had_error) {
     size_t node_index = bm_exec_node_index(model, kind, id);
     colors[node_index] = 1;
     if (kind == BM_EXEC_NODE_TARGET) {
-        if (!bm_exec_visit_target(model, (BM_Target_Id)id, colors, sink, had_error)) return false;
+        if (!bm_exec_visit_target(model, (BM_Target_Id)id, ctx, scratch, colors, sink, had_error)) return false;
     } else {
-        if (!bm_exec_visit_step(model, (BM_Build_Step_Id)id, colors, sink, had_error)) return false;
+        if (!bm_exec_visit_step(model, (BM_Build_Step_Id)id, ctx, scratch, colors, sink, had_error)) return false;
     }
     colors[node_index] = 2;
     return true;
 }
 
-static bool bm_validate_execution_cycles(const Build_Model *model,
-                                         Arena *scratch,
-                                         Diag_Sink *sink,
-                                         bool *had_error) {
+static bool bm_validate_execution_cycles_for_context(const Build_Model *model,
+                                                     const BM_Query_Eval_Context *ctx,
+                                                     Arena *scratch,
+                                                     Diag_Sink *sink,
+                                                     bool *had_error) {
     size_t target_count = model ? arena_arr_len(model->targets) : 0;
     size_t step_count = model ? arena_arr_len(model->build_steps) : 0;
     size_t node_count = target_count + step_count;
@@ -391,11 +411,30 @@ static bool bm_validate_execution_cycles(const Build_Model *model,
 
     for (size_t i = 0; i < target_count; ++i) {
         if (colors[bm_exec_node_index(model, BM_EXEC_NODE_TARGET, i)] != 0) continue;
-        if (!bm_exec_visit_node(model, BM_EXEC_NODE_TARGET, i, colors, sink, had_error)) return false;
+        if (!bm_exec_visit_node(model, BM_EXEC_NODE_TARGET, i, ctx, scratch, colors, sink, had_error)) return false;
     }
     for (size_t i = 0; i < step_count; ++i) {
         if (colors[bm_exec_node_index(model, BM_EXEC_NODE_STEP, i)] != 0) continue;
-        if (!bm_exec_visit_node(model, BM_EXEC_NODE_STEP, i, colors, sink, had_error)) return false;
+        if (!bm_exec_visit_node(model, BM_EXEC_NODE_STEP, i, ctx, scratch, colors, sink, had_error)) return false;
+    }
+    return true;
+}
+
+static bool bm_validate_execution_cycles(const Build_Model *model,
+                                         Arena *scratch,
+                                         Diag_Sink *sink,
+                                         bool *had_error) {
+    size_t config_count = model ? arena_arr_len(model->known_configurations) : 0;
+    if (!model || !scratch || !had_error) return false;
+    for (size_t branch = 0; branch <= config_count; ++branch) {
+        BM_Query_Eval_Context ctx = {0};
+        ctx.config = branch < config_count ? model->known_configurations[branch] : nob_sv_from_cstr("");
+        ctx.current_target_id = BM_TARGET_ID_INVALID;
+        ctx.usage_mode = BM_QUERY_USAGE_LINK;
+        ctx.build_interface_active = true;
+        ctx.build_local_interface_active = true;
+        ctx.install_interface_active = false;
+        if (!bm_validate_execution_cycles_for_context(model, &ctx, scratch, sink, had_error)) return false;
     }
     return true;
 }

@@ -111,6 +111,20 @@ static bool build_model_target_id_span_contains(BM_Target_Id_Span span, BM_Targe
     return false;
 }
 
+static bool build_model_build_order_span_contains_target(BM_Build_Order_Node_Span span, BM_Target_Id needle) {
+    for (size_t i = 0; i < span.count; ++i) {
+        if (span.items[i].kind == BM_BUILD_ORDER_NODE_TARGET && span.items[i].target_id == needle) return true;
+    }
+    return false;
+}
+
+static bool build_model_build_order_span_contains_step(BM_Build_Order_Node_Span span, BM_Build_Step_Id needle) {
+    for (size_t i = 0; i < span.count; ++i) {
+        if (span.items[i].kind == BM_BUILD_ORDER_NODE_STEP && span.items[i].step_id == needle) return true;
+    }
+    return false;
+}
+
 static bool build_model_string_span_contains_ci(BM_String_Span span, const char *needle) {
     String_View needle_sv = nob_sv_from_cstr(needle ? needle : "");
     for (size_t i = 0; i < span.count; ++i) {
@@ -757,6 +771,160 @@ TEST(build_model_known_configurations_include_build_step_genex_fields) {
     ASSERT(build_model_string_span_contains_ci(known_configs, "RelWithDebInfo"));
     ASSERT(build_model_string_span_contains_ci(known_configs, "Debug"));
 
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_target_build_order_view_centralizes_explicit_steps_and_config_link_prereqs) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id prepare_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id imported_prepare_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id debugdep_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id releasedep_id = BM_TARGET_ID_INVALID;
+    BM_Build_Step_Id generated_step_id = BM_BUILD_STEP_ID_INVALID;
+    BM_Build_Step_Id pre_build_id = BM_BUILD_STEP_ID_INVALID;
+    BM_Build_Step_Id pre_link_id = BM_BUILD_STEP_ID_INVALID;
+    BM_Build_Step_Id post_build_id = BM_BUILD_STEP_ID_INVALID;
+    size_t generated_source_index = 0;
+    BM_Query_Eval_Context debug_ctx = {0};
+    BM_Query_Eval_Context release_ctx = {0};
+    BM_Target_Build_Order_View debug_view = {0};
+    BM_Target_Build_Order_View release_view = {0};
+
+    ASSERT(query_arena != NULL);
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "row55_order_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("row55_order_src");
+    config.binary_dir = nob_sv_from_cstr("row55_order_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Row55 C)\n"
+        "add_custom_target(prepare COMMAND ${CMAKE_COMMAND} -E echo prepare)\n"
+        "add_custom_target(imported_prepare COMMAND ${CMAKE_COMMAND} -E echo imported)\n"
+        "add_library(iface INTERFACE)\n"
+        "add_dependencies(iface prepare)\n"
+        "add_library(ext STATIC IMPORTED GLOBAL)\n"
+        "set_target_properties(ext PROPERTIES IMPORTED_LOCATION \"${CMAKE_CURRENT_BINARY_DIR}/libext.a\")\n"
+        "add_dependencies(ext imported_prepare)\n"
+        "add_library(debugdep STATIC debugdep.c)\n"
+        "add_library(releasedep STATIC releasedep.c)\n"
+        "add_custom_command(OUTPUT generated.c COMMAND ${CMAKE_COMMAND} -E echo generated)\n"
+        "add_executable(app main.c ${CMAKE_CURRENT_BINARY_DIR}/generated.c)\n"
+        "add_dependencies(app iface)\n"
+        "target_link_libraries(app PRIVATE ext \"$<$<CONFIG:Debug>:debugdep>\" \"$<$<CONFIG:Release>:releasedep>\")\n"
+        "add_custom_command(TARGET app PRE_BUILD COMMAND ${CMAKE_COMMAND} -E echo prebuild)\n"
+        "add_custom_command(TARGET app PRE_LINK COMMAND ${CMAKE_COMMAND} -E echo prelink)\n"
+        "add_custom_command(TARGET app POST_BUILD COMMAND ${CMAKE_COMMAND} -E echo postbuild)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    prepare_id = bm_query_target_by_name(model, nob_sv_from_cstr("prepare"));
+    imported_prepare_id = bm_query_target_by_name(model, nob_sv_from_cstr("imported_prepare"));
+    debugdep_id = bm_query_target_by_name(model, nob_sv_from_cstr("debugdep"));
+    releasedep_id = bm_query_target_by_name(model, nob_sv_from_cstr("releasedep"));
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+    ASSERT(prepare_id != BM_TARGET_ID_INVALID);
+    ASSERT(imported_prepare_id != BM_TARGET_ID_INVALID);
+    ASSERT(debugdep_id != BM_TARGET_ID_INVALID);
+    ASSERT(releasedep_id != BM_TARGET_ID_INVALID);
+
+    generated_source_index = build_model_find_target_source_index_containing(model, app_id, "generated.c");
+    ASSERT(generated_source_index < bm_query_target_source_count(model, app_id));
+    generated_step_id = bm_query_target_source_producer_step(model, app_id, generated_source_index);
+    pre_build_id = build_model_find_step_by_kind_and_owner(model, BM_BUILD_STEP_TARGET_PRE_BUILD, app_id);
+    pre_link_id = build_model_find_step_by_kind_and_owner(model, BM_BUILD_STEP_TARGET_PRE_LINK, app_id);
+    post_build_id = build_model_find_step_by_kind_and_owner(model, BM_BUILD_STEP_TARGET_POST_BUILD, app_id);
+    ASSERT(generated_step_id != BM_BUILD_STEP_ID_INVALID);
+    ASSERT(pre_build_id != BM_BUILD_STEP_ID_INVALID);
+    ASSERT(pre_link_id != BM_BUILD_STEP_ID_INVALID);
+    ASSERT(post_build_id != BM_BUILD_STEP_ID_INVALID);
+
+    debug_ctx.current_target_id = app_id;
+    debug_ctx.usage_mode = BM_QUERY_USAGE_LINK;
+    debug_ctx.config = nob_sv_from_cstr("Debug");
+    debug_ctx.platform_id = nob_sv_from_cstr("Linux");
+    debug_ctx.build_interface_active = true;
+    debug_ctx.build_local_interface_active = true;
+    release_ctx = debug_ctx;
+    release_ctx.config = nob_sv_from_cstr("Release");
+
+    ASSERT(bm_query_target_effective_build_order_view(model, app_id, &debug_ctx, query_arena, &debug_view));
+    ASSERT(bm_query_target_effective_build_order_view(model, app_id, &release_ctx, query_arena, &release_view));
+
+    ASSERT(debug_view.explicit_prerequisites.count == 1);
+    ASSERT(build_model_build_order_span_contains_target(debug_view.explicit_prerequisites, prepare_id));
+    ASSERT(build_model_build_order_span_contains_step(debug_view.generated_source_steps, generated_step_id));
+    ASSERT(build_model_build_order_span_contains_step(debug_view.pre_build_steps, pre_build_id));
+    ASSERT(build_model_build_order_span_contains_step(debug_view.pre_link_steps, pre_link_id));
+    ASSERT(build_model_build_order_span_contains_step(debug_view.post_build_steps, post_build_id));
+    ASSERT(build_model_build_order_span_contains_target(debug_view.link_prerequisites, imported_prepare_id));
+    ASSERT(build_model_build_order_span_contains_target(debug_view.link_prerequisites, debugdep_id));
+    ASSERT(!build_model_build_order_span_contains_target(debug_view.link_prerequisites, releasedep_id));
+    ASSERT(build_model_build_order_span_contains_target(release_view.link_prerequisites, imported_prepare_id));
+    ASSERT(!build_model_build_order_span_contains_target(release_view.link_prerequisites, debugdep_id));
+    ASSERT(build_model_build_order_span_contains_target(release_view.link_prerequisites, releasedep_id));
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_static_library_link_cycle_is_not_an_execution_order_cycle) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(256 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id a_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id b_id = BM_TARGET_ID_INVALID;
+    BM_Query_Eval_Context ctx = {0};
+    BM_Target_Build_Order_View a_view = {0};
+    BM_Target_Build_Order_View b_view = {0};
+
+    ASSERT(query_arena != NULL);
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "row55_static_cycle_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("row55_static_cycle_src");
+    config.binary_dir = nob_sv_from_cstr("row55_static_cycle_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Row55 C)\n"
+        "add_library(a STATIC a.c)\n"
+        "add_library(b STATIC b.c)\n"
+        "target_link_libraries(a PRIVATE b)\n"
+        "target_link_libraries(b PRIVATE a)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    a_id = bm_query_target_by_name(model, nob_sv_from_cstr("a"));
+    b_id = bm_query_target_by_name(model, nob_sv_from_cstr("b"));
+    ASSERT(a_id != BM_TARGET_ID_INVALID);
+    ASSERT(b_id != BM_TARGET_ID_INVALID);
+
+    ctx.current_target_id = a_id;
+    ctx.usage_mode = BM_QUERY_USAGE_LINK;
+    ctx.platform_id = nob_sv_from_cstr("Linux");
+    ctx.build_interface_active = true;
+    ctx.build_local_interface_active = true;
+    ASSERT(bm_query_target_effective_build_order_view(model, a_id, &ctx, query_arena, &a_view));
+    ctx.current_target_id = b_id;
+    ASSERT(bm_query_target_effective_build_order_view(model, b_id, &ctx, query_arena, &b_view));
+    ASSERT(a_view.link_prerequisites.count == 0);
+    ASSERT(b_view.link_prerequisites.count == 0);
+
+    arena_destroy(query_arena);
     test_semantic_pipeline_fixture_destroy(&fixture);
     TEST_PASS();
 }
@@ -5136,6 +5304,8 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_build_step_effective_view_resolves_context_and_target_artifacts(passed, failed, skipped);
     test_build_model_custom_command_append_merges_into_original_step_and_rejects_missing_base(passed, failed, skipped);
     test_build_model_known_configurations_include_build_step_genex_fields(passed, failed, skipped);
+    test_build_model_target_build_order_view_centralizes_explicit_steps_and_config_link_prereqs(passed, failed, skipped);
+    test_build_model_static_library_link_cycle_is_not_an_execution_order_cycle(passed, failed, skipped);
     test_build_model_resolves_direct_and_binary_generated_source_producers(passed, failed, skipped);
     test_build_model_resolves_source_and_stripped_generated_source_producers(passed, failed, skipped);
     test_build_model_resolves_byproduct_producers_and_keeps_unresolved_file_dependencies(passed, failed, skipped);

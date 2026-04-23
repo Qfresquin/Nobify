@@ -434,6 +434,192 @@ set_target_properties(app PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/artifacts/bin")
 #@@ENDCASE
 
+#@@CASE backend_row55_explicit_dependency_ordering_closure_surface
+#@@OUTCOME SUCCESS
+#@@FILE_TEXT source/src/tool.c
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+
+static int file_exists(const char *path) {
+    struct stat st;
+    return path && stat(path, &st) == 0;
+}
+
+static int ensure_parent_dir(const char *path) {
+    char buf[512];
+    size_t len = path ? strlen(path) : 0;
+    if (!path || len >= sizeof(buf)) return 1;
+    memcpy(buf, path, len + 1);
+    for (size_t i = 1; i < len; ++i) {
+        if (buf[i] != '/') continue;
+        buf[i] = '\0';
+        mkdir(buf, 0777);
+        buf[i] = '/';
+    }
+    return 0;
+}
+
+static int append_line(const char *path, const char *line) {
+    FILE *f = NULL;
+    if (ensure_parent_dir(path) != 0) return 1;
+    f = fopen(path, "ab");
+    if (!f) return 1;
+    fprintf(f, "%s\n", line);
+    fclose(f);
+    return 0;
+}
+
+static int write_marker(const char *path, const char *value) {
+    FILE *f = NULL;
+    if (!path || path[0] == '\0') return 0;
+    if (ensure_parent_dir(path) != 0) return 1;
+    f = fopen(path, "wb");
+    if (!f) return 1;
+    fprintf(f, "%s\n", value);
+    fclose(f);
+    return 0;
+}
+
+static int note(const char *order, const char *label, const char *marker) {
+    return append_line(order, label) == 0 && write_marker(marker, label) == 0 ? 0 : 1;
+}
+
+static int gen(const char *out, const char *byproduct, const char *config, const char *order) {
+    FILE *f = NULL;
+    if (append_line(order, "generated") != 0 || ensure_parent_dir(out) != 0) return 1;
+    f = fopen(out, "wb");
+    if (!f) return 1;
+    fprintf(f, "int generated_base(void) { return 50; }\n");
+    fprintf(f, "int generated_append(void) { return 4; }\n");
+    fprintf(f, "const char *generated_config(void) { return \"%s\"; }\n", config);
+    fclose(f);
+    return write_marker(byproduct, config);
+}
+
+static int extend(const char *out, const char *order) {
+    FILE *f = NULL;
+    if (append_line(order, "append") != 0) return 1;
+    f = fopen(out, "ab");
+    if (!f) return 1;
+    fprintf(f, "int generated_append(void) { return 4; }\n");
+    fclose(f);
+    return 0;
+}
+
+static int report(const char *out,
+                  const char *config,
+                  const char *app,
+                  const char *order,
+                  const char *rel_dep,
+                  const char *debug_dep,
+                  const char *imported_marker) {
+    char line[256];
+    FILE *src = NULL;
+    FILE *dst = NULL;
+    if (append_line(order, "report") != 0 || ensure_parent_dir(out) != 0) return 1;
+    dst = fopen(out, "wb");
+    if (!dst) return 1;
+    fprintf(dst, "config=%s\n", config);
+    fprintf(dst, "app_exists=%d\n", file_exists(app));
+    fprintf(dst, "rel_dep_exists=%d\n", file_exists(rel_dep));
+    fprintf(dst, "debug_dep_exists=%d\n", file_exists(debug_dep));
+    fprintf(dst, "imported_marker_exists=%d\n", file_exists(imported_marker));
+    fprintf(dst, "order:\n");
+    src = fopen(order, "rb");
+    if (src) {
+        while (fgets(line, sizeof(line), src)) fputs(line, dst);
+        fclose(src);
+    }
+    fclose(dst);
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    if (argc >= 5 && strcmp(argv[1], "note") == 0) return note(argv[2], argv[3], argv[4]);
+    if (argc >= 6 && strcmp(argv[1], "gen") == 0) return gen(argv[2], argv[3], argv[4], argv[5]);
+    if (argc >= 4 && strcmp(argv[1], "extend") == 0) return extend(argv[2], argv[3]);
+    if (argc >= 9 && strcmp(argv[1], "report") == 0) return report(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], argv[8]);
+    return 2;
+}
+#@@END_FILE_TEXT
+#@@FILE_TEXT source/src/main.c
+#include <string.h>
+int generated_base(void);
+int generated_append(void);
+const char *generated_config(void);
+int config_dep_value(void);
+int main(void) {
+    return generated_base() + generated_append() + config_dep_value() == 55 &&
+           strcmp(generated_config(), "RelWithDebInfo") == 0 ? 0 : 1;
+}
+#@@END_FILE_TEXT
+#@@FILE_TEXT source/src/rel_dep.c
+int config_dep_value(void) { return 1; }
+#@@END_FILE_TEXT
+#@@FILE_TEXT source/src/debug_dep.c
+int config_dep_value(void) { return 99; }
+#@@END_FILE_TEXT
+cmake_minimum_required(VERSION 3.28)
+set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
+project(Row55Closure LANGUAGES C)
+file(MAKE_DIRECTORY
+  "${CMAKE_CURRENT_BINARY_DIR}/artifacts/debug"
+  "${CMAKE_CURRENT_BINARY_DIR}/artifacts/rel")
+add_executable(tool src/tool.c)
+set_target_properties(tool PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/artifacts/tools")
+add_custom_target(prepare
+  COMMAND tool note reports/order.txt prepare reports/prepare.txt
+  BYPRODUCTS reports/prepare.txt
+  WORKING_DIRECTORY .
+  VERBATIM)
+add_custom_target(imported_prepare
+  COMMAND tool note reports/order.txt imported reports/imported.txt
+  BYPRODUCTS reports/imported.txt
+  WORKING_DIRECTORY .
+  VERBATIM)
+add_library(iface INTERFACE)
+add_dependencies(iface prepare)
+add_library(ext STATIC IMPORTED GLOBAL)
+set_target_properties(ext PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/missing/libext.a")
+add_dependencies(ext imported_prepare)
+add_library(rel_dep STATIC src/rel_dep.c)
+add_library(debug_dep STATIC src/debug_dep.c)
+set_target_properties(rel_dep PROPERTIES
+  EXCLUDE_FROM_ALL TRUE
+  ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/artifacts/rel")
+set_target_properties(debug_dep PROPERTIES
+  EXCLUDE_FROM_ALL TRUE
+  ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/artifacts/debug")
+add_custom_command(
+  OUTPUT generated/generated.c
+  BYPRODUCTS generated/generated.by
+  COMMAND tool gen generated/generated.c generated/generated.by "$<CONFIG>" reports/order.txt
+  DEPENDS tool reports/prepare.txt
+  WORKING_DIRECTORY .
+  VERBATIM)
+add_executable(app src/main.c "${CMAKE_CURRENT_BINARY_DIR}/generated/generated.c")
+add_dependencies(app iface)
+target_link_libraries(app PRIVATE "$<$<CONFIG:RelWithDebInfo>:rel_dep>" "$<$<CONFIG:Debug>:debug_dep>")
+set_target_properties(app PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/artifacts/bin")
+add_custom_command(TARGET app PRE_LINK
+  COMMAND tool note reports/order.txt pre-hook ""
+  WORKING_DIRECTORY .
+  VERBATIM)
+add_custom_command(TARGET app POST_BUILD
+  COMMAND tool note reports/order.txt post-hook ""
+  WORKING_DIRECTORY .
+  VERBATIM)
+add_custom_target(row55_all ALL
+  COMMAND tool report reports/row55.txt "$<CONFIG>" "$<TARGET_FILE:app>" reports/order.txt artifacts/rel/librel_dep.a artifacts/debug/libdebug_dep.a reports/imported.txt
+  DEPENDS app
+  WORKING_DIRECTORY .
+  VERBATIM)
+add_dependencies(row55_all ext)
+#@@ENDCASE
+
 #@@CASE backend_reject_target_precompile_headers
 #@@OUTCOME SUCCESS
 #@@FILE_TEXT source/src/main.c

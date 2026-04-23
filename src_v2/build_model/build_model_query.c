@@ -116,6 +116,13 @@ static BM_String_Span bm_string_span(const String_View *items) {
     return span;
 }
 
+static BM_Build_Order_Node_Span bm_build_order_node_span(const BM_Build_Order_Node *items) {
+    BM_Build_Order_Node_Span span = {0};
+    span.items = items;
+    span.count = arena_arr_len(items);
+    return span;
+}
+
 static String_View bm_query_trim_current_dir_prefixes(String_View path) {
     while (path.count >= 2 &&
            path.data[0] == '.' &&
@@ -1991,6 +1998,260 @@ static bool bm_query_push_unique_sv(Arena *scratch, String_View **items, String_
         if (nob_sv_eq((*items)[i], value)) return true;
     }
     return arena_arr_push(scratch, *items, value);
+}
+
+static BM_Build_Order_Node bm_build_order_target_node(BM_Target_Id id) {
+    return (BM_Build_Order_Node){
+        .kind = BM_BUILD_ORDER_NODE_TARGET,
+        .target_id = id,
+        .step_id = BM_BUILD_STEP_ID_INVALID,
+    };
+}
+
+static BM_Build_Order_Node bm_build_order_step_node(BM_Build_Step_Id id) {
+    return (BM_Build_Order_Node){
+        .kind = BM_BUILD_ORDER_NODE_STEP,
+        .target_id = BM_TARGET_ID_INVALID,
+        .step_id = id,
+    };
+}
+
+static bool bm_query_build_order_node_eq(BM_Build_Order_Node lhs, BM_Build_Order_Node rhs) {
+    return lhs.kind == rhs.kind && lhs.target_id == rhs.target_id && lhs.step_id == rhs.step_id;
+}
+
+static bool bm_query_push_unique_build_order_node(Arena *scratch,
+                                                  BM_Build_Order_Node **items,
+                                                  BM_Build_Order_Node node) {
+    if (!scratch || !items) return false;
+    if (node.kind == BM_BUILD_ORDER_NODE_TARGET && !bm_target_id_is_valid(node.target_id)) return true;
+    if (node.kind == BM_BUILD_ORDER_NODE_STEP && !bm_build_step_id_is_valid(node.step_id)) return true;
+    for (size_t i = 0; i < arena_arr_len(*items); ++i) {
+        if (bm_query_build_order_node_eq((*items)[i], node)) return true;
+    }
+    return arena_arr_push(scratch, *items, node);
+}
+
+static bool bm_query_target_kind_is_local_build_order_node(BM_Target_Kind kind) {
+    return kind == BM_TARGET_EXECUTABLE ||
+           kind == BM_TARGET_STATIC_LIBRARY ||
+           kind == BM_TARGET_SHARED_LIBRARY ||
+           kind == BM_TARGET_MODULE_LIBRARY ||
+           kind == BM_TARGET_OBJECT_LIBRARY ||
+           kind == BM_TARGET_UTILITY;
+}
+
+static bool bm_query_target_kind_has_target_hooks(BM_Target_Kind kind) {
+    return kind == BM_TARGET_EXECUTABLE ||
+           kind == BM_TARGET_STATIC_LIBRARY ||
+           kind == BM_TARGET_SHARED_LIBRARY ||
+           kind == BM_TARGET_MODULE_LIBRARY;
+}
+
+static bool bm_query_target_kind_consumes_link_prerequisites(BM_Target_Kind kind) {
+    return kind == BM_TARGET_EXECUTABLE ||
+           kind == BM_TARGET_SHARED_LIBRARY ||
+           kind == BM_TARGET_MODULE_LIBRARY;
+}
+
+static bool bm_query_target_is_build_order_node(const BM_Target_Record *target) {
+    return target &&
+           !target->alias &&
+           !target->imported &&
+           bm_query_target_kind_is_local_build_order_node(target->kind);
+}
+
+static bool bm_query_collect_order_prerequisite_target(const Build_Model *model,
+                                                       BM_Target_Id root_id,
+                                                       BM_Target_Id id,
+                                                       Arena *scratch,
+                                                       uint8_t *visiting,
+                                                       BM_Build_Order_Node **out) {
+    BM_Target_Id resolved_id = BM_TARGET_ID_INVALID;
+    const BM_Target_Record *target = NULL;
+    if (!model || !scratch || !visiting || !out) return false;
+    resolved_id = bm_resolve_alias_target_id(model, id);
+    if (!bm_target_id_is_valid(resolved_id) || resolved_id == root_id) return true;
+    target = bm_model_target(model, resolved_id);
+    if (!target) return false;
+
+    if (bm_query_target_is_build_order_node(target)) {
+        return bm_query_push_unique_build_order_node(scratch, out, bm_build_order_target_node(resolved_id));
+    }
+
+    if (visiting[resolved_id]) return true;
+    visiting[resolved_id] = 1;
+    for (size_t i = 0; i < arena_arr_len(target->explicit_dependency_ids); ++i) {
+        if (!bm_query_collect_order_prerequisite_target(model,
+                                                        root_id,
+                                                        target->explicit_dependency_ids[i],
+                                                        scratch,
+                                                        visiting,
+                                                        out)) {
+            visiting[resolved_id] = 0;
+            return false;
+        }
+    }
+    visiting[resolved_id] = 0;
+    return true;
+}
+
+static bool bm_query_collect_order_explicit_prerequisites(const Build_Model *model,
+                                                         const BM_Target_Record *target,
+                                                         Arena *scratch,
+                                                         BM_Build_Order_Node **out) {
+    uint8_t *visiting = NULL;
+    if (!model || !target || !scratch || !out) return false;
+    visiting = arena_alloc_array_zero(scratch, uint8_t, arena_arr_len(model->targets));
+    if (!visiting && arena_arr_len(model->targets) > 0) return false;
+    if (bm_target_id_is_valid(target->id) && (size_t)target->id < arena_arr_len(model->targets)) {
+        visiting[target->id] = 1;
+    }
+    for (size_t i = 0; i < arena_arr_len(target->explicit_dependency_ids); ++i) {
+        if (!bm_query_collect_order_prerequisite_target(model,
+                                                        target->id,
+                                                        target->explicit_dependency_ids[i],
+                                                        scratch,
+                                                        visiting,
+                                                        out)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool bm_query_collect_order_steps(const Build_Model *model,
+                                         BM_Target_Id owner_target_id,
+                                         BM_Build_Step_Kind kind,
+                                         Arena *scratch,
+                                         BM_Build_Order_Node **out) {
+    if (!model || !scratch || !out) return false;
+    for (size_t i = 0; i < arena_arr_len(model->build_steps); ++i) {
+        const BM_Build_Step_Record *step = &model->build_steps[i];
+        if (step->owner_target_id != owner_target_id || step->kind != kind) continue;
+        if (!bm_query_push_unique_build_order_node(scratch, out, bm_build_order_step_node(step->id))) return false;
+    }
+    return true;
+}
+
+static bool bm_query_collect_order_generated_source_steps(const Build_Model *model,
+                                                          const BM_Target_Record *target,
+                                                          Arena *scratch,
+                                                          BM_Build_Order_Node **out) {
+    if (!model || !target || !scratch || !out) return false;
+    for (size_t i = 0; i < arena_arr_len(target->source_records); ++i) {
+        BM_Build_Step_Id producer_id = target->source_records[i].producer_step_id;
+        if (!bm_build_step_id_is_valid(producer_id)) continue;
+        if (!bm_query_push_unique_build_order_node(scratch, out, bm_build_order_step_node(producer_id))) return false;
+    }
+    return true;
+}
+
+static bool bm_query_collect_order_link_prerequisites(const Build_Model *model,
+                                                      const BM_Target_Record *target,
+                                                      const BM_Query_Eval_Context *ctx,
+                                                      Arena *scratch,
+                                                      BM_Build_Order_Node **out) {
+    BM_Link_Item_Span link_items = {0};
+    uint8_t *visiting = NULL;
+    if (!model || !target || !scratch || !out) return false;
+    if (!bm_query_target_kind_consumes_link_prerequisites(target->kind)) return true;
+    visiting = arena_alloc_array_zero(scratch, uint8_t, arena_arr_len(model->targets));
+    if (!visiting && arena_arr_len(model->targets) > 0) return false;
+    if (bm_target_id_is_valid(target->id) && (size_t)target->id < arena_arr_len(model->targets)) {
+        visiting[target->id] = 1;
+    }
+    if (!bm_query_target_effective_link_libraries_items_with_context(model,
+                                                                     target->id,
+                                                                     ctx,
+                                                                     scratch,
+                                                                     &link_items)) {
+        return false;
+    }
+    for (size_t i = 0; i < link_items.count; ++i) {
+        BM_Target_Id dep_id = BM_TARGET_ID_INVALID;
+        if (!bm_query_target_link_item_target_id(model, link_items.items[i], &dep_id)) continue;
+        if (!bm_query_collect_order_prerequisite_target(model,
+                                                        target->id,
+                                                        dep_id,
+                                                        scratch,
+                                                        visiting,
+                                                        out)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool bm_query_target_effective_build_order_view(const Build_Model *model,
+                                                BM_Target_Id id,
+                                                const BM_Query_Eval_Context *ctx,
+                                                Arena *scratch,
+                                                BM_Target_Build_Order_View *out) {
+    BM_Target_Id resolved_id = BM_TARGET_ID_INVALID;
+    const BM_Target_Record *target = NULL;
+    BM_Query_Eval_Context qctx = {0};
+    BM_Build_Order_Node *explicit_prereqs = NULL;
+    BM_Build_Order_Node *pre_build = NULL;
+    BM_Build_Order_Node *generated_sources = NULL;
+    BM_Build_Order_Node *link_prereqs = NULL;
+    BM_Build_Order_Node *pre_link = NULL;
+    BM_Build_Order_Node *post_build = NULL;
+    BM_Build_Order_Node *custom_target = NULL;
+    if (out) *out = (BM_Target_Build_Order_View){0};
+    if (!model || !scratch || !out) return false;
+    resolved_id = bm_resolve_alias_target_id(model, id);
+    target = bm_model_target(model, resolved_id);
+    if (!target) return false;
+
+    qctx = ctx ? *ctx : bm_default_query_eval_context(resolved_id, BM_QUERY_USAGE_LINK);
+    qctx.current_target_id = resolved_id;
+    qctx.usage_mode = BM_QUERY_USAGE_LINK;
+    qctx.compile_language = nob_sv_from_cstr("");
+
+    if (!bm_query_collect_order_explicit_prerequisites(model, target, scratch, &explicit_prereqs)) return false;
+
+    if (target->kind == BM_TARGET_UTILITY && !target->alias && !target->imported) {
+        if (!bm_query_collect_order_steps(model,
+                                          resolved_id,
+                                          BM_BUILD_STEP_CUSTOM_TARGET,
+                                          scratch,
+                                          &custom_target)) {
+            return false;
+        }
+    } else if (!target->alias && !target->imported && bm_query_target_kind_is_local_build_order_node(target->kind)) {
+        if (!bm_query_collect_order_generated_source_steps(model, target, scratch, &generated_sources) ||
+            !bm_query_collect_order_link_prerequisites(model, target, &qctx, scratch, &link_prereqs)) {
+            return false;
+        }
+        if (bm_query_target_kind_has_target_hooks(target->kind) &&
+            (!bm_query_collect_order_steps(model,
+                                           resolved_id,
+                                           BM_BUILD_STEP_TARGET_PRE_BUILD,
+                                           scratch,
+                                           &pre_build) ||
+             !bm_query_collect_order_steps(model,
+                                           resolved_id,
+                                           BM_BUILD_STEP_TARGET_PRE_LINK,
+                                           scratch,
+                                           &pre_link) ||
+             !bm_query_collect_order_steps(model,
+                                           resolved_id,
+                                           BM_BUILD_STEP_TARGET_POST_BUILD,
+                                           scratch,
+                                           &post_build))) {
+            return false;
+        }
+    }
+
+    out->explicit_prerequisites = bm_build_order_node_span(explicit_prereqs);
+    out->pre_build_steps = bm_build_order_node_span(pre_build);
+    out->generated_source_steps = bm_build_order_node_span(generated_sources);
+    out->link_prerequisites = bm_build_order_node_span(link_prereqs);
+    out->pre_link_steps = bm_build_order_node_span(pre_link);
+    out->post_build_steps = bm_build_order_node_span(post_build);
+    out->custom_target_steps = bm_build_order_node_span(custom_target);
+    return true;
 }
 
 static bool bm_query_resolve_string_array(const Build_Model *model,

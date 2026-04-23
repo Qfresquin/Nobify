@@ -2372,6 +2372,98 @@ TEST(codegen_target_hooks_run_at_pre_link_and_post_build_boundaries) {
     TEST_PASS();
 }
 
+TEST(codegen_interface_explicit_dependencies_are_executed_via_build_order_query) {
+    Arena *arena = arena_create(64 * 1024);
+    const char *script =
+        "project(Row55 C)\n"
+        "add_custom_target(prepare\n"
+        "  COMMAND sh -c \"mkdir -p row55_iface_build/generated && printf prepared > row55_iface_build/generated/prepared.txt\"\n"
+        "  BYPRODUCTS generated/prepared.txt)\n"
+        "add_library(iface INTERFACE)\n"
+        "add_dependencies(iface prepare)\n"
+        "add_executable(app main.c)\n"
+        "add_dependencies(app iface)\n";
+    Codegen_Test_Config config = {
+        .input_path = "row55_iface_src/CMakeLists.txt",
+        .output_path = "row55_iface_nob.c",
+        .source_dir = "row55_iface_src",
+        .binary_dir = "row55_iface_build",
+    };
+
+    ASSERT(arena != NULL);
+    ASSERT(codegen_write_text_file("row55_iface_src/main.c", "int main(void) { return 0; }\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("row55_iface_nob.c", "row55_iface_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir(".", "./row55_iface_nob_gen", "app", NULL));
+    ASSERT(test_ws_host_path_exists("row55_iface_build/app"));
+    ASSERT(codegen_text_file_equals(arena, "row55_iface_build/generated/prepared.txt", "prepared"));
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(codegen_config_specific_link_prerequisites_build_only_selected_config) {
+    const char *debug_build_argv[] = {"--config", "Debug", "app"};
+    const char *script =
+        "project(Row55 C)\n"
+        "add_library(debugdep STATIC debugdep.c)\n"
+        "set_target_properties(debugdep PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/debug)\n"
+        "add_library(releasedep STATIC releasedep.c)\n"
+        "set_target_properties(releasedep PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/release)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE \"$<$<CONFIG:Debug>:debugdep>\" \"$<$<CONFIG:Release>:releasedep>\")\n";
+    Codegen_Test_Config config = {
+        .input_path = "row55_cfg_src/CMakeLists.txt",
+        .output_path = "row55_cfg_nob.c",
+        .source_dir = "row55_cfg_src",
+        .binary_dir = "row55_cfg_build",
+    };
+
+    ASSERT(codegen_write_text_file("row55_cfg_src/debugdep.c", "int selected_value(void) { return 55; }\n"));
+    ASSERT(codegen_write_text_file("row55_cfg_src/releasedep.c", "int selected_value(void) { return 0; }\n"));
+    ASSERT(codegen_write_text_file(
+        "row55_cfg_src/main.c",
+        "int selected_value(void);\n"
+        "int main(void) { return selected_value() == 55 ? 0 : 1; }\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("row55_cfg_nob.c", "row55_cfg_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./row55_cfg_nob_gen", debug_build_argv, NOB_ARRAY_LEN(debug_build_argv)));
+    ASSERT(test_ws_host_path_exists("row55_cfg_build/app"));
+    ASSERT(test_ws_host_path_exists("row55_cfg_build/artifacts/debug/libdebugdep.a"));
+    ASSERT(!test_ws_host_path_exists("row55_cfg_build/artifacts/release/libreleasedep.a"));
+    ASSERT(codegen_run_binary_in_dir(".", "row55_cfg_build/app", NULL, NULL));
+    TEST_PASS();
+}
+
+TEST(codegen_static_library_link_cycle_does_not_create_build_order_cycle) {
+    const char *script =
+        "project(Row55 C)\n"
+        "add_library(a STATIC a.c)\n"
+        "add_library(b STATIC b.c)\n"
+        "target_link_libraries(a PRIVATE b)\n"
+        "target_link_libraries(b PRIVATE a)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE a)\n";
+    Codegen_Test_Config config = {
+        .input_path = "row55_static_cycle_src/CMakeLists.txt",
+        .output_path = "row55_static_cycle_nob.c",
+        .source_dir = "row55_static_cycle_src",
+        .binary_dir = "row55_static_cycle_build",
+    };
+
+    ASSERT(codegen_write_text_file("row55_static_cycle_src/a.c", "int a_value(void) { return 55; }\n"));
+    ASSERT(codegen_write_text_file("row55_static_cycle_src/b.c", "int b_value(void) { return 0; }\n"));
+    ASSERT(codegen_write_text_file(
+        "row55_static_cycle_src/main.c",
+        "int a_value(void);\n"
+        "int main(void) { return a_value() == 55 ? 0 : 1; }\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("row55_static_cycle_nob.c", "row55_static_cycle_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir(".", "./row55_static_cycle_nob_gen", "app", NULL));
+    ASSERT(test_ws_host_path_exists("row55_static_cycle_build/app"));
+    ASSERT(codegen_run_binary_in_dir(".", "row55_static_cycle_build/app", NULL, NULL));
+    TEST_PASS();
+}
+
 TEST(codegen_render_explicit_linux_posix_policy_preserves_linux_artifact_rules) {
     Arena *arena = arena_create(512 * 1024);
     Nob_String_Builder sb = {0};
@@ -3267,6 +3359,9 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_custom_target_dependency_runs_each_invocation_and_clean_removes_byproducts(passed, failed, skipped);
     test_codegen_custom_command_append_and_expand_lists_use_effective_build_step_queries(passed, failed, skipped);
     test_codegen_target_hooks_run_at_pre_link_and_post_build_boundaries(passed, failed, skipped);
+    test_codegen_interface_explicit_dependencies_are_executed_via_build_order_query(passed, failed, skipped);
+    test_codegen_config_specific_link_prerequisites_build_only_selected_config(passed, failed, skipped);
+    test_codegen_static_library_link_cycle_does_not_create_build_order_cycle(passed, failed, skipped);
     test_codegen_runtime_config_maps_imported_target_file_and_mixed_language_usage(passed, failed, skipped);
     test_codegen_config_mapped_imported_cxx_link_language_comes_from_build_model_query(passed, failed, skipped);
     test_codegen_render_explicit_linux_posix_policy_preserves_linux_artifact_rules(passed, failed, skipped);

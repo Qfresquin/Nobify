@@ -44,6 +44,32 @@ typedef struct {
     String_View comment;
 } BM_Build_Step_Effective_View;
 
+typedef enum {
+    BM_BUILD_ORDER_NODE_TARGET = 0,
+    BM_BUILD_ORDER_NODE_STEP,
+} BM_Build_Order_Node_Kind;
+
+typedef struct {
+    BM_Build_Order_Node_Kind kind;
+    BM_Target_Id target_id;
+    BM_Build_Step_Id step_id;
+} BM_Build_Order_Node;
+
+typedef struct {
+    const BM_Build_Order_Node *items;
+    size_t count;
+} BM_Build_Order_Node_Span;
+
+typedef struct {
+    BM_Build_Order_Node_Span explicit_prerequisites;
+    BM_Build_Order_Node_Span pre_build_steps;
+    BM_Build_Order_Node_Span generated_source_steps;
+    BM_Build_Order_Node_Span link_prerequisites;
+    BM_Build_Order_Node_Span pre_link_steps;
+    BM_Build_Order_Node_Span post_build_steps;
+    BM_Build_Order_Node_Span custom_target_steps;
+} BM_Target_Build_Order_View;
+
 typedef struct {
     String_View config;
     String_View platform_id;
@@ -164,6 +190,11 @@ BM_String_Span bm_query_target_file_set_base_dirs(const Build_Model *model, BM_T
 BM_String_Span bm_query_target_file_set_files_raw(const Build_Model *model, BM_Target_Id id, size_t file_set_index);
 BM_String_Span bm_query_target_file_set_files_effective(const Build_Model *model, BM_Target_Id id, size_t file_set_index);
 BM_Target_Id_Span bm_query_target_dependencies_explicit(const Build_Model *model, BM_Target_Id id);
+bool bm_query_target_effective_build_order_view(const Build_Model *model,
+                                                BM_Target_Id id,
+                                                const BM_Query_Eval_Context *ctx,
+                                                Arena *scratch,
+                                                BM_Target_Build_Order_View *out);
 BM_Link_Item_Span bm_query_target_link_libraries_raw(const Build_Model *model, BM_Target_Id id);
 BM_String_Item_Span bm_query_target_include_directories_raw(const Build_Model *model, BM_Target_Id id);
 BM_String_Item_Span bm_query_target_compile_definitions_raw(const Build_Model *model, BM_Target_Id id);

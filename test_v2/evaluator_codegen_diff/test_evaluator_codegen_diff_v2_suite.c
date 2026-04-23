@@ -329,6 +329,18 @@ static const EGD_Observed_Output s_egd_row54_build_step_outputs[] = {
     {"row54_all_report", "reports/all-RelWithDebInfo.txt", EGD_DIFF_FILE_TEXT},
 };
 
+static const Test_Manifest_Request s_egd_row55_build_order_manifests[] = {
+    {TEST_MANIFEST_CAPTURE_TREE, "row55_artifacts", "artifacts"},
+    {TEST_MANIFEST_CAPTURE_TREE, "row55_generated", "generated"},
+    {TEST_MANIFEST_CAPTURE_FILE_TEXT, "row55_report", "reports/row55.txt"},
+};
+
+static const EGD_Observed_Output s_egd_row55_build_order_outputs[] = {
+    {"row55_artifacts", "artifacts", EGD_DIFF_TREE},
+    {"row55_generated", "generated", EGD_DIFF_TREE},
+    {"row55_report", "reports/row55.txt", EGD_DIFF_FILE_TEXT},
+};
+
 static const Test_Manifest_Request s_egd_fetchcontent_local_manifests[] = {
     {TEST_MANIFEST_CAPTURE_TREE, "fetchcontent_tree", "fc_base"},
     {TEST_MANIFEST_CAPTURE_FILE_TEXT, "saved_marker", "fc_base/saveddep-build/from_saved.txt"},
@@ -402,6 +414,7 @@ static const EGD_Case_Def s_egd_cases[] = {
     {"backend_row52_config_language_platform_replay_closure_surface", EGD_PACK_SEEDS, "target_link_libraries|file(GENERATE)", "row-52 integrated closure", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE, "build-model.query.config-split", "integrated row-52 proof for imported config mapping, mixed-language/platform usage, known-config replay operands, and generated artifacts", NULL, "workload.codegen.row52-config-split", s_egd_row52_closure_outputs, NOB_ARRAY_LEN(s_egd_row52_closure_outputs), s_egd_row52_closure_manifests, NOB_ARRAY_LEN(s_egd_row52_closure_manifests), NULL, "RelWithDebInfo"},
     {"backend_row53_output_naming_artifact_path_closure_surface", EGD_PACK_SEEDS, "set_target_properties|file(GENERATE)", "row-53 integrated closure", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE, "build-model.query.artifact-path", "integrated row-53 proof for output naming, type/config directories, prefix/suffix, and TARGET_FILE/TARGET_LINKER_FILE metadata", NULL, "workload.codegen.row53-artifact-path", s_egd_row53_artifact_outputs, NOB_ARRAY_LEN(s_egd_row53_artifact_outputs), s_egd_row53_artifact_manifests, NOB_ARRAY_LEN(s_egd_row53_artifact_manifests), NULL, "RelWithDebInfo"},
     {"backend_row54_custom_command_target_graph_closure_surface", EGD_PACK_SEEDS, "add_custom_command|add_custom_target", "row-54 integrated closure", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE, "build-model.build-step", "integrated row-54 proof for generated sources, byproduct producer dependencies, APPEND, custom target ALL, target executable commands, target-file genex dependencies, and config-resolved outputs", NULL, "workload.codegen.row54-build-step-graph", s_egd_row54_build_step_outputs, NOB_ARRAY_LEN(s_egd_row54_build_step_outputs), s_egd_row54_build_step_manifests, NOB_ARRAY_LEN(s_egd_row54_build_step_manifests), NULL, "RelWithDebInfo"},
+    {"backend_row55_explicit_dependency_ordering_closure_surface", EGD_PACK_SEEDS, "add_dependencies|target_link_libraries|add_custom_target", "row-55 integrated closure", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE, "build-model.build-order", "integrated row-55 proof for explicit interface/imported prerequisites, generated-source producer ordering, target hooks, custom target ALL ordering, and config-selected link prerequisites", NULL, "workload.codegen.row55-build-order", s_egd_row55_build_order_outputs, NOB_ARRAY_LEN(s_egd_row55_build_order_outputs), s_egd_row55_build_order_manifests, NOB_ARRAY_LEN(s_egd_row55_build_order_manifests), NULL, "RelWithDebInfo"},
     {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package TGZ", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_TAR | EGD_TOOL_GZIP, "build-model.package", "positive full-package parity for TGZ", NULL, "workload.codegen.package-tgz", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "TGZ"},
     {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package TXZ", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_TAR | EGD_TOOL_XZ, "build-model.package", "positive full-package parity for TXZ", NULL, "workload.codegen.package-txz", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "TXZ"},
     {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package ZIP", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_PYTHON, "build-model.package", "positive full-package parity for ZIP", NULL, "workload.codegen.package-zip", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "ZIP"},

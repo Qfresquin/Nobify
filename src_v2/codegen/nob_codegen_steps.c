@@ -117,6 +117,7 @@ static bool cg_step_emit_dependency_prelude(CG_Context *ctx,
 static bool cg_step_collect_rebuild_inputs(CG_Context *ctx,
                                            const CG_Build_Step_Info *info,
                                            const BM_Build_Step_Effective_View *view,
+                                           String_View config,
                                            String_View sentinel_path,
                                            String_View **out_inputs) {
     if (!ctx || !info || !view || !out_inputs) return false;
@@ -130,9 +131,28 @@ static bool cg_step_collect_rebuild_inputs(CG_Context *ctx,
     }
     for (size_t i = 0; i < view->producer_dependencies.count; ++i) {
         const CG_Build_Step_Info *dep = cg_build_step_info(ctx, view->producer_dependencies.items[i]);
+        BM_Build_Step_Effective_View dep_view = {0};
         if (!dep) return false;
-        if (!cg_step_collect_unique_path(ctx->scratch, out_inputs, sentinel_path, dep->sentinel_path)) {
-            return false;
+        if (dep->sentinel_path.count > 0) {
+            if (!cg_step_collect_unique_path(ctx->scratch, out_inputs, sentinel_path, dep->sentinel_path)) {
+                return false;
+            }
+            continue;
+        }
+        if (!cg_step_query_effective_view(ctx, dep, config, &dep_view)) return false;
+        for (size_t output = 0; output < dep_view.outputs.count; ++output) {
+            String_View path = {0};
+            if (!cg_rebase_path_from_cwd(ctx, dep_view.outputs.items[output], &path) ||
+                !cg_step_collect_unique_path(ctx->scratch, out_inputs, sentinel_path, path)) {
+                return false;
+            }
+        }
+        for (size_t byproduct = 0; byproduct < dep_view.byproducts.count; ++byproduct) {
+            String_View path = {0};
+            if (!cg_rebase_path_from_cwd(ctx, dep_view.byproducts.items[byproduct], &path) ||
+                !cg_step_collect_unique_path(ctx->scratch, out_inputs, sentinel_path, path)) {
+                return false;
+            }
         }
     }
     for (size_t i = 0; i < view->file_dependencies.count; ++i) {
@@ -286,18 +306,38 @@ static bool cg_step_emit_config_body(CG_Context *ctx,
     String_View *declared_paths = NULL;
     String_View sentinel_path = {0};
     if (!ctx || !info || !out) return false;
-    if (!cg_step_query_effective_view(ctx, info, config, &view) ||
-        !cg_step_collect_declared_paths(ctx, &view, &declared_paths) ||
-        !cg_step_compute_sentinel_for_view(ctx, info, &view, &sentinel_path)) {
+    if (!cg_step_query_effective_view(ctx, info, config, &view)) {
+        nob_log(NOB_ERROR, "codegen: failed while querying build-step effective view");
+        return false;
+    }
+    if (!cg_step_collect_declared_paths(ctx, &view, &declared_paths)) {
+        nob_log(NOB_ERROR, "codegen: failed while collecting build-step declared paths");
+        return false;
+    }
+    if (!cg_step_compute_sentinel_for_view(ctx, info, &view, &sentinel_path)) {
+        nob_log(NOB_ERROR, "codegen: failed while computing build-step sentinel");
         return false;
     }
 
     if (output_rule) {
-        if (!cg_step_collect_rebuild_inputs(ctx, info, &view, sentinel_path, &rebuild_inputs) ||
-            !cg_step_emit_rebuild_guard(ctx, sentinel_path, rebuild_inputs, out) ||
-            !cg_step_emit_ensure_declared_paths(sentinel_path, declared_paths, out) ||
-            !cg_step_emit_commands(ctx, info, &view, config, out) ||
-            !cg_step_emit_verify_declared_paths(declared_paths, out)) {
+        if (!cg_step_collect_rebuild_inputs(ctx, info, &view, config, sentinel_path, &rebuild_inputs)) {
+            nob_log(NOB_ERROR, "codegen: failed while collecting build-step rebuild inputs");
+            return false;
+        }
+        if (!cg_step_emit_rebuild_guard(ctx, sentinel_path, rebuild_inputs, out)) {
+            nob_log(NOB_ERROR, "codegen: failed while emitting build-step rebuild guard");
+            return false;
+        }
+        if (!cg_step_emit_ensure_declared_paths(sentinel_path, declared_paths, out)) {
+            nob_log(NOB_ERROR, "codegen: failed while emitting build-step declared path mkdirs");
+            return false;
+        }
+        if (!cg_step_emit_commands(ctx, info, &view, config, out)) {
+            nob_log(NOB_ERROR, "codegen: failed while emitting build-step commands");
+            return false;
+        }
+        if (!cg_step_emit_verify_declared_paths(declared_paths, out)) {
+            nob_log(NOB_ERROR, "codegen: failed while emitting build-step declared path checks");
             return false;
         }
         nob_sb_append_cstr(out, "    }\n");
@@ -368,9 +408,16 @@ bool cg_emit_step_function(CG_Context *ctx,
     nob_sb_append_cstr(out, "    step_state = 1;\n");
 
     output_rule = info->kind == BM_BUILD_STEP_OUTPUT_RULE;
-    if (!cg_step_emit_dependency_prelude(ctx, info, out) ||
-        !cg_step_emit_config_bodies(ctx, info, output_rule, out) ||
-        !cg_step_emit_finalize(info, out)) {
+    if (!cg_step_emit_dependency_prelude(ctx, info, out)) {
+        nob_log(NOB_ERROR, "codegen: failed while emitting build-step dependency prelude");
+        return false;
+    }
+    if (!cg_step_emit_config_bodies(ctx, info, output_rule, out)) {
+        nob_log(NOB_ERROR, "codegen: failed while emitting build-step config bodies");
+        return false;
+    }
+    if (!cg_step_emit_finalize(info, out)) {
+        nob_log(NOB_ERROR, "codegen: failed while finalizing build-step function");
         return false;
     }
 
