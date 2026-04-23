@@ -8,6 +8,111 @@ static bool bm_assign_target_string(BM_Builder *builder,
     return bm_builder_error(builder, ev, "failed to copy promoted target property", "increase arena capacity");
 }
 
+static bool bm_sv_ends_with_ci_lit(String_View value, const char *suffix) {
+    size_t suffix_len = suffix ? strlen(suffix) : 0;
+    if (!suffix || suffix_len == 0 || value.count <= suffix_len) return false;
+    return bm_sv_eq_ci_lit(nob_sv_from_parts(value.data + value.count - suffix_len, suffix_len), suffix);
+}
+
+static bool bm_sv_eq_ci_view(String_View lhs, String_View rhs) {
+    if (lhs.count != rhs.count) return false;
+    for (size_t i = 0; i < lhs.count; ++i) {
+        if (tolower((unsigned char)lhs.data[i]) != tolower((unsigned char)rhs.data[i])) return false;
+    }
+    return true;
+}
+
+static bool bm_target_artifact_property_is_supported(String_View key) {
+    static const char *const exact_keys[] = {
+        "OUTPUT_NAME",
+        "PREFIX",
+        "SUFFIX",
+        "ARCHIVE_OUTPUT_NAME",
+        "LIBRARY_OUTPUT_NAME",
+        "RUNTIME_OUTPUT_NAME",
+        "ARCHIVE_OUTPUT_DIRECTORY",
+        "LIBRARY_OUTPUT_DIRECTORY",
+        "RUNTIME_OUTPUT_DIRECTORY",
+    };
+    static const char *const config_prefixes[] = {
+        "OUTPUT_NAME_",
+        "ARCHIVE_OUTPUT_NAME_",
+        "LIBRARY_OUTPUT_NAME_",
+        "RUNTIME_OUTPUT_NAME_",
+        "ARCHIVE_OUTPUT_DIRECTORY_",
+        "LIBRARY_OUTPUT_DIRECTORY_",
+        "RUNTIME_OUTPUT_DIRECTORY_",
+    };
+    static const char *const legacy_suffixes[] = {
+        "_OUTPUT_NAME",
+        "_ARCHIVE_OUTPUT_NAME",
+        "_LIBRARY_OUTPUT_NAME",
+        "_RUNTIME_OUTPUT_NAME",
+    };
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(exact_keys); ++i) {
+        if (bm_sv_eq_ci_lit(key, exact_keys[i])) return true;
+    }
+    for (size_t i = 0; i < NOB_ARRAY_LEN(config_prefixes); ++i) {
+        size_t prefix_len = strlen(config_prefixes[i]);
+        if (key.count > prefix_len &&
+            bm_sv_eq_ci_lit(nob_sv_from_parts(key.data, prefix_len), config_prefixes[i])) {
+            return true;
+        }
+    }
+    for (size_t i = 0; i < NOB_ARRAY_LEN(legacy_suffixes); ++i) {
+        if (bm_sv_ends_with_ci_lit(key, legacy_suffixes[i])) return true;
+    }
+    return false;
+}
+
+static void bm_target_sync_artifact_scalar(BM_Target_Record *target,
+                                           const BM_Target_Artifact_Property_Record *record) {
+    if (!target || !record) return;
+    if (bm_sv_eq_ci_lit(record->name, "OUTPUT_NAME")) target->output_name = record->value;
+    if (bm_sv_eq_ci_lit(record->name, "PREFIX")) target->prefix = record->value;
+    if (bm_sv_eq_ci_lit(record->name, "SUFFIX")) target->suffix = record->value;
+    if (bm_sv_eq_ci_lit(record->name, "ARCHIVE_OUTPUT_DIRECTORY")) target->archive_output_directory = record->value;
+    if (bm_sv_eq_ci_lit(record->name, "LIBRARY_OUTPUT_DIRECTORY")) target->library_output_directory = record->value;
+    if (bm_sv_eq_ci_lit(record->name, "RUNTIME_OUTPUT_DIRECTORY")) target->runtime_output_directory = record->value;
+}
+
+static bool bm_target_record_artifact_property(BM_Builder *builder,
+                                               BM_Target_Record *target,
+                                               const Event *ev,
+                                               String_View key,
+                                               String_View value,
+                                               bool *promoted) {
+    BM_Target_Artifact_Property_Record record = {0};
+    if (promoted) *promoted = false;
+    if (!builder || !target || !ev) return false;
+    if (!bm_target_artifact_property_is_supported(key)) return true;
+    if (ev->as.target_prop_set.op == EV_PROP_APPEND_STRING) return true;
+
+    if (!bm_copy_string(builder->arena, key, &record.name) ||
+        !bm_copy_string(builder->arena, value, &record.value)) {
+        return bm_builder_error(builder, ev, "failed to copy artifact target property", "increase arena capacity");
+    }
+    record.provenance = bm_provenance_from_event(builder->arena, ev);
+
+    for (size_t i = 0; i < arena_arr_len(target->artifact_properties); ++i) {
+        if (bm_sv_eq_ci_view(target->artifact_properties[i].name, key)) {
+            target->artifact_properties[i] = record;
+            bm_target_sync_artifact_scalar(target, &record);
+            if (promoted) *promoted = true;
+            return true;
+        }
+    }
+    if (!arena_arr_push(builder->arena, target->artifact_properties, record)) {
+        return bm_builder_error(builder, ev, "failed to append artifact target property", "increase arena capacity");
+    }
+
+    bm_target_sync_artifact_scalar(target, &record);
+
+    if (promoted) *promoted = true;
+    return true;
+}
+
 static bool bm_target_append_item(BM_Builder *builder,
                                   const Event *ev,
                                   BM_String_Item_View **dest,
@@ -502,12 +607,16 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
             }
             if (!target) return bm_builder_error(builder, ev, "target property references an unknown target", "declare the target before setting properties");
 
-            if (bm_sv_eq_ci_lit(ev->as.target_prop_set.key, "OUTPUT_NAME")) return bm_assign_target_string(builder, ev, &target->output_name, ev->as.target_prop_set.value);
-            if (bm_sv_eq_ci_lit(ev->as.target_prop_set.key, "PREFIX")) return bm_assign_target_string(builder, ev, &target->prefix, ev->as.target_prop_set.value);
-            if (bm_sv_eq_ci_lit(ev->as.target_prop_set.key, "SUFFIX")) return bm_assign_target_string(builder, ev, &target->suffix, ev->as.target_prop_set.value);
-            if (bm_sv_eq_ci_lit(ev->as.target_prop_set.key, "ARCHIVE_OUTPUT_DIRECTORY")) return bm_assign_target_string(builder, ev, &target->archive_output_directory, ev->as.target_prop_set.value);
-            if (bm_sv_eq_ci_lit(ev->as.target_prop_set.key, "LIBRARY_OUTPUT_DIRECTORY")) return bm_assign_target_string(builder, ev, &target->library_output_directory, ev->as.target_prop_set.value);
-            if (bm_sv_eq_ci_lit(ev->as.target_prop_set.key, "RUNTIME_OUTPUT_DIRECTORY")) return bm_assign_target_string(builder, ev, &target->runtime_output_directory, ev->as.target_prop_set.value);
+            if (!bm_target_record_artifact_property(builder,
+                                                    target,
+                                                    ev,
+                                                    ev->as.target_prop_set.key,
+                                                    ev->as.target_prop_set.value,
+                                                    &promoted)) {
+                return false;
+            }
+            if (promoted) return true;
+
             if (bm_sv_eq_ci_lit(ev->as.target_prop_set.key, "FOLDER")) return bm_assign_target_string(builder, ev, &target->folder, ev->as.target_prop_set.value);
             if (bm_sv_eq_ci_lit(ev->as.target_prop_set.key, "EXCLUDE_FROM_ALL")) {
                 target->exclude_from_all = bm_sv_truthy(ev->as.target_prop_set.value);

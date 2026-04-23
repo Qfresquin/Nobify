@@ -791,6 +791,7 @@ static bool bm_target_has_typed_payload(const BM_Target_Record *target) {
            !bm_string_view_is_empty(target->archive_output_directory) ||
            !bm_string_view_is_empty(target->library_output_directory) ||
            !bm_string_view_is_empty(target->runtime_output_directory) ||
+           arena_arr_len(target->artifact_properties) > 0 ||
            !bm_string_view_is_empty(target->folder);
 }
 
@@ -831,6 +832,7 @@ static bool bm_validate_semantic_pass(const Build_Model_Draft *draft, Diag_Sink 
              !bm_string_view_is_empty(target->archive_output_directory) ||
              !bm_string_view_is_empty(target->library_output_directory) ||
              !bm_string_view_is_empty(target->runtime_output_directory) ||
+             arena_arr_len(target->artifact_properties) > 0 ||
              bm_target_has_local_build_flags(target))) {
             *had_error = true;
             bm_diag_error(sink, target->provenance, "build_model_validate", "semantic", "imported target may not declare local build outputs or build-only flags", "remove local output properties and build-only flags from imported targets");

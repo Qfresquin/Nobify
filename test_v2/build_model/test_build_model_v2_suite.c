@@ -104,6 +104,13 @@ static bool build_model_string_span_contains(BM_String_Span span, const char *ne
     return false;
 }
 
+static bool build_model_target_id_span_contains(BM_Target_Id_Span span, BM_Target_Id needle) {
+    for (size_t i = 0; i < span.count; ++i) {
+        if (span.items[i] == needle) return true;
+    }
+    return false;
+}
+
 static bool build_model_string_span_contains_ci(BM_String_Span span, const char *needle) {
     String_View needle_sv = nob_sv_from_cstr(needle ? needle : "");
     for (size_t i = 0; i < span.count; ++i) {
@@ -572,6 +579,183 @@ TEST(build_model_build_steps_classify_target_producer_and_file_dependencies_and_
     ASSERT(bm_query_build_step_file_dependencies(model, custom_target_id).count == 1);
     ASSERT(nob_sv_eq(bm_query_build_step_file_dependencies(model, custom_target_id).items[0],
                      nob_sv_from_cstr("graph_src/extra.txt")));
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_build_step_effective_view_resolves_context_and_target_artifacts) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id tool_id = BM_TARGET_ID_INVALID;
+    BM_Build_Step_Id step_id = BM_BUILD_STEP_ID_INVALID;
+    BM_Query_Eval_Context debug_linux = {0};
+    BM_Build_Step_Effective_View view = {0};
+    BM_String_Span argv = {0};
+
+    ASSERT(query_arena != NULL);
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "row54_effective_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("row54_effective_src");
+    config.binary_dir = nob_sv_from_cstr("row54_effective_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Row54 C)\n"
+        "add_executable(tool tool.c)\n"
+        "set_target_properties(tool PROPERTIES\n"
+        "  RUNTIME_OUTPUT_DIRECTORY bin\n"
+        "  RUNTIME_OUTPUT_NAME \"$<IF:$<CONFIG:Debug>,tool_dbg,tool_rel>\")\n"
+        "add_custom_command(\n"
+        "  OUTPUT \"generated/$<CONFIG>-$<PLATFORM_ID>.c\"\n"
+        "  COMMAND tool --mode \"$<IF:$<PLATFORM_ID:Linux>,linux,other>\" \"$<TARGET_FILE:tool>\"\n"
+        "  DEPENDS \"schema-$<CONFIG>.idl\"\n"
+        "  BYPRODUCTS \"logs/$<CONFIG>.stamp\"\n"
+        "  WORKING_DIRECTORY \"work/$<CONFIG>\"\n"
+        "  DEPFILE \"deps/$<CONFIG>.d\"\n"
+        "  COMMENT \"build $<CONFIG>\"\n"
+        "  COMMAND_EXPAND_LISTS)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    tool_id = bm_query_target_by_name(model, nob_sv_from_cstr("tool"));
+    ASSERT(tool_id != BM_TARGET_ID_INVALID);
+    ASSERT(bm_query_build_step_count(model) == 1);
+    step_id = (BM_Build_Step_Id)0;
+
+    debug_linux.config = nob_sv_from_cstr("Debug");
+    debug_linux.platform_id = nob_sv_from_cstr("Linux");
+    debug_linux.usage_mode = BM_QUERY_USAGE_COMPILE;
+    debug_linux.current_target_id = BM_TARGET_ID_INVALID;
+    debug_linux.build_interface_active = true;
+    debug_linux.build_local_interface_active = true;
+
+    ASSERT(bm_query_build_step_effective_view(model, step_id, &debug_linux, query_arena, &view));
+    ASSERT(build_model_string_equals_at(view.outputs, 0, "row54_effective_build/generated/Debug-Linux.c"));
+    ASSERT(build_model_string_equals_at(view.byproducts, 0, "row54_effective_build/logs/Debug.stamp"));
+    ASSERT(build_model_string_equals_at(view.file_dependencies, 0, "row54_effective_src/schema-Debug.idl"));
+    ASSERT(build_model_sv_contains(view.working_directory, nob_sv_from_cstr("work/Debug")));
+    ASSERT(build_model_sv_contains(view.depfile, nob_sv_from_cstr("deps/Debug.d")));
+    ASSERT(nob_sv_eq(view.comment, nob_sv_from_cstr("build Debug")));
+    ASSERT(view.target_dependencies.count == 1);
+    ASSERT(build_model_target_id_span_contains(view.target_dependencies, tool_id));
+
+    ASSERT(bm_query_build_step_effective_command_argv(model, step_id, 0, &debug_linux, query_arena, &argv));
+    ASSERT(argv.count == 4);
+    ASSERT(build_model_string_contains_at(argv, 0, "row54_effective_build/bin/tool_dbg"));
+    ASSERT(build_model_string_equals_at(argv, 1, "--mode"));
+    ASSERT(build_model_string_equals_at(argv, 2, "linux"));
+    ASSERT(build_model_string_contains_at(argv, 3, "row54_effective_build/bin/tool_dbg"));
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_custom_command_append_merges_into_original_step_and_rejects_missing_base) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Test_Semantic_Pipeline_Fixture invalid_fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Query_Eval_Context ctx = {0};
+    BM_Build_Step_Effective_View view = {0};
+    BM_String_Span argv = {0};
+
+    ASSERT(query_arena != NULL);
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "row54_append_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("row54_append_src");
+    config.binary_dir = nob_sv_from_cstr("row54_append_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Row54 C)\n"
+        "add_custom_command(OUTPUT out.txt COMMAND sh -c \"printf base\" DEPENDS base.in)\n"
+        "add_custom_command(OUTPUT out.txt APPEND COMMAND sh -c \"printf append\" DEPENDS append.in)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    ASSERT(bm_query_build_step_count(model) == 1);
+    ASSERT(bm_query_build_step_command_count(model, (BM_Build_Step_Id)0) == 2);
+
+    ctx.config = nob_sv_from_cstr("Debug");
+    ctx.platform_id = nob_sv_from_cstr("Linux");
+    ctx.usage_mode = BM_QUERY_USAGE_COMPILE;
+    ctx.build_interface_active = true;
+    ctx.build_local_interface_active = true;
+
+    ASSERT(bm_query_build_step_effective_view(model, (BM_Build_Step_Id)0, &ctx, query_arena, &view));
+    ASSERT(view.outputs.count == 1);
+    ASSERT(build_model_string_equals_at(view.outputs, 0, "row54_append_build/out.txt"));
+    ASSERT(view.file_dependencies.count == 2);
+    ASSERT(build_model_string_span_contains(view.file_dependencies, "row54_append_src/base.in"));
+    ASSERT(build_model_string_span_contains(view.file_dependencies, "row54_append_src/append.in"));
+
+    ASSERT(bm_query_build_step_effective_command_argv(model, (BM_Build_Step_Id)0, 0, &ctx, query_arena, &argv));
+    ASSERT(build_model_string_equals_at(argv, 2, "printf base"));
+    ASSERT(bm_query_build_step_effective_command_argv(model, (BM_Build_Step_Id)0, 1, &ctx, query_arena, &argv));
+    ASSERT(build_model_string_equals_at(argv, 2, "printf append"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "row54_append_invalid_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("row54_append_invalid_src");
+    config.binary_dir = nob_sv_from_cstr("row54_append_invalid_build");
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &invalid_fixture,
+        "project(Row54 C)\n"
+        "add_custom_command(OUTPUT missing.txt APPEND COMMAND echo bad)\n",
+        &config));
+    ASSERT(invalid_fixture.eval_run.report.error_count >= 1);
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    test_semantic_pipeline_fixture_destroy(&invalid_fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_known_configurations_include_build_step_genex_fields) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    BM_String_Span known_configs = {0};
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "row54_configs_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("row54_configs_src");
+    config.binary_dir = nob_sv_from_cstr("row54_configs_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Row54 C)\n"
+        "add_custom_command(\n"
+        "  OUTPUT \"out/$<IF:$<CONFIG:Profile>,profile,other>.txt\"\n"
+        "  COMMAND echo \"$<IF:$<CONFIG:Asan>,asan,other>\"\n"
+        "  DEPENDS \"dep/$<IF:$<CONFIG:Coverage>,cov,other>.in\"\n"
+        "  BYPRODUCTS \"by/$<IF:$<CONFIG:Tsan>,tsan,other>.txt\"\n"
+        "  WORKING_DIRECTORY \"wd/$<IF:$<CONFIG:MinSizeRel>,min,other>\"\n"
+        "  DEPFILE \"depfile/$<IF:$<CONFIG:RelWithDebInfo>,rel,other>.d\"\n"
+        "  COMMENT \"comment $<IF:$<CONFIG:Debug>,dbg,other>\")\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    known_configs = bm_query_known_configurations(fixture.build.model);
+    ASSERT(build_model_string_span_contains_ci(known_configs, "Profile"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "Asan"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "Coverage"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "Tsan"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "MinSizeRel"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "RelWithDebInfo"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "Debug"));
 
     test_semantic_pipeline_fixture_destroy(&fixture);
     TEST_PASS();
@@ -2998,8 +3182,14 @@ TEST(build_model_imported_target_paths_already_rooted_in_source_dir_are_not_reba
     BM_Query_Eval_Context debug_ctx = {0};
     String_View effective_file = {0};
     String_View resolved_target_file = {0};
+    const char *cwd = NULL;
+    char cwd_buf[_TINYDIR_PATH_MAX] = {0};
 
     ASSERT(query_arena != NULL);
+    cwd = nob_get_current_dir_temp();
+    ASSERT(cwd != NULL);
+    ASSERT(strlen(cwd) + 1 < sizeof(cwd_buf));
+    memcpy(cwd_buf, cwd, strlen(cwd) + 1);
     test_semantic_pipeline_config_init(&config);
     config.current_file = "nested/imported_rooted_src/CMakeLists.txt";
     config.source_dir = nob_sv_from_cstr("nested/imported_rooted_src");
@@ -3037,7 +3227,9 @@ TEST(build_model_imported_target_paths_already_rooted_in_source_dir_are_not_reba
                                                 nob_sv_from_cstr("$<TARGET_FILE:ext>"),
                                                 &resolved_target_file));
     ASSERT(nob_sv_eq(resolved_target_file,
-                     nob_sv_from_cstr("nested/imported_rooted_src/imports/libdebug.so")));
+                     nob_sv_from_cstr(nob_temp_sprintf(
+                         "%s/nested/imported_rooted_src/imports/libdebug.so",
+                         cwd_buf))));
 
     arena_destroy(query_arena);
     test_semantic_pipeline_fixture_destroy(&fixture);
@@ -3153,6 +3345,142 @@ TEST(build_model_known_configuration_catalog_detects_strequal_config_comparisons
     known_configs = bm_query_known_configurations(fixture.build.model);
     ASSERT(build_model_string_span_contains_ci(known_configs, "Profile"));
 
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_artifact_query_resolves_output_naming_layout_by_config_and_platform) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    Arena *session_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id core_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id shared_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    BM_Query_Eval_Context debug_linux = {0};
+    BM_Query_Eval_Context release_linux = {0};
+    BM_Query_Eval_Context debug_windows = {0};
+    BM_Query_Session *session = NULL;
+    const BM_Query_Session_Stats *stats = NULL;
+    BM_Target_Artifact_View artifact = {0};
+    BM_Target_Artifact_View linker = {0};
+    BM_String_Span known_configs = {0};
+
+    ASSERT(query_arena != NULL);
+    ASSERT(session_arena != NULL);
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "row53_artifact_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("row53_artifact_src");
+    config.binary_dir = nob_sv_from_cstr("row53_artifact_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Row53 LANGUAGES C)\n"
+        "add_library(core STATIC src/core.c)\n"
+        "set_target_properties(core PROPERTIES\n"
+        "  OUTPUT_NAME generic_core\n"
+        "  OUTPUT_NAME_RELEASE generic_rel\n"
+        "  RELWITHDEBINFO_OUTPUT_NAME legacy_rel\n"
+        "  ARCHIVE_OUTPUT_NAME archive_generic\n"
+        "  ARCHIVE_OUTPUT_NAME_DEBUG archive_dbg\n"
+        "  ARCHIVE_OUTPUT_DIRECTORY artifacts/lib\n"
+        "  ARCHIVE_OUTPUT_DIRECTORY_DEBUG \"artifacts/$<IF:$<CONFIG:Debug>,dbg,other>/lib\"\n"
+        "  PREFIX pre_\n"
+        "  SUFFIX .pkg)\n"
+        "add_library(shared SHARED src/shared.c)\n"
+        "set_target_properties(shared PROPERTIES\n"
+        "  LIBRARY_OUTPUT_NAME_DEBUG sh_dbg\n"
+        "  RUNTIME_OUTPUT_NAME_DEBUG rt_dbg\n"
+        "  ARCHIVE_OUTPUT_NAME_DEBUG implib_dbg\n"
+        "  LIBRARY_OUTPUT_DIRECTORY_DEBUG linux/lib\n"
+        "  RUNTIME_OUTPUT_DIRECTORY_DEBUG win/bin\n"
+        "  ARCHIVE_OUTPUT_DIRECTORY_DEBUG win/implib)\n"
+        "add_executable(app src/main.c)\n"
+        "set_target_properties(app PROPERTIES\n"
+        "  OUTPUT_NAME base_app\n"
+        "  RUNTIME_OUTPUT_NAME_DEBUG dbg_app\n"
+        "  RUNTIME_OUTPUT_NAME_RELEASE \"$<IF:$<CONFIG:Release>,rel_app,bad_app>\"\n"
+        "  RUNTIME_OUTPUT_DIRECTORY \"$<IF:$<PLATFORM_ID:Windows>,winbin,posixbin>\")\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    core_id = bm_query_target_by_name(model, nob_sv_from_cstr("core"));
+    shared_id = bm_query_target_by_name(model, nob_sv_from_cstr("shared"));
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    ASSERT(core_id != BM_TARGET_ID_INVALID);
+    ASSERT(shared_id != BM_TARGET_ID_INVALID);
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+
+    debug_linux.current_target_id = app_id;
+    debug_linux.usage_mode = BM_QUERY_USAGE_LINK;
+    debug_linux.config = nob_sv_from_cstr("Debug");
+    debug_linux.platform_id = nob_sv_from_cstr("Linux");
+    debug_linux.build_interface_active = true;
+
+    release_linux = debug_linux;
+    release_linux.config = nob_sv_from_cstr("Release");
+
+    debug_windows = debug_linux;
+    debug_windows.platform_id = nob_sv_from_cstr("Windows");
+
+    ASSERT(bm_query_target_effective_artifact(model, core_id, BM_TARGET_ARTIFACT_RUNTIME, &debug_linux, query_arena, &artifact));
+    ASSERT(artifact.emits);
+    ASSERT(nob_sv_eq(artifact.directory, nob_sv_from_cstr("row53_artifact_build/artifacts/dbg/lib")));
+    ASSERT(nob_sv_eq(artifact.file_name, nob_sv_from_cstr("pre_archive_dbg.pkg")));
+    ASSERT(nob_sv_eq(artifact.prefix, nob_sv_from_cstr("pre_")));
+    ASSERT(nob_sv_eq(artifact.output_name, nob_sv_from_cstr("archive_dbg")));
+    ASSERT(nob_sv_eq(artifact.suffix, nob_sv_from_cstr(".pkg")));
+    ASSERT(nob_sv_eq(artifact.path, nob_sv_from_cstr("row53_artifact_build/artifacts/dbg/lib/pre_archive_dbg.pkg")));
+
+    ASSERT(bm_query_target_effective_artifact(model, core_id, BM_TARGET_ARTIFACT_LINKER, &release_linux, query_arena, &artifact));
+    ASSERT(nob_sv_eq(artifact.file_name, nob_sv_from_cstr("pre_archive_generic.pkg")));
+    ASSERT(nob_sv_eq(artifact.directory, nob_sv_from_cstr("row53_artifact_build/artifacts/lib")));
+
+    ASSERT(bm_query_target_effective_artifact(model, app_id, BM_TARGET_ARTIFACT_RUNTIME, &release_linux, query_arena, &artifact));
+    ASSERT(nob_sv_eq(artifact.path, nob_sv_from_cstr("row53_artifact_build/posixbin/rel_app")));
+    ASSERT(nob_sv_eq(artifact.suffix, nob_sv_from_cstr("")));
+
+    ASSERT(bm_query_target_effective_artifact(model, app_id, BM_TARGET_ARTIFACT_RUNTIME, &debug_windows, query_arena, &artifact));
+    ASSERT(nob_sv_eq(artifact.path, nob_sv_from_cstr("row53_artifact_build/winbin/dbg_app.exe")));
+    ASSERT(nob_sv_eq(artifact.suffix, nob_sv_from_cstr(".exe")));
+
+    ASSERT(bm_query_target_effective_artifact(model, shared_id, BM_TARGET_ARTIFACT_RUNTIME, &debug_linux, query_arena, &artifact));
+    ASSERT(nob_sv_eq(artifact.path, nob_sv_from_cstr("row53_artifact_build/linux/lib/libsh_dbg.so")));
+    ASSERT(bm_query_target_effective_artifact(model, shared_id, BM_TARGET_ARTIFACT_LINKER, &debug_linux, query_arena, &linker));
+    ASSERT(nob_sv_eq(linker.path, artifact.path));
+
+    ASSERT(bm_query_target_effective_artifact(model, shared_id, BM_TARGET_ARTIFACT_RUNTIME, &debug_windows, query_arena, &artifact));
+    ASSERT(nob_sv_eq(artifact.path, nob_sv_from_cstr("row53_artifact_build/win/bin/rt_dbg.dll")));
+    ASSERT(bm_query_target_effective_artifact(model, shared_id, BM_TARGET_ARTIFACT_LINKER, &debug_windows, query_arena, &linker));
+    ASSERT(nob_sv_eq(linker.path, nob_sv_from_cstr("row53_artifact_build/win/implib/implib_dbg.lib")));
+
+    known_configs = bm_query_known_configurations(model);
+    ASSERT(build_model_string_span_contains_ci(known_configs, "Debug"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "Release"));
+    ASSERT(build_model_string_span_contains_ci(known_configs, "RelWithDebInfo"));
+
+    session = bm_query_session_create(session_arena, model);
+    ASSERT(session != NULL);
+    stats = bm_query_session_stats(session);
+    ASSERT(stats != NULL);
+
+    ASSERT(bm_query_session_target_effective_artifact(session, app_id, BM_TARGET_ARTIFACT_RUNTIME, &debug_linux, &artifact));
+    ASSERT(nob_sv_eq(artifact.path, nob_sv_from_cstr("row53_artifact_build/posixbin/dbg_app")));
+    ASSERT(bm_query_session_target_effective_artifact(session, app_id, BM_TARGET_ARTIFACT_RUNTIME, &debug_linux, &artifact));
+    ASSERT(nob_sv_eq(artifact.path, nob_sv_from_cstr("row53_artifact_build/posixbin/dbg_app")));
+    ASSERT(bm_query_session_target_effective_artifact(session, app_id, BM_TARGET_ARTIFACT_RUNTIME, &release_linux, &artifact));
+    ASSERT(nob_sv_eq(artifact.path, nob_sv_from_cstr("row53_artifact_build/posixbin/rel_app")));
+    ASSERT(bm_query_session_target_effective_artifact(session, app_id, BM_TARGET_ARTIFACT_RUNTIME, &debug_windows, &artifact));
+    ASSERT(nob_sv_eq(artifact.path, nob_sv_from_cstr("row53_artifact_build/winbin/dbg_app.exe")));
+    ASSERT(stats->target_artifact_hits == 1);
+    ASSERT(stats->target_artifact_misses == 3);
+
+    arena_destroy(query_arena);
+    arena_destroy(session_arena);
     test_semantic_pipeline_fixture_destroy(&fixture);
     TEST_PASS();
 }
@@ -4805,6 +5133,9 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_add_subdirectory_defaults_rebase_binary_dirs_out_of_source(passed, failed, skipped);
     test_build_model_generated_sources_rebase_to_binary_dir_and_link_producer_steps(passed, failed, skipped);
     test_build_model_build_steps_classify_target_producer_and_file_dependencies_and_preserve_hooks(passed, failed, skipped);
+    test_build_model_build_step_effective_view_resolves_context_and_target_artifacts(passed, failed, skipped);
+    test_build_model_custom_command_append_merges_into_original_step_and_rejects_missing_base(passed, failed, skipped);
+    test_build_model_known_configurations_include_build_step_genex_fields(passed, failed, skipped);
     test_build_model_resolves_direct_and_binary_generated_source_producers(passed, failed, skipped);
     test_build_model_resolves_source_and_stripped_generated_source_producers(passed, failed, skipped);
     test_build_model_resolves_byproduct_producers_and_keeps_unresolved_file_dependencies(passed, failed, skipped);
@@ -4832,6 +5163,7 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_imported_target_known_configurations_are_stable_and_deduped(passed, failed, skipped);
     test_build_model_known_configuration_catalog_surfaces_supported_row52_domains(passed, failed, skipped);
     test_build_model_known_configuration_catalog_detects_strequal_config_comparisons(passed, failed, skipped);
+    test_build_model_artifact_query_resolves_output_naming_layout_by_config_and_platform(passed, failed, skipped);
     test_build_model_preserves_imported_global_across_property_orderings(passed, failed, skipped);
     test_build_model_alias_and_unknown_target_identity_queries_are_canonical(passed, failed, skipped);
     test_build_model_source_membership_file_sets_and_source_properties_are_canonical(passed, failed, skipped);

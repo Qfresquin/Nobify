@@ -94,6 +94,63 @@ static bool custom_emit_generated_mark(EvalExecContext *ctx,
                                            true);
 }
 
+static bool custom_command_effective_first_output(EvalExecContext *ctx,
+                                                  const SV_List *outputs,
+                                                  String_View *out) {
+    String_View directory_binary_dir = {0};
+    if (out) *out = nob_sv_from_cstr("");
+    if (!ctx || !outputs || !out || arena_arr_len(*outputs) == 0) return false;
+    directory_binary_dir = eval_current_binary_dir(ctx);
+    *out = eval_path_resolve_for_cmake_arg(ctx, (*outputs)[0], directory_binary_dir, true);
+    return !eval_should_stop(ctx);
+}
+
+static const Eval_Custom_Command_Output_Step *custom_command_find_output_step(EvalExecContext *ctx,
+                                                                              String_View effective_output) {
+    if (!ctx || effective_output.count == 0) return NULL;
+    for (size_t i = 0; i < arena_arr_len(ctx->file_state.custom_command_output_steps); ++i) {
+        const Eval_Custom_Command_Output_Step *record = &ctx->file_state.custom_command_output_steps[i];
+        if (nob_sv_eq(record->effective_first_output, effective_output)) return record;
+    }
+    return NULL;
+}
+
+static bool custom_command_register_output_step(EvalExecContext *ctx,
+                                                String_View effective_output,
+                                                String_View step_key) {
+    Eval_Custom_Command_Output_Step record = {0};
+    if (!ctx || effective_output.count == 0 || step_key.count == 0) return false;
+    if (custom_command_find_output_step(ctx, effective_output)) return true;
+    record.effective_first_output = sv_copy_to_event_arena(ctx, effective_output);
+    record.step_key = sv_copy_to_event_arena(ctx, step_key);
+    if (eval_should_stop(ctx)) return false;
+    return arena_arr_push(eval_event_arena(ctx), ctx->file_state.custom_command_output_steps, record);
+}
+
+static bool custom_emit_build_step_payload(EvalExecContext *ctx,
+                                           Cmake_Event_Origin origin,
+                                           String_View step_key,
+                                           bool command_expand_lists,
+                                           const SV_List *depends,
+                                           const Eval_Custom_Command_Record_List *commands) {
+    if (!ctx) return false;
+    if (depends) {
+        for (size_t i = 0; i < arena_arr_len(*depends); ++i) {
+            if (!eval_emit_build_step_add_dependency(ctx, origin, step_key, (*depends)[i])) return false;
+        }
+    }
+    if (commands) {
+        for (size_t i = 0; i < arena_arr_len(*commands); ++i) {
+            SV_List argv = NULL;
+            if (!custom_expand_command_argv(ctx, &(*commands)[i], command_expand_lists, &argv) ||
+                !eval_emit_build_step_add_command(ctx, origin, step_key, (uint32_t)i, &argv)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 static bool custom_emit_build_step(EvalExecContext *ctx,
                                    Cmake_Event_Origin origin,
                                    String_View step_key,
@@ -157,16 +214,7 @@ static bool custom_emit_build_step(EvalExecContext *ctx,
             if (!eval_emit_build_step_add_dependency(ctx, origin, step_key, (*depends)[i])) return false;
         }
     }
-    if (commands) {
-        for (size_t i = 0; i < arena_arr_len(*commands); ++i) {
-            SV_List argv = NULL;
-            if (!custom_expand_command_argv(ctx, &(*commands)[i], command_expand_lists, &argv) ||
-                !eval_emit_build_step_add_command(ctx, origin, step_key, (uint32_t)i, &argv)) {
-                return false;
-            }
-        }
-    }
-    return true;
+    return custom_emit_build_step_payload(ctx, origin, step_key, command_expand_lists, NULL, commands);
 }
 
 typedef struct {
@@ -715,14 +763,59 @@ Eval_Result eval_handle_add_custom_command(EvalExecContext *ctx, const Node *nod
     if (opt.main_dependency.count > 0) (void)svu_list_push_temp(ctx, &opt.depends, opt.main_dependency);
 
     if (mode_output && opt.append) {
-        // CMake ignores these on APPEND mode.
+        String_View effective_first_output = {0};
+        const Eval_Custom_Command_Output_Step *base_step = NULL;
+        if (arena_arr_len(opt.byproducts) > 0 ||
+            opt.has_depfile ||
+            opt.has_job_pool ||
+            opt.has_job_server_aware ||
+            opt.uses_terminal ||
+            opt.command_expand_lists ||
+            opt.depends_explicit_only ||
+            opt.codegen) {
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                           node,
+                                           o,
+                                           EV_DIAG_ERROR,
+                                           EVAL_DIAG_UNSUPPORTED_OPERATION,
+                                           "dispatcher",
+                                           nob_sv_from_cstr("add_custom_command(OUTPUT ... APPEND) uses options that cannot be appended"),
+                                           nob_sv_from_cstr("APPEND supports additional COMMAND and DEPENDS entries for an existing first output only"));
+            return eval_result_from_ctx(ctx);
+        }
+        if (!custom_command_effective_first_output(ctx, &opt.outputs, &effective_first_output)) {
+            return eval_result_from_ctx(ctx);
+        }
+        base_step = custom_command_find_output_step(ctx, effective_first_output);
+        if (!base_step) {
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx,
+                                           node,
+                                           o,
+                                           EV_DIAG_ERROR,
+                                           EVAL_DIAG_NOT_FOUND,
+                                           "dispatcher",
+                                           nob_sv_from_cstr("add_custom_command(OUTPUT ... APPEND) could not find an existing output rule"),
+                                           effective_first_output);
+            return eval_result_from_ctx(ctx);
+        }
+        if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
         opt.comment = nob_sv_from_cstr("");
         opt.working_dir = nob_sv_from_cstr("");
         opt.main_dependency = nob_sv_from_cstr("");
+        if (!custom_emit_build_step_payload(ctx,
+                                            o,
+                                            base_step->step_key,
+                                            false,
+                                            &opt.depends,
+                                            &opt.commands)) {
+            return eval_result_fatal();
+        }
+        return eval_result_from_ctx(ctx);
     }
 
     {
         String_View step_key = eval_alloc_build_step_key(ctx);
+        String_View effective_first_output = {0};
         String_View job_pool = opt.has_job_pool ? opt.job_pool : nob_sv_from_cstr("");
         String_View job_server_aware = opt.has_job_server_aware ? opt.job_server_aware : nob_sv_from_cstr("");
         Event_Build_Step_Kind step_kind =
@@ -750,6 +843,14 @@ Eval_Result eval_handle_add_custom_command(EvalExecContext *ctx, const Node *nod
                                     &opt.byproducts,
                                     &opt.depends,
                                     &opt.commands)) {
+            return eval_result_fatal();
+        }
+        if (mode_output &&
+            !custom_command_effective_first_output(ctx, &opt.outputs, &effective_first_output)) {
+            return eval_result_from_ctx(ctx);
+        }
+        if (mode_output &&
+            !custom_command_register_output_step(ctx, effective_first_output, step_key)) {
             return eval_result_fatal();
         }
     }

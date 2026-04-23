@@ -362,7 +362,7 @@ TEST(codegen_render_imported_config_branches_do_not_depend_on_imported_raw_prope
     ASSERT(nob_codegen_render(fixture.build.model, codegen_arena, &opts, &sb));
 
     char *output = nob_temp_sprintf("%.*s", (int)sb.count, sb.items ? sb.items : "");
-    ASSERT(strstr(output, "RELWITHDEBINFO") != NULL);
+    ASSERT(strstr(output, "RelWithDebInfo") != NULL);
     ASSERT(strstr(output, "imports/libdebug_link.so") != NULL);
     ASSERT(strstr(output, "config_matches(g_build_config") != NULL);
 

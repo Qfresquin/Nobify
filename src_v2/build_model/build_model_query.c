@@ -261,6 +261,17 @@ static String_View bm_join_relative_path_query(Arena *scratch, String_View base,
     return copy ? nob_sv_from_cstr(copy) : nob_sv_from_cstr("");
 }
 
+static bool bm_query_make_absolute_from_cwd(Arena *scratch, String_View value, String_View *out) {
+    const char *cwd = NULL;
+    if (!scratch || !out) return false;
+    *out = nob_sv_from_cstr("");
+    if (value.count == 0) return true;
+    if (bm_sv_is_abs_path_query(value)) return bm_normalize_path(scratch, value, out);
+    cwd = nob_get_current_dir_temp();
+    if (!cwd || cwd[0] == '\0') return false;
+    return bm_path_rebase(scratch, nob_sv_from_cstr(cwd), value, out);
+}
+
 static bool bm_push_item_copy(Arena *scratch,
                               BM_String_Item_View **out,
                               BM_String_Item_View item) {
@@ -1067,6 +1078,12 @@ bool bm_query_target_modeled_property_value(const Build_Model *model,
         *out = target->runtime_output_directory;
         return true;
     }
+    for (size_t i = 0; i < arena_arr_len(target->artifact_properties); ++i) {
+        if (bm_sv_eq_ci_query(property_name, target->artifact_properties[i].name)) {
+            *out = target->artifact_properties[i].value;
+            return true;
+        }
+    }
     if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("FOLDER"))) {
         *out = target->folder;
         return true;
@@ -1139,6 +1156,7 @@ static String_View bm_query_genex_target_file_common(void *userdata,
     BM_Query_Genex_Data *data = (BM_Query_Genex_Data*)userdata;
     BM_Target_Id target_id = BM_TARGET_ID_INVALID;
     String_View out = nob_sv_from_cstr("");
+    String_View absolute = nob_sv_from_cstr("");
     if (!data || !data->model || !data->ctx || !data->scratch) return nob_sv_from_cstr("");
     target_id = bm_query_target_by_name(data->model, target_name);
     if (!bm_target_id_is_valid(target_id)) return nob_sv_from_cstr("");
@@ -1157,7 +1175,8 @@ static String_View bm_query_genex_target_file_common(void *userdata,
                                                &out)) {
         return nob_sv_from_cstr("");
     }
-    return out;
+    if (!bm_query_make_absolute_from_cwd(data->scratch, out, &absolute)) return nob_sv_from_cstr("");
+    return absolute;
 }
 
 static String_View bm_query_genex_target_file_cb(void *userdata, String_View target_name) {
@@ -1945,6 +1964,396 @@ BM_String_Span bm_query_build_step_command_argv(const Build_Model *model, BM_Bui
     const BM_Build_Step_Record *step = bm_model_build_step(model, id);
     if (!step || command_index >= arena_arr_len(step->commands)) return (BM_String_Span){0};
     return bm_string_span(step->commands[command_index].argv);
+}
+
+static bool bm_query_push_unique_target_id(Arena *scratch, BM_Target_Id **items, BM_Target_Id id) {
+    if (!scratch || !items) return false;
+    if (!bm_target_id_is_valid(id)) return true;
+    for (size_t i = 0; i < arena_arr_len(*items); ++i) {
+        if ((*items)[i] == id) return true;
+    }
+    return arena_arr_push(scratch, *items, id);
+}
+
+static bool bm_query_push_unique_step_id(Arena *scratch, BM_Build_Step_Id **items, BM_Build_Step_Id id) {
+    if (!scratch || !items) return false;
+    if (!bm_build_step_id_is_valid(id)) return true;
+    for (size_t i = 0; i < arena_arr_len(*items); ++i) {
+        if ((*items)[i] == id) return true;
+    }
+    return arena_arr_push(scratch, *items, id);
+}
+
+static bool bm_query_push_unique_sv(Arena *scratch, String_View **items, String_View value) {
+    if (!scratch || !items) return false;
+    if (value.count == 0) return true;
+    for (size_t i = 0; i < arena_arr_len(*items); ++i) {
+        if (nob_sv_eq((*items)[i], value)) return true;
+    }
+    return arena_arr_push(scratch, *items, value);
+}
+
+static bool bm_query_resolve_string_array(const Build_Model *model,
+                                          const BM_Query_Eval_Context *ctx,
+                                          Arena *scratch,
+                                          const String_View *raw_items,
+                                          String_View **out_items) {
+    if (!model || !scratch || !out_items) return false;
+    for (size_t i = 0; i < arena_arr_len(raw_items); ++i) {
+        String_View resolved = {0};
+        if (!bm_query_resolve_string_with_context(model, ctx, scratch, raw_items[i], &resolved)) return false;
+        if (resolved.count == 0) continue;
+        if (!arena_arr_push(scratch, *out_items, resolved)) return false;
+    }
+    return true;
+}
+
+static bool bm_query_split_command_expand_value(Arena *scratch, String_View value, String_View **out_items) {
+    size_t start = 0;
+    bool saw_separator = false;
+    if (!scratch || !out_items) return false;
+    for (size_t i = 0; i <= value.count; ++i) {
+        bool at_end = (i == value.count);
+        if (!at_end && value.data[i] != ';') continue;
+        saw_separator = saw_separator || !at_end;
+        if (i > start) {
+            String_View part = nob_sv_from_parts(value.data + start, i - start);
+            if (!arena_arr_push(scratch, *out_items, part)) return false;
+        }
+        start = i + 1;
+    }
+    if (!saw_separator && value.count == 0) return arena_arr_push(scratch, *out_items, value);
+    return true;
+}
+
+static BM_Target_Id bm_query_target_id_by_name_resolved(const Build_Model *model, String_View name) {
+    BM_Target_Id id = bm_find_target_by_name_id(model, name);
+    if (!bm_target_id_is_valid(id)) return BM_TARGET_ID_INVALID;
+    return bm_resolve_alias_target_id(model, id);
+}
+
+static bool bm_query_extract_target_genex_dependency(String_View raw,
+                                                     size_t at,
+                                                     String_View prefix,
+                                                     String_View *out_name) {
+    size_t start = at + prefix.count;
+    size_t end = start;
+    if (!out_name || raw.count < start) return false;
+    while (end < raw.count && raw.data[end] != '>' && raw.data[end] != ',') {
+        ++end;
+    }
+    if (end <= start) return false;
+    *out_name = nob_sv_from_parts(raw.data + start, end - start);
+    return true;
+}
+
+static bool bm_query_collect_target_genex_dependencies(const Build_Model *model,
+                                                       Arena *scratch,
+                                                       String_View raw,
+                                                       BM_Target_Id exclude_target_id,
+                                                       BM_Target_Id **target_deps) {
+    static const char *k_prefixes[] = {
+        "$<TARGET_FILE:",
+        "$<TARGET_FILE_DIR:",
+        "$<TARGET_FILE_NAME:",
+        "$<TARGET_LINKER_FILE:",
+        "$<TARGET_LINKER_FILE_DIR:",
+        "$<TARGET_LINKER_FILE_NAME:",
+    };
+    if (!model || !scratch || !target_deps || raw.count < 3) return true;
+    for (size_t i = 0; i < raw.count; ++i) {
+        for (size_t p = 0; p < NOB_ARRAY_LEN(k_prefixes); ++p) {
+            String_View prefix = nob_sv_from_cstr(k_prefixes[p]);
+            String_View name = {0};
+            BM_Target_Id target_id = BM_TARGET_ID_INVALID;
+            if (i + prefix.count > raw.count) continue;
+            if (memcmp(raw.data + i, prefix.data, prefix.count) != 0) continue;
+            if (!bm_query_extract_target_genex_dependency(raw, i, prefix, &name)) continue;
+            target_id = bm_query_target_id_by_name_resolved(model, name);
+            if (!bm_target_id_is_valid(target_id)) continue;
+            if (bm_target_id_is_valid(exclude_target_id) && target_id == exclude_target_id) continue;
+            if (!bm_query_push_unique_target_id(scratch, target_deps, target_id)) return false;
+        }
+    }
+    return true;
+}
+
+static bool bm_query_build_step_command_target_dependency(const Build_Model *model,
+                                                          const BM_Build_Step_Record *step,
+                                                          size_t command_index,
+                                                          BM_Target_Id *out) {
+    BM_Target_Id id = BM_TARGET_ID_INVALID;
+    const BM_Build_Step_Command_Record *command = NULL;
+    const BM_Target_Record *target = NULL;
+    if (out) *out = BM_TARGET_ID_INVALID;
+    if (!model || !step || !out || command_index >= arena_arr_len(step->commands)) return true;
+    command = &step->commands[command_index];
+    if (arena_arr_len(command->argv) == 0) return true;
+    id = bm_query_target_id_by_name_resolved(model, command->argv[0]);
+    if (!bm_target_id_is_valid(id)) return true;
+    target = bm_model_target(model, id);
+    if (!target || target->imported || target->kind != BM_TARGET_EXECUTABLE) return true;
+    *out = id;
+    return true;
+}
+
+static bool bm_query_resolve_build_step_dependency_token(const Build_Model *model,
+                                                         const BM_Build_Step_Record *step,
+                                                         const BM_Query_Eval_Context *ctx,
+                                                         Arena *scratch,
+                                                         String_View raw_token,
+                                                         String_View *out) {
+    const BM_Directory_Record *owner = NULL;
+    String_View resolved = {0};
+    if (out) *out = nob_sv_from_cstr("");
+    if (!model || !step || !scratch || !out) return false;
+    owner = bm_model_directory(model, step->owner_directory_id);
+    if (!owner) return false;
+    if (!bm_query_resolve_string_with_context(model, ctx, scratch, raw_token, &resolved)) return false;
+    if (resolved.count == 0) return true;
+    if (bm_sv_is_abs_path_query(resolved)) return bm_normalize_path(scratch, resolved, out);
+    return bm_path_rebase(scratch, owner->source_dir, resolved, out);
+}
+
+static bool bm_query_build_step_resolved_path_matches(const Build_Model *model,
+                                                      BM_Build_Step_Id candidate_id,
+                                                      const BM_Query_Eval_Context *ctx,
+                                                      Arena *scratch,
+                                                      String_View resolved_path) {
+    const BM_Build_Step_Record *candidate = bm_model_build_step(model, candidate_id);
+    if (!candidate || resolved_path.count == 0) return false;
+    for (size_t i = 0; i < arena_arr_len(candidate->effective_outputs); ++i) {
+        String_View value = {0};
+        if (!bm_query_resolve_string_with_context(model, ctx, scratch, candidate->effective_outputs[i], &value)) return false;
+        if (nob_sv_eq(value, resolved_path)) return true;
+    }
+    for (size_t i = 0; i < arena_arr_len(candidate->effective_byproducts); ++i) {
+        String_View value = {0};
+        if (!bm_query_resolve_string_with_context(model, ctx, scratch, candidate->effective_byproducts[i], &value)) return false;
+        if (nob_sv_eq(value, resolved_path)) return true;
+    }
+    return false;
+}
+
+static bool bm_query_build_step_dependency_matches_producer(const Build_Model *model,
+                                                            BM_Build_Step_Id self_id,
+                                                            const BM_Query_Eval_Context *ctx,
+                                                            Arena *scratch,
+                                                            String_View resolved_path,
+                                                            BM_Build_Step_Id **producer_deps,
+                                                            bool *matched) {
+    if (matched) *matched = false;
+    if (!model || !scratch || !producer_deps || !matched || resolved_path.count == 0) return false;
+    for (size_t candidate = 0; candidate < arena_arr_len(model->build_steps); ++candidate) {
+        BM_Build_Step_Id candidate_id = (BM_Build_Step_Id)candidate;
+        if (candidate_id == self_id) continue;
+        if (bm_query_build_step_resolved_path_matches(model, candidate_id, ctx, scratch, resolved_path)) {
+            if (!bm_query_push_unique_step_id(scratch, producer_deps, candidate_id)) return false;
+            *matched = true;
+            return true;
+        }
+    }
+    return true;
+}
+
+static bool bm_query_build_step_dependency_match_candidates(const Build_Model *model,
+                                                           const BM_Build_Step_Record *step,
+                                                           const BM_Query_Eval_Context *ctx,
+                                                           Arena *scratch,
+                                                           String_View raw_token,
+                                                           BM_Build_Step_Id **producer_deps,
+                                                           bool *matched) {
+    const BM_Directory_Record *owner = NULL;
+    String_View resolved = {0};
+    String_View candidate = {0};
+    if (matched) *matched = false;
+    if (!model || !step || !scratch || !producer_deps || !matched) return false;
+    owner = bm_model_directory(model, step->owner_directory_id);
+    if (!owner) return false;
+    if (!bm_query_resolve_string_with_context(model, ctx, scratch, raw_token, &resolved)) return false;
+    if (resolved.count == 0) return true;
+    if (bm_sv_is_abs_path_query(resolved)) {
+        if (!bm_normalize_path(scratch, resolved, &candidate)) return false;
+        return bm_query_build_step_dependency_matches_producer(model,
+                                                              step->id,
+                                                              ctx,
+                                                              scratch,
+                                                              candidate,
+                                                              producer_deps,
+                                                              matched);
+    }
+
+    if (!bm_path_rebase(scratch, owner->binary_dir, resolved, &candidate) ||
+        !bm_query_build_step_dependency_matches_producer(model,
+                                                         step->id,
+                                                         ctx,
+                                                         scratch,
+                                                         candidate,
+                                                         producer_deps,
+                                                         matched)) {
+        return false;
+    }
+    if (*matched) return true;
+
+    if (!bm_path_rebase(scratch, owner->source_dir, resolved, &candidate) ||
+        !bm_query_build_step_dependency_matches_producer(model,
+                                                         step->id,
+                                                         ctx,
+                                                         scratch,
+                                                         candidate,
+                                                         producer_deps,
+                                                         matched)) {
+        return false;
+    }
+    return true;
+}
+
+bool bm_query_build_step_effective_view(const Build_Model *model,
+                                        BM_Build_Step_Id id,
+                                        const BM_Query_Eval_Context *ctx,
+                                        Arena *scratch,
+                                        BM_Build_Step_Effective_View *out) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    String_View *outputs = NULL;
+    String_View *byproducts = NULL;
+    String_View *file_deps = NULL;
+    BM_Target_Id *target_deps = NULL;
+    BM_Build_Step_Id *producer_deps = NULL;
+    BM_Target_Id owner_target_id = BM_TARGET_ID_INVALID;
+    if (out) *out = (BM_Build_Step_Effective_View){0};
+    if (!model || !step || !scratch || !out) return false;
+    owner_target_id = bm_resolve_alias_target_id(model, step->owner_target_id);
+
+    if (!bm_query_resolve_string_array(model, ctx, scratch, step->effective_outputs, &outputs) ||
+        !bm_query_resolve_string_array(model, ctx, scratch, step->effective_byproducts, &byproducts) ||
+        !bm_query_resolve_string_with_context(model, ctx, scratch, step->working_directory, &out->working_directory) ||
+        !bm_query_resolve_string_with_context(model, ctx, scratch, step->depfile, &out->depfile) ||
+        !bm_query_resolve_string_with_context(model, ctx, scratch, step->comment, &out->comment)) {
+        return false;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(step->resolved_target_dependencies); ++i) {
+        if (!bm_query_push_unique_target_id(scratch, &target_deps, step->resolved_target_dependencies[i])) return false;
+    }
+    for (size_t i = 0; i < arena_arr_len(step->resolved_producer_dependencies); ++i) {
+        if (!bm_query_push_unique_step_id(scratch, &producer_deps, step->resolved_producer_dependencies[i])) return false;
+    }
+    for (size_t i = 0; i < arena_arr_len(step->resolved_file_dependencies); ++i) {
+        String_View resolved = {0};
+        if (!bm_query_resolve_string_with_context(model, ctx, scratch, step->resolved_file_dependencies[i], &resolved)) {
+            return false;
+        }
+        if (resolved.count > 0 && !bm_query_push_unique_sv(scratch, &file_deps, resolved)) return false;
+    }
+
+    for (size_t dep = 0; dep < arena_arr_len(step->dependencies); ++dep) {
+        const BM_Build_Step_Dependency_Record *record = &step->dependencies[dep];
+        if (record->kind == BM_BUILD_STEP_DEP_TARGET_REF) {
+            BM_Target_Id target_id = bm_resolve_alias_target_id(model, record->target_id);
+            if (!bm_query_push_unique_target_id(scratch, &target_deps, target_id)) return false;
+            continue;
+        }
+
+        String_View resolved = {0};
+        bool matched_producer = false;
+        if (!bm_query_build_step_dependency_match_candidates(model,
+                                                            step,
+                                                            ctx,
+                                                            scratch,
+                                                            record->raw_token,
+                                                            &producer_deps,
+                                                            &matched_producer)) {
+            return false;
+        }
+        if (matched_producer) continue;
+        if (!bm_query_resolve_build_step_dependency_token(model, step, ctx, scratch, record->raw_token, &resolved)) return false;
+        if (resolved.count == 0) continue;
+        for (size_t candidate = 0; candidate < arena_arr_len(model->build_steps); ++candidate) {
+            BM_Build_Step_Id candidate_id = (BM_Build_Step_Id)candidate;
+            if (candidate_id == id) continue;
+            if (bm_query_build_step_resolved_path_matches(model, candidate_id, ctx, scratch, resolved)) {
+                if (!bm_query_push_unique_step_id(scratch, &producer_deps, candidate_id)) return false;
+                matched_producer = true;
+                break;
+            }
+        }
+        if (!matched_producer && !bm_query_push_unique_sv(scratch, &file_deps, resolved)) return false;
+    }
+
+    for (size_t cmd = 0; cmd < arena_arr_len(step->commands); ++cmd) {
+        BM_Target_Id command_target = BM_TARGET_ID_INVALID;
+        if (!bm_query_build_step_command_target_dependency(model, step, cmd, &command_target)) return false;
+        if (command_target != owner_target_id &&
+            !bm_query_push_unique_target_id(scratch, &target_deps, command_target)) {
+            return false;
+        }
+        for (size_t arg = 0; arg < arena_arr_len(step->commands[cmd].argv); ++arg) {
+            if (!bm_query_collect_target_genex_dependencies(model,
+                                                            scratch,
+                                                            step->commands[cmd].argv[arg],
+                                                            owner_target_id,
+                                                            &target_deps)) {
+                return false;
+            }
+        }
+    }
+
+    out->outputs.items = outputs;
+    out->outputs.count = arena_arr_len(outputs);
+    out->byproducts.items = byproducts;
+    out->byproducts.count = arena_arr_len(byproducts);
+    out->file_dependencies.items = file_deps;
+    out->file_dependencies.count = arena_arr_len(file_deps);
+    out->target_dependencies.items = target_deps;
+    out->target_dependencies.count = arena_arr_len(target_deps);
+    out->producer_dependencies.items = producer_deps;
+    out->producer_dependencies.count = arena_arr_len(producer_deps);
+    return true;
+}
+
+bool bm_query_build_step_effective_command_argv(const Build_Model *model,
+                                                BM_Build_Step_Id id,
+                                                size_t command_index,
+                                                const BM_Query_Eval_Context *ctx,
+                                                Arena *scratch,
+                                                BM_String_Span *out) {
+    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
+    const BM_Build_Step_Command_Record *command = NULL;
+    String_View *items = NULL;
+    BM_Target_Id command_target = BM_TARGET_ID_INVALID;
+    if (out) *out = (BM_String_Span){0};
+    if (!model || !step || !scratch || !out) return false;
+    if (command_index >= arena_arr_len(step->commands)) return true;
+    command = &step->commands[command_index];
+
+    (void)bm_query_build_step_command_target_dependency(model, step, command_index, &command_target);
+    for (size_t i = 0; i < arena_arr_len(command->argv); ++i) {
+        String_View resolved = {0};
+        if (i == 0 && bm_target_id_is_valid(command_target)) {
+            BM_Target_Artifact_View artifact = {0};
+            if (!bm_query_target_effective_artifact(model,
+                                                    command_target,
+                                                    BM_TARGET_ARTIFACT_RUNTIME,
+                                                    ctx,
+                                                    scratch,
+                                                    &artifact)) {
+                return false;
+            }
+            if (!bm_query_make_absolute_from_cwd(scratch, artifact.path, &resolved)) return false;
+        } else if (!bm_query_resolve_string_with_context(model, ctx, scratch, command->argv[i], &resolved)) {
+            return false;
+        }
+
+        if (step->command_expand_lists) {
+            if (!bm_query_split_command_expand_value(scratch, resolved, &items)) return false;
+        } else if (!arena_arr_push(scratch, items, resolved)) {
+            return false;
+        }
+    }
+
+    out->items = items;
+    out->count = arena_arr_len(items);
+    return true;
 }
 
 BM_Replay_Action_Kind bm_query_replay_action_kind(const Build_Model *model, BM_Replay_Action_Id id) {

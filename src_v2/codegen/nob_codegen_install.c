@@ -190,7 +190,7 @@ static bool cg_target_installed_artifact_relpath(CG_Context *ctx,
                                                  String_View *out) {
     String_View destination = {0};
     String_View basename = {0};
-    String_View source_path = {0};
+    BM_Target_Artifact_View artifact = {0};
     if (!ctx || !info || !out) return false;
     *out = nob_sv_from_cstr("");
     if (!cg_resolve_install_rule_target_destination_for_kind(ctx,
@@ -202,9 +202,14 @@ static bool cg_target_installed_artifact_relpath(CG_Context *ctx,
                                                              &destination)) {
         return false;
     }
-    source_path = linker_artifact ? info->linker_artifact_path : info->artifact_path;
-    if (source_path.count == 0) return true;
-    basename = cg_basename_to_arena(ctx->scratch, source_path);
+    if (!cg_target_artifact_for_config_or_empty(info,
+                                                linker_artifact ? BM_TARGET_ARTIFACT_LINKER : BM_TARGET_ARTIFACT_RUNTIME,
+                                                config,
+                                                &artifact)) {
+        return false;
+    }
+    if (artifact.path.count == 0) return true;
+    basename = cg_basename_to_arena(ctx->scratch, artifact.path);
     if (destination.count == 0) {
         *out = basename;
         return true;
@@ -703,7 +708,9 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
                         ? ctx->known_configs[branch]
                         : nob_sv_from_cstr("");
                     String_View runtime_rel = {0};
+                    BM_Target_Artifact_View artifact = {0};
                     if (!cg_target_installed_artifact_relpath(ctx, id, info, false, config, &runtime_rel) ||
+                        !cg_target_artifact_for_config_or_empty(info, BM_TARGET_ARTIFACT_RUNTIME, config, &artifact) ||
                         !cg_emit_runtime_config_branches_prefix(ctx, out, branch)) {
                         return false;
                     }
@@ -712,7 +719,7 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
                     nob_sb_append_cstr(out, ";\n");
                     nob_sb_append_cstr(out, "        if (!ensure_parent_dir(install_path)) return false;\n");
                     nob_sb_append_cstr(out, "        if (!install_copy_file(");
-                    if (!cg_sb_append_c_string(out, info->artifact_path)) return false;
+                    if (!cg_sb_append_c_string(out, artifact.path)) return false;
                     nob_sb_append_cstr(out, ", install_path)) return false;\n");
                 }
                 if (!cg_emit_runtime_config_branches_suffix(ctx, out)) return false;

@@ -22,6 +22,11 @@ typedef struct {
 
 typedef struct {
     char *key;
+    BM_Target_Artifact_View value;
+} BM_Query_Session_Target_Artifact_Entry;
+
+typedef struct {
+    char *key;
     BM_String_Span value;
 } BM_Query_Session_Imported_Link_Lang_Entry;
 
@@ -38,6 +43,7 @@ struct BM_Query_Session {
     BM_Query_Session_Effective_Link_Item_Entry *effective_link_item_cache;
     BM_Query_Session_Effective_Value_Entry *effective_value_cache;
     BM_Query_Session_Target_File_Entry *target_file_cache;
+    BM_Query_Session_Target_Artifact_Entry *target_artifact_cache;
     BM_Query_Session_Imported_Link_Lang_Entry *imported_link_lang_cache;
     BM_Query_Session_Effective_Link_Lang_Entry *effective_link_lang_cache;
 };
@@ -64,6 +70,7 @@ static void bm_query_session_cleanup(void *userdata) {
     stbds_shfree(session->effective_link_item_cache);
     stbds_shfree(session->effective_value_cache);
     stbds_shfree(session->target_file_cache);
+    stbds_shfree(session->target_artifact_cache);
     stbds_shfree(session->imported_link_lang_cache);
     stbds_shfree(session->effective_link_lang_cache);
 }
@@ -171,6 +178,21 @@ static bool bm_query_session_copy_string(Arena *arena, String_View in, String_Vi
     return bm_query_copy_sv(arena, in, out);
 }
 
+static bool bm_query_session_copy_artifact(Arena *arena,
+                                           BM_Target_Artifact_View in,
+                                           BM_Target_Artifact_View *out) {
+    if (!out) return false;
+    *out = (BM_Target_Artifact_View){0};
+    if (!arena) return false;
+    out->emits = in.emits;
+    return bm_query_copy_sv(arena, in.path, &out->path) &&
+           bm_query_copy_sv(arena, in.directory, &out->directory) &&
+           bm_query_copy_sv(arena, in.file_name, &out->file_name) &&
+           bm_query_copy_sv(arena, in.prefix, &out->prefix) &&
+           bm_query_copy_sv(arena, in.output_name, &out->output_name) &&
+           bm_query_copy_sv(arena, in.suffix, &out->suffix);
+}
+
 static bool bm_query_session_build_effective_key(BM_Target_Id id,
                                                  BM_Effective_Query_Kind kind,
                                                  const BM_Query_Eval_Context *ctx,
@@ -200,6 +222,27 @@ static bool bm_query_session_build_target_file_key(BM_Target_Id id,
     nob_sb_append_cstr(sb, "target_file|");
     bm_query_session_key_append_u64(sb, (uint64_t)id);
     bm_query_session_key_append_u64(sb, (uint64_t)(linker_file ? 1 : 0));
+    bm_query_session_key_append_u64(sb, (uint64_t)ctx->usage_mode);
+    bm_query_session_key_append_u64(sb, (uint64_t)ctx->current_target_id);
+    bm_query_session_key_append_u64(sb, (uint64_t)(ctx->build_interface_active ? 1 : 0));
+    bm_query_session_key_append_u64(sb, (uint64_t)(ctx->build_local_interface_active ? 1 : 0));
+    bm_query_session_key_append_u64(sb, (uint64_t)(ctx->install_interface_active ? 1 : 0));
+    bm_query_session_key_append_sv(sb, ctx->config);
+    bm_query_session_key_append_sv(sb, ctx->platform_id);
+    bm_query_session_key_append_sv(sb, ctx->compile_language);
+    bm_query_session_key_append_sv(sb, ctx->install_prefix);
+    bm_query_session_finalize_key(sb);
+    return true;
+}
+
+static bool bm_query_session_build_target_artifact_key(BM_Target_Id id,
+                                                       BM_Target_Artifact_Role role,
+                                                       const BM_Query_Eval_Context *ctx,
+                                                       Nob_String_Builder *sb) {
+    if (!ctx || !sb) return false;
+    nob_sb_append_cstr(sb, "target_artifact|");
+    bm_query_session_key_append_u64(sb, (uint64_t)id);
+    bm_query_session_key_append_u64(sb, (uint64_t)role);
     bm_query_session_key_append_u64(sb, (uint64_t)ctx->usage_mode);
     bm_query_session_key_append_u64(sb, (uint64_t)ctx->current_target_id);
     bm_query_session_key_append_u64(sb, (uint64_t)(ctx->build_interface_active ? 1 : 0));
@@ -473,6 +516,55 @@ static bool bm_query_session_target_file_cached(BM_Query_Session *session,
     return true;
 }
 
+static bool bm_query_session_target_artifact_cached(BM_Query_Session *session,
+                                                    BM_Target_Id id,
+                                                    BM_Target_Artifact_Role role,
+                                                    const BM_Query_Eval_Context *ctx,
+                                                    bool count_stats,
+                                                    BM_Target_Artifact_View *out) {
+    BM_Query_Session_Target_Artifact_Entry *entry = NULL;
+    BM_Query_Eval_Context normalized = bm_query_session_normalize_generic_ctx(ctx);
+    Arena *temp = NULL;
+    BM_Target_Artifact_View computed = {0};
+    BM_Target_Artifact_View cached = {0};
+    Nob_String_Builder key = {0};
+    if (!session || !out) return false;
+    *out = (BM_Target_Artifact_View){0};
+
+    if (!bm_query_session_build_target_artifact_key(id, role, &normalized, &key)) return false;
+    entry = stbds_shgetp_null(session->target_artifact_cache, key.items ? key.items : "");
+    if (entry) {
+        if (count_stats) session->stats.target_artifact_hits++;
+        *out = entry->value;
+        nob_sb_free(key);
+        return true;
+    }
+
+    if (count_stats) session->stats.target_artifact_misses++;
+    temp = arena_create(64 * 1024);
+    if (!temp) {
+        nob_sb_free(key);
+        return false;
+    }
+
+    if (!bm_query_target_effective_artifact(session->model, id, role, &normalized, temp, &computed) ||
+        !bm_query_session_copy_artifact(session->arena, computed, &cached)) {
+        arena_destroy(temp);
+        nob_sb_free(key);
+        return false;
+    }
+
+    stbds_shput(session->target_artifact_cache,
+                key.items ? key.items : "",
+                cached);
+    entry = stbds_shgetp_null(session->target_artifact_cache, key.items ? key.items : "");
+    arena_destroy(temp);
+    nob_sb_free(key);
+    if (!entry) return false;
+    *out = entry->value;
+    return true;
+}
+
 static bool bm_query_session_imported_link_languages_cached(BM_Query_Session *session,
                                                             BM_Target_Id id,
                                                             const BM_Query_Eval_Context *ctx,
@@ -581,6 +673,7 @@ BM_Query_Session *bm_query_session_create(Arena *arena, const Build_Model *model
     stbds_sh_new_arena(session->effective_link_item_cache);
     stbds_sh_new_arena(session->effective_value_cache);
     stbds_sh_new_arena(session->target_file_cache);
+    stbds_sh_new_arena(session->target_artifact_cache);
     stbds_sh_new_arena(session->imported_link_lang_cache);
     stbds_sh_new_arena(session->effective_link_lang_cache);
     return session;
@@ -765,6 +858,14 @@ bool bm_query_session_target_effective_linker_file(BM_Query_Session *session,
                                                    const BM_Query_Eval_Context *ctx,
                                                    String_View *out) {
     return bm_query_session_target_file_cached(session, id, ctx, true, true, out);
+}
+
+bool bm_query_session_target_effective_artifact(BM_Query_Session *session,
+                                                BM_Target_Id id,
+                                                BM_Target_Artifact_Role role,
+                                                const BM_Query_Eval_Context *ctx,
+                                                BM_Target_Artifact_View *out) {
+    return bm_query_session_target_artifact_cached(session, id, role, ctx, true, out);
 }
 
 bool bm_query_session_target_imported_link_languages(BM_Query_Session *session,

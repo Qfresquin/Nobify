@@ -60,8 +60,6 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
                     needs_link_tool = true;
                 }
             }
-        } else if (ctx->targets[i].kind == BM_TARGET_UTILITY && ctx->targets[i].state_path.count > 0) {
-            needs_write_stamp = true;
         }
     }
 
@@ -72,7 +70,6 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
                 bm_query_build_step_byproducts(ctx->model, id).count > 0) {
                 needs_require_paths = true;
             }
-            if (ctx->build_steps[i].uses_stamp) needs_write_stamp = true;
         }
     }
     if (bm_query_test_count(ctx->model) > 0) {

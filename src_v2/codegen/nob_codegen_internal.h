@@ -49,6 +49,9 @@ typedef struct {
     String_View linker_artifact_path;
     String_View state_path;
     bool has_distinct_linker_artifact;
+    BM_Target_Artifact_View *runtime_artifacts;
+    BM_Target_Artifact_View *linker_artifacts;
+    String_View *artifact_configs;
 } CG_Target_Info;
 
 typedef struct {
@@ -209,6 +212,11 @@ bool cg_query_target_file_cached(CG_Context *ctx,
                                  const BM_Query_Eval_Context *qctx,
                                  bool linker_file,
                                  String_View *out);
+bool cg_query_target_artifact_cached(CG_Context *ctx,
+                                     BM_Target_Id id,
+                                     const BM_Query_Eval_Context *qctx,
+                                     BM_Target_Artifact_Role role,
+                                     BM_Target_Artifact_View *out);
 bool cg_query_imported_link_languages_cached(CG_Context *ctx,
                                              BM_Target_Id id,
                                              const BM_Query_Eval_Context *qctx,

@@ -95,44 +95,6 @@ static bool cg_policy_is_windows(const CG_Context *ctx) {
     return ctx && ctx->policy.platform == NOB_CODEGEN_PLATFORM_WINDOWS;
 }
 
-static bool cg_target_uses_runtime_output_dir(const CG_Context *ctx, BM_Target_Kind kind) {
-    if (kind == BM_TARGET_EXECUTABLE) return true;
-    if (cg_policy_is_windows(ctx) && (kind == BM_TARGET_SHARED_LIBRARY || kind == BM_TARGET_MODULE_LIBRARY)) {
-        return true;
-    }
-    return false;
-}
-
-static bool cg_target_uses_archive_output_dir(const CG_Context *ctx, BM_Target_Kind kind, bool linker_artifact) {
-    if (kind == BM_TARGET_STATIC_LIBRARY) return true;
-    if (cg_policy_is_windows(ctx) &&
-        linker_artifact &&
-        (kind == BM_TARGET_SHARED_LIBRARY || kind == BM_TARGET_MODULE_LIBRARY)) {
-        return true;
-    }
-    return false;
-}
-
-static CG_Artifact_Naming cg_target_runtime_naming(const CG_Context *ctx, BM_Target_Kind kind) {
-    switch (kind) {
-        case BM_TARGET_EXECUTABLE: return ctx->policy.executable;
-        case BM_TARGET_STATIC_LIBRARY: return ctx->policy.static_library;
-        case BM_TARGET_SHARED_LIBRARY: return ctx->policy.shared_runtime;
-        case BM_TARGET_MODULE_LIBRARY: return ctx->policy.module_runtime;
-        default: return cg_artifact_naming("", "");
-    }
-}
-
-static CG_Artifact_Naming cg_target_linker_naming(const CG_Context *ctx, BM_Target_Kind kind) {
-    switch (kind) {
-        case BM_TARGET_EXECUTABLE: return ctx->policy.executable;
-        case BM_TARGET_STATIC_LIBRARY: return ctx->policy.static_library;
-        case BM_TARGET_SHARED_LIBRARY: return ctx->policy.shared_linker;
-        case BM_TARGET_MODULE_LIBRARY: return ctx->policy.module_linker;
-        default: return cg_artifact_naming("", "");
-    }
-}
-
 static bool cg_init_backend_policy(CG_Context *ctx) {
     Nob_Codegen_Platform platform = NOB_CODEGEN_PLATFORM_HOST;
     Nob_Codegen_Backend backend = NOB_CODEGEN_BACKEND_AUTO;

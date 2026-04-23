@@ -18,6 +18,32 @@ typedef enum {
     BM_REPLAY_OPERAND_ENVIRONMENT,
 } BM_Replay_Operand_Family;
 
+typedef enum {
+    BM_TARGET_ARTIFACT_RUNTIME = 0,
+    BM_TARGET_ARTIFACT_LINKER,
+} BM_Target_Artifact_Role;
+
+typedef struct {
+    bool emits;
+    String_View path;
+    String_View directory;
+    String_View file_name;
+    String_View prefix;
+    String_View output_name;
+    String_View suffix;
+} BM_Target_Artifact_View;
+
+typedef struct {
+    BM_String_Span outputs;
+    BM_String_Span byproducts;
+    BM_String_Span file_dependencies;
+    BM_Target_Id_Span target_dependencies;
+    BM_Build_Step_Id_Span producer_dependencies;
+    String_View working_directory;
+    String_View depfile;
+    String_View comment;
+} BM_Build_Step_Effective_View;
+
 typedef struct {
     String_View config;
     String_View platform_id;
@@ -37,6 +63,8 @@ typedef struct {
     size_t effective_value_misses;
     size_t target_file_hits;
     size_t target_file_misses;
+    size_t target_artifact_hits;
+    size_t target_artifact_misses;
     size_t imported_link_language_hits;
     size_t imported_link_language_misses;
     size_t effective_link_language_hits;
@@ -197,6 +225,17 @@ BM_Build_Step_Id_Span bm_query_build_step_producer_dependencies(const Build_Mode
 BM_String_Span bm_query_build_step_file_dependencies(const Build_Model *model, BM_Build_Step_Id id);
 size_t bm_query_build_step_command_count(const Build_Model *model, BM_Build_Step_Id id);
 BM_String_Span bm_query_build_step_command_argv(const Build_Model *model, BM_Build_Step_Id id, size_t command_index);
+bool bm_query_build_step_effective_view(const Build_Model *model,
+                                        BM_Build_Step_Id id,
+                                        const BM_Query_Eval_Context *ctx,
+                                        Arena *scratch,
+                                        BM_Build_Step_Effective_View *out);
+bool bm_query_build_step_effective_command_argv(const Build_Model *model,
+                                                BM_Build_Step_Id id,
+                                                size_t command_index,
+                                                const BM_Query_Eval_Context *ctx,
+                                                Arena *scratch,
+                                                BM_String_Span *out);
 
 BM_Replay_Action_Kind bm_query_replay_action_kind(const Build_Model *model, BM_Replay_Action_Id id);
 BM_Replay_Opcode bm_query_replay_action_opcode(const Build_Model *model, BM_Replay_Action_Id id);
@@ -403,6 +442,12 @@ bool bm_query_target_effective_linker_file(const Build_Model *model,
                                            const BM_Query_Eval_Context *ctx,
                                            Arena *scratch,
                                            String_View *out);
+bool bm_query_target_effective_artifact(const Build_Model *model,
+                                        BM_Target_Id id,
+                                        BM_Target_Artifact_Role role,
+                                        const BM_Query_Eval_Context *ctx,
+                                        Arena *scratch,
+                                        BM_Target_Artifact_View *out);
 bool bm_query_target_imported_link_languages(const Build_Model *model,
                                              BM_Target_Id id,
                                              const BM_Query_Eval_Context *ctx,
@@ -425,6 +470,11 @@ bool bm_query_session_target_effective_linker_file(BM_Query_Session *session,
                                                    BM_Target_Id id,
                                                    const BM_Query_Eval_Context *ctx,
                                                    String_View *out);
+bool bm_query_session_target_effective_artifact(BM_Query_Session *session,
+                                                BM_Target_Id id,
+                                                BM_Target_Artifact_Role role,
+                                                const BM_Query_Eval_Context *ctx,
+                                                BM_Target_Artifact_View *out);
 bool bm_query_session_target_imported_link_languages(BM_Query_Session *session,
                                                      BM_Target_Id id,
                                                      const BM_Query_Eval_Context *ctx,

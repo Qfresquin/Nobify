@@ -77,6 +77,12 @@ typedef struct {
 } BM_Imported_Config_Record;
 
 typedef struct {
+    String_View name;
+    String_View value;
+    BM_Provenance provenance;
+} BM_Target_Artifact_Property_Record;
+
+typedef struct {
     BM_Build_Step_Id id;
     String_View step_key;
     BM_Directory_Id owner_directory_id;
@@ -224,6 +230,7 @@ typedef struct {
     String_View archive_output_directory;
     String_View library_output_directory;
     String_View runtime_output_directory;
+    BM_Target_Artifact_Property_Record *artifact_properties;
     String_View folder;
     BM_Imported_Config_Map_Record *imported_config_maps;
     BM_Imported_Config_Record *imported_configs;

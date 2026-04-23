@@ -1261,6 +1261,14 @@ bool eval_command_tx_begin(EvalExecContext *ctx, Eval_Command_Transaction *tx) {
                                    &tx->generated_deferred_ids)) {
         return false;
     }
+    tx->custom_command_output_step_count = arena_arr_len(ctx->file_state.custom_command_output_steps);
+    if (!eval_tx_snapshot_bytes(ctx,
+                                ctx->file_state.custom_command_output_steps,
+                                sizeof(*ctx->file_state.custom_command_output_steps),
+                                tx->custom_command_output_step_count,
+                                (void**)&tx->custom_command_output_steps)) {
+        return false;
+    }
     tx->canonical_artifact_count = arena_arr_len(ctx->canonical_state.artifacts);
     if (!eval_tx_snapshot_bytes(ctx,
                                 ctx->canonical_state.artifacts,
@@ -1426,6 +1434,10 @@ bool eval_command_tx_finish(EvalExecContext *ctx, Eval_Command_Transaction *tx, 
                               ctx->file_state.generated_deferred_ids,
                               tx->generated_deferred_ids,
                               tx->generated_deferred_id_count);
+        EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
+                              ctx->file_state.custom_command_output_steps,
+                              tx->custom_command_output_steps,
+                              tx->custom_command_output_step_count);
         ctx->file_state.next_deferred_call_id = tx->next_deferred_call_id;
         EVAL_TX_RESTORE_ARRAY(ctx->event_arena,
                               ctx->canonical_state.artifacts,

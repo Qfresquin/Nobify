@@ -909,6 +909,53 @@ TEST(codegen_explicit_output_directories_shape_out_of_source_artifacts) {
     TEST_PASS();
 }
 
+TEST(codegen_config_sensitive_artifact_paths_follow_build_model_query) {
+    Arena *arena = arena_create(512 * 1024);
+    String_View generated = {0};
+    const char *debug_build_argv[] = {"--config", "Debug", "app"};
+    const char *release_build_argv[] = {"--config", "Release", "app"};
+    const char *clean_argv[] = {"clean"};
+    const char *script =
+        "project(Test C)\n"
+        "add_executable(app main.c)\n"
+        "set_target_properties(app PROPERTIES\n"
+        "  OUTPUT_NAME app_default\n"
+        "  RUNTIME_OUTPUT_NAME_DEBUG \"$<IF:$<CONFIG:Debug>,app_dbg,bad_dbg>\"\n"
+        "  RUNTIME_OUTPUT_NAME_RELEASE \"$<IF:$<CONFIG:Release>,app_rel,bad_rel>\"\n"
+        "  RUNTIME_OUTPUT_DIRECTORY_DEBUG artifacts/debug/bin\n"
+        "  RUNTIME_OUTPUT_DIRECTORY_RELEASE artifacts/release/bin)\n";
+    Codegen_Test_Config config = {
+        .input_path = "row53_artifacts_src/CMakeLists.txt",
+        .output_path = "row53_artifacts_nob.c",
+        .source_dir = "row53_artifacts_src",
+        .binary_dir = "row53_artifacts_build",
+    };
+    ASSERT(arena != NULL);
+
+    ASSERT(codegen_write_text_file("row53_artifacts_src/main.c", "int main(void) { return 0; }\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_load_text_file_to_arena(arena, "row53_artifacts_nob.c", &generated));
+    ASSERT(codegen_sv_contains(generated, "row53_artifacts_build/artifacts/debug/bin/app_dbg"));
+    ASSERT(codegen_sv_contains(generated, "row53_artifacts_build/artifacts/release/bin/app_rel"));
+    ASSERT(!codegen_sv_contains(generated, "$<IF:"));
+
+    ASSERT(codegen_compile_generated_nob("row53_artifacts_nob.c", "row53_artifacts_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./row53_artifacts_nob_gen", debug_build_argv, NOB_ARRAY_LEN(debug_build_argv)));
+    ASSERT(test_ws_host_path_exists("row53_artifacts_build/artifacts/debug/bin/app_dbg"));
+    ASSERT(codegen_run_binary_in_dir(".", "row53_artifacts_build/artifacts/debug/bin/app_dbg", NULL, NULL));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./row53_artifacts_nob_gen", release_build_argv, NOB_ARRAY_LEN(release_build_argv)));
+    ASSERT(test_ws_host_path_exists("row53_artifacts_build/artifacts/release/bin/app_rel"));
+    ASSERT(codegen_run_binary_in_dir(".", "row53_artifacts_build/artifacts/release/bin/app_rel", NULL, NULL));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./row53_artifacts_nob_gen", clean_argv, NOB_ARRAY_LEN(clean_argv)));
+    ASSERT(!test_ws_host_path_exists("row53_artifacts_build/artifacts/debug/bin/app_dbg"));
+    ASSERT(!test_ws_host_path_exists("row53_artifacts_build/artifacts/release/bin/app_rel"));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(codegen_cxx_static_dependency_uses_cxx_driver_for_link_out_of_source) {
     Arena *arena = arena_create(512 * 1024);
     String_View generated = {0};
@@ -2223,10 +2270,13 @@ TEST(codegen_uses_embedded_cmake_for_runtime_steps_without_cmake_on_path) {
 #endif
 }
 
-TEST(codegen_custom_target_dependency_runs_and_clean_removes_step_stamps) {
+TEST(codegen_custom_target_dependency_runs_each_invocation_and_clean_removes_byproducts) {
+    Arena *arena = arena_create(64 * 1024);
     const char *script =
         "project(Test C)\n"
-        "add_custom_target(prepare COMMAND sh -c \"mkdir -p ct_build/generated && printf ready > ct_build/generated/prepared.txt\")\n"
+        "add_custom_target(prepare ALL\n"
+        "  COMMAND sh -c \"mkdir -p ct_build/generated && n=$(cat ct_build/generated/count.txt 2>/dev/null || printf 0); n=$((n+1)); printf %s $n > ct_build/generated/count.txt; printf ready > ct_build/generated/prepared.txt\"\n"
+        "  BYPRODUCTS generated/prepared.txt generated/count.txt)\n"
         "add_executable(app main.c)\n"
         "add_dependencies(app prepare)\n";
     Codegen_Test_Config config = {
@@ -2236,16 +2286,62 @@ TEST(codegen_custom_target_dependency_runs_and_clean_removes_step_stamps) {
         .binary_dir = "ct_build",
     };
 
+    ASSERT(arena != NULL);
     ASSERT(codegen_write_text_file("ct_src/main.c", "int main(void) { return 0; }\n"));
     ASSERT(codegen_write_script_with_config(script, &config));
     ASSERT(codegen_compile_generated_nob("custom_target_nob.c", "custom_target_nob_gen"));
     ASSERT(codegen_run_binary_in_dir(".", "./custom_target_nob_gen", "app", NULL));
     ASSERT(test_ws_host_path_exists("ct_build/app"));
     ASSERT(test_ws_host_path_exists("ct_build/generated/prepared.txt"));
-    ASSERT(test_ws_host_path_exists("ct_build/.nob/steps"));
+    ASSERT(codegen_text_file_equals(arena, "ct_build/generated/count.txt", "1"));
+    ASSERT(codegen_run_binary_in_dir(".", "./custom_target_nob_gen", NULL, NULL));
+    arena_reset(arena);
+    ASSERT(codegen_text_file_equals(arena, "ct_build/generated/count.txt", "2"));
     ASSERT(codegen_run_binary_in_dir(".", "./custom_target_nob_gen", "clean", NULL));
     ASSERT(test_ws_host_path_exists("ct_build"));
-    ASSERT(!test_ws_host_path_exists("ct_build/.nob/steps"));
+    ASSERT(!test_ws_host_path_exists("ct_build/generated/prepared.txt"));
+    ASSERT(!test_ws_host_path_exists("ct_build/generated/count.txt"));
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(codegen_custom_command_append_and_expand_lists_use_effective_build_step_queries) {
+    Arena *arena = arena_create(128 * 1024);
+    const char *debug_build_argv[] = {"--config", "Debug", "app"};
+    const char *script =
+        "project(Test C)\n"
+        "add_custom_command(\n"
+        "  OUTPUT generated/generated.c\n"
+        "  COMMAND sh -c \"mkdir -p append_build/generated && printf 'int generated_value(void) { return 40; }\\n' > append_build/generated/generated.c\")\n"
+        "add_custom_command(\n"
+        "  OUTPUT generated/generated.c APPEND\n"
+        "  COMMAND sh -c \"printf 'int appended_value(void) { return 2; }\\n' >> append_build/generated/generated.c\")\n"
+        "add_custom_command(\n"
+        "  OUTPUT generated/list.txt\n"
+        "  COMMAND sh -c \"mkdir -p append_build/generated && printf '%s|%s|%s' \\\"$1\\\" \\\"$2\\\" \\\"$3\\\" > append_build/generated/list.txt\" _ \"a;b;$<IF:$<CONFIG:Debug>,dbg,rel>\"\n"
+        "  COMMAND_EXPAND_LISTS)\n"
+        "add_custom_target(genlist ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/generated/list.txt)\n"
+        "add_executable(app main.c ${CMAKE_CURRENT_BINARY_DIR}/generated/generated.c)\n"
+        "add_dependencies(app genlist)\n";
+    Codegen_Test_Config config = {
+        .input_path = "append_src/CMakeLists.txt",
+        .output_path = "append_nob.c",
+        .source_dir = "append_src",
+        .binary_dir = "append_build",
+    };
+
+    ASSERT(arena != NULL);
+    ASSERT(codegen_write_text_file(
+        "append_src/main.c",
+        "int generated_value(void);\n"
+        "int appended_value(void);\n"
+        "int main(void) { return generated_value() + appended_value() == 42 ? 0 : 1; }\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("append_nob.c", "append_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./append_nob_gen", debug_build_argv, NOB_ARRAY_LEN(debug_build_argv)));
+    ASSERT(test_ws_host_path_exists("append_build/app"));
+    ASSERT(codegen_text_file_equals(arena, "append_build/generated/list.txt", "a|b|dbg"));
+    arena_destroy(arena);
     TEST_PASS();
 }
 
@@ -3144,6 +3240,7 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_diff_matches_cmake_for_all_supported_generated_nob_commands(passed, failed, skipped);
     test_codegen_default_out_of_source_subdirectory_uses_owner_binary_dirs(passed, failed, skipped);
     test_codegen_explicit_output_directories_shape_out_of_source_artifacts(passed, failed, skipped);
+    test_codegen_config_sensitive_artifact_paths_follow_build_model_query(passed, failed, skipped);
     test_codegen_cxx_static_dependency_uses_cxx_driver_for_link_out_of_source(passed, failed, skipped);
     test_codegen_clean_removes_out_of_source_outputs_but_preserves_binary_root(passed, failed, skipped);
     test_codegen_configure_replay_supported_effects_and_phase_cli_work(passed, failed, skipped);
@@ -3167,7 +3264,8 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_transitive_link_library_seeds_drive_compile_and_link_commands(passed, failed, skipped);
     test_codegen_suite_reuses_shared_host_env_guard_support(passed, failed, skipped);
     test_codegen_uses_embedded_cmake_for_runtime_steps_without_cmake_on_path(passed, failed, skipped);
-    test_codegen_custom_target_dependency_runs_and_clean_removes_step_stamps(passed, failed, skipped);
+    test_codegen_custom_target_dependency_runs_each_invocation_and_clean_removes_byproducts(passed, failed, skipped);
+    test_codegen_custom_command_append_and_expand_lists_use_effective_build_step_queries(passed, failed, skipped);
     test_codegen_target_hooks_run_at_pre_link_and_post_build_boundaries(passed, failed, skipped);
     test_codegen_runtime_config_maps_imported_target_file_and_mixed_language_usage(passed, failed, skipped);
     test_codegen_config_mapped_imported_cxx_link_language_comes_from_build_model_query(passed, failed, skipped);

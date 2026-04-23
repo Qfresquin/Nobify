@@ -1440,9 +1440,21 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         if (!cg_sb_append_c_string(out, info->name)) return false;
         nob_sb_append_cstr(out, ") == 0) {\n");
         nob_sb_append_cstr(out, "        if (out_buildable) *out_buildable = true;\n");
-        nob_sb_append_cstr(out, "        return ");
-        if (!cg_sb_append_c_string(out, resolved->artifact_path)) return false;
-        nob_sb_append_cstr(out, ";\n    }\n");
+        for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
+            String_View config = branch < arena_arr_len(ctx->known_configs)
+                ? ctx->known_configs[branch]
+                : nob_sv_from_cstr("");
+            BM_Target_Artifact_View artifact = {0};
+            if (!cg_target_artifact_for_config_or_empty(resolved, BM_TARGET_ARTIFACT_RUNTIME, config, &artifact) ||
+                !cg_emit_runtime_config_branches_prefix(ctx, out, branch)) {
+                return false;
+            }
+            nob_sb_append_cstr(out, "            return ");
+            if (!cg_sb_append_c_string(out, artifact.path)) return false;
+            nob_sb_append_cstr(out, ";\n");
+        }
+        if (!cg_emit_runtime_config_branches_suffix(ctx, out)) return false;
+        nob_sb_append_cstr(out, "    }\n");
     }
     nob_sb_append_cstr(out,
         "    return NULL;\n"

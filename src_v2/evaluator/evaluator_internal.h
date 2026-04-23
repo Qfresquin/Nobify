@@ -535,11 +535,17 @@ typedef struct {
     SV_List watched_variable_commands;
 } Eval_Command_State;
 
+typedef struct Eval_Custom_Command_Output_Step {
+    String_View effective_first_output;
+    String_View step_key;
+} Eval_Custom_Command_Output_Step;
+
 typedef struct {
     Eval_File_Lock_List file_locks;
     Eval_File_Generate_Job_List file_generate_jobs;
     Eval_Deferred_Dir_Frame_Stack deferred_dirs;
     SV_List generated_deferred_ids;
+    struct Eval_Custom_Command_Output_Step *custom_command_output_steps;
     size_t next_deferred_call_id;
     size_t next_build_step_id;
     size_t next_replay_action_id;
@@ -742,6 +748,8 @@ typedef struct Eval_Command_Transaction {
     size_t deferred_dir_count;
     String_View *generated_deferred_ids;
     size_t generated_deferred_id_count;
+    struct Eval_Custom_Command_Output_Step *custom_command_output_steps;
+    size_t custom_command_output_step_count;
     size_t next_deferred_call_id;
     Eval_Canonical_Artifact *canonical_artifacts;
     size_t canonical_artifact_count;

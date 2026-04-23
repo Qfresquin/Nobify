@@ -165,6 +165,7 @@ static bool cg_export_emit_build_tree_target_properties(CG_Context *ctx,
     String_View link_opts_joined = {0};
     String_View link_dirs_joined = {0};
     String_View link_libs_joined = {0};
+    BM_Target_Artifact_View artifact = {0};
     String_View *include_items = NULL;
     String_View *system_include_items = NULL;
     String_View *compile_defs = NULL;
@@ -197,7 +198,8 @@ static bool cg_export_emit_build_tree_target_properties(CG_Context *ctx,
     }
 
     if (info->emits_artifact) {
-        if (!cg_absolute_from_emit(ctx, info->artifact_path, &runtime_abs)) {
+        if (!cg_target_artifact_for_config_or_empty(info, BM_TARGET_ARTIFACT_RUNTIME, config, &artifact) ||
+            !cg_absolute_from_emit(ctx, artifact.path, &runtime_abs)) {
             return false;
         }
     }

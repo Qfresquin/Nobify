@@ -194,14 +194,6 @@ static bool cg_validate_package_model(CG_Context *ctx) {
 bool cg_validate_model_for_backend(CG_Context *ctx) {
     if (!ctx) return false;
 
-    for (size_t step_index = 0; step_index < ctx->build_step_count; ++step_index) {
-        BM_Build_Step_Id id = (BM_Build_Step_Id)step_index;
-        if (bm_query_build_step_append(ctx->model, id)) {
-            nob_log(NOB_ERROR, "codegen: APPEND custom-command steps are not supported yet");
-            return false;
-        }
-    }
-
     for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
         BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
         BM_Replay_Action_Kind kind = bm_query_replay_action_kind(ctx->model, id);

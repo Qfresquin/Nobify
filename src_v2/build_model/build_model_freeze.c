@@ -214,6 +214,23 @@ static bool bm_clone_imported_configs(Arena *arena,
     return true;
 }
 
+static bool bm_clone_artifact_properties(Arena *arena,
+                                         BM_Target_Artifact_Property_Record **dest,
+                                         const BM_Target_Artifact_Property_Record *src) {
+    if (!dest) return false;
+    *dest = NULL;
+    for (size_t i = 0; i < arena_arr_len(src); ++i) {
+        BM_Target_Artifact_Property_Record record = {0};
+        if (!bm_copy_string(arena, src[i].name, &record.name) ||
+            !bm_copy_string(arena, src[i].value, &record.value) ||
+            !bm_clone_provenance(arena, &record.provenance, src[i].provenance) ||
+            !arena_arr_push(arena, *dest, record)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool bm_clone_raw_properties(Arena *arena,
                                     BM_Raw_Property_Record **dest,
                                     const BM_Raw_Property_Record *src) {
@@ -368,6 +385,7 @@ static bool bm_clone_targets(const Build_Model_Draft *draft, Build_Model *model,
             !bm_clone_item_array(arena, &target.compile_definitions, src->compile_definitions) ||
             !bm_clone_item_array(arena, &target.compile_options, src->compile_options) ||
             !bm_clone_item_array(arena, &target.compile_features, src->compile_features) ||
+            !bm_clone_artifact_properties(arena, &target.artifact_properties, src->artifact_properties) ||
             !bm_clone_imported_config_maps(arena, &target.imported_config_maps, src->imported_config_maps) ||
             !bm_clone_imported_configs(arena, &target.imported_configs, src->imported_configs) ||
             !bm_clone_raw_properties(arena, &target.raw_properties, src->raw_properties)) {
@@ -1393,8 +1411,29 @@ static bool bm_clone_cpack(const Build_Model_Draft *draft, Build_Model *model, A
     return true;
 }
 
+static String_View bm_known_config_canonical_name(String_View config) {
+    if (bm_sv_eq_ci_freeze(config, nob_sv_from_cstr("DEBUG"))) return nob_sv_from_cstr("Debug");
+    if (bm_sv_eq_ci_freeze(config, nob_sv_from_cstr("RELEASE"))) return nob_sv_from_cstr("Release");
+    if (bm_sv_eq_ci_freeze(config, nob_sv_from_cstr("RELWITHDEBINFO"))) return nob_sv_from_cstr("RelWithDebInfo");
+    if (bm_sv_eq_ci_freeze(config, nob_sv_from_cstr("MINSIZEREL"))) return nob_sv_from_cstr("MinSizeRel");
+    return config;
+}
+
+static bool bm_known_config_has_lowercase(String_View config) {
+    for (size_t i = 0; i < config.count; ++i) {
+        if (islower((unsigned char)config.data[i])) return true;
+    }
+    return false;
+}
+
+static bool bm_known_config_should_replace(String_View existing, String_View candidate) {
+    if (bm_known_config_has_lowercase(existing)) return false;
+    return bm_known_config_has_lowercase(candidate);
+}
+
 static bool bm_known_configs_push_unique_ci(Arena *arena, String_View **configs, String_View config) {
     if (!arena || !configs || config.count == 0) return true;
+    config = bm_known_config_canonical_name(config);
     for (size_t i = 0; i < arena_arr_len(*configs); ++i) {
         if ((*configs)[i].count == config.count) {
             bool same = true;
@@ -1404,7 +1443,15 @@ static bool bm_known_configs_push_unique_ci(Arena *arena, String_View **configs,
                     break;
                 }
             }
-            if (same) return true;
+            if (same) {
+                String_View existing_canonical = bm_known_config_canonical_name((*configs)[i]);
+                if (!nob_sv_eq(existing_canonical, (*configs)[i])) {
+                    (*configs)[i] = existing_canonical;
+                } else if (bm_known_config_should_replace((*configs)[i], config)) {
+                    (*configs)[i] = config;
+                }
+                return true;
+            }
         }
     }
     return arena_arr_push(arena, *configs, config);
@@ -1449,6 +1496,74 @@ static bool bm_known_configs_scan_raw_properties(Arena *arena,
     return true;
 }
 
+static bool bm_sv_starts_with_ci_freeze(String_View value, const char *prefix) {
+    size_t prefix_len = prefix ? strlen(prefix) : 0;
+    if (!prefix || value.count <= prefix_len) return false;
+    return bm_sv_eq_ci_freeze(nob_sv_from_parts(value.data, prefix_len),
+                              nob_sv_from_parts(prefix, prefix_len));
+}
+
+static bool bm_sv_ends_with_ci_freeze(String_View value, const char *suffix) {
+    size_t suffix_len = suffix ? strlen(suffix) : 0;
+    if (!suffix || value.count <= suffix_len) return false;
+    return bm_sv_eq_ci_freeze(nob_sv_from_parts(value.data + value.count - suffix_len, suffix_len),
+                              nob_sv_from_parts(suffix, suffix_len));
+}
+
+static bool bm_known_configs_scan_artifact_property_name(Arena *arena,
+                                                         String_View **configs,
+                                                         String_View name) {
+    static const char *const config_prefixes[] = {
+        "OUTPUT_NAME_",
+        "ARCHIVE_OUTPUT_NAME_",
+        "LIBRARY_OUTPUT_NAME_",
+        "RUNTIME_OUTPUT_NAME_",
+        "ARCHIVE_OUTPUT_DIRECTORY_",
+        "LIBRARY_OUTPUT_DIRECTORY_",
+        "RUNTIME_OUTPUT_DIRECTORY_",
+    };
+    static const char *const legacy_suffixes[] = {
+        "_OUTPUT_NAME",
+        "_ARCHIVE_OUTPUT_NAME",
+        "_LIBRARY_OUTPUT_NAME",
+        "_RUNTIME_OUTPUT_NAME",
+    };
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(config_prefixes); ++i) {
+        size_t prefix_len = strlen(config_prefixes[i]);
+        if (bm_sv_starts_with_ci_freeze(name, config_prefixes[i])) {
+            if (!bm_known_configs_push_unique_ci(arena,
+                                                 configs,
+                                                 nob_sv_from_parts(name.data + prefix_len, name.count - prefix_len))) {
+                return false;
+            }
+        }
+    }
+    for (size_t i = 0; i < NOB_ARRAY_LEN(legacy_suffixes); ++i) {
+        size_t suffix_len = strlen(legacy_suffixes[i]);
+        if (bm_sv_ends_with_ci_freeze(name, legacy_suffixes[i])) {
+            if (!bm_known_configs_push_unique_ci(arena,
+                                                 configs,
+                                                 nob_sv_from_parts(name.data, name.count - suffix_len))) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool bm_known_configs_scan_artifact_properties(Arena *arena,
+                                                      String_View **configs,
+                                                      const BM_Target_Artifact_Property_Record *properties) {
+    for (size_t i = 0; i < arena_arr_len(properties); ++i) {
+        if (!bm_known_configs_scan_artifact_property_name(arena, configs, properties[i].name) ||
+            !bm_known_configs_scan_string(arena, configs, properties[i].value)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool bm_collect_known_configurations(Build_Model *model, Arena *arena) {
     String_View *configs = NULL;
     if (!model || !arena) return false;
@@ -1487,6 +1602,7 @@ static bool bm_collect_known_configurations(Build_Model *model, Arena *arena) {
             !bm_known_configs_scan_link_item_array(arena, &configs, target->link_libraries) ||
             !bm_known_configs_scan_item_array(arena, &configs, target->link_options) ||
             !bm_known_configs_scan_item_array(arena, &configs, target->link_directories) ||
+            !bm_known_configs_scan_artifact_properties(arena, &configs, target->artifact_properties) ||
             !bm_known_configs_scan_raw_properties(arena, &configs, target->raw_properties)) {
             return false;
         }
@@ -1555,8 +1671,17 @@ static bool bm_collect_known_configurations(Build_Model *model, Arena *arena) {
     }
 
     for (size_t i = 0; i < arena_arr_len(model->build_steps); ++i) {
-        for (size_t cmd = 0; cmd < arena_arr_len(model->build_steps[i].commands); ++cmd) {
-            if (!bm_known_configs_scan_string_array(arena, &configs, model->build_steps[i].commands[cmd].argv)) {
+        const BM_Build_Step_Record *step = &model->build_steps[i];
+        if (!bm_known_configs_scan_string(arena, &configs, step->working_directory) ||
+            !bm_known_configs_scan_string(arena, &configs, step->depfile) ||
+            !bm_known_configs_scan_string(arena, &configs, step->comment) ||
+            !bm_known_configs_scan_string_array(arena, &configs, step->raw_outputs) ||
+            !bm_known_configs_scan_string_array(arena, &configs, step->raw_byproducts) ||
+            !bm_known_configs_scan_string_array(arena, &configs, step->raw_dependency_tokens)) {
+            return false;
+        }
+        for (size_t cmd = 0; cmd < arena_arr_len(step->commands); ++cmd) {
+            if (!bm_known_configs_scan_string_array(arena, &configs, step->commands[cmd].argv)) {
                 return false;
             }
         }
