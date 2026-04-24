@@ -121,6 +121,16 @@ static const char *pipeline_export_source_kind_name(BM_Export_Source_Kind kind) 
     return "UNKNOWN";
 }
 
+static const char *pipeline_install_rule_kind_name(BM_Install_Rule_Kind kind) {
+    switch (kind) {
+        case BM_INSTALL_RULE_TARGET: return "TARGET";
+        case BM_INSTALL_RULE_FILE: return "FILE";
+        case BM_INSTALL_RULE_PROGRAM: return "PROGRAM";
+        case BM_INSTALL_RULE_DIRECTORY: return "DIRECTORY";
+    }
+    return "UNKNOWN";
+}
+
 static size_t pipeline_count_non_private_link_items(BM_Link_Item_Span items) {
     size_t count = 0;
     for (size_t i = 0; i < items.count; ++i) {
@@ -213,6 +223,26 @@ static void append_model_snapshot(Nob_String_Builder *sb, const Build_Model *mod
         global_compile_opts.count,
         global_link_opts.count,
         global_link_libs.count));
+
+    for (size_t i = 0; i < package_count; ++i) {
+        BM_Package_Id package_id = (BM_Package_Id)i;
+        String_View found_path = bm_query_package_found_path(model, package_id);
+
+        nob_sb_append_cstr(sb, nob_temp_sprintf("PACKAGE[%zu] name=", i));
+        test_snapshot_append_escaped_sv(sb, bm_query_package_name(model, package_id));
+        nob_sb_append_cstr(sb, nob_temp_sprintf(" owner_dir=%u mode=",
+                                                (unsigned)bm_query_package_owner_directory(model, package_id)));
+        test_snapshot_append_escaped_sv(sb, bm_query_package_mode(model, package_id));
+        nob_sb_append_cstr(sb, nob_temp_sprintf(" found=%d required=%d quiet=%d found_path=",
+                                                bm_query_package_found(model, package_id) ? 1 : 0,
+                                                bm_query_package_required(model, package_id) ? 1 : 0,
+                                                bm_query_package_quiet(model, package_id) ? 1 : 0));
+        test_snapshot_append_escaped_sv(sb,
+                                        scratch
+                                            ? pipeline_stable_path_in_workspace(scratch, found_path)
+                                            : found_path);
+        nob_sb_append_cstr(sb, "\n");
+    }
 
     for (size_t i = 0; i < target_count; ++i) {
         BM_Target_Id target_id = (BM_Target_Id)i;
@@ -340,11 +370,47 @@ static bool pipeline_snapshot_from_script(const char *script,
     return true;
 }
 
+static void append_pipeline_export_target_identities(Nob_String_Builder *sb,
+                                                     const Build_Model *model,
+                                                     BM_Target_Id_Span targets,
+                                                     Arena *scratch,
+                                                     bool use_export_name) {
+    nob_sb_append_cstr(sb, "'");
+    for (size_t i = 0; i < targets.count; ++i) {
+        BM_Target_Id target_id = targets.items[i];
+        String_View name = bm_query_target_name(model, target_id);
+        String_View export_name = {0};
+        if (i > 0) nob_sb_append_cstr(sb, ",");
+        if (use_export_name &&
+            scratch &&
+            bm_query_target_modeled_property_value(model,
+                                                   target_id,
+                                                   nob_sv_from_cstr("EXPORT_NAME"),
+                                                   scratch,
+                                                   &export_name) &&
+            export_name.count > 0) {
+            name = export_name;
+        }
+        for (size_t j = 0; j < name.count; ++j) {
+            char c = name.data[j];
+            if (c == '\\') {
+                nob_sb_append_cstr(sb, "\\\\");
+            } else if (c == '\'') {
+                nob_sb_append_cstr(sb, "\\'");
+            } else {
+                nob_sb_append(sb, c);
+            }
+        }
+    }
+    nob_sb_append_cstr(sb, "'");
+}
+
 static void append_pipeline_build_graph_snapshot(Nob_String_Builder *sb, const Build_Model *model) {
     size_t build_step_count = bm_query_build_step_count(model);
     size_t replay_action_count = bm_query_replay_action_count(model);
     size_t test_count = bm_query_test_count(model);
     size_t target_count = bm_query_target_count(model);
+    size_t install_rule_count = bm_query_install_rule_count(model);
     size_t export_count = bm_query_export_count(model);
     size_t cpack_package_count = bm_query_cpack_package_count(model);
     Arena *scratch = arena_create(64 * 1024);
@@ -407,30 +473,128 @@ static void append_pipeline_build_graph_snapshot(Nob_String_Builder *sb, const B
         nob_sb_append_cstr(sb, "\n");
     }
 
+    nob_sb_append_cstr(sb, nob_temp_sprintf("INSTALL_RULES count=%zu\n", install_rule_count));
+    for (size_t i = 0; i < install_rule_count; ++i) {
+        BM_Install_Rule_Id rule_id = (BM_Install_Rule_Id)i;
+        BM_Target_Id target_id = bm_query_install_rule_target(model, rule_id);
+        String_View item = bm_query_install_rule_item_raw(model, rule_id);
+        String_View destination = bm_query_install_rule_destination(model, rule_id);
+        String_View archive_destination = bm_query_install_rule_archive_destination(model, rule_id);
+        String_View library_destination = bm_query_install_rule_library_destination(model, rule_id);
+        String_View runtime_destination = bm_query_install_rule_runtime_destination(model, rule_id);
+        String_View includes_destination = bm_query_install_rule_includes_destination(model, rule_id);
+        String_View public_header_destination = bm_query_install_rule_public_header_destination(model, rule_id);
+
+        if (scratch) arena_reset(scratch);
+        nob_sb_append_cstr(sb, nob_temp_sprintf("INSTALL[%zu] kind=%s owner_dir=%u target=",
+                                                i,
+                                                pipeline_install_rule_kind_name(
+                                                    bm_query_install_rule_kind(model, rule_id)),
+                                                (unsigned)bm_query_install_rule_owner_directory(model, rule_id)));
+        test_snapshot_append_escaped_sv(sb,
+                                        bm_target_id_is_valid(target_id)
+                                            ? bm_query_target_name(model, target_id)
+                                            : nob_sv_from_cstr(""));
+        nob_sb_append_cstr(sb, " item=");
+        test_snapshot_append_escaped_sv(sb,
+                                        scratch
+                                            ? pipeline_stable_path_in_workspace(scratch, item)
+                                            : item);
+        nob_sb_append_cstr(sb, " destination=");
+        test_snapshot_append_escaped_sv(sb,
+                                        scratch
+                                            ? pipeline_stable_path_in_workspace(scratch, destination)
+                                            : destination);
+        nob_sb_append_cstr(sb, " archive_destination=");
+        test_snapshot_append_escaped_sv(sb,
+                                        scratch
+                                            ? pipeline_stable_path_in_workspace(scratch, archive_destination)
+                                            : archive_destination);
+        nob_sb_append_cstr(sb, " library_destination=");
+        test_snapshot_append_escaped_sv(sb,
+                                        scratch
+                                            ? pipeline_stable_path_in_workspace(scratch, library_destination)
+                                            : library_destination);
+        nob_sb_append_cstr(sb, " runtime_destination=");
+        test_snapshot_append_escaped_sv(sb,
+                                        scratch
+                                            ? pipeline_stable_path_in_workspace(scratch, runtime_destination)
+                                            : runtime_destination);
+        nob_sb_append_cstr(sb, " includes_destination=");
+        test_snapshot_append_escaped_sv(sb,
+                                        scratch
+                                            ? pipeline_stable_path_in_workspace(scratch, includes_destination)
+                                            : includes_destination);
+        nob_sb_append_cstr(sb, " public_header_destination=");
+        test_snapshot_append_escaped_sv(sb,
+                                        scratch
+                                            ? pipeline_stable_path_in_workspace(scratch, public_header_destination)
+                                            : public_header_destination);
+        nob_sb_append_cstr(sb, " component=");
+        test_snapshot_append_escaped_sv(sb, bm_query_install_rule_component(model, rule_id));
+        nob_sb_append_cstr(sb, " archive_component=");
+        test_snapshot_append_escaped_sv(sb, bm_query_install_rule_archive_component(model, rule_id));
+        nob_sb_append_cstr(sb, " library_component=");
+        test_snapshot_append_escaped_sv(sb, bm_query_install_rule_library_component(model, rule_id));
+        nob_sb_append_cstr(sb, " runtime_component=");
+        test_snapshot_append_escaped_sv(sb, bm_query_install_rule_runtime_component(model, rule_id));
+        nob_sb_append_cstr(sb, " includes_component=");
+        test_snapshot_append_escaped_sv(sb, bm_query_install_rule_includes_component(model, rule_id));
+        nob_sb_append_cstr(sb, " public_header_component=");
+        test_snapshot_append_escaped_sv(sb, bm_query_install_rule_public_header_component(model, rule_id));
+        nob_sb_append_cstr(sb, " rename=");
+        test_snapshot_append_escaped_sv(sb, bm_query_install_rule_rename(model, rule_id));
+        nob_sb_append_cstr(sb, " export=");
+        test_snapshot_append_escaped_sv(sb, bm_query_install_rule_export_name(model, rule_id));
+        nob_sb_append_cstr(sb, "\n");
+    }
+
     nob_sb_append_cstr(sb, nob_temp_sprintf("EXPORTS count=%zu\n", export_count));
     for (size_t i = 0; i < export_count; ++i) {
         BM_Export_Id export_id = (BM_Export_Id)i;
         BM_Target_Id_Span targets = bm_query_export_targets(model, export_id);
-        nob_sb_append_cstr(sb, nob_temp_sprintf("EXPORT[%zu] kind=%s source=%s name=",
+        String_View output_file = nob_sv_from_cstr("");
+        String_View registry_prefix = bm_query_export_registry_prefix(model, export_id);
+
+        if (scratch) {
+            arena_reset(scratch);
+            output_file = pipeline_stable_path_in_workspace(
+                scratch,
+                bm_query_export_output_file_path(model, export_id, scratch));
+            registry_prefix = pipeline_stable_path_in_workspace(scratch, registry_prefix);
+        }
+
+        nob_sb_append_cstr(sb, nob_temp_sprintf("EXPORT[%zu] kind=%s source=%s owner_dir=%u name=",
                                                 i,
                                                 pipeline_export_kind_name(bm_query_export_kind(model, export_id)),
                                                 pipeline_export_source_kind_name(
-                                                    bm_query_export_source_kind(model, export_id))));
+                                                    bm_query_export_source_kind(model, export_id)),
+                                                (unsigned)bm_query_export_owner_directory(model, export_id)));
         test_snapshot_append_escaped_sv(sb, bm_query_export_name(model, export_id));
         nob_sb_append_cstr(sb, " namespace=");
         test_snapshot_append_escaped_sv(sb, bm_query_export_namespace(model, export_id));
+        nob_sb_append_cstr(sb, " destination=");
+        test_snapshot_append_escaped_sv(sb, bm_query_export_destination(model, export_id));
+        nob_sb_append_cstr(sb, " file_name=");
+        test_snapshot_append_escaped_sv(sb, bm_query_export_file_name(model, export_id));
+        nob_sb_append_cstr(sb, " component=");
+        test_snapshot_append_escaped_sv(sb, bm_query_export_component(model, export_id));
         nob_sb_append_cstr(sb, " output=");
-        test_snapshot_append_escaped_sv(sb,
-                                        scratch
-                                            ? pipeline_stable_path_in_workspace(
-                                                  scratch,
-                                                  bm_query_export_output_file_path(model, export_id, scratch))
-                                            : nob_sv_from_cstr(""));
+        test_snapshot_append_escaped_sv(sb, output_file);
+        nob_sb_append_cstr(sb, " package=");
+        test_snapshot_append_escaped_sv(sb, bm_query_export_package_name(model, export_id));
         nob_sb_append_cstr(sb, " registry_prefix=");
-        test_snapshot_append_escaped_sv(sb, bm_query_export_registry_prefix(model, export_id));
-        nob_sb_append_cstr(sb, nob_temp_sprintf(" enabled=%d targets=%zu\n",
+        test_snapshot_append_escaped_sv(sb, registry_prefix);
+        nob_sb_append_cstr(sb, " cxx_modules_directory=");
+        test_snapshot_append_escaped_sv(sb, bm_query_export_cxx_modules_directory(model, export_id));
+        nob_sb_append_cstr(sb, nob_temp_sprintf(" append=%d enabled=%d targets=%zu target_names=",
+                                                bm_query_export_append(model, export_id) ? 1 : 0,
                                                 bm_query_export_enabled(model, export_id) ? 1 : 0,
                                                 targets.count));
+        append_pipeline_export_target_identities(sb, model, targets, scratch, false);
+        nob_sb_append_cstr(sb, " exported_names=");
+        append_pipeline_export_target_identities(sb, model, targets, scratch, true);
+        nob_sb_append_cstr(sb, "\n");
     }
 
     nob_sb_append_cstr(sb, nob_temp_sprintf("CPACK_PACKAGES count=%zu\n", cpack_package_count));

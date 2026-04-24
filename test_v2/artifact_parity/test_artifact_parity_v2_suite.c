@@ -230,10 +230,17 @@ static bool artifact_parity_verify_export_include_consumer(const char *export_re
                nob_temp_sprintf("cmake_minimum_required(VERSION 3.28)\n"
                                 "project(ExportConsumer LANGUAGES C)\n"
                                 "include(\"%s\")\n"
+                                "if(NOT TARGET Demo::api)\n"
+                                "  message(FATAL_ERROR \"expected imported target Demo::api\")\n"
+                                "endif()\n"
+                                "if(NOT TARGET Demo::dep)\n"
+                                "  message(FATAL_ERROR \"expected imported target Demo::dep\")\n"
+                                "endif()\n"
                                 "add_executable(consumer main.c)\n"
-                                "target_link_libraries(consumer PRIVATE Demo::core)\n",
+                                "target_link_libraries(consumer PRIVATE Demo::api)\n",
                                 export_abs),
-               "int main(void) { return 0; }\n") &&
+               "#include \"core.h\"\n"
+               "int main(void) { return core_value() == 171 ? 0 : 1; }\n") &&
            artifact_parity_build_consumer_project(consumer_source_dir, consumer_binary_dir, home_dir);
 }
 
@@ -246,9 +253,39 @@ static bool artifact_parity_verify_package_registry_consumer(const char *consume
                "project(PackageRegistryConsumer LANGUAGES C)\n"
                "set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)\n"
                "find_package(DemoPkg CONFIG REQUIRED)\n"
+               "if(NOT TARGET DemoPkg::api)\n"
+               "  message(FATAL_ERROR \"expected imported target DemoPkg::api\")\n"
+               "endif()\n"
                "add_executable(consumer main.c)\n"
-               "target_link_libraries(consumer PRIVATE DemoPkg::core)\n",
+               "target_link_libraries(consumer PRIVATE DemoPkg::api)\n",
                "int main(void) { return 0; }\n") &&
+           artifact_parity_build_consumer_project(consumer_source_dir, consumer_binary_dir, home_dir);
+}
+
+static bool artifact_parity_verify_installed_package_consumer(const char *prefix_relpath,
+                                                              const char *consumer_source_dir,
+                                                              const char *consumer_binary_dir,
+                                                              const char *home_dir) {
+    char prefix_abs[_TINYDIR_PATH_MAX] = {0};
+    if (!prefix_relpath || !consumer_source_dir || !consumer_binary_dir) return false;
+    if (!artifact_parity_make_abs_path(prefix_relpath, prefix_abs)) return false;
+    return artifact_parity_write_consumer_project(
+               consumer_source_dir,
+               nob_temp_sprintf("cmake_minimum_required(VERSION 3.28)\n"
+                                "project(InstalledPackageConsumer LANGUAGES C)\n"
+                                "list(PREPEND CMAKE_PREFIX_PATH \"%s\")\n"
+                                "find_package(DemoPkg CONFIG REQUIRED)\n"
+                                "if(NOT TARGET DemoPkg::api)\n"
+                                "  message(FATAL_ERROR \"expected imported target DemoPkg::api\")\n"
+                                "endif()\n"
+                                "if(NOT TARGET DemoPkg::dep)\n"
+                                "  message(FATAL_ERROR \"expected imported target DemoPkg::dep\")\n"
+                                "endif()\n"
+                                "add_executable(consumer main.c)\n"
+                                "target_link_libraries(consumer PRIVATE DemoPkg::api)\n",
+                                prefix_abs),
+               "#include \"core.h\"\n"
+               "int main(void) { return core_value() == 181 ? 0 : 1; }\n") &&
            artifact_parity_build_consumer_project(consumer_source_dir, consumer_binary_dir, home_dir);
 }
 
@@ -283,6 +320,19 @@ static bool artifact_parity_verify_export_package_case(const Artifact_Parity_Cas
            artifact_parity_verify_package_registry_consumer("consumer_export_pkg_nob",
                                                             "consumer_export_pkg_nob_build",
                                                             artifact_parity_case_nob_home_dir(case_def));
+}
+
+static bool artifact_parity_verify_installed_package_case(const Artifact_Parity_Case *case_def) {
+    return artifact_parity_verify_installed_package_consumer(
+               artifact_parity_case_cmake_install_prefix(case_def),
+               "consumer_installed_pkg_cmake",
+               "consumer_installed_pkg_cmake_build",
+               NULL) &&
+           artifact_parity_verify_installed_package_consumer(
+               artifact_parity_case_nob_install_prefix(case_def),
+               "consumer_installed_pkg_nob",
+               "consumer_installed_pkg_nob_build",
+               NULL);
 }
 
 static bool artifact_parity_run_nob_command(const Artifact_Parity_Case *case_def,
@@ -795,6 +845,132 @@ static const Artifact_Parity_Case s_install_component_default_case = {
     .subject = "install_component_default_toolkit",
 };
 
+static const Artifact_Parity_Manifest_Request s_install_target_kinds_manifest_requests[] = {
+    {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_TREE, "install_tree", ""},
+    {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "install_demo_targets_text", "lib/cmake/demo/DemoTargets.cmake"},
+    {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "install_demo_targets_noconfig_text", "lib/cmake/demo/DemoTargets-noconfig.cmake"},
+};
+
+static const Artifact_Parity_File s_install_target_kinds_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityInstallKinds VERSION 2.0 LANGUAGES C)\n"
+        "add_library(core_static STATIC src/core_static.c)\n"
+        "set_target_properties(core_static PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/libstatic)\n"
+        "add_library(core_shared SHARED src/core_shared.c)\n"
+        "set_target_properties(core_shared PROPERTIES LIBRARY_OUTPUT_DIRECTORY artifacts/libshared)\n"
+        "add_library(plugin MODULE src/plugin.c)\n"
+        "set_target_properties(plugin PROPERTIES LIBRARY_OUTPUT_DIRECTORY artifacts/modules)\n"
+        "add_executable(app src/main.c)\n"
+        "target_link_libraries(app PRIVATE core_static)\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY artifacts/bin)\n"
+        "install(TARGETS app core_static core_shared plugin EXPORT DemoTargets\n"
+        "  RUNTIME DESTINATION bin\n"
+        "  ARCHIVE DESTINATION lib\n"
+        "  LIBRARY DESTINATION lib)\n"
+        "install(EXPORT DemoTargets NAMESPACE Demo:: DESTINATION lib/cmake/demo FILE DemoTargets.cmake)\n",
+    },
+    {
+        "src/core_static.c",
+        "int core_static_value(void) { return 31; }\n",
+    },
+    {
+        "src/core_shared.c",
+        "int core_shared_value(void) { return 32; }\n",
+    },
+    {
+        "src/plugin.c",
+        "int plugin_value(void) { return 33; }\n",
+    },
+    {
+        "src/main.c",
+        "int core_static_value(void);\n"
+        "int main(void) { return core_static_value() == 31 ? 0 : 1; }\n",
+    },
+};
+
+static const Artifact_Parity_Nob_Command s_install_target_kinds_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_DEFAULT, NULL, NULL},
+    {ARTIFACT_PARITY_NOB_COMMAND_INSTALL, NULL, NULL},
+};
+
+static const Artifact_Parity_Case s_install_target_kinds_case = {
+    .name = "install_target_kinds",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE |
+              ARTIFACT_PARITY_PHASE_BUILD |
+              ARTIFACT_PARITY_PHASE_INSTALL,
+    .files = s_install_target_kinds_files,
+    .file_count = NOB_ARRAY_LEN(s_install_target_kinds_files),
+    .nob_commands = s_install_target_kinds_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_install_target_kinds_commands),
+    .manifest_requests = s_install_target_kinds_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_install_target_kinds_manifest_requests),
+    .source_root = "install_target_kinds_source",
+    .cmake_binary_dir = "install_target_kinds_cmake_build",
+    .nob_binary_dir = "install_target_kinds_nob_build",
+    .generated_nob_path = "install_target_kinds_source/nob.c",
+    .nob_run_dir = "install_target_kinds_source",
+    .cmake_build_target = NULL,
+    .cmake_install_prefix = "install_target_kinds_cmake_prefix",
+    .nob_install_prefix = "install_target_kinds_source/install_prefix",
+    .cmake_base_dir = "install_target_kinds_cmake_prefix",
+    .nob_base_dir = "install_target_kinds_source/install_prefix",
+    .clean_absence_relpath = NULL,
+    .subject = "install_target_kinds",
+};
+
+static const Artifact_Parity_Manifest_Request s_install_interface_only_manifest_requests[] = {
+    {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_TREE, "install_tree", ""},
+    {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "iface_targets_text", "lib/cmake/demo/IfaceTargets.cmake"},
+    {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "iface_targets_noconfig_text", "lib/cmake/demo/IfaceTargets-noconfig.cmake"},
+};
+
+static const Artifact_Parity_File s_install_interface_only_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityInstallInterfaceOnly VERSION 2.0 LANGUAGES C)\n"
+        "add_library(iface INTERFACE)\n"
+        "target_include_directories(iface INTERFACE\n"
+        "  \"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>\"\n"
+        "  \"$<INSTALL_INTERFACE:include/iface>\")\n"
+        "install(TARGETS iface EXPORT IfaceTargets DESTINATION share/meta INCLUDES DESTINATION include/iface)\n"
+        "install(EXPORT IfaceTargets NAMESPACE Demo:: DESTINATION lib/cmake/demo FILE IfaceTargets.cmake)\n",
+    },
+    {
+        "include/iface.h",
+        "#define IFACE_VALUE 1\n",
+    },
+};
+
+static const Artifact_Parity_Nob_Command s_install_interface_only_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_INSTALL, NULL, NULL},
+};
+
+static const Artifact_Parity_Case s_install_interface_only_case = {
+    .name = "install_interface_only_export",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE | ARTIFACT_PARITY_PHASE_INSTALL,
+    .files = s_install_interface_only_files,
+    .file_count = NOB_ARRAY_LEN(s_install_interface_only_files),
+    .nob_commands = s_install_interface_only_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_install_interface_only_commands),
+    .manifest_requests = s_install_interface_only_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_install_interface_only_manifest_requests),
+    .source_root = "install_interface_only_source",
+    .cmake_binary_dir = "install_interface_only_cmake_build",
+    .nob_binary_dir = "install_interface_only_nob_build",
+    .generated_nob_path = "install_interface_only_source/nob.c",
+    .nob_run_dir = "install_interface_only_source",
+    .cmake_build_target = NULL,
+    .cmake_install_prefix = "install_interface_only_cmake_prefix",
+    .nob_install_prefix = "install_interface_only_source/install_prefix",
+    .cmake_base_dir = "install_interface_only_cmake_prefix",
+    .nob_base_dir = "install_interface_only_source/install_prefix",
+    .clean_absence_relpath = NULL,
+    .subject = "install_interface_only_export",
+};
+
 static const Artifact_Parity_Manifest_Request s_empty_export_package_manifest_requests[] = {
     {ARTIFACT_PARITY_DOMAIN_EXPORT_FILES, ARTIFACT_PARITY_CAPTURE_TREE, "export_files", "exports"},
     {ARTIFACT_PARITY_DOMAIN_PACKAGE_FILES, ARTIFACT_PARITY_CAPTURE_TREE, "package_files", "packages"},
@@ -831,8 +1007,6 @@ static const Artifact_Parity_Case s_empty_export_package_case = {
 
 static const Artifact_Parity_Manifest_Request s_export_targets_manifest_requests[] = {
     {ARTIFACT_PARITY_DOMAIN_EXPORT_FILES, ARTIFACT_PARITY_CAPTURE_TREE, "export_tree", "exports"},
-    {ARTIFACT_PARITY_DOMAIN_EXPORT_FILES, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "core_targets_text", "exports/CoreTargets.cmake"},
-    {ARTIFACT_PARITY_DOMAIN_EXPORT_FILES, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "core_targets_noconfig_text", "exports/CoreTargets-noconfig.cmake"},
 };
 
 static const Artifact_Parity_File s_export_targets_files[] = {
@@ -840,17 +1014,42 @@ static const Artifact_Parity_File s_export_targets_files[] = {
         "CMakeLists.txt",
         "cmake_minimum_required(VERSION 3.28)\n"
         "project(ArtifactParityExportTargets LANGUAGES C)\n"
+        "add_library(dep STATIC dep.c)\n"
+        "set_target_properties(dep PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/lib)\n"
+        "target_include_directories(dep INTERFACE \"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/dep_include>\")\n"
         "add_library(core STATIC core.c)\n"
-        "set_target_properties(core PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/lib)\n"
-        "export(TARGETS core FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/CoreTargets.cmake NAMESPACE Demo::)\n",
+        "set_target_properties(core PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/lib EXPORT_NAME api)\n"
+        "target_include_directories(core PUBLIC \"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>\" PRIVATE private_include)\n"
+        "target_compile_definitions(core PRIVATE PRIVATE_USAGE_SHOULD_NOT_EXPORT=1)\n"
+        "target_link_libraries(core PUBLIC dep)\n"
+        "export(TARGETS core dep FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/CoreTargets.cmake NAMESPACE Demo::)\n",
     },
     {
         "core.c",
-        "int core_value(void) { return 71; }\n",
+        "#include \"core.h\"\n"
+        "int core_value(void) { return dep_value() + 100; }\n",
+    },
+    {
+        "dep.c",
+        "int dep_value(void) { return 71; }\n",
+    },
+    {
+        "include/core.h",
+        "#include \"dep.h\"\n"
+        "int core_value(void);\n",
+    },
+    {
+        "dep_include/dep.h",
+        "int dep_value(void);\n",
+    },
+    {
+        "private_include/private.h",
+        "#define PRIVATE_USAGE_SHOULD_NOT_EXPORT 1\n",
     },
 };
 
 static const Artifact_Parity_Nob_Command s_export_targets_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, NULL, "dep"},
     {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, NULL, "core"},
     {ARTIFACT_PARITY_NOB_COMMAND_EXPORT, NULL, NULL},
 };
@@ -878,8 +1077,6 @@ static const Artifact_Parity_Case s_export_targets_case = {
 
 static const Artifact_Parity_Manifest_Request s_export_set_manifest_requests[] = {
     {ARTIFACT_PARITY_DOMAIN_EXPORT_FILES, ARTIFACT_PARITY_CAPTURE_TREE, "export_tree", "exports"},
-    {ARTIFACT_PARITY_DOMAIN_EXPORT_FILES, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "demo_targets_text", "exports/DemoTargets.cmake"},
-    {ARTIFACT_PARITY_DOMAIN_EXPORT_FILES, ARTIFACT_PARITY_CAPTURE_FILE_TEXT, "demo_targets_noconfig_text", "exports/DemoTargets-noconfig.cmake"},
 };
 
 static const Artifact_Parity_File s_export_set_files[] = {
@@ -887,18 +1084,43 @@ static const Artifact_Parity_File s_export_set_files[] = {
         "CMakeLists.txt",
         "cmake_minimum_required(VERSION 3.28)\n"
         "project(ArtifactParityExportSet LANGUAGES C)\n"
+        "add_library(dep STATIC dep.c)\n"
+        "set_target_properties(dep PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/lib)\n"
+        "target_include_directories(dep INTERFACE \"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/dep_include>\")\n"
         "add_library(core STATIC core.c)\n"
-        "set_target_properties(core PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/lib)\n"
-        "install(TARGETS core EXPORT DemoTargets DESTINATION lib)\n"
+        "set_target_properties(core PROPERTIES ARCHIVE_OUTPUT_DIRECTORY artifacts/lib EXPORT_NAME api)\n"
+        "target_include_directories(core PUBLIC \"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>\" PRIVATE private_include)\n"
+        "target_compile_definitions(core PRIVATE PRIVATE_USAGE_SHOULD_NOT_EXPORT=1)\n"
+        "target_link_libraries(core PUBLIC dep)\n"
+        "install(TARGETS core dep EXPORT DemoTargets DESTINATION lib)\n"
         "export(EXPORT DemoTargets FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/DemoTargets.cmake NAMESPACE Demo::)\n",
     },
     {
         "core.c",
-        "int core_value(void) { return 73; }\n",
+        "#include \"core.h\"\n"
+        "int core_value(void) { return dep_value() + 100; }\n",
+    },
+    {
+        "dep.c",
+        "int dep_value(void) { return 71; }\n",
+    },
+    {
+        "include/core.h",
+        "#include \"dep.h\"\n"
+        "int core_value(void);\n",
+    },
+    {
+        "dep_include/dep.h",
+        "int dep_value(void);\n",
+    },
+    {
+        "private_include/private.h",
+        "#define PRIVATE_USAGE_SHOULD_NOT_EXPORT 1\n",
     },
 };
 
 static const Artifact_Parity_Nob_Command s_export_set_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, NULL, "dep"},
     {ARTIFACT_PARITY_NOB_COMMAND_BUILD_TARGET, NULL, "core"},
     {ARTIFACT_PARITY_NOB_COMMAND_EXPORT, NULL, NULL},
 };
@@ -933,7 +1155,7 @@ static const Artifact_Parity_File s_export_package_files[] = {
         "CMakeLists.txt",
         "cmake_minimum_required(VERSION 3.28)\n"
         "project(ArtifactParityExportPackage LANGUAGES C)\n"
-        "file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/DemoPkgConfig.cmake [=[add_library(DemoPkg::core INTERFACE IMPORTED)\n]=])\n"
+        "file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/DemoPkgConfig.cmake [=[add_library(DemoPkg::api INTERFACE IMPORTED)\n]=])\n"
         "cmake_policy(SET CMP0090 NEW)\n"
         "set(CMAKE_EXPORT_PACKAGE_REGISTRY ON)\n"
         "export(PACKAGE DemoPkg)\n",
@@ -964,6 +1186,93 @@ static const Artifact_Parity_Case s_export_package_case = {
     .nob_base_dir = "export_pkg_nob_home",
     .subject = "export_package_registry",
     .verify = artifact_parity_verify_export_package_case,
+};
+
+static const Artifact_Parity_Manifest_Request s_installed_package_manifest_requests[] = {
+    {ARTIFACT_PARITY_DOMAIN_INSTALL_TREE, ARTIFACT_PARITY_CAPTURE_TREE, "install_tree", ""},
+};
+
+static const Artifact_Parity_File s_installed_package_files[] = {
+    {
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(ArtifactParityInstalledPackage LANGUAGES C)\n"
+        "add_library(dep STATIC dep.c)\n"
+        "set_target_properties(dep PROPERTIES PUBLIC_HEADER dep_include/dep.h)\n"
+        "target_include_directories(dep INTERFACE\n"
+        "  \"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/dep_include>\"\n"
+        "  \"$<INSTALL_INTERFACE:include/demo>\")\n"
+        "add_library(core STATIC core.c)\n"
+        "set_target_properties(core PROPERTIES EXPORT_NAME api PUBLIC_HEADER include/core.h)\n"
+        "target_include_directories(core PUBLIC\n"
+        "  \"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>\"\n"
+        "  \"$<INSTALL_INTERFACE:include/demo>\"\n"
+        "  PRIVATE private_include)\n"
+        "target_compile_definitions(core PRIVATE PRIVATE_USAGE_SHOULD_NOT_EXPORT=1)\n"
+        "target_link_libraries(core PUBLIC dep)\n"
+        "install(TARGETS core dep EXPORT DemoPkgTargets\n"
+        "  ARCHIVE DESTINATION lib\n"
+        "  PUBLIC_HEADER DESTINATION include/demo\n"
+        "  INCLUDES DESTINATION include/demo)\n"
+        "install(FILES cmake/DemoPkgConfig.cmake DESTINATION lib/cmake/DemoPkg)\n"
+        "install(EXPORT DemoPkgTargets NAMESPACE DemoPkg:: DESTINATION lib/cmake/DemoPkg FILE DemoPkgTargets.cmake)\n",
+    },
+    {
+        "cmake/DemoPkgConfig.cmake",
+        "include(\"${CMAKE_CURRENT_LIST_DIR}/DemoPkgTargets.cmake\")\n",
+    },
+    {
+        "core.c",
+        "#include \"core.h\"\n"
+        "int core_value(void) { return dep_value() + 100; }\n",
+    },
+    {
+        "dep.c",
+        "int dep_value(void) { return 81; }\n",
+    },
+    {
+        "include/core.h",
+        "#include \"dep.h\"\n"
+        "int core_value(void);\n",
+    },
+    {
+        "dep_include/dep.h",
+        "int dep_value(void);\n",
+    },
+    {
+        "private_include/private.h",
+        "#define PRIVATE_USAGE_SHOULD_NOT_EXPORT 1\n",
+    },
+};
+
+static const Artifact_Parity_Nob_Command s_installed_package_commands[] = {
+    {ARTIFACT_PARITY_NOB_COMMAND_BUILD_DEFAULT, NULL, NULL},
+    {ARTIFACT_PARITY_NOB_COMMAND_INSTALL, NULL, NULL},
+};
+
+static const Artifact_Parity_Case s_installed_package_case = {
+    .name = "installed_package_config_round_trip",
+    .phases = ARTIFACT_PARITY_PHASE_CONFIGURE |
+              ARTIFACT_PARITY_PHASE_BUILD |
+              ARTIFACT_PARITY_PHASE_INSTALL,
+    .files = s_installed_package_files,
+    .file_count = NOB_ARRAY_LEN(s_installed_package_files),
+    .nob_commands = s_installed_package_commands,
+    .nob_command_count = NOB_ARRAY_LEN(s_installed_package_commands),
+    .manifest_requests = s_installed_package_manifest_requests,
+    .manifest_request_count = NOB_ARRAY_LEN(s_installed_package_manifest_requests),
+    .source_root = "installed_package_source",
+    .cmake_binary_dir = "installed_package_cmake_build",
+    .nob_binary_dir = "installed_package_nob_build",
+    .generated_nob_path = "installed_package_source/nob.c",
+    .nob_run_dir = "installed_package_source",
+    .cmake_build_target = NULL,
+    .cmake_install_prefix = "installed_package_cmake_prefix",
+    .nob_install_prefix = "installed_package_source/install_prefix",
+    .cmake_base_dir = "installed_package_cmake_prefix",
+    .nob_base_dir = "installed_package_source/install_prefix",
+    .subject = "installed_package_config_round_trip",
+    .verify = artifact_parity_verify_installed_package_case,
 };
 
 static const Artifact_Parity_Manifest_Request s_package_archive_manifest_requests[] = {
@@ -1684,6 +1993,28 @@ TEST(artifact_parity_install_component_default_matches_cmake) {
     TEST_PASS();
 }
 
+TEST(artifact_parity_install_target_kinds_match_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_install_target_kinds_case));
+    TEST_PASS();
+}
+
+TEST(artifact_parity_install_interface_only_export_matches_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_install_interface_only_case));
+    TEST_PASS();
+}
+
 TEST(artifact_parity_emits_empty_export_and_package_manifest_sections) {
     if (!s_artifact_parity_cmake.available) {
         TEST_SKIP(s_artifact_parity_skip_reason[0]
@@ -1725,6 +2056,17 @@ TEST(artifact_parity_export_package_registry_matches_cmake) {
     }
 
     ASSERT(artifact_parity_run_case(&s_export_package_case));
+    TEST_PASS();
+}
+
+TEST(artifact_parity_installed_package_config_round_trip_matches_cmake) {
+    if (!s_artifact_parity_cmake.available) {
+        TEST_SKIP(s_artifact_parity_skip_reason[0]
+                      ? s_artifact_parity_skip_reason
+                      : "cmake 3.28.x is not available");
+    }
+
+    ASSERT(artifact_parity_run_case(&s_installed_package_case));
     TEST_PASS();
 }
 
@@ -2035,13 +2377,16 @@ void run_artifact_parity_v2_tests(int *passed, int *failed, int *skipped) {
         if (failed) (*failed)++;
     } else {
         test_artifact_parity_build_and_generated_manifest_matches_cmake_via_nobify(passed, failed, skipped);
-        test_artifact_parity_install_tree_matches_cmake_for_files_and_targets(passed, failed, skipped);
-        test_artifact_parity_install_component_development_matches_cmake(passed, failed, skipped);
-        test_artifact_parity_install_component_default_matches_cmake(passed, failed, skipped);
-        test_artifact_parity_emits_empty_export_and_package_manifest_sections(passed, failed, skipped);
+    test_artifact_parity_install_tree_matches_cmake_for_files_and_targets(passed, failed, skipped);
+    test_artifact_parity_install_component_development_matches_cmake(passed, failed, skipped);
+    test_artifact_parity_install_component_default_matches_cmake(passed, failed, skipped);
+    test_artifact_parity_install_target_kinds_match_cmake(passed, failed, skipped);
+    test_artifact_parity_install_interface_only_export_matches_cmake(passed, failed, skipped);
+    test_artifact_parity_emits_empty_export_and_package_manifest_sections(passed, failed, skipped);
         test_artifact_parity_export_targets_build_tree_matches_cmake(passed, failed, skipped);
         test_artifact_parity_export_export_set_matches_cmake(passed, failed, skipped);
         test_artifact_parity_export_package_registry_matches_cmake(passed, failed, skipped);
+        test_artifact_parity_installed_package_config_round_trip_matches_cmake(passed, failed, skipped);
         test_artifact_parity_package_tgz_matches_cmake(passed, failed, skipped);
         test_artifact_parity_package_txz_matches_cmake(passed, failed, skipped);
         test_artifact_parity_package_zip_matches_cmake(passed, failed, skipped);

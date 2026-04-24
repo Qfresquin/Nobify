@@ -9,6 +9,80 @@ static void codegen_reject_init_event(Event *ev, Event_Kind kind, size_t line) {
     ev->h.origin.col = 1;
 }
 
+static bool codegen_reject_render_install_pseudo_item_from_stream(const char *item) {
+    Arena *builder_arena = arena_create(2 * 1024 * 1024);
+    Arena *validate_arena = arena_create(512 * 1024);
+    Arena *model_arena = arena_create(2 * 1024 * 1024);
+    Arena *codegen_arena = arena_create(2 * 1024 * 1024);
+    Test_Semantic_Pipeline_Build_Result build = {0};
+    Event_Stream *stream = NULL;
+    Event ev = {0};
+    Nob_String_Builder sb = {0};
+    Nob_Codegen_Options opts = {
+        .input_path = {0},
+        .output_path = {0},
+        .target_platform = NOB_CODEGEN_PLATFORM_HOST,
+        .backend = NOB_CODEGEN_BACKEND_AUTO,
+    };
+    bool ok = false;
+
+    if (!item || !builder_arena || !validate_arena || !model_arena || !codegen_arena) {
+        arena_destroy(builder_arena);
+        arena_destroy(validate_arena);
+        arena_destroy(model_arena);
+        arena_destroy(codegen_arena);
+        return false;
+    }
+
+    stream = event_stream_create(builder_arena);
+    if (!stream) goto cleanup;
+
+    codegen_reject_init_event(&ev, EVENT_DIRECTORY_ENTER, 1);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr(".");
+    if (!event_stream_push(stream, &ev)) goto cleanup;
+
+    codegen_reject_init_event(&ev, EVENT_PROJECT_DECLARE, 2);
+    ev.as.project_declare.name = nob_sv_from_cstr("InstallPseudoReject");
+    ev.as.project_declare.languages = nob_sv_from_cstr("C");
+    if (!event_stream_push(stream, &ev)) goto cleanup;
+
+    codegen_reject_init_event(&ev, EVENT_INSTALL_RULE_ADD, 3);
+    ev.as.install_rule_add.rule_type = EV_INSTALL_RULE_FILE;
+    ev.as.install_rule_add.item = nob_sv_from_cstr(item);
+    ev.as.install_rule_add.destination = nob_sv_from_cstr("share/runtime");
+    if (!event_stream_push(stream, &ev)) goto cleanup;
+
+    codegen_reject_init_event(&ev, EVENT_DIRECTORY_LEAVE, 4);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
+    if (!event_stream_push(stream, &ev)) goto cleanup;
+
+    if (!test_semantic_pipeline_build_model_from_stream(builder_arena,
+                                                        validate_arena,
+                                                        model_arena,
+                                                        stream,
+                                                        &build)) {
+        goto cleanup;
+    }
+    if (!build.builder_ok || !build.validate_ok || !build.freeze_ok || !build.model) goto cleanup;
+
+    diag_reset();
+    diag_set_strict(false);
+    diag_telemetry_reset();
+    opts.input_path = nob_sv_from_cstr("CMakeLists.txt");
+    opts.output_path = nob_sv_from_cstr("nob.c");
+    ok = !nob_codegen_render(build.model, codegen_arena, &opts, &sb);
+
+cleanup:
+    nob_sb_free(sb);
+    arena_destroy(builder_arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
+    arena_destroy(codegen_arena);
+    return ok;
+}
+
 TEST(codegen_rejects_module_target_as_link_dependency) {
     Nob_String_Builder sb = {0};
     diag_reset();
@@ -86,7 +160,7 @@ TEST(codegen_rejects_append_custom_command_steps) {
     ASSERT(!codegen_render_script(
         "project(Test C)\n"
         "add_custom_command(OUTPUT generated.c COMMAND echo base)\n"
-        "add_custom_command(OUTPUT generated.c APPEND COMMAND echo extra)\n"
+        "add_custom_command(OUTPUT generated.c APPEND COMMAND echo extra BYPRODUCTS extra.stamp)\n"
         "add_executable(app main.c ${CMAKE_CURRENT_BINARY_DIR}/generated.c)\n",
         "CMakeLists.txt",
         "nob.c",
@@ -136,6 +210,37 @@ TEST(codegen_rejects_export_cxx_modules_directory_in_standalone_export_backend) 
         "project(Test C)\n"
         "add_library(core STATIC core.c)\n"
         "export(TARGETS core FILE CoreTargets.cmake CXX_MODULES_DIRECTORY modules)\n",
+        "CMakeLists.txt",
+        "nob.c",
+        &sb));
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
+TEST(codegen_rejects_export_package_info_signature_boundary) {
+    Nob_String_Builder sb = {0};
+    diag_reset();
+    diag_set_strict(false);
+    diag_telemetry_reset();
+    ASSERT(!codegen_render_script(
+        "project(Test C)\n"
+        "add_library(core STATIC core.c)\n"
+        "export(PACKAGE_INFO DemoPkg TARGETS core)\n",
+        "CMakeLists.txt",
+        "nob.c",
+        &sb));
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
+TEST(codegen_rejects_export_setup_signature_boundary) {
+    Nob_String_Builder sb = {0};
+    diag_reset();
+    diag_set_strict(false);
+    diag_telemetry_reset();
+    ASSERT(!codegen_render_script(
+        "project(Test C)\n"
+        "export(SETUP DemoPkg)\n",
         "CMakeLists.txt",
         "nob.c",
         &sb));
@@ -202,6 +307,88 @@ TEST(codegen_rejects_cpack_archive_component_install_before_render) {
         "cpack_add_install_type(Full)\n"
         "cpack_add_component(Runtime INSTALL_TYPES Full)\n"
         "add_executable(app main.c)\n",
+        "CMakeLists.txt",
+        "nob.c",
+        &sb));
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
+TEST(codegen_rejects_install_object_library_targets_before_render) {
+    Nob_String_Builder sb = {0};
+    diag_reset();
+    diag_set_strict(false);
+    diag_telemetry_reset();
+    ASSERT(!codegen_render_script(
+        "project(Test C)\n"
+        "add_library(obj OBJECT obj.c)\n"
+        "install(TARGETS obj DESTINATION lib)\n",
+        "CMakeLists.txt",
+        "nob.c",
+        &sb));
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
+TEST(codegen_rejects_install_utility_targets_before_render) {
+    Nob_String_Builder sb = {0};
+    diag_reset();
+    diag_set_strict(false);
+    diag_telemetry_reset();
+    ASSERT(!codegen_render_script(
+        "project(Test C)\n"
+        "add_custom_target(tool)\n"
+        "install(TARGETS tool DESTINATION share)\n",
+        "CMakeLists.txt",
+        "nob.c",
+        &sb));
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
+TEST(codegen_rejects_install_unknown_library_targets_before_render) {
+    Nob_String_Builder sb = {0};
+    diag_reset();
+    diag_set_strict(false);
+    diag_telemetry_reset();
+    ASSERT(!codegen_render_script(
+        "project(Test C)\n"
+        "add_library(dep UNKNOWN IMPORTED)\n"
+        "set_target_properties(dep PROPERTIES IMPORTED_LOCATION imports/libdep.a)\n"
+        "install(TARGETS dep DESTINATION lib)\n",
+        "CMakeLists.txt",
+        "nob.c",
+        &sb));
+    nob_sb_free(sb);
+    TEST_PASS();
+}
+
+TEST(codegen_rejects_install_script_pseudo_items_before_render) {
+    diag_reset();
+    diag_set_strict(false);
+    diag_telemetry_reset();
+    ASSERT(codegen_reject_render_install_pseudo_item_from_stream("SCRIPT::tools/install_step.cmake"));
+    TEST_PASS();
+}
+
+TEST(codegen_rejects_install_code_pseudo_items_before_render) {
+    diag_reset();
+    diag_set_strict(false);
+    diag_telemetry_reset();
+    ASSERT(codegen_reject_render_install_pseudo_item_from_stream("CODE::message(STATUS install-code)"));
+    TEST_PASS();
+}
+
+TEST(codegen_rejects_install_export_android_mk_pseudo_items_before_render) {
+    Nob_String_Builder sb = {0};
+    diag_reset();
+    diag_set_strict(false);
+    diag_telemetry_reset();
+    ASSERT(!codegen_render_script(
+        "project(Test C)\n"
+        "add_library(iface INTERFACE)\n"
+        "install(TARGETS iface EXPORT DemoTargets DESTINATION lib)\n"
+        "install(EXPORT_ANDROID_MK DemoTargets DESTINATION share/cmake/android)\n",
         "CMakeLists.txt",
         "nob.c",
         &sb));
@@ -491,9 +678,17 @@ void run_codegen_v2_reject_tests(int *passed, int *failed, int *skipped) {
     test_codegen_rejects_targets_with_precompile_headers(passed, failed, skipped);
     test_codegen_rejects_export_append_in_standalone_export_backend(passed, failed, skipped);
     test_codegen_rejects_export_cxx_modules_directory_in_standalone_export_backend(passed, failed, skipped);
+    test_codegen_rejects_export_package_info_signature_boundary(passed, failed, skipped);
+    test_codegen_rejects_export_setup_signature_boundary(passed, failed, skipped);
     test_codegen_rejects_invalid_platform_backend_pair(passed, failed, skipped);
     test_codegen_rejects_macosx_bundle_targets(passed, failed, skipped);
     test_codegen_rejects_cpack_archive_component_install_before_render(passed, failed, skipped);
+    test_codegen_rejects_install_object_library_targets_before_render(passed, failed, skipped);
+    test_codegen_rejects_install_utility_targets_before_render(passed, failed, skipped);
+    test_codegen_rejects_install_unknown_library_targets_before_render(passed, failed, skipped);
+    test_codegen_rejects_install_script_pseudo_items_before_render(passed, failed, skipped);
+    test_codegen_rejects_install_code_pseudo_items_before_render(passed, failed, skipped);
+    test_codegen_rejects_install_export_android_mk_pseudo_items_before_render(passed, failed, skipped);
     test_codegen_rejects_remote_download_replay_before_render(passed, failed, skipped);
     test_codegen_rejects_unsupported_archive_variant_before_render(passed, failed, skipped);
     test_codegen_rejects_get_runtime_dependencies_before_render(passed, failed, skipped);

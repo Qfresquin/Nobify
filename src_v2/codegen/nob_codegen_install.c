@@ -344,93 +344,81 @@ static bool cg_export_has_non_interface_targets(CG_Context *ctx, BM_Export_Id ex
     return false;
 }
 
-static bool cg_export_collect_interface_includes(CG_Context *ctx,
-                                                 BM_Export_Id export_id,
-                                                 BM_Install_Rule_Id rule_id,
-                                                 BM_Target_Id target_id,
-                                                 bool want_system,
-                                                 String_View **out) {
-    BM_String_Item_Span includes = {0};
-    BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx,
-                                                   target_id,
-                                                   BM_QUERY_USAGE_COMPILE,
-                                                   nob_sv_from_cstr(""),
-                                                   nob_sv_from_cstr(""));
-    String_View install_dest = bm_query_install_rule_includes_destination(ctx->model, rule_id);
-    String_View export_dir = bm_query_export_destination(ctx->model, export_id);
+static bool cg_export_collect_direct_property_values(CG_Context *ctx,
+                                                     BM_Target_Id target_id,
+                                                     BM_Query_Usage_Mode usage_mode,
+                                                     String_View property_name,
+                                                     bool rewrite_import_prefix,
+                                                     String_View **out) {
+    BM_Query_Eval_Context qctx = {0};
+    String_View raw = {0};
+    String_View resolved = {0};
+    String_View *pieces = NULL;
+    if (!ctx) return false;
+
+    qctx = cg_make_query_ctx(ctx, target_id, usage_mode, nob_sv_from_cstr(""), nob_sv_from_cstr(""));
     qctx.build_interface_active = false;
     qctx.build_local_interface_active = false;
     qctx.install_interface_active = true;
     qctx.install_prefix = nob_sv_from_cstr("${_IMPORT_PREFIX}");
-    if (!cg_query_effective_items_cached(ctx, target_id, &qctx, CG_EFFECTIVE_INCLUDE_DIRECTORIES, &includes)) {
+
+    if (!bm_query_target_modeled_property_value(ctx->model, target_id, property_name, ctx->scratch, &raw)) {
         return false;
     }
-    for (size_t i = 0; i < includes.count; ++i) {
-        String_View item = includes.items[i].value;
-        String_View expr = {0};
-        bool is_system = (includes.items[i].flags & BM_ITEM_FLAG_SYSTEM) != 0;
-        if (is_system != want_system) continue;
-        if (item.count == 0) continue;
-        (void)export_dir;
-        if (!cg_install_import_prefix_expr(ctx, item, &expr)) return false;
-        item = expr;
-        if (!cg_collect_unique_path(ctx->scratch, out, item)) return false;
+    if (raw.count == 0) return true;
+    if (!cg_resolve_model_string_with_query_ctx(ctx, &qctx, raw, &resolved) ||
+        !cg_split_top_level_list(ctx->scratch, resolved, &pieces)) {
+        return false;
     }
-    if (!want_system && install_dest.count > 0) {
-        String_View expr = {0};
-        if (!cg_install_import_prefix_expr(ctx, install_dest, &expr) ||
-            !cg_collect_unique_path(ctx->scratch, out, expr)) {
-            return false;
+
+    for (size_t i = 0; i < arena_arr_len(pieces); ++i) {
+        String_View value = pieces[i];
+        if (value.count == 0) continue;
+        if (rewrite_import_prefix) {
+            if (!cg_install_import_prefix_expr(ctx, value, &value)) return false;
         }
+        if (!cg_collect_unique_path(ctx->scratch, out, value)) return false;
     }
     return true;
 }
 
-static bool cg_export_collect_effective_values(CG_Context *ctx,
-                                               BM_Target_Id target_id,
-                                               BM_Query_Usage_Mode usage_mode,
-                                               CG_Effective_Query_Family family,
-                                               String_View **out) {
-    BM_String_Span values = {0};
-    BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx,
-                                                   target_id,
-                                                   usage_mode,
-                                                   nob_sv_from_cstr(""),
-                                                   nob_sv_from_cstr(""));
+static bool cg_export_collect_direct_link_libraries(CG_Context *ctx,
+                                                    BM_Export_Id export_id,
+                                                    BM_Target_Id target_id,
+                                                    String_View export_namespace,
+                                                    String_View **out) {
+    BM_Query_Eval_Context qctx = {0};
+    BM_Target_Id_Span exported_targets = {0};
+    String_View raw = {0};
+    String_View resolved = {0};
+    String_View *pieces = NULL;
+    if (!ctx) return false;
+
+    qctx = cg_make_query_ctx(ctx, target_id, BM_QUERY_USAGE_LINK, nob_sv_from_cstr(""), nob_sv_from_cstr(""));
     qctx.build_interface_active = false;
     qctx.build_local_interface_active = false;
     qctx.install_interface_active = true;
     qctx.install_prefix = nob_sv_from_cstr("${_IMPORT_PREFIX}");
-    if (!cg_query_effective_values_cached(ctx, target_id, &qctx, family, &values)) return false;
-    for (size_t i = 0; i < values.count; ++i) {
-        if (values.items[i].count == 0) continue;
-        if (!cg_collect_unique_path(ctx->scratch, out, values.items[i])) return false;
+    exported_targets = bm_query_export_targets(ctx->model, export_id);
+
+    if (!bm_query_target_modeled_property_value(ctx->model,
+                                                target_id,
+                                                nob_sv_from_cstr("INTERFACE_LINK_LIBRARIES"),
+                                                ctx->scratch,
+                                                &raw)) {
+        return false;
     }
-    return true;
-}
+    if (raw.count == 0) return true;
+    if (!cg_resolve_model_string_with_query_ctx(ctx, &qctx, raw, &resolved) ||
+        !cg_split_top_level_list(ctx->scratch, resolved, &pieces)) {
+        return false;
+    }
 
-static bool cg_export_collect_link_libraries(CG_Context *ctx,
-                                             BM_Export_Id export_id,
-                                             BM_Target_Id target_id,
-                                             String_View export_namespace,
-                                             String_View **out) {
-    BM_Link_Item_Span libs = {0};
-    BM_Target_Id_Span exported_targets = bm_query_export_targets(ctx->model, export_id);
-    BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx,
-                                                   target_id,
-                                                   BM_QUERY_USAGE_LINK,
-                                                   nob_sv_from_cstr(""),
-                                                   nob_sv_from_cstr(""));
-    qctx.build_interface_active = false;
-    qctx.build_local_interface_active = false;
-    qctx.install_interface_active = true;
-    qctx.install_prefix = nob_sv_from_cstr("${_IMPORT_PREFIX}");
-    if (!cg_query_effective_link_items_cached(ctx, target_id, &qctx, &libs)) return false;
-
-    for (size_t i = 0; i < libs.count; ++i) {
+    for (size_t i = 0; i < arena_arr_len(pieces); ++i) {
         CG_Resolved_Target_Ref dep = {0};
-        String_View value = libs.items[i].value;
-        if (cg_resolve_link_item_ref(ctx, &qctx, libs.items[i], &dep)) {
+        String_View value = pieces[i];
+        if (value.count == 0) continue;
+        if (cg_resolve_target_ref(ctx, &qctx, value, &dep)) {
             String_View exported_name = {0};
             if (cg_export_target_in_span(exported_targets, dep.target_id)) {
                 if (!cg_target_exported_name(ctx, dep.target_id, export_namespace, &exported_name) ||
@@ -443,6 +431,48 @@ static bool cg_export_collect_link_libraries(CG_Context *ctx,
         if (!cg_collect_unique_path(ctx->scratch, out, value)) return false;
     }
     return true;
+}
+
+static bool cg_export_collect_interface_includes(CG_Context *ctx,
+                                                 BM_Export_Id export_id,
+                                                 BM_Install_Rule_Id rule_id,
+                                                 BM_Target_Id target_id,
+                                                 bool want_system,
+                                                 String_View **out) {
+    String_View install_dest = bm_query_install_rule_includes_destination(ctx->model, rule_id);
+    String_View property_name = want_system
+        ? nob_sv_from_cstr("INTERFACE_SYSTEM_INCLUDE_DIRECTORIES")
+        : nob_sv_from_cstr("INTERFACE_INCLUDE_DIRECTORIES");
+    (void)export_id;
+
+    if (!cg_export_collect_direct_property_values(ctx,
+                                                  target_id,
+                                                  BM_QUERY_USAGE_COMPILE,
+                                                  property_name,
+                                                  true,
+                                                  out)) {
+        return false;
+    }
+    if (!want_system && install_dest.count > 0) {
+        String_View expr = {0};
+        if (!cg_install_import_prefix_expr(ctx, install_dest, &expr)) return false;
+        if (!arena_arr_push(ctx->scratch, *out, expr)) return false;
+    }
+    return true;
+}
+
+static bool cg_export_collect_effective_values(CG_Context *ctx,
+                                               BM_Target_Id target_id,
+                                               BM_Query_Usage_Mode usage_mode,
+                                               String_View property_name,
+                                               bool rewrite_import_prefix,
+                                               String_View **out) {
+    return cg_export_collect_direct_property_values(ctx,
+                                                    target_id,
+                                                    usage_mode,
+                                                    property_name,
+                                                    rewrite_import_prefix,
+                                                    out);
 }
 
 static bool cg_export_emit_target_properties(CG_Context *ctx,
@@ -483,12 +513,37 @@ static bool cg_export_emit_target_properties(CG_Context *ctx,
 
     if (!cg_export_collect_interface_includes(ctx, export_id, rule_id, target_id, false, &include_items) ||
         !cg_export_collect_interface_includes(ctx, export_id, rule_id, target_id, true, &system_include_items) ||
-        !cg_export_collect_effective_values(ctx, target_id, BM_QUERY_USAGE_COMPILE, CG_EFFECTIVE_COMPILE_DEFINITIONS, &compile_defs) ||
-        !cg_export_collect_effective_values(ctx, target_id, BM_QUERY_USAGE_COMPILE, CG_EFFECTIVE_COMPILE_OPTIONS, &compile_opts) ||
-        !cg_export_collect_effective_values(ctx, target_id, BM_QUERY_USAGE_COMPILE, CG_EFFECTIVE_COMPILE_FEATURES, &compile_features) ||
-        !cg_export_collect_effective_values(ctx, target_id, BM_QUERY_USAGE_LINK, CG_EFFECTIVE_LINK_OPTIONS, &link_opts) ||
-        !cg_export_collect_effective_values(ctx, target_id, BM_QUERY_USAGE_LINK, CG_EFFECTIVE_LINK_DIRECTORIES, &link_dirs) ||
-        !cg_export_collect_link_libraries(ctx, export_id, target_id, export_namespace, &link_libs) ||
+        !cg_export_collect_effective_values(ctx,
+                                            target_id,
+                                            BM_QUERY_USAGE_COMPILE,
+                                            nob_sv_from_cstr("INTERFACE_COMPILE_DEFINITIONS"),
+                                            false,
+                                            &compile_defs) ||
+        !cg_export_collect_effective_values(ctx,
+                                            target_id,
+                                            BM_QUERY_USAGE_COMPILE,
+                                            nob_sv_from_cstr("INTERFACE_COMPILE_OPTIONS"),
+                                            false,
+                                            &compile_opts) ||
+        !cg_export_collect_effective_values(ctx,
+                                            target_id,
+                                            BM_QUERY_USAGE_COMPILE,
+                                            nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES"),
+                                            false,
+                                            &compile_features) ||
+        !cg_export_collect_effective_values(ctx,
+                                            target_id,
+                                            BM_QUERY_USAGE_LINK,
+                                            nob_sv_from_cstr("INTERFACE_LINK_OPTIONS"),
+                                            false,
+                                            &link_opts) ||
+        !cg_export_collect_effective_values(ctx,
+                                            target_id,
+                                            BM_QUERY_USAGE_LINK,
+                                            nob_sv_from_cstr("INTERFACE_LINK_DIRECTORIES"),
+                                            true,
+                                            &link_dirs) ||
+        !cg_export_collect_direct_link_libraries(ctx, export_id, target_id, export_namespace, &link_libs) ||
         !cg_collect_target_link_languages(ctx, target_id, &link_languages_joined) ||
         !cg_join_sv_list(ctx->scratch, include_items, &includes_joined) ||
         !cg_join_sv_list(ctx->scratch, system_include_items, &system_includes_joined) ||
@@ -514,53 +569,62 @@ static bool cg_export_emit_target_properties(CG_Context *ctx,
                                    link_opts_joined.count > 0 ||
                                    link_dirs_joined.count > 0 ||
                                    link_libs_joined.count > 0;
-        if (!has_interface_props) return true;
-        nob_sb_append_cstr(sb, "set_target_properties(");
-        if (!cg_cmake_append_escaped(sb, exported_name)) return false;
-        nob_sb_append_cstr(sb, " PROPERTIES\n");
-        if (includes_joined.count > 0) {
-            nob_sb_append_cstr(sb, "  INTERFACE_INCLUDE_DIRECTORIES \"");
-            if (!cg_cmake_append_escaped(sb, includes_joined)) return false;
-            nob_sb_append_cstr(sb, "\"\n");
+        if (has_interface_props) {
+            nob_sb_append_cstr(sb, "set_target_properties(");
+            if (!cg_cmake_append_escaped(sb, exported_name)) return false;
+            nob_sb_append_cstr(sb, " PROPERTIES\n");
+            if (includes_joined.count > 0) {
+                nob_sb_append_cstr(sb, "  INTERFACE_INCLUDE_DIRECTORIES \"");
+                if (!cg_cmake_append_escaped(sb, includes_joined)) return false;
+                nob_sb_append_cstr(sb, "\"\n");
+            }
+            if (system_includes_joined.count > 0) {
+                nob_sb_append_cstr(sb, "  INTERFACE_SYSTEM_INCLUDE_DIRECTORIES \"");
+                if (!cg_cmake_append_escaped(sb, system_includes_joined)) return false;
+                nob_sb_append_cstr(sb, "\"\n");
+            }
+            if (compile_defs_joined.count > 0) {
+                nob_sb_append_cstr(sb, "  INTERFACE_COMPILE_DEFINITIONS \"");
+                if (!cg_cmake_append_escaped(sb, compile_defs_joined)) return false;
+                nob_sb_append_cstr(sb, "\"\n");
+            }
+            if (compile_opts_joined.count > 0) {
+                nob_sb_append_cstr(sb, "  INTERFACE_COMPILE_OPTIONS \"");
+                if (!cg_cmake_append_escaped(sb, compile_opts_joined)) return false;
+                nob_sb_append_cstr(sb, "\"\n");
+            }
+            if (compile_features_joined.count > 0) {
+                nob_sb_append_cstr(sb, "  INTERFACE_COMPILE_FEATURES \"");
+                if (!cg_cmake_append_escaped(sb, compile_features_joined)) return false;
+                nob_sb_append_cstr(sb, "\"\n");
+            }
+            if (link_opts_joined.count > 0) {
+                nob_sb_append_cstr(sb, "  INTERFACE_LINK_OPTIONS \"");
+                if (!cg_cmake_append_escaped(sb, link_opts_joined)) return false;
+                nob_sb_append_cstr(sb, "\"\n");
+            }
+            if (link_dirs_joined.count > 0) {
+                nob_sb_append_cstr(sb, "  INTERFACE_LINK_DIRECTORIES \"");
+                if (!cg_cmake_append_escaped(sb, link_dirs_joined)) return false;
+                nob_sb_append_cstr(sb, "\"\n");
+            }
+            if (link_libs_joined.count > 0) {
+                nob_sb_append_cstr(sb, "  INTERFACE_LINK_LIBRARIES \"");
+                if (!cg_cmake_append_escaped(sb, link_libs_joined)) return false;
+                nob_sb_append_cstr(sb, "\"\n");
+            }
+            nob_sb_append_cstr(sb, ")\n\n");
         }
-        if (system_includes_joined.count > 0) {
-            nob_sb_append_cstr(sb, "  INTERFACE_SYSTEM_INCLUDE_DIRECTORIES \"");
-            if (!cg_cmake_append_escaped(sb, system_includes_joined)) return false;
-            nob_sb_append_cstr(sb, "\"\n");
+        if (info->kind == BM_TARGET_INTERFACE_LIBRARY) {
+            nob_sb_append_cstr(sb,
+                "if(CMAKE_VERSION VERSION_LESS 3.0.0)\n"
+                "  message(FATAL_ERROR \"This file relies on consumers using CMake 3.0.0 or greater.\")\n"
+                "endif()\n\n");
         }
-        if (compile_defs_joined.count > 0) {
-            nob_sb_append_cstr(sb, "  INTERFACE_COMPILE_DEFINITIONS \"");
-            if (!cg_cmake_append_escaped(sb, compile_defs_joined)) return false;
-            nob_sb_append_cstr(sb, "\"\n");
-        }
-        if (compile_opts_joined.count > 0) {
-            nob_sb_append_cstr(sb, "  INTERFACE_COMPILE_OPTIONS \"");
-            if (!cg_cmake_append_escaped(sb, compile_opts_joined)) return false;
-            nob_sb_append_cstr(sb, "\"\n");
-        }
-        if (compile_features_joined.count > 0) {
-            nob_sb_append_cstr(sb, "  INTERFACE_COMPILE_FEATURES \"");
-            if (!cg_cmake_append_escaped(sb, compile_features_joined)) return false;
-            nob_sb_append_cstr(sb, "\"\n");
-        }
-        if (link_opts_joined.count > 0) {
-            nob_sb_append_cstr(sb, "  INTERFACE_LINK_OPTIONS \"");
-            if (!cg_cmake_append_escaped(sb, link_opts_joined)) return false;
-            nob_sb_append_cstr(sb, "\"\n");
-        }
-        if (link_dirs_joined.count > 0) {
-            nob_sb_append_cstr(sb, "  INTERFACE_LINK_DIRECTORIES \"");
-            if (!cg_cmake_append_escaped(sb, link_dirs_joined)) return false;
-            nob_sb_append_cstr(sb, "\"\n");
-        }
-        if (link_libs_joined.count > 0) {
-            nob_sb_append_cstr(sb, "  INTERFACE_LINK_LIBRARIES \"");
-            if (!cg_cmake_append_escaped(sb, link_libs_joined)) return false;
-            nob_sb_append_cstr(sb, "\"\n");
-        }
-        nob_sb_append_cstr(sb, ")\n\n");
         return true;
     }
+
+    if (info->kind == BM_TARGET_INTERFACE_LIBRARY) return true;
 
     nob_sb_append_cstr(sb, "# Import target \"");
     if (!cg_cmake_append_escaped(sb, exported_name)) return false;
@@ -571,16 +635,28 @@ static bool cg_export_emit_target_properties(CG_Context *ctx,
     nob_sb_append_cstr(sb, "set_target_properties(");
     if (!cg_cmake_append_escaped(sb, exported_name)) return false;
     nob_sb_append_cstr(sb, " PROPERTIES\n");
-    if (link_languages_joined.count > 0) {
+    if (info->kind == BM_TARGET_STATIC_LIBRARY && link_languages_joined.count > 0) {
         nob_sb_append_cstr(sb, "  IMPORTED_LINK_INTERFACE_LANGUAGES_NOCONFIG \"");
         if (!cg_cmake_append_escaped(sb, link_languages_joined)) return false;
         nob_sb_append_cstr(sb, "\"\n");
+    }
+    if (info->kind == BM_TARGET_MODULE_LIBRARY) {
+        nob_sb_append_cstr(sb, "  IMPORTED_COMMON_LANGUAGE_RUNTIME_NOCONFIG \"\"\n");
     }
     if (runtime_rel.count > 0) {
         if (!cg_install_import_prefix_expr(ctx, runtime_rel, &runtime_expr)) return false;
         nob_sb_append_cstr(sb, "  IMPORTED_LOCATION_NOCONFIG \"");
         if (!cg_cmake_append_escaped(sb, runtime_expr)) return false;
         nob_sb_append_cstr(sb, "\"\n");
+    }
+    if (info->kind == BM_TARGET_SHARED_LIBRARY && runtime_rel.count > 0 && !cg_policy_is_windows(ctx)) {
+        String_View soname = cg_basename_to_arena(ctx->scratch, runtime_rel);
+        nob_sb_append_cstr(sb, "  IMPORTED_SONAME_NOCONFIG \"");
+        if (!cg_cmake_append_escaped(sb, soname)) return false;
+        nob_sb_append_cstr(sb, "\"\n");
+    }
+    if (info->kind == BM_TARGET_MODULE_LIBRARY && !cg_policy_is_windows(ctx)) {
+        nob_sb_append_cstr(sb, "  IMPORTED_NO_SONAME_NOCONFIG \"TRUE\"\n");
     }
     nob_sb_append_cstr(sb, "  )\n\n");
     nob_sb_append_cstr(sb, "list(APPEND _cmake_import_check_targets ");
@@ -611,18 +687,14 @@ static bool cg_build_export_file_contents(CG_Context *ctx,
                                           BM_Export_Id export_id,
                                           String_View config,
                                           String_View *out) {
-    bool use_noconfig = false;
     if (!ctx || !out) return false;
 
-    use_noconfig = cg_export_has_non_interface_targets(ctx, export_id);
-    CG_Install_Export_Emit_Mode mode = use_noconfig
-        ? CG_INSTALL_EXPORT_EMIT_MAIN
-        : CG_INSTALL_EXPORT_EMIT_MAIN;
+    CG_Install_Export_Emit_Mode mode = CG_INSTALL_EXPORT_EMIT_MAIN;
     return cg_build_cmake_targets_file_contents(ctx,
                                                 export_id,
                                                 config,
                                                 true,
-                                                use_noconfig,
+                                                true,
                                                 cg_export_emit_target_properties,
                                                 &mode,
                                                 out);

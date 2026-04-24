@@ -1085,6 +1085,11 @@ bool bm_query_target_modeled_property_value(const Build_Model *model,
         *out = target->runtime_output_directory;
         return true;
     }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("EXPORT_NAME"))) {
+        return bm_query_append_joined_raw_record(scratch,
+                                                 out,
+                                                 bm_find_raw_property(target->raw_properties, property_name));
+    }
     for (size_t i = 0; i < arena_arr_len(target->artifact_properties); ++i) {
         if (bm_sv_eq_ci_query(property_name, target->artifact_properties[i].name)) {
             *out = target->artifact_properties[i].value;

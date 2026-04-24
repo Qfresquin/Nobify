@@ -143,9 +143,12 @@ bool cg_emit_cmake_imported_target_declaration(BM_Target_Kind kind,
 
     if (kind == BM_TARGET_EXECUTABLE) {
         nob_sb_append_cstr(sb, "add_executable(");
-    } else {
-        nob_sb_append_cstr(sb, "add_library(");
+        if (!cg_cmake_append_escaped(sb, exported_name)) return false;
+        nob_sb_append_cstr(sb, " IMPORTED)\n");
+        return true;
     }
+
+    nob_sb_append_cstr(sb, "add_library(");
     if (!cg_cmake_append_escaped(sb, exported_name)) return false;
     nob_sb_append_cstr(sb, " ");
     nob_sb_append_cstr(sb, cmake_kind);

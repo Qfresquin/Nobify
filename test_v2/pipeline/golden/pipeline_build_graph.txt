@@ -1,5 +1,5 @@
 MODULE pipeline_build_graph
-CASES 2
+CASES 4
 
 === CASE build_graph_generated_source_and_hooks ===
 EVAL_OK 1
@@ -15,10 +15,12 @@ STEP[3] kind=TARGET_PRE_LINK owner_target='app' outputs=0 byproducts=1 target_de
 STEP[4] kind=TARGET_POST_BUILD owner_target='app' outputs=0 byproducts=1 target_deps=0 producer_deps=0 file_deps=0 commands=1
 REPLAY_ACTIONS count=0
 TESTS count=0
+INSTALL_RULES count=1
+INSTALL[0] kind=TARGET owner_dir=0 target='helper' item='helper' destination='lib' archive_destination='' library_destination='' runtime_destination='' includes_destination='' public_header_destination='' component='Unspecified' archive_component='' library_component='' runtime_component='' includes_component='' public_header_component='' rename='' export='DemoTargets'
 EXPORTS count=3
-EXPORT[0] kind=BUILD_TREE source=TARGETS name='HelperTargets' namespace='Demo::' output='graph_build/exports/HelperTargets.cmake' registry_prefix='' enabled=1 targets=1
-EXPORT[1] kind=BUILD_TREE source=EXPORT_SET name='DemoTargets' namespace='Demo::' output='graph_build/exports/DemoTargets.cmake' registry_prefix='' enabled=1 targets=1
-EXPORT[2] kind=PACKAGE_REGISTRY source=PACKAGE name='DemoPkg' namespace='' output='' registry_prefix='graph_build' enabled=1 targets=0
+EXPORT[0] kind=BUILD_TREE source=TARGETS owner_dir=0 name='HelperTargets' namespace='Demo::' destination='' file_name='HelperTargets.cmake' component='' output='graph_build/exports/HelperTargets.cmake' package='' registry_prefix='' cxx_modules_directory='' append=0 enabled=1 targets=1 target_names='helper' exported_names='helper'
+EXPORT[1] kind=BUILD_TREE source=EXPORT_SET owner_dir=0 name='DemoTargets' namespace='Demo::' destination='' file_name='DemoTargets.cmake' component='' output='graph_build/exports/DemoTargets.cmake' package='' registry_prefix='' cxx_modules_directory='' append=0 enabled=1 targets=1 target_names='helper' exported_names='helper'
+EXPORT[2] kind=PACKAGE_REGISTRY source=PACKAGE owner_dir=0 name='DemoPkg' namespace='' destination='' file_name='DemoPkg' component='' output='' package='DemoPkg' registry_prefix='graph_build' cxx_modules_directory='' append=0 enabled=1 targets=0 target_names='' exported_names=''
 CPACK_PACKAGES count=0
 TARGET name='helper' source_count=1
 SOURCE[0] generated=0 producer=INVALID effective='graph_src/helper.c'
@@ -26,6 +28,65 @@ TARGET name='prepare' source_count=0
 TARGET name='app' source_count=2
 SOURCE[0] generated=0 producer=INVALID effective='graph_src/main.c'
 SOURCE[1] generated=1 producer=0 effective='graph_build/generated.c'
+=== END CASE ===
+
+=== CASE install_graph_supported_target_kinds ===
+EVAL_OK 1
+BUILDER_OK 1
+FREEZE_OK 1
+DIAG errors=1 warnings=0
+EVENTS count=56
+BUILD_STEPS count=0
+REPLAY_ACTIONS count=0
+TESTS count=0
+INSTALL_RULES count=8
+INSTALL[0] kind=TARGET owner_dir=0 target='app' item='app' destination='' archive_destination='' library_destination='' runtime_destination='bin' includes_destination='' public_header_destination='' component='Unspecified' archive_component='' library_component='' runtime_component='AppRuntime' includes_component='' public_header_component='' rename='' export=''
+INSTALL[1] kind=TARGET owner_dir=0 target='core_static' item='core_static' destination='' archive_destination='lib/static' library_destination='' runtime_destination='' includes_destination='' public_header_destination='include/static' component='Unspecified' archive_component='StaticDevelopment' library_component='' runtime_component='' includes_component='' public_header_component='StaticHeaders' rename='' export='DemoTargets'
+INSTALL[2] kind=TARGET owner_dir=0 target='core_shared' item='core_shared' destination='' archive_destination='lib/import' library_destination='lib/shared' runtime_destination='bin/shared' includes_destination='' public_header_destination='' component='Unspecified' archive_component='SharedImport' library_component='SharedRuntime' runtime_component='SharedRuntime' includes_component='' public_header_component='' rename='' export='DemoTargets'
+INSTALL[3] kind=TARGET owner_dir=0 target='plugin' item='plugin' destination='' archive_destination='' library_destination='lib/plugins' runtime_destination='' includes_destination='' public_header_destination='' component='Unspecified' archive_component='' library_component='PluginRuntime' runtime_component='' includes_component='' public_header_component='' rename='' export='DemoTargets'
+INSTALL[4] kind=TARGET owner_dir=0 target='iface' item='iface' destination='share/meta' archive_destination='' library_destination='' runtime_destination='' includes_destination='include/iface' public_header_destination='' component='InterfaceMeta' archive_component='' library_component='' runtime_component='' includes_component='InterfaceHeaders' public_header_component='' rename='' export='DemoTargets'
+INSTALL[5] kind=FILE owner_dir=0 target='' item='cmake/DemoConfig.cmake' destination='lib/cmake/demo' archive_destination='' library_destination='' runtime_destination='' includes_destination='' public_header_destination='' component='DemoConfig' archive_component='' library_component='' runtime_component='' includes_component='' public_header_component='' rename='DemoPkgConfig.cmake' export=''
+INSTALL[6] kind=PROGRAM owner_dir=0 target='' item='scripts/tool.sh' destination='bin/tools' archive_destination='' library_destination='' runtime_destination='' includes_destination='' public_header_destination='' component='RuntimeTools' archive_component='' library_component='' runtime_component='' includes_component='' public_header_component='' rename='demo-tool' export=''
+INSTALL[7] kind=DIRECTORY owner_dir=0 target='' item='assets' destination='share/root' archive_destination='' library_destination='' runtime_destination='' includes_destination='' public_header_destination='' component='RuntimeTree' archive_component='' library_component='' runtime_component='' includes_component='' public_header_component='' rename='' export=''
+EXPORTS count=1
+EXPORT[0] kind=INSTALL source=INSTALL_EXPORT owner_dir=0 name='DemoTargets' namespace='Demo::' destination='lib/cmake/demo' file_name='DemoTargets.cmake' component='DemoConfig' output='lib/cmake/demo/DemoTargets.cmake' package='' registry_prefix='' cxx_modules_directory='' append=0 enabled=1 targets=4 target_names='core_static,core_shared,plugin,iface' exported_names='core_static,core_shared,plugin,iface'
+CPACK_PACKAGES count=0
+TARGET name='app' source_count=1
+SOURCE[0] generated=0 producer=INVALID effective='graph_src/main.c'
+TARGET name='core_static' source_count=1
+SOURCE[0] generated=0 producer=INVALID effective='graph_src/core_static.c'
+TARGET name='core_shared' source_count=1
+SOURCE[0] generated=0 producer=INVALID effective='graph_src/core_shared.c'
+TARGET name='plugin' source_count=1
+SOURCE[0] generated=0 producer=INVALID effective='graph_src/plugin.c'
+TARGET name='iface' source_count=0
+=== END CASE ===
+
+=== CASE export_round_trip_graph_snapshot ===
+EVAL_OK 1
+BUILDER_OK 1
+FREEZE_OK 1
+DIAG errors=1 warnings=0
+EVENTS count=68
+BUILD_STEPS count=0
+REPLAY_ACTIONS count=3
+REPLAY[0] kind=FILESYSTEM opcode=fs_mkdir phase=CONFIGURE owner_dir=0 inputs=0 outputs=1 argv=0 env=0 working_dir='graph_build'
+REPLAY[1] kind=FILESYSTEM opcode=fs_write_text phase=CONFIGURE owner_dir=0 inputs=0 outputs=1 argv=2 env=0 working_dir='graph_build'
+REPLAY[2] kind=FILESYSTEM opcode=fs_write_text phase=CONFIGURE owner_dir=0 inputs=0 outputs=1 argv=2 env=0 working_dir='graph_build'
+TESTS count=0
+INSTALL_RULES count=2
+INSTALL[0] kind=TARGET owner_dir=1 target='extra' item='extra' destination='' archive_destination='lib/nested' library_destination='' runtime_destination='' includes_destination='' public_header_destination='' component='Unspecified' archive_component='Development' library_component='' runtime_component='' includes_component='' public_header_component='' rename='' export='RoundTripTargets'
+INSTALL[1] kind=TARGET owner_dir=0 target='core' item='core' destination='' archive_destination='lib' library_destination='' runtime_destination='' includes_destination='' public_header_destination='' component='Unspecified' archive_component='Development' library_component='' runtime_component='' includes_component='' public_header_component='' rename='' export='RoundTripTargets'
+EXPORTS count=4
+EXPORT[0] kind=INSTALL source=INSTALL_EXPORT owner_dir=0 name='RoundTripTargets' namespace='Round::' destination='lib/cmake/round' file_name='RoundTripTargets.cmake' component='Development' output='lib/cmake/round/RoundTripTargets.cmake' package='' registry_prefix='' cxx_modules_directory='' append=0 enabled=1 targets=2 target_names='extra,core' exported_names='helper,api'
+EXPORT[1] kind=BUILD_TREE source=TARGETS owner_dir=0 name='StandaloneTargets' namespace='Round::' destination='' file_name='StandaloneTargets.cmake' component='' output='graph_build/exports/StandaloneTargets.cmake' package='' registry_prefix='' cxx_modules_directory='' append=0 enabled=1 targets=2 target_names='core,extra' exported_names='api,helper'
+EXPORT[2] kind=BUILD_TREE source=EXPORT_SET owner_dir=0 name='RoundTripTargets' namespace='Round::' destination='' file_name='BuildSetTargets.cmake' component='' output='graph_build/exports/BuildSetTargets.cmake' package='' registry_prefix='' cxx_modules_directory='' append=0 enabled=1 targets=1 target_names='core' exported_names='api'
+EXPORT[3] kind=PACKAGE_REGISTRY source=PACKAGE owner_dir=0 name='RoundTripPkg' namespace='' destination='' file_name='RoundTripPkg' component='' output='' package='RoundTripPkg' registry_prefix='graph_build' cxx_modules_directory='' append=0 enabled=1 targets=0 target_names='' exported_names=''
+CPACK_PACKAGES count=0
+TARGET name='core' source_count=1
+SOURCE[0] generated=0 producer=INVALID effective='graph_src/core.c'
+TARGET name='extra' source_count=1
+SOURCE[0] generated=0 producer=INVALID effective='graph_src/nested/extra.c'
 === END CASE ===
 
 === CASE cpack_package_plan_snapshot ===
@@ -37,6 +98,8 @@ EVENTS count=32
 BUILD_STEPS count=0
 REPLAY_ACTIONS count=0
 TESTS count=0
+INSTALL_RULES count=1
+INSTALL[0] kind=TARGET owner_dir=0 target='core' item='core' destination='lib' archive_destination='' library_destination='' runtime_destination='' includes_destination='' public_header_destination='' component='Unspecified' archive_component='' library_component='' runtime_component='' includes_component='' public_header_component='' rename='' export=''
 EXPORTS count=0
 CPACK_PACKAGES count=1
 CPACK_PACKAGE[0] name='PackDemo' version='1.0.0' file='pack-demo' output='graph_build/packages/out' include_toplevel=0 archive_component_install=0 generators=2 components=2

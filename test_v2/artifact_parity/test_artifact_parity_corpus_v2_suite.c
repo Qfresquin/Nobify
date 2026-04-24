@@ -43,6 +43,48 @@ static bool corpus_extract_archive_from_repo(const char *repo_relpath, const cha
     return nob_cmd_run_sync_and_reset(&cmd);
 }
 
+static bool corpus_append_text_file(const char *path, const char *text) {
+    FILE *file = NULL;
+    size_t expected = 0;
+    size_t written = 0;
+
+    if (!path || !text) return false;
+    expected = strlen(text);
+    file = fopen(path, "a");
+    if (!file) return false;
+    written = fwrite(text, 1, expected, file);
+    if (fclose(file) != 0) return false;
+    return written == expected;
+}
+
+static bool corpus_append_expected_imported_target_assertions(
+    const Artifact_Parity_Corpus_Project *project,
+    const char *consumer_dir) {
+    char cmake_lists_path[_TINYDIR_PATH_MAX] = {0};
+    Nob_String_Builder sb = {0};
+    bool ok = false;
+
+    if (!project || !consumer_dir) return false;
+    if (project->expected_imported_targets.count == 0) return true;
+    if (!test_fs_join_path(consumer_dir, "CMakeLists.txt", cmake_lists_path)) return false;
+
+    nob_sb_append_cstr(&sb,
+                       "\n# Assert that the package consumer actually received the imported targets declared by the corpus manifest.\n");
+    for (size_t i = 0; i < project->expected_imported_targets.count; ++i) {
+        const char *target_name = project->expected_imported_targets.items[i];
+        if (!target_name || target_name[0] == '\0') continue;
+        nob_sb_append_cstr(&sb, nob_temp_sprintf("if(NOT TARGET %s)\n", target_name));
+        nob_sb_append_cstr(&sb,
+                           nob_temp_sprintf("  message(FATAL_ERROR \"Expected imported target missing after find_package(): %s\")\n",
+                                            target_name));
+        nob_sb_append_cstr(&sb, "endif()\n");
+    }
+
+    ok = corpus_append_text_file(cmake_lists_path, sb.items ? sb.items : "");
+    nob_sb_free(sb);
+    return ok;
+}
+
 static bool corpus_capture_tree_manifest(Arena *arena,
                                          const char *base_dir,
                                          const char *relpath,
@@ -183,6 +225,8 @@ static bool corpus_run_project(const Artifact_Parity_Corpus_Project *project, co
     if (!corpus_extract_archive_from_repo(archive_relpath, snapshot_dst)) return false;
     if (out_stage) *out_stage = "copy_consumer_fixture";
     if (!corpus_copy_tree_from_repo(consumer_relpath, consumer_dst)) return false;
+    if (out_stage) *out_stage = "append_consumer_target_assertions";
+    if (!corpus_append_expected_imported_target_assertions(project, consumer_dst)) return false;
 
     if (out_stage) *out_stage = "cmake_configure";
     if (!artifact_parity_run_cmake_configure(&s_corpus_cmake,

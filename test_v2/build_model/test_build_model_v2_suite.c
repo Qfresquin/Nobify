@@ -5079,14 +5079,269 @@ TEST(build_model_install_queries_materialize_effective_default_components) {
     TEST_PASS();
 }
 
+TEST(build_model_install_queries_cover_supported_target_kinds_and_rule_families) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_Directory_Id root_dir_id = BM_DIRECTORY_ID_INVALID;
+    BM_Directory_Id sub_dir_id = BM_DIRECTORY_ID_INVALID;
+    BM_Target_Id app_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id core_static_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id core_shared_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id plugin_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id iface_id = BM_TARGET_ID_INVALID;
+    BM_Export_Id demo_export_id = BM_EXPORT_ID_INVALID;
+    BM_Export_Id plugin_export_id = BM_EXPORT_ID_INVALID;
+    BM_Install_Rule_Id_Span static_header_rules = {0};
+    BM_Install_Rule_Id_Span shared_runtime_rules = {0};
+    BM_Install_Rule_Id_Span interface_header_rules = {0};
+
+    ASSERT(build_model_write_text_file("install_graph_src/src/app.c", "int main(void) { return 0; }\n"));
+    ASSERT(build_model_write_text_file("install_graph_src/src/core_static.c", "int core_static_value(void) { return 1; }\n"));
+    ASSERT(build_model_write_text_file("install_graph_src/src/core_shared.c", "int core_shared_value(void) { return 2; }\n"));
+    ASSERT(build_model_write_text_file("install_graph_src/include/core_static.h", "int core_static_value(void);\n"));
+    ASSERT(build_model_write_text_file("install_graph_src/cmake/DemoConfig.cmake",
+                                       "include(\"${CMAKE_CURRENT_LIST_DIR}/DemoTargets.cmake\")\n"));
+    ASSERT(build_model_write_text_file("install_graph_src/scripts/tool.sh", "#!/bin/sh\nexit 0\n"));
+    ASSERT(build_model_write_text_file("install_graph_src/assets/readme.txt", "root asset\n"));
+    ASSERT(build_model_write_text_file("install_graph_src/sub/plugin.c", "int plugin_value(void) { return 3; }\n"));
+    ASSERT(build_model_write_text_file("install_graph_src/sub/include/iface.h", "#define IFACE_VALUE 1\n"));
+    ASSERT(build_model_write_text_file(
+        "install_graph_src/sub/CMakeLists.txt",
+        "add_library(plugin MODULE plugin.c)\n"
+        "install(TARGETS plugin EXPORT PluginTargets LIBRARY DESTINATION lib/plugins COMPONENT PluginRuntime)\n"
+        "add_library(iface INTERFACE)\n"
+        "target_include_directories(iface INTERFACE\n"
+        "  \"$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>\"\n"
+        "  \"$<INSTALL_INTERFACE:include/subiface>\")\n"
+        "install(TARGETS iface EXPORT PluginTargets DESTINATION share/meta COMPONENT InterfaceMeta\n"
+        "  INCLUDES DESTINATION include/subiface COMPONENT InterfaceHeaders)\n"
+        "install(EXPORT PluginTargets NAMESPACE Demo:: DESTINATION lib/cmake/plugin FILE PluginTargets.cmake COMPONENT PluginConfig)\n"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "install_graph_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("install_graph_src");
+    config.binary_dir = nob_sv_from_cstr("install_graph_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "project(Test LANGUAGES C)\n"
+        "add_executable(app src/app.c)\n"
+        "add_library(core_static STATIC src/core_static.c)\n"
+        "set_target_properties(core_static PROPERTIES PUBLIC_HEADER include/core_static.h)\n"
+        "add_library(core_shared SHARED src/core_shared.c)\n"
+        "install(TARGETS app RUNTIME DESTINATION bin/apps COMPONENT AppRuntime)\n"
+        "install(TARGETS core_static EXPORT DemoTargets\n"
+        "  ARCHIVE DESTINATION lib/static COMPONENT StaticDevelopment\n"
+        "  PUBLIC_HEADER DESTINATION include/static COMPONENT StaticHeaders)\n"
+        "install(TARGETS core_shared EXPORT DemoTargets\n"
+        "  LIBRARY DESTINATION lib/shared COMPONENT SharedRuntime\n"
+        "  RUNTIME DESTINATION bin/shared COMPONENT SharedRuntime\n"
+        "  ARCHIVE DESTINATION lib/import COMPONENT SharedImport\n"
+        "  NAMELINK_COMPONENT SharedDev)\n"
+        "install(FILES cmake/DemoConfig.cmake DESTINATION lib/cmake/demo RENAME DemoPkgConfig.cmake COMPONENT DemoConfig)\n"
+        "install(PROGRAMS scripts/tool.sh DESTINATION bin/tools RENAME demo-tool COMPONENT RuntimeTools)\n"
+        "install(DIRECTORY assets DESTINATION share/root COMPONENT RuntimeTree)\n"
+        "install(EXPORT DemoTargets NAMESPACE Demo:: DESTINATION lib/cmake/demo FILE DemoTargets.cmake COMPONENT DemoConfig)\n"
+        "add_subdirectory(sub)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    root_dir_id = build_model_find_directory_id(model,
+                                                nob_sv_from_cstr("install_graph_src"),
+                                                nob_sv_from_cstr("install_graph_build"));
+    sub_dir_id = build_model_find_directory_id(model,
+                                               nob_sv_from_cstr("install_graph_src/sub"),
+                                               nob_sv_from_cstr("install_graph_build/sub"));
+    app_id = bm_query_target_by_name(model, nob_sv_from_cstr("app"));
+    core_static_id = bm_query_target_by_name(model, nob_sv_from_cstr("core_static"));
+    core_shared_id = bm_query_target_by_name(model, nob_sv_from_cstr("core_shared"));
+    plugin_id = bm_query_target_by_name(model, nob_sv_from_cstr("plugin"));
+    iface_id = bm_query_target_by_name(model, nob_sv_from_cstr("iface"));
+
+    ASSERT(root_dir_id != BM_DIRECTORY_ID_INVALID);
+    ASSERT(sub_dir_id != BM_DIRECTORY_ID_INVALID);
+    ASSERT(app_id != BM_TARGET_ID_INVALID);
+    ASSERT(core_static_id != BM_TARGET_ID_INVALID);
+    ASSERT(core_shared_id != BM_TARGET_ID_INVALID);
+    ASSERT(plugin_id != BM_TARGET_ID_INVALID);
+    ASSERT(iface_id != BM_TARGET_ID_INVALID);
+
+    for (size_t export_index = 0; export_index < bm_query_export_count(model); ++export_index) {
+        BM_Export_Id export_id = (BM_Export_Id)export_index;
+        String_View name = bm_query_export_name(model, export_id);
+        if (nob_sv_eq(name, nob_sv_from_cstr("DemoTargets"))) {
+            demo_export_id = export_id;
+        } else if (nob_sv_eq(name, nob_sv_from_cstr("PluginTargets"))) {
+            plugin_export_id = export_id;
+        }
+    }
+
+    ASSERT(demo_export_id != BM_EXPORT_ID_INVALID);
+    ASSERT(plugin_export_id != BM_EXPORT_ID_INVALID);
+    ASSERT(bm_query_install_rule_count(model) == 8);
+
+    ASSERT(bm_query_install_rule_kind(model, (BM_Install_Rule_Id)0) == BM_INSTALL_RULE_TARGET);
+    ASSERT(bm_query_install_rule_owner_directory(model, (BM_Install_Rule_Id)0) == root_dir_id);
+    ASSERT(nob_sv_eq(bm_query_install_rule_item_raw(model, (BM_Install_Rule_Id)0), nob_sv_from_cstr("app")));
+    ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)0) == app_id);
+    ASSERT(bm_query_target_kind(model, app_id) == BM_TARGET_EXECUTABLE);
+    ASSERT(nob_sv_eq(bm_query_install_rule_runtime_destination(model, (BM_Install_Rule_Id)0),
+                     nob_sv_from_cstr("bin/apps")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_runtime_component(model, (BM_Install_Rule_Id)0),
+                     nob_sv_from_cstr("AppRuntime")));
+
+    ASSERT(bm_query_install_rule_kind(model, (BM_Install_Rule_Id)1) == BM_INSTALL_RULE_TARGET);
+    ASSERT(bm_query_install_rule_owner_directory(model, (BM_Install_Rule_Id)1) == root_dir_id);
+    ASSERT(nob_sv_eq(bm_query_install_rule_item_raw(model, (BM_Install_Rule_Id)1),
+                     nob_sv_from_cstr("core_static")));
+    ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)1) == core_static_id);
+    ASSERT(bm_query_target_kind(model, core_static_id) == BM_TARGET_STATIC_LIBRARY);
+    ASSERT(nob_sv_eq(bm_query_install_rule_export_name(model, (BM_Install_Rule_Id)1),
+                     nob_sv_from_cstr("DemoTargets")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_archive_destination(model, (BM_Install_Rule_Id)1),
+                     nob_sv_from_cstr("lib/static")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_archive_component(model, (BM_Install_Rule_Id)1),
+                     nob_sv_from_cstr("StaticDevelopment")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_public_header_destination(model, (BM_Install_Rule_Id)1),
+                     nob_sv_from_cstr("include/static")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_public_header_component(model, (BM_Install_Rule_Id)1),
+                     nob_sv_from_cstr("StaticHeaders")));
+
+    ASSERT(bm_query_install_rule_kind(model, (BM_Install_Rule_Id)2) == BM_INSTALL_RULE_TARGET);
+    ASSERT(bm_query_install_rule_owner_directory(model, (BM_Install_Rule_Id)2) == root_dir_id);
+    ASSERT(nob_sv_eq(bm_query_install_rule_item_raw(model, (BM_Install_Rule_Id)2),
+                     nob_sv_from_cstr("core_shared")));
+    ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)2) == core_shared_id);
+    ASSERT(bm_query_target_kind(model, core_shared_id) == BM_TARGET_SHARED_LIBRARY);
+    ASSERT(nob_sv_eq(bm_query_install_rule_export_name(model, (BM_Install_Rule_Id)2),
+                     nob_sv_from_cstr("DemoTargets")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_archive_destination(model, (BM_Install_Rule_Id)2),
+                     nob_sv_from_cstr("lib/import")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_library_destination(model, (BM_Install_Rule_Id)2),
+                     nob_sv_from_cstr("lib/shared")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_runtime_destination(model, (BM_Install_Rule_Id)2),
+                     nob_sv_from_cstr("bin/shared")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_archive_component(model, (BM_Install_Rule_Id)2),
+                     nob_sv_from_cstr("SharedImport")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_library_component(model, (BM_Install_Rule_Id)2),
+                     nob_sv_from_cstr("SharedRuntime")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_runtime_component(model, (BM_Install_Rule_Id)2),
+                     nob_sv_from_cstr("SharedRuntime")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_namelink_component(model, (BM_Install_Rule_Id)2),
+                     nob_sv_from_cstr("SharedDev")));
+
+    ASSERT(bm_query_install_rule_kind(model, (BM_Install_Rule_Id)3) == BM_INSTALL_RULE_FILE);
+    ASSERT(bm_query_install_rule_owner_directory(model, (BM_Install_Rule_Id)3) == root_dir_id);
+    ASSERT(nob_sv_eq(bm_query_install_rule_item_raw(model, (BM_Install_Rule_Id)3),
+                     nob_sv_from_cstr("cmake/DemoConfig.cmake")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_destination(model, (BM_Install_Rule_Id)3),
+                     nob_sv_from_cstr("lib/cmake/demo")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_rename(model, (BM_Install_Rule_Id)3),
+                     nob_sv_from_cstr("DemoPkgConfig.cmake")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_component(model, (BM_Install_Rule_Id)3),
+                     nob_sv_from_cstr("DemoConfig")));
+    ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)3) == BM_TARGET_ID_INVALID);
+
+    ASSERT(bm_query_install_rule_kind(model, (BM_Install_Rule_Id)4) == BM_INSTALL_RULE_PROGRAM);
+    ASSERT(bm_query_install_rule_owner_directory(model, (BM_Install_Rule_Id)4) == root_dir_id);
+    ASSERT(nob_sv_eq(bm_query_install_rule_item_raw(model, (BM_Install_Rule_Id)4),
+                     nob_sv_from_cstr("scripts/tool.sh")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_destination(model, (BM_Install_Rule_Id)4),
+                     nob_sv_from_cstr("bin/tools")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_rename(model, (BM_Install_Rule_Id)4),
+                     nob_sv_from_cstr("demo-tool")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_component(model, (BM_Install_Rule_Id)4),
+                     nob_sv_from_cstr("RuntimeTools")));
+
+    ASSERT(bm_query_install_rule_kind(model, (BM_Install_Rule_Id)5) == BM_INSTALL_RULE_DIRECTORY);
+    ASSERT(bm_query_install_rule_owner_directory(model, (BM_Install_Rule_Id)5) == root_dir_id);
+    ASSERT(nob_sv_eq(bm_query_install_rule_item_raw(model, (BM_Install_Rule_Id)5),
+                     nob_sv_from_cstr("assets")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_destination(model, (BM_Install_Rule_Id)5),
+                     nob_sv_from_cstr("share/root")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_component(model, (BM_Install_Rule_Id)5),
+                     nob_sv_from_cstr("RuntimeTree")));
+
+    ASSERT(bm_query_install_rule_kind(model, (BM_Install_Rule_Id)6) == BM_INSTALL_RULE_TARGET);
+    ASSERT(bm_query_install_rule_owner_directory(model, (BM_Install_Rule_Id)6) == sub_dir_id);
+    ASSERT(nob_sv_eq(bm_query_install_rule_item_raw(model, (BM_Install_Rule_Id)6),
+                     nob_sv_from_cstr("plugin")));
+    ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)6) == plugin_id);
+    ASSERT(bm_query_target_kind(model, plugin_id) == BM_TARGET_MODULE_LIBRARY);
+    ASSERT(nob_sv_eq(bm_query_install_rule_export_name(model, (BM_Install_Rule_Id)6),
+                     nob_sv_from_cstr("PluginTargets")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_library_destination(model, (BM_Install_Rule_Id)6),
+                     nob_sv_from_cstr("lib/plugins")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_library_component(model, (BM_Install_Rule_Id)6),
+                     nob_sv_from_cstr("PluginRuntime")));
+
+    ASSERT(bm_query_install_rule_kind(model, (BM_Install_Rule_Id)7) == BM_INSTALL_RULE_TARGET);
+    ASSERT(bm_query_install_rule_owner_directory(model, (BM_Install_Rule_Id)7) == sub_dir_id);
+    ASSERT(nob_sv_eq(bm_query_install_rule_item_raw(model, (BM_Install_Rule_Id)7),
+                     nob_sv_from_cstr("iface")));
+    ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)7) == iface_id);
+    ASSERT(bm_query_target_kind(model, iface_id) == BM_TARGET_INTERFACE_LIBRARY);
+    ASSERT(nob_sv_eq(bm_query_install_rule_export_name(model, (BM_Install_Rule_Id)7),
+                     nob_sv_from_cstr("PluginTargets")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_destination(model, (BM_Install_Rule_Id)7),
+                     nob_sv_from_cstr("share/meta")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_component(model, (BM_Install_Rule_Id)7),
+                     nob_sv_from_cstr("InterfaceMeta")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_includes_destination(model, (BM_Install_Rule_Id)7),
+                     nob_sv_from_cstr("include/subiface")));
+    ASSERT(nob_sv_eq(bm_query_install_rule_includes_component(model, (BM_Install_Rule_Id)7),
+                     nob_sv_from_cstr("InterfaceHeaders")));
+
+    static_header_rules = bm_query_install_rules_for_component(model,
+                                                               nob_sv_from_cstr("StaticHeaders"),
+                                                               fixture.scratch_arena);
+    shared_runtime_rules = bm_query_install_rules_for_component(model,
+                                                                nob_sv_from_cstr("SharedRuntime"),
+                                                                fixture.scratch_arena);
+    interface_header_rules = bm_query_install_rules_for_component(model,
+                                                                  nob_sv_from_cstr("InterfaceHeaders"),
+                                                                  fixture.scratch_arena);
+    ASSERT(static_header_rules.count == 1);
+    ASSERT(static_header_rules.items[0] == (BM_Install_Rule_Id)1);
+    ASSERT(shared_runtime_rules.count == 1);
+    ASSERT(shared_runtime_rules.items[0] == (BM_Install_Rule_Id)2);
+    ASSERT(interface_header_rules.count == 1);
+    ASSERT(interface_header_rules.items[0] == (BM_Install_Rule_Id)7);
+
+    ASSERT(bm_query_install_rule_for_export_target(model, demo_export_id, core_static_id) == (BM_Install_Rule_Id)1);
+    ASSERT(bm_query_install_rule_for_export_target(model, demo_export_id, core_shared_id) == (BM_Install_Rule_Id)2);
+    ASSERT(bm_query_install_rule_for_export_target(model, plugin_export_id, plugin_id) == (BM_Install_Rule_Id)6);
+    ASSERT(bm_query_install_rule_for_export_target(model, plugin_export_id, iface_id) == (BM_Install_Rule_Id)7);
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 TEST(build_model_standalone_export_queries_cover_build_tree_and_package_registry) {
     Test_Semantic_Pipeline_Config config = {0};
     Test_Semantic_Pipeline_Fixture fixture = {0};
     const Build_Model *model = NULL;
+    BM_Directory_Id root_dir_id = BM_DIRECTORY_ID_INVALID;
+    BM_Directory_Id sub_dir_id = BM_DIRECTORY_ID_INVALID;
     BM_Target_Id core_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id helper_id = BM_TARGET_ID_INVALID;
+    BM_Export_Id install_export_id = BM_EXPORT_ID_INVALID;
+    BM_Export_Id targets_export_id = BM_EXPORT_ID_INVALID;
+    BM_Export_Id export_set_id = BM_EXPORT_ID_INVALID;
+    BM_Export_Id package_export_id = BM_EXPORT_ID_INVALID;
     BM_Target_Id_Span export_targets = {0};
+    BM_Export_Id_Span component_exports = {0};
+    String_View export_name = {0};
 
     ASSERT(build_model_write_text_file("standalone_export_src/core.c", "int core_value(void) { return 41; }\n"));
+    ASSERT(build_model_write_text_file("standalone_export_src/sub/helper.c", "int helper_value(void) { return 1; }\n"));
+    ASSERT(build_model_write_text_file("standalone_export_src/sub/CMakeLists.txt",
+                                       "add_library(helper STATIC helper.c)\n"
+                                       "install(TARGETS helper EXPORT DemoTargets ARCHIVE DESTINATION lib/sub COMPONENT Development)\n"));
 
     test_semantic_pipeline_config_init(&config);
     config.current_file = "standalone_export_src/CMakeLists.txt";
@@ -5097,8 +5352,11 @@ TEST(build_model_standalone_export_queries_cover_build_tree_and_package_registry
         &fixture,
         "project(Test LANGUAGES C)\n"
         "add_library(core STATIC core.c)\n"
-        "install(TARGETS core EXPORT DemoTargets DESTINATION lib)\n"
-        "export(TARGETS core FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/StandaloneTargets.cmake NAMESPACE Demo::)\n"
+        "set_target_properties(core PROPERTIES EXPORT_NAME api)\n"
+        "add_subdirectory(sub)\n"
+        "install(TARGETS core EXPORT DemoTargets ARCHIVE DESTINATION lib COMPONENT Development)\n"
+        "install(EXPORT DemoTargets NAMESPACE Demo:: DESTINATION lib/cmake/demo FILE DemoTargets.cmake COMPONENT Development)\n"
+        "export(TARGETS core helper FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/StandaloneTargets.cmake NAMESPACE Demo::)\n"
         "export(EXPORT DemoTargets FILE ${CMAKE_CURRENT_BINARY_DIR}/exports/InstallSetTargets.cmake NAMESPACE Demo::)\n"
         "cmake_policy(SET CMP0090 NEW)\n"
         "set(CMAKE_EXPORT_PACKAGE_REGISTRY ON)\n"
@@ -5109,38 +5367,317 @@ TEST(build_model_standalone_export_queries_cover_build_tree_and_package_registry
     ASSERT(fixture.build.model != NULL);
 
     model = fixture.build.model;
+    root_dir_id = build_model_find_directory_id(model,
+                                                nob_sv_from_cstr("standalone_export_src"),
+                                                nob_sv_from_cstr("standalone_export_build"));
+    sub_dir_id = build_model_find_directory_id(model,
+                                               nob_sv_from_cstr("standalone_export_src/sub"),
+                                               nob_sv_from_cstr("standalone_export_build/sub"));
     core_id = bm_query_target_by_name(model, nob_sv_from_cstr("core"));
+    helper_id = bm_query_target_by_name(model, nob_sv_from_cstr("helper"));
+    ASSERT(root_dir_id != BM_DIRECTORY_ID_INVALID);
+    ASSERT(sub_dir_id != BM_DIRECTORY_ID_INVALID);
     ASSERT(core_id != BM_TARGET_ID_INVALID);
+    ASSERT(helper_id != BM_TARGET_ID_INVALID);
+    ASSERT(bm_query_target_modeled_property_value(model,
+                                                  core_id,
+                                                  nob_sv_from_cstr("EXPORT_NAME"),
+                                                  fixture.scratch_arena,
+                                                  &export_name));
+    ASSERT(nob_sv_eq(export_name, nob_sv_from_cstr("api")));
 
-    ASSERT(bm_query_export_count(model) == 3);
+    ASSERT(bm_query_export_count(model) == 4);
+    for (size_t i = 0; i < bm_query_export_count(model); ++i) {
+        BM_Export_Id export_id = (BM_Export_Id)i;
+        if (bm_query_export_kind(model, export_id) == BM_EXPORT_INSTALL) {
+            install_export_id = export_id;
+        } else if (bm_query_export_kind(model, export_id) == BM_EXPORT_BUILD_TREE &&
+                   bm_query_export_source_kind(model, export_id) == BM_EXPORT_SOURCE_TARGETS) {
+            targets_export_id = export_id;
+        } else if (bm_query_export_kind(model, export_id) == BM_EXPORT_BUILD_TREE &&
+                   bm_query_export_source_kind(model, export_id) == BM_EXPORT_SOURCE_EXPORT_SET) {
+            export_set_id = export_id;
+        } else if (bm_query_export_kind(model, export_id) == BM_EXPORT_PACKAGE_REGISTRY) {
+            package_export_id = export_id;
+        }
+    }
 
-    ASSERT(bm_query_export_kind(model, (BM_Export_Id)0) == BM_EXPORT_BUILD_TREE);
-    ASSERT(bm_query_export_source_kind(model, (BM_Export_Id)0) == BM_EXPORT_SOURCE_TARGETS);
-    ASSERT(nob_sv_eq(bm_query_export_name(model, (BM_Export_Id)0), nob_sv_from_cstr("StandaloneTargets")));
-    ASSERT(nob_sv_eq(bm_query_export_namespace(model, (BM_Export_Id)0), nob_sv_from_cstr("Demo::")));
-    ASSERT(build_model_sv_contains(bm_query_export_output_file_path(model, (BM_Export_Id)0, fixture.scratch_arena),
+    ASSERT(install_export_id != BM_EXPORT_ID_INVALID);
+    ASSERT(targets_export_id != BM_EXPORT_ID_INVALID);
+    ASSERT(export_set_id != BM_EXPORT_ID_INVALID);
+    ASSERT(package_export_id != BM_EXPORT_ID_INVALID);
+
+    ASSERT(bm_query_export_source_kind(model, install_export_id) == BM_EXPORT_SOURCE_INSTALL_EXPORT);
+    ASSERT(bm_query_export_owner_directory(model, install_export_id) == root_dir_id);
+    ASSERT(nob_sv_eq(bm_query_export_name(model, install_export_id), nob_sv_from_cstr("DemoTargets")));
+    ASSERT(nob_sv_eq(bm_query_export_namespace(model, install_export_id), nob_sv_from_cstr("Demo::")));
+    ASSERT(nob_sv_eq(bm_query_export_destination(model, install_export_id), nob_sv_from_cstr("lib/cmake/demo")));
+    ASSERT(nob_sv_eq(bm_query_export_file_name(model, install_export_id), nob_sv_from_cstr("DemoTargets.cmake")));
+    ASSERT(nob_sv_eq(bm_query_export_component(model, install_export_id), nob_sv_from_cstr("Development")));
+    ASSERT(nob_sv_eq(bm_query_export_output_file_path(model, install_export_id, fixture.scratch_arena),
+                     nob_sv_from_cstr("lib/cmake/demo/DemoTargets.cmake")));
+    ASSERT(bm_query_export_enabled(model, install_export_id));
+    ASSERT(!bm_query_export_append(model, install_export_id));
+    ASSERT(bm_query_export_cxx_modules_directory(model, install_export_id).count == 0);
+    export_targets = bm_query_export_targets(model, install_export_id);
+    ASSERT(export_targets.count == 2);
+    ASSERT(build_model_target_id_span_contains(export_targets, core_id));
+    ASSERT(build_model_target_id_span_contains(export_targets, helper_id));
+
+    ASSERT(bm_query_export_kind(model, targets_export_id) == BM_EXPORT_BUILD_TREE);
+    ASSERT(bm_query_export_owner_directory(model, targets_export_id) == root_dir_id);
+    ASSERT(nob_sv_eq(bm_query_export_name(model, targets_export_id), nob_sv_from_cstr("StandaloneTargets")));
+    ASSERT(nob_sv_eq(bm_query_export_namespace(model, targets_export_id), nob_sv_from_cstr("Demo::")));
+    ASSERT(nob_sv_eq(bm_query_export_file_name(model, targets_export_id), nob_sv_from_cstr("StandaloneTargets.cmake")));
+    ASSERT(build_model_sv_contains(bm_query_export_output_file_path(model, targets_export_id, fixture.scratch_arena),
                                    nob_sv_from_cstr("exports/StandaloneTargets.cmake")));
-    export_targets = bm_query_export_targets(model, (BM_Export_Id)0);
-    ASSERT(export_targets.count == 1);
-    ASSERT(export_targets.items[0] == core_id);
+    ASSERT(bm_query_export_destination(model, targets_export_id).count == 0);
+    ASSERT(bm_query_export_component(model, targets_export_id).count == 0);
+    ASSERT(bm_query_export_enabled(model, targets_export_id));
+    ASSERT(!bm_query_export_append(model, targets_export_id));
+    ASSERT(bm_query_export_cxx_modules_directory(model, targets_export_id).count == 0);
+    export_targets = bm_query_export_targets(model, targets_export_id);
+    ASSERT(export_targets.count == 2);
+    ASSERT(build_model_target_id_span_contains(export_targets, core_id));
+    ASSERT(build_model_target_id_span_contains(export_targets, helper_id));
 
-    ASSERT(bm_query_export_kind(model, (BM_Export_Id)1) == BM_EXPORT_BUILD_TREE);
-    ASSERT(bm_query_export_source_kind(model, (BM_Export_Id)1) == BM_EXPORT_SOURCE_EXPORT_SET);
-    ASSERT(nob_sv_eq(bm_query_export_name(model, (BM_Export_Id)1), nob_sv_from_cstr("DemoTargets")));
-    ASSERT(build_model_sv_contains(bm_query_export_output_file_path(model, (BM_Export_Id)1, fixture.scratch_arena),
+    ASSERT(bm_query_export_kind(model, export_set_id) == BM_EXPORT_BUILD_TREE);
+    ASSERT(bm_query_export_owner_directory(model, export_set_id) == root_dir_id);
+    ASSERT(nob_sv_eq(bm_query_export_name(model, export_set_id), nob_sv_from_cstr("DemoTargets")));
+    ASSERT(nob_sv_eq(bm_query_export_file_name(model, export_set_id), nob_sv_from_cstr("InstallSetTargets.cmake")));
+    ASSERT(build_model_sv_contains(bm_query_export_output_file_path(model, export_set_id, fixture.scratch_arena),
                                    nob_sv_from_cstr("exports/InstallSetTargets.cmake")));
-    export_targets = bm_query_export_targets(model, (BM_Export_Id)1);
+    ASSERT(bm_query_export_destination(model, export_set_id).count == 0);
+    ASSERT(bm_query_export_component(model, export_set_id).count == 0);
+    ASSERT(bm_query_export_enabled(model, export_set_id));
+    ASSERT(!bm_query_export_append(model, export_set_id));
+    ASSERT(bm_query_export_cxx_modules_directory(model, export_set_id).count == 0);
+    export_targets = bm_query_export_targets(model, export_set_id);
     ASSERT(export_targets.count == 1);
-    ASSERT(export_targets.items[0] == core_id);
+    ASSERT(build_model_target_id_span_contains(export_targets, core_id));
 
-    ASSERT(bm_query_export_kind(model, (BM_Export_Id)2) == BM_EXPORT_PACKAGE_REGISTRY);
-    ASSERT(bm_query_export_source_kind(model, (BM_Export_Id)2) == BM_EXPORT_SOURCE_PACKAGE);
-    ASSERT(bm_query_export_enabled(model, (BM_Export_Id)2));
-    ASSERT(nob_sv_eq(bm_query_export_package_name(model, (BM_Export_Id)2), nob_sv_from_cstr("DemoPkg")));
-    ASSERT(build_model_sv_contains(bm_query_export_registry_prefix(model, (BM_Export_Id)2),
+    ASSERT(bm_query_export_source_kind(model, package_export_id) == BM_EXPORT_SOURCE_PACKAGE);
+    ASSERT(bm_query_export_owner_directory(model, package_export_id) == root_dir_id);
+    ASSERT(bm_query_export_enabled(model, package_export_id));
+    ASSERT(nob_sv_eq(bm_query_export_package_name(model, package_export_id), nob_sv_from_cstr("DemoPkg")));
+    ASSERT(build_model_sv_contains(bm_query_export_registry_prefix(model, package_export_id),
                                    nob_sv_from_cstr("standalone_export_build")));
+    ASSERT(!bm_query_export_append(model, package_export_id));
+    ASSERT(bm_query_export_cxx_modules_directory(model, package_export_id).count == 0);
+
+    component_exports = bm_query_exports_for_component(model,
+                                                       nob_sv_from_cstr("Development"),
+                                                       fixture.scratch_arena);
+    ASSERT(component_exports.count == 1);
+    ASSERT(component_exports.items[0] == install_export_id);
+    ASSERT(bm_query_install_rule_for_export_target(model, install_export_id, core_id) != BM_INSTALL_RULE_ID_INVALID);
+    ASSERT(bm_query_install_rule_for_export_target(model, install_export_id, helper_id) != BM_INSTALL_RULE_ID_INVALID);
+    ASSERT(bm_query_target_owner_directory(model, helper_id) == sub_dir_id);
 
     test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_package_find_results_freeze_query_surface_and_nested_owner) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_Directory_Id root_dir_id = BM_DIRECTORY_ID_INVALID;
+    BM_Directory_Id sub_dir_id = BM_DIRECTORY_ID_INVALID;
+    BM_Package_Id module_id = BM_PACKAGE_ID_INVALID;
+    BM_Package_Id config_id = BM_PACKAGE_ID_INVALID;
+    BM_Package_Id missing_id = BM_PACKAGE_ID_INVALID;
+
+    ASSERT(build_model_write_text_file("package_find_src/cmake/FindModulePkg.cmake",
+                                       "set(ModulePkg_FOUND 1)\n"));
+    ASSERT(build_model_write_text_file("package_find_src/sub/prefix/ConfigPkgConfig.cmake",
+                                       "set(ConfigPkg_FOUND 1)\n"));
+    ASSERT(build_model_write_text_file("package_find_src/sub/CMakeLists.txt",
+                                       "find_package(ConfigPkg REQUIRED CONFIG PATHS prefix NO_DEFAULT_PATH)\n"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "package_find_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("package_find_src");
+    config.binary_dir = nob_sv_from_cstr("package_find_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(Test LANGUAGES NONE)\n"
+        "set(CMAKE_MODULE_PATH cmake)\n"
+        "find_package(ModulePkg QUIET MODULE)\n"
+        "find_package(MissingPkg QUIET CONFIG)\n"
+        "add_subdirectory(sub)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    root_dir_id = build_model_find_directory_id(model,
+                                                nob_sv_from_cstr("package_find_src"),
+                                                nob_sv_from_cstr("package_find_build"));
+    sub_dir_id = build_model_find_directory_id(model,
+                                               nob_sv_from_cstr("package_find_src/sub"),
+                                               nob_sv_from_cstr("package_find_build/sub"));
+    module_id = bm_query_package_by_name(model, nob_sv_from_cstr("ModulePkg"));
+    config_id = bm_query_package_by_name(model, nob_sv_from_cstr("ConfigPkg"));
+    missing_id = bm_query_package_by_name(model, nob_sv_from_cstr("MissingPkg"));
+
+    ASSERT(root_dir_id != BM_DIRECTORY_ID_INVALID);
+    ASSERT(sub_dir_id != BM_DIRECTORY_ID_INVALID);
+    ASSERT(bm_query_package_count(model) == 3);
+    ASSERT(module_id != BM_PACKAGE_ID_INVALID);
+    ASSERT(config_id != BM_PACKAGE_ID_INVALID);
+    ASSERT(missing_id != BM_PACKAGE_ID_INVALID);
+
+    ASSERT(nob_sv_eq(bm_query_package_name(model, module_id), nob_sv_from_cstr("ModulePkg")));
+    ASSERT(nob_sv_eq(bm_query_package_mode(model, module_id), nob_sv_from_cstr("MODULE")));
+    ASSERT(build_model_sv_contains(bm_query_package_found_path(model, module_id),
+                                   nob_sv_from_cstr("FindModulePkg.cmake")));
+    ASSERT(bm_query_package_found(model, module_id));
+    ASSERT(!bm_query_package_required(model, module_id));
+    ASSERT(bm_query_package_quiet(model, module_id));
+    ASSERT(bm_query_package_owner_directory(model, module_id) == root_dir_id);
+
+    ASSERT(nob_sv_eq(bm_query_package_name(model, config_id), nob_sv_from_cstr("ConfigPkg")));
+    ASSERT(nob_sv_eq(bm_query_package_mode(model, config_id), nob_sv_from_cstr("CONFIG")));
+    ASSERT(build_model_sv_contains(bm_query_package_found_path(model, config_id),
+                                   nob_sv_from_cstr("ConfigPkgConfig.cmake")));
+    ASSERT(bm_query_package_found(model, config_id));
+    ASSERT(bm_query_package_required(model, config_id));
+    ASSERT(!bm_query_package_quiet(model, config_id));
+    ASSERT(bm_query_package_owner_directory(model, config_id) == sub_dir_id);
+
+    ASSERT(nob_sv_eq(bm_query_package_name(model, missing_id), nob_sv_from_cstr("MissingPkg")));
+    ASSERT(nob_sv_eq(bm_query_package_mode(model, missing_id), nob_sv_from_cstr("CONFIG")));
+    ASSERT(bm_query_package_found_path(model, missing_id).count == 0);
+    ASSERT(!bm_query_package_found(model, missing_id));
+    ASSERT(!bm_query_package_required(model, missing_id));
+    ASSERT(bm_query_package_quiet(model, missing_id));
+    ASSERT(bm_query_package_owner_directory(model, missing_id) == root_dir_id);
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_package_find_results_preserve_redirect_registry_and_provider_resolution) {
+    Test_Semantic_Pipeline_Config redirect_config = {0};
+    Test_Semantic_Pipeline_Config provider_config = {0};
+    Test_Semantic_Pipeline_Fixture redirect_fixture = {0};
+    Test_Semantic_Pipeline_Fixture provider_fixture = {0};
+    const Build_Model *redirect_model = NULL;
+    const Build_Model *provider_model = NULL;
+    BM_Directory_Id redirect_root_dir_id = BM_DIRECTORY_ID_INVALID;
+    BM_Directory_Id provider_root_dir_id = BM_DIRECTORY_ID_INVALID;
+    BM_Package_Id redirect_id = BM_PACKAGE_ID_INVALID;
+    BM_Package_Id registry_id = BM_PACKAGE_ID_INVALID;
+    BM_Package_Id provided_id = BM_PACKAGE_ID_INVALID;
+
+    ASSERT(build_model_write_text_file("redirect_src/CMakeLists.txt",
+                                       "set(RedirectPkg_FOUND 1)\n"
+                                       "add_library(redirect_pkg_target INTERFACE)\n"));
+    ASSERT(build_model_write_text_file("provider_top.cmake",
+                                       "macro(dep_provider method)\n"
+                                       "  if(method STREQUAL \"FIND_PACKAGE\")\n"
+                                       "    if(ARGV1 STREQUAL \"ProvidedPkg\")\n"
+                                       "      set(ProvidedPkg_FOUND 1)\n"
+                                       "      set(ProvidedPkg_CONFIG provider://ProvidedPkg)\n"
+                                       "    else()\n"
+                                       "      find_package(${ARGN} BYPASS_PROVIDER)\n"
+                                       "    endif()\n"
+                                       "  endif()\n"
+                                       "endmacro()\n"
+                                       "cmake_language(SET_DEPENDENCY_PROVIDER dep_provider SUPPORTED_METHODS FIND_PACKAGE)\n"));
+
+    test_semantic_pipeline_config_init(&redirect_config);
+    redirect_config.current_file = "CMakeLists.txt";
+    redirect_config.source_dir = nob_sv_from_cstr(".");
+    redirect_config.binary_dir = nob_sv_from_cstr("package_special_redirect_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &redirect_fixture,
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(Test LANGUAGES NONE)\n"
+        "include(FetchContent)\n"
+        "FetchContent_Declare(RedirectPkg SOURCE_DIR redirect_src OVERRIDE_FIND_PACKAGE)\n"
+        "FetchContent_MakeAvailable(RedirectPkg)\n"
+        "find_package(RedirectPkg CONFIG QUIET)\n"
+        "set(ENV{HOME} \"${CMAKE_CURRENT_BINARY_DIR}/home\")\n"
+        "set(ENV{USERPROFILE} \"${CMAKE_CURRENT_BINARY_DIR}/home\")\n"
+        "file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/RegPkgConfig.cmake\" \"set(RegPkg_FOUND 1)\\n\")\n"
+        "cmake_policy(SET CMP0090 NEW)\n"
+        "set(CMAKE_EXPORT_PACKAGE_REGISTRY TRUE)\n"
+        "export(PACKAGE RegPkg)\n"
+        "find_package(RegPkg CONFIG QUIET)\n",
+        &redirect_config));
+    ASSERT(redirect_fixture.eval_ok);
+    ASSERT(redirect_fixture.build.freeze_ok);
+    ASSERT(redirect_fixture.build.model != NULL);
+
+    redirect_model = redirect_fixture.build.model;
+    redirect_root_dir_id = build_model_find_directory_id(redirect_model,
+                                                         nob_sv_from_cstr("."),
+                                                         nob_sv_from_cstr("package_special_redirect_build"));
+    redirect_id = bm_query_package_by_name(redirect_model, nob_sv_from_cstr("RedirectPkg"));
+    registry_id = bm_query_package_by_name(redirect_model, nob_sv_from_cstr("RegPkg"));
+
+    ASSERT(redirect_root_dir_id != BM_DIRECTORY_ID_INVALID);
+    ASSERT(bm_query_package_count(redirect_model) >= 2);
+    ASSERT(redirect_id != BM_PACKAGE_ID_INVALID);
+    ASSERT(registry_id != BM_PACKAGE_ID_INVALID);
+
+    ASSERT(nob_sv_eq(bm_query_package_name(redirect_model, redirect_id), nob_sv_from_cstr("RedirectPkg")));
+    ASSERT(nob_sv_eq(bm_query_package_mode(redirect_model, redirect_id), nob_sv_from_cstr("CONFIG")));
+    ASSERT(bm_query_package_found(redirect_model, redirect_id));
+    ASSERT(bm_query_package_quiet(redirect_model, redirect_id));
+    ASSERT(bm_query_package_owner_directory(redirect_model, redirect_id) == redirect_root_dir_id);
+    ASSERT(build_model_sv_contains(bm_query_package_found_path(redirect_model, redirect_id),
+                                   nob_sv_from_cstr("RedirectPkgConfig.cmake")));
+
+    ASSERT(nob_sv_eq(bm_query_package_name(redirect_model, registry_id), nob_sv_from_cstr("RegPkg")));
+    ASSERT(nob_sv_eq(bm_query_package_mode(redirect_model, registry_id), nob_sv_from_cstr("CONFIG")));
+    ASSERT(bm_query_package_found(redirect_model, registry_id));
+    ASSERT(bm_query_package_quiet(redirect_model, registry_id));
+    ASSERT(bm_query_package_owner_directory(redirect_model, registry_id) == redirect_root_dir_id);
+    ASSERT(build_model_sv_contains(bm_query_package_found_path(redirect_model, registry_id),
+                                   nob_sv_from_cstr("RegPkgConfig.cmake")));
+
+    test_semantic_pipeline_config_init(&provider_config);
+    provider_config.current_file = "CMakeLists.txt";
+    provider_config.source_dir = nob_sv_from_cstr(".");
+    provider_config.binary_dir = nob_sv_from_cstr("package_special_provider_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &provider_fixture,
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES provider_top.cmake)\n"
+        "project(Test LANGUAGES NONE)\n"
+        "find_package(ProvidedPkg QUIET)\n",
+        &provider_config));
+    ASSERT(provider_fixture.eval_ok);
+    ASSERT(provider_fixture.build.freeze_ok);
+    ASSERT(provider_fixture.build.model != NULL);
+
+    provider_model = provider_fixture.build.model;
+    provider_root_dir_id = build_model_find_directory_id(provider_model,
+                                                         nob_sv_from_cstr("."),
+                                                         nob_sv_from_cstr("package_special_provider_build"));
+    provided_id = bm_query_package_by_name(provider_model, nob_sv_from_cstr("ProvidedPkg"));
+
+    ASSERT(provider_root_dir_id != BM_DIRECTORY_ID_INVALID);
+    ASSERT(bm_query_package_count(provider_model) == 1);
+    ASSERT(provided_id != BM_PACKAGE_ID_INVALID);
+    ASSERT(nob_sv_eq(bm_query_package_name(provider_model, provided_id), nob_sv_from_cstr("ProvidedPkg")));
+    ASSERT(nob_sv_eq(bm_query_package_mode(provider_model, provided_id), nob_sv_from_cstr("AUTO")));
+    ASSERT(bm_query_package_found(provider_model, provided_id));
+    ASSERT(bm_query_package_quiet(provider_model, provided_id));
+    ASSERT(bm_query_package_owner_directory(provider_model, provided_id) == provider_root_dir_id);
+    ASSERT(nob_sv_eq(bm_query_package_found_path(provider_model, provided_id),
+                     nob_sv_from_cstr("provider://ProvidedPkg")));
+
+    test_semantic_pipeline_fixture_destroy(&redirect_fixture);
+    test_semantic_pipeline_fixture_destroy(&provider_fixture);
     TEST_PASS();
 }
 
@@ -5346,7 +5883,10 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_usage_requirement_property_setters_promote_to_canonical_item_storage(passed, failed, skipped);
     test_build_model_install_and_export_queries_surface_typed_metadata(passed, failed, skipped);
     test_build_model_install_queries_materialize_effective_default_components(passed, failed, skipped);
+    test_build_model_install_queries_cover_supported_target_kinds_and_rule_families(passed, failed, skipped);
     test_build_model_standalone_export_queries_cover_build_tree_and_package_registry(passed, failed, skipped);
+    test_build_model_package_find_results_freeze_query_surface_and_nested_owner(passed, failed, skipped);
+    test_build_model_package_find_results_preserve_redirect_registry_and_provider_resolution(passed, failed, skipped);
     test_build_model_package_queries_surface_component_associations(passed, failed, skipped);
     test_build_model_cpack_package_queries_surface_generation_plan(passed, failed, skipped);
 

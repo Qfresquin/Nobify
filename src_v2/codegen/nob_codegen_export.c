@@ -56,13 +56,15 @@ static bool cg_build_tree_resolve_owner_path_abs(CG_Context *ctx,
     return true;
 }
 
-static bool cg_export_collect_build_interface_values(CG_Context *ctx,
-                                                     BM_Target_Id target_id,
-                                                     String_View config,
-                                                     BM_Query_Usage_Mode usage_mode,
-                                                     CG_Effective_Query_Family family,
-                                                     String_View **out) {
-    BM_String_Span values = {0};
+static bool cg_export_collect_build_direct_property_values(CG_Context *ctx,
+                                                           BM_Target_Id target_id,
+                                                           String_View config,
+                                                           BM_Query_Usage_Mode usage_mode,
+                                                           const char *property_name,
+                                                           String_View **out) {
+    String_View raw = {0};
+    String_View resolved = {0};
+    String_View *values = NULL;
     BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx,
                                                    target_id,
                                                    usage_mode,
@@ -71,10 +73,21 @@ static bool cg_export_collect_build_interface_values(CG_Context *ctx,
     qctx.build_interface_active = true;
     qctx.build_local_interface_active = false;
     qctx.install_interface_active = false;
-    if (!cg_query_effective_values_cached(ctx, target_id, &qctx, family, &values)) return false;
-    for (size_t i = 0; i < values.count; ++i) {
-        if (values.items[i].count == 0) continue;
-        if (!cg_collect_unique_path(ctx->scratch, out, values.items[i])) return false;
+    if (!bm_query_target_modeled_property_value(ctx->model,
+                                                target_id,
+                                                nob_sv_from_cstr(property_name),
+                                                ctx->scratch,
+                                                &raw) ||
+        raw.count == 0) {
+        return true;
+    }
+    if (!cg_resolve_model_string_with_query_ctx(ctx, &qctx, raw, &resolved) ||
+        !cg_split_top_level_list(ctx->scratch, resolved, &values)) {
+        return false;
+    }
+    for (size_t i = 0; i < arena_arr_len(values); ++i) {
+        if (values[i].count == 0) continue;
+        if (!cg_collect_unique_path(ctx->scratch, out, values[i])) return false;
     }
     return true;
 }
@@ -84,25 +97,37 @@ static bool cg_export_collect_build_interface_includes(CG_Context *ctx,
                                                        String_View config,
                                                        bool want_system,
                                                        String_View **out) {
-    BM_String_Item_Span includes = {0};
+    String_View raw = {0};
+    String_View resolved = {0};
+    String_View *includes = NULL;
     BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx,
                                                    target_id,
                                                    BM_QUERY_USAGE_COMPILE,
                                                    config,
                                                    nob_sv_from_cstr(""));
     BM_Directory_Id owner_dir = BM_DIRECTORY_ID_INVALID;
+    const char *property_name = want_system ?
+        "INTERFACE_SYSTEM_INCLUDE_DIRECTORIES" :
+        "INTERFACE_INCLUDE_DIRECTORIES";
     qctx.build_interface_active = true;
     qctx.build_local_interface_active = false;
     qctx.install_interface_active = false;
     owner_dir = bm_query_target_owner_directory(ctx->model, target_id);
-    if (!cg_query_effective_items_cached(ctx, target_id, &qctx, CG_EFFECTIVE_INCLUDE_DIRECTORIES, &includes)) {
+    if (!bm_query_target_modeled_property_value(ctx->model,
+                                                target_id,
+                                                nob_sv_from_cstr(property_name),
+                                                ctx->scratch,
+                                                &raw) ||
+        raw.count == 0) {
+        return true;
+    }
+    if (!cg_resolve_model_string_with_query_ctx(ctx, &qctx, raw, &resolved) ||
+        !cg_split_top_level_list(ctx->scratch, resolved, &includes)) {
         return false;
     }
-    for (size_t i = 0; i < includes.count; ++i) {
-        String_View item = includes.items[i].value;
+    for (size_t i = 0; i < arena_arr_len(includes); ++i) {
+        String_View item = includes[i];
         String_View absolute = {0};
-        bool is_system = (includes.items[i].flags & BM_ITEM_FLAG_SYSTEM) != 0;
-        if (is_system != want_system) continue;
         if (item.count == 0) continue;
         if (!cg_build_tree_resolve_owner_path_abs(ctx, owner_dir, item, &absolute)) return false;
         if (!cg_collect_unique_path(ctx->scratch, out, absolute)) return false;
@@ -116,7 +141,9 @@ static bool cg_export_collect_build_link_libraries(CG_Context *ctx,
                                                    String_View export_namespace,
                                                    String_View config,
                                                    String_View **out) {
-    BM_Link_Item_Span libs = {0};
+    String_View raw = {0};
+    String_View resolved = {0};
+    String_View *libs = NULL;
     BM_Target_Id_Span exported_targets = bm_query_export_targets(ctx->model, export_id);
     BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx,
                                                    target_id,
@@ -126,12 +153,24 @@ static bool cg_export_collect_build_link_libraries(CG_Context *ctx,
     qctx.build_interface_active = true;
     qctx.build_local_interface_active = false;
     qctx.install_interface_active = false;
-    if (!cg_query_effective_link_items_cached(ctx, target_id, &qctx, &libs)) return false;
+    if (!bm_query_target_modeled_property_value(ctx->model,
+                                                target_id,
+                                                nob_sv_from_cstr("INTERFACE_LINK_LIBRARIES"),
+                                                ctx->scratch,
+                                                &raw) ||
+        raw.count == 0) {
+        return true;
+    }
+    if (!cg_resolve_model_string_with_query_ctx(ctx, &qctx, raw, &resolved) ||
+        !cg_split_top_level_list(ctx->scratch, resolved, &libs)) {
+        return false;
+    }
 
-    for (size_t i = 0; i < libs.count; ++i) {
+    for (size_t i = 0; i < arena_arr_len(libs); ++i) {
         CG_Resolved_Target_Ref dep = {0};
-        String_View value = libs.items[i].value;
-        if (cg_resolve_link_item_ref(ctx, &qctx, libs.items[i], &dep)) {
+        String_View value = libs[i];
+        if (value.count == 0) continue;
+        if (cg_resolve_target_ref(ctx, &qctx, value, &dep)) {
             String_View exported_name = {0};
             if (cg_export_target_in_span(exported_targets, dep.target_id)) {
                 if (!cg_target_exported_name(ctx, dep.target_id, export_namespace, &exported_name) ||
@@ -179,11 +218,11 @@ static bool cg_export_emit_build_tree_target_properties(CG_Context *ctx,
 
     if (!cg_export_collect_build_interface_includes(ctx, target_id, config, false, &include_items) ||
         !cg_export_collect_build_interface_includes(ctx, target_id, config, true, &system_include_items) ||
-        !cg_export_collect_build_interface_values(ctx, target_id, config, BM_QUERY_USAGE_COMPILE, CG_EFFECTIVE_COMPILE_DEFINITIONS, &compile_defs) ||
-        !cg_export_collect_build_interface_values(ctx, target_id, config, BM_QUERY_USAGE_COMPILE, CG_EFFECTIVE_COMPILE_OPTIONS, &compile_opts) ||
-        !cg_export_collect_build_interface_values(ctx, target_id, config, BM_QUERY_USAGE_COMPILE, CG_EFFECTIVE_COMPILE_FEATURES, &compile_features) ||
-        !cg_export_collect_build_interface_values(ctx, target_id, config, BM_QUERY_USAGE_LINK, CG_EFFECTIVE_LINK_OPTIONS, &link_opts) ||
-        !cg_export_collect_build_interface_values(ctx, target_id, config, BM_QUERY_USAGE_LINK, CG_EFFECTIVE_LINK_DIRECTORIES, &link_dirs) ||
+        !cg_export_collect_build_direct_property_values(ctx, target_id, config, BM_QUERY_USAGE_COMPILE, "INTERFACE_COMPILE_DEFINITIONS", &compile_defs) ||
+        !cg_export_collect_build_direct_property_values(ctx, target_id, config, BM_QUERY_USAGE_COMPILE, "INTERFACE_COMPILE_OPTIONS", &compile_opts) ||
+        !cg_export_collect_build_direct_property_values(ctx, target_id, config, BM_QUERY_USAGE_COMPILE, "INTERFACE_COMPILE_FEATURES", &compile_features) ||
+        !cg_export_collect_build_direct_property_values(ctx, target_id, config, BM_QUERY_USAGE_LINK, "INTERFACE_LINK_OPTIONS", &link_opts) ||
+        !cg_export_collect_build_direct_property_values(ctx, target_id, config, BM_QUERY_USAGE_LINK, "INTERFACE_LINK_DIRECTORIES", &link_dirs) ||
         !cg_export_collect_build_link_libraries(ctx, export_id, target_id, export_namespace, config, &link_libs) ||
         !cg_collect_target_link_languages(ctx, target_id, &link_languages_joined) ||
         !cg_join_sv_list(ctx->scratch, include_items, &includes_joined) ||

@@ -1,5 +1,5 @@
 MODULE pipeline
-CASES 9
+CASES 10
 
 === CASE pipeline_positive_links_and_dirs ===
 EVAL_OK 1
@@ -78,6 +78,20 @@ TARGET[5] name='linkonly_iface' type=INTERFACE_LIB sources=0 deps=0 link_libs=1 
 TARGET[5]_EFFECTIVE compile_includes=4 compile_defs=5 compile_opts=4 compile_features=3 link_libs=8 link_opts=4 link_dirs=4
 TARGET[6] name='app' type=EXECUTABLE sources=1 deps=0 link_libs=0 interface_libs=0 link_opts=0 link_dirs=0 compile_features=0 system_includes=0
 TARGET[6]_EFFECTIVE compile_includes=4 compile_defs=4 compile_opts=4 compile_features=3 link_libs=8 link_opts=4 link_dirs=4
+=== END CASE ===
+
+=== CASE pipeline_positive_package_discovery_snapshot ===
+EVAL_OK 1
+BUILDER_OK 1
+FREEZE_OK 1
+DIAG errors=0 warnings=0
+EVENTS count=48
+MODEL project='PipePackages' targets=0 packages=3 tests=0 install_enabled=0 testing_enabled=0 cpack_groups=0 cpack_types=0 cpack_components=0
+DIR include=0 system_include=0 link=0 link_libs=0
+GLOBAL compile_defs=0 compile_opts=0 link_opts=0 link_libs=0
+PACKAGE[0] name='ModulePkg' owner_dir=0 mode='MODULE' found=1 required=0 quiet=1 found_path='./cmake/FindModulePkg.cmake'
+PACKAGE[1] name='ConfigPkg' owner_dir=0 mode='CONFIG' found=1 required=1 quiet=0 found_path='./prefix/lib/cmake/ConfigPkg/ConfigPkgConfig.cmake'
+PACKAGE[2] name='MissingPkg' owner_dir=0 mode='CONFIG' found=0 required=0 quiet=1 found_path=''
 === END CASE ===
 
 === CASE pipeline_negative_cpack_unknown_group ===

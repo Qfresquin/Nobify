@@ -86,6 +86,20 @@ set_property(DIRECTORY APPEND PROPERTY LINK_LIBRARIES dir_iface "$<LINK_ONLY:lin
 add_executable(app main.c)
 #@@ENDCASE
 
+#@@CASE pipeline_positive_package_discovery_snapshot
+cmake_minimum_required(VERSION 3.28)
+project(PipePackages LANGUAGES NONE)
+file(MAKE_DIRECTORY cmake)
+file(WRITE cmake/FindModulePkg.cmake "set(ModulePkg_FOUND 1)\n")
+file(MAKE_DIRECTORY prefix/lib/cmake/ConfigPkg)
+file(WRITE prefix/lib/cmake/ConfigPkg/ConfigPkgConfig.cmake "set(ConfigPkg_FOUND 1)\n")
+set(CMAKE_MODULE_PATH cmake)
+set(CMAKE_PREFIX_PATH prefix)
+find_package(ModulePkg QUIET MODULE)
+find_package(ConfigPkg REQUIRED CONFIG)
+find_package(MissingPkg QUIET CONFIG)
+#@@ENDCASE
+
 #@@CASE pipeline_negative_cpack_unknown_group
 project(BadPackGroup)
 include(CPackComponent)
