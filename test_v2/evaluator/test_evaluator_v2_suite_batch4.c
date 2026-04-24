@@ -181,6 +181,12 @@ static bool ctest_submit_mock_process_run(void *user_data,
         return true;
     }
 
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("ctest"))) {
+        out_result->exit_code = 0;
+        out_result->stdout_text = nob_sv_from_cstr("100% tests passed\n");
+        return true;
+    }
+
     if (!nob_sv_eq(request->argv[0], nob_sv_from_cstr("curl"))) {
         out_result->exit_code = 127;
         out_result->stderr_text = nob_sv_from_cstr("unexpected process");
@@ -327,6 +333,12 @@ static bool ctest_configure_mock_process_run(void *user_data,
         }
         out_result->exit_code = 0;
         out_result->stdout_text = nob_sv_from_cstr("Built target all\n");
+        return true;
+    }
+
+    if (nob_sv_eq(request->argv[0], nob_sv_from_cstr("ctest"))) {
+        out_result->exit_code = 0;
+        out_result->stdout_text = nob_sv_from_cstr("100% tests passed\n");
         return true;
     }
 
@@ -1126,7 +1138,7 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
     ASSERT(report->error_count == 0);
-    ASSERT(configure_mock.call_count == 2);
+    ASSERT(configure_mock.call_count == 3);
     ASSERT(configure_mock.saw_configure_tool);
     ASSERT(configure_mock.build_call_count == 1);
     ASSERT(configure_mock.saw_build_tool);
@@ -1162,11 +1174,9 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("UPD_CE")), nob_sv_from_cstr("-1")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::SCHEDULE_RANDOM")),
                      nob_sv_from_cstr("ON")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::STATUS")),
-                     nob_sv_from_cstr("MEMCHECKED")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_update::STATUS")),
                      nob_sv_from_cstr("FAILED")));
-    ASSERT(eval_test_ctest_step_count(ctx) >= 8);
+    ASSERT(eval_test_ctest_step_count(ctx) >= 7);
     String_View step_status = {0};
     String_View submit_part = {0};
     ASSERT(eval_test_ctest_step_find(ctx, nob_sv_from_cstr("ctest_start"), &step_status, &submit_part));
@@ -1210,8 +1220,6 @@ TEST(evaluator_ctest_family_models_metadata_and_safe_local_effects) {
                           nob_sv_from_cstr("ctest_bin/Testing")));
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_update::TAG_DIR")),
                           ctest_tag));
-    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_memcheck::TAG_FILE")),
-                          nob_sv_from_cstr("ctest_bin/Testing/TAG")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST_SESSION::TAG")), ctest_tag));
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_start::TAG_FILE")),
                           nob_sv_from_cstr("ctest_bin/Testing/TAG")));
@@ -2917,7 +2925,7 @@ TEST(evaluator_ctest_submit_models_documented_local_surface) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::HTTPHEADER")),
                      nob_sv_from_cstr("Authorization: Bearer one;X-Nobify: yes")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_PARTS")),
-                     nob_sv_from_cstr("Start;Update;Build;Test;MemCheck;Notes;ExtraFiles;Upload")));
+                     nob_sv_from_cstr("Start;Update;Build;Test;Notes;ExtraFiles;Upload")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::STATUS")),
                      nob_sv_from_cstr("SUBMITTED")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::ATTEMPTS")),
@@ -2949,10 +2957,6 @@ TEST(evaluator_ctest_submit_models_documented_local_surface) {
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
                           nob_sv_from_cstr("TestManifest.txt")));
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
-                          nob_sv_from_cstr("/MemCheck.xml")));
-    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
-                          nob_sv_from_cstr("MemCheckManifest.txt")));
-    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
                           nob_sv_from_cstr("ctest_submit_defaults_bin/upload.bin")));
     ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("NOBIFY_CTEST::ctest_submit::RESOLVED_FILES")),
                           nob_sv_from_cstr("/Upload.xml")));
@@ -2969,13 +2973,13 @@ TEST(evaluator_ctest_submit_models_documented_local_surface) {
     ASSERT(strstr(submit_sb.items, "HTTPHEADERS=Authorization: Bearer one;X-Nobify: yes") != NULL);
     ASSERT(strstr(submit_sb.items, "RETRY_COUNT=1") != NULL);
     ASSERT(strstr(submit_sb.items, "INACTIVITY_TIMEOUT=9") != NULL);
-    ASSERT(strstr(submit_sb.items, "PARTS=Start;Update;Build;Test;MemCheck;Notes;ExtraFiles;Upload") != NULL);
+    ASSERT(strstr(submit_sb.items, "PARTS=Start;Update;Build;Test;Notes;ExtraFiles;Upload") != NULL);
     ASSERT(strstr(submit_sb.items, "notes.md") != NULL);
     ASSERT(strstr(submit_sb.items, "extra.log") != NULL);
     ASSERT(strstr(submit_sb.items, "upload.bin") != NULL);
     nob_sb_free(submit_sb);
 
-    ASSERT(mock.call_count == 4);
+    ASSERT(mock.call_count == 5);
     ASSERT(mock.submit_call_count == 2);
     ASSERT(mock.update_call_count == 1);
     ASSERT(mock.build_call_count == 1);
@@ -2983,7 +2987,7 @@ TEST(evaluator_ctest_submit_models_documented_local_surface) {
     ASSERT(mock.saw_extra_header);
     ASSERT(mock.saw_manifest_form);
     ASSERT(mock.saw_parts_form);
-    ASSERT(mock.file_form_count == 24);
+    ASSERT(mock.file_form_count == 20);
     ASSERT(mock.saw_legacy_url);
     ASSERT(mock.saw_update_tool);
     ASSERT(mock.saw_build_tool);

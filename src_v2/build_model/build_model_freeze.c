@@ -693,13 +693,20 @@ static bool bm_resolve_build_step_dependencies(const Build_Model_Draft *draft,
     return true;
 }
 
+static bool bm_sv_eq_freeze(String_View lhs, String_View rhs) {
+    if (lhs.count != rhs.count) return false;
+    if (lhs.count == 0) return true;
+    if (!lhs.data || !rhs.data) return false;
+    return memcmp(lhs.data, rhs.data, lhs.count) == 0;
+}
+
 static BM_Imported_Config_Record *bm_imported_config_ensure(Arena *arena,
                                                             BM_Target_Record *target,
                                                             String_View config) {
     BM_Imported_Config_Record record = {0};
     if (!arena || !target) return NULL;
     for (size_t i = 0; i < arena_arr_len(target->imported_configs); ++i) {
-        if (nob_sv_eq(target->imported_configs[i].config, config)) return &target->imported_configs[i];
+        if (bm_sv_eq_freeze(target->imported_configs[i].config, config)) return &target->imported_configs[i];
     }
     if (!bm_copy_string(arena, config, &record.config) ||
         !arena_arr_push(arena, target->imported_configs, record)) {
@@ -714,7 +721,7 @@ static BM_Imported_Config_Map_Record *bm_imported_config_map_ensure(Arena *arena
     BM_Imported_Config_Map_Record record = {0};
     if (!arena || !target) return NULL;
     for (size_t i = 0; i < arena_arr_len(target->imported_config_maps); ++i) {
-        if (nob_sv_eq(target->imported_config_maps[i].config, config)) return &target->imported_config_maps[i];
+        if (bm_sv_eq_freeze(target->imported_config_maps[i].config, config)) return &target->imported_config_maps[i];
     }
     if (!bm_copy_string(arena, config, &record.config) ||
         !arena_arr_push(arena, target->imported_config_maps, record)) {

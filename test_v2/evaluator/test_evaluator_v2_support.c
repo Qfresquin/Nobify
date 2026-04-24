@@ -266,13 +266,7 @@ bool evaluator_test_guard_env(const char *name, const char *value) {
 
     if (!name || name[0] == '\0') return false;
 
-    guard = (Test_Host_Env_Guard*)calloc(1, sizeof(*guard));
-    if (!guard) return false;
-
-    if (!test_host_env_guard_begin(guard, name, value)) {
-        free(guard);
-        return false;
-    }
+    if (!test_host_env_guard_begin_heap(&guard, name, value)) return false;
 
     if (!test_v2_cleanup_push(test_host_env_guard_cleanup, guard)) {
         test_host_env_guard_cleanup(guard);

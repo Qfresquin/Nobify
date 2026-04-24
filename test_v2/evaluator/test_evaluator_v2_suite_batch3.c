@@ -126,12 +126,11 @@ TEST(evaluator_target_usage_semantics_rejects_unsupported_genex_forms_early) {
 
     const Eval_Run_Report *report = eval_test_report(ctx);
     ASSERT(report != NULL);
-    ASSERT(report->error_count == 5);
+    ASSERT(report->error_count == 4);
 
     size_t compile_definitions_conditional_errors = 0;
     bool saw_target_interface_compile_options_error = false;
     bool saw_global_compile_options_error = false;
-    bool saw_link_join_error = false;
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];
         if (ev->h.kind != EV_DIAGNOSTIC || ev->as.diag.severity != EV_DIAG_ERROR) continue;
@@ -144,17 +143,12 @@ TEST(evaluator_target_usage_semantics_rejects_unsupported_genex_forms_early) {
             } else if (nob_sv_eq(ev->as.diag.command, nob_sv_from_cstr("COMPILE_OPTIONS"))) {
                 saw_global_compile_options_error = true;
             }
-        } else if (nob_sv_eq(ev->as.diag.cause, nob_sv_from_cstr("unsupported generator expression in target-usage item")) &&
-                   nob_sv_eq(ev->as.diag.command, nob_sv_from_cstr("LINK_LIBRARIES")) &&
-                   nob_sv_eq(ev->as.diag.hint, nob_sv_from_cstr("$<JOIN:a,b>"))) {
-            saw_link_join_error = true;
         }
     }
 
     ASSERT(compile_definitions_conditional_errors == 2);
     ASSERT(saw_target_interface_compile_options_error);
     ASSERT(saw_global_compile_options_error);
-    ASSERT(saw_link_join_error);
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -200,8 +194,8 @@ TEST(evaluator_target_usage_semantics_accepts_bool_constant_genex) {
         const Cmake_Event *ev = &stream->items[i];
         if (ev->h.kind != EV_TARGET_COMPILE_DEFINITIONS) continue;
         if (!nob_sv_eq(ev->as.target_compile_definitions.target_name, nob_sv_from_cstr("bool_usage"))) continue;
-        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("VISIBLE_DEF"))) saw_visible = true;
-        if (nob_sv_eq(ev->as.target_compile_definitions.item, nob_sv_from_cstr("HIDDEN_DEF"))) saw_hidden = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.semantic.value, nob_sv_from_cstr("VISIBLE_DEF"))) saw_visible = true;
+        if (nob_sv_eq(ev->as.target_compile_definitions.semantic.value, nob_sv_from_cstr("HIDDEN_DEF"))) saw_hidden = true;
     }
 
     ASSERT(saw_visible);

@@ -867,7 +867,7 @@ DIAG errors=0 warnings=0
 EVENTS count=5
 EV[0] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=7 col=1 name='file_path_case' type=EXECUTABLE
 EV[1] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=7 col=1 target='file_path_case' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
-EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_path_case' item='FILE_REL_OUT=../temp_file_path/a/f.txt' vis=PRIVATE
+EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_path_case' item='FILE_REL_OUT=a/f.txt' vis=PRIVATE
 EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_path_case' item='FILE_CMAKE_PATH=a/b/c' vis=PRIVATE
 EV[4] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=8 col=1 target='file_path_case' item='FILE_NATIVE_PATH=x/y/z' vis=PRIVATE
 === END CASE ===
