@@ -125,6 +125,7 @@ typedef enum {
     X(EVENT_CPACK_ADD_COMPONENT, EVENT_FAMILY_CPACK, "cpack_add_component", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_CPACK_PACKAGE_DECLARE, EVENT_FAMILY_CPACK, "cpack_package_declare", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_CPACK_PACKAGE_ADD_GENERATOR, EVENT_FAMILY_CPACK, "cpack_package_add_generator", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_CPACK_PACKAGE_ARCHIVE_NAME_OVERRIDE, EVENT_FAMILY_CPACK, "cpack_package_archive_name_override", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_PACKAGE_FIND_RESULT, EVENT_FAMILY_PACKAGE, "package_find_result", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_PROJECT_DECLARE, EVENT_FAMILY_PROJECT, "project_declare", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_PROJECT_MINIMUM_REQUIRED, EVENT_FAMILY_PROJECT, "project_minimum_required", EVENT_ROLE_BUILD_SEMANTIC) \
@@ -784,6 +785,10 @@ typedef struct {
     String_View package_version;
     String_View package_file_name;
     String_View package_directory;
+    String_View archive_file_name;
+    String_View archive_file_extension;
+    String_View components_grouping;
+    String_View project_config_file;
     bool include_toplevel_directory;
     bool archive_component_install;
     String_View components_all;
@@ -793,6 +798,12 @@ typedef struct {
     String_View package_key;
     String_View generator;
 } Event_Cpack_Package_Add_Generator;
+
+typedef struct {
+    String_View package_key;
+    String_View archive_key;
+    String_View archive_file_name;
+} Event_Cpack_Package_Archive_Name_Override;
 
 typedef struct {
     String_View package_name;
@@ -1136,6 +1147,7 @@ typedef struct {
         Event_Cpack_Add_Component cpack_add_component;
         Event_Cpack_Package_Declare cpack_package_declare;
         Event_Cpack_Package_Add_Generator cpack_package_add_generator;
+        Event_Cpack_Package_Archive_Name_Override cpack_package_archive_name_override;
         Event_Package_Find_Result package_find_result;
         Event_Package_Find_Result find_package; // legacy alias
         Event_Project_Declare project_declare;
@@ -1231,6 +1243,7 @@ typedef Event_Diag_Severity Cmake_Diag_Severity;
 #define EV_CPACK_ADD_COMPONENT EVENT_CPACK_ADD_COMPONENT
 #define EV_CPACK_PACKAGE_DECLARE EVENT_CPACK_PACKAGE_DECLARE
 #define EV_CPACK_PACKAGE_ADD_GENERATOR EVENT_CPACK_PACKAGE_ADD_GENERATOR
+#define EV_CPACK_PACKAGE_ARCHIVE_NAME_OVERRIDE EVENT_CPACK_PACKAGE_ARCHIVE_NAME_OVERRIDE
 #define EV_FIND_PACKAGE EVENT_PACKAGE_FIND_RESULT
 #define EV_COMMAND_CALL EVENT_COMMAND_BEGIN
 

@@ -2243,6 +2243,10 @@ static inline bool eval_emit_cpack_package_declare(EvalExecContext *ctx,
                                                    String_View package_version,
                                                    String_View package_file_name,
                                                    String_View package_directory,
+                                                   String_View archive_file_name,
+                                                   String_View archive_file_extension,
+                                                   String_View components_grouping,
+                                                   String_View project_config_file,
                                                    bool include_toplevel_directory,
                                                    bool archive_component_install,
                                                    String_View components_all) {
@@ -2254,6 +2258,10 @@ static inline bool eval_emit_cpack_package_declare(EvalExecContext *ctx,
     ev.as.cpack_package_declare.package_version = sv_copy_to_event_arena(ctx, package_version);
     ev.as.cpack_package_declare.package_file_name = sv_copy_to_event_arena(ctx, package_file_name);
     ev.as.cpack_package_declare.package_directory = sv_copy_to_event_arena(ctx, package_directory);
+    ev.as.cpack_package_declare.archive_file_name = sv_copy_to_event_arena(ctx, archive_file_name);
+    ev.as.cpack_package_declare.archive_file_extension = sv_copy_to_event_arena(ctx, archive_file_extension);
+    ev.as.cpack_package_declare.components_grouping = sv_copy_to_event_arena(ctx, components_grouping);
+    ev.as.cpack_package_declare.project_config_file = sv_copy_to_event_arena(ctx, project_config_file);
     ev.as.cpack_package_declare.include_toplevel_directory = include_toplevel_directory;
     ev.as.cpack_package_declare.archive_component_install = archive_component_install;
     ev.as.cpack_package_declare.components_all = sv_copy_to_event_arena(ctx, components_all);
@@ -2268,6 +2276,19 @@ static inline bool eval_emit_cpack_package_add_generator(EvalExecContext *ctx,
     ev.h.origin = origin;
     ev.as.cpack_package_add_generator.package_key = sv_copy_to_event_arena(ctx, package_key);
     ev.as.cpack_package_add_generator.generator = sv_copy_to_event_arena(ctx, generator);
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_cpack_package_archive_name_override(EvalExecContext *ctx,
+                                                                 Event_Origin origin,
+                                                                 String_View package_key,
+                                                                 String_View archive_key,
+                                                                 String_View archive_file_name) {
+    Event ev = {0};
+    ev.h.kind = EVENT_CPACK_PACKAGE_ARCHIVE_NAME_OVERRIDE;
+    ev.h.origin = origin;
+    ev.as.cpack_package_archive_name_override.package_key = sv_copy_to_event_arena(ctx, package_key);
+    ev.as.cpack_package_archive_name_override.archive_key = sv_copy_to_event_arena(ctx, archive_key);
+    ev.as.cpack_package_archive_name_override.archive_file_name = sv_copy_to_event_arena(ctx, archive_file_name);
     return emit_event(ctx, ev);
 }
 static inline bool eval_emit_package_find_result(EvalExecContext *ctx,

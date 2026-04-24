@@ -94,7 +94,7 @@ EVAL_OK 1
 BUILDER_OK 1
 FREEZE_OK 1
 DIAG errors=1 warnings=0
-EVENTS count=32
+EVENTS count=52
 BUILD_STEPS count=0
 REPLAY_ACTIONS count=0
 TESTS count=0
@@ -102,11 +102,12 @@ INSTALL_RULES count=1
 INSTALL[0] kind=TARGET owner_dir=0 target='core' item='core' destination='lib' archive_destination='' library_destination='' runtime_destination='' includes_destination='' public_header_destination='' component='Unspecified' archive_component='' library_component='' runtime_component='' includes_component='' public_header_component='' rename='' export=''
 EXPORTS count=0
 CPACK_PACKAGES count=1
-CPACK_PACKAGE[0] name='PackDemo' version='1.0.0' file='pack-demo' output='graph_build/packages/out' include_toplevel=0 archive_component_install=0 generators=2 components=2
+CPACK_PACKAGE[0] name='PackDemo' version='1.0.0' file='pack-demo' archive_file='pack-archive' archive_ext='pkg' grouping='ONE_PER_GROUP' project_config='' output='graph_build/packages/out' include_toplevel=0 archive_component_install=1 generators=2 components=2
 GENERATOR 'TGZ'
 GENERATOR 'ZIP'
 COMPONENT 'Runtime'
 COMPONENT 'Development'
+ARCHIVE_OVERRIDE key='BASE' file='pack-base'
 TARGET name='core' source_count=1
 SOURCE[0] generated=0 producer=INVALID effective='graph_src/core.c'
 === END CASE ===

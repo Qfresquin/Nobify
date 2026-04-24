@@ -145,6 +145,8 @@ static bool cg_validate_package_model(CG_Context *ctx) {
         String_View package_name = bm_query_cpack_package_name(ctx->model, id);
         String_View file_name = bm_query_cpack_package_file_name(ctx->model, id);
         String_View output_dir = bm_query_cpack_package_output_directory(ctx->model, id, ctx->scratch);
+        String_View project_config_file = bm_query_cpack_package_project_config_file(ctx->model, id);
+        String_View grouping = bm_query_cpack_package_components_grouping(ctx->model, id);
         BM_String_Span generators = bm_query_cpack_package_generators(ctx->model, id);
 
         if (package_name.count == 0 || file_name.count == 0 || output_dir.count == 0) {
@@ -155,9 +157,20 @@ static bool cg_validate_package_model(CG_Context *ctx) {
             return false;
         }
 
-        if (bm_query_cpack_package_archive_component_install(ctx->model, id)) {
+        if (project_config_file.count > 0) {
             nob_log(NOB_ERROR,
-                    "codegen: CPACK_ARCHIVE_COMPONENT_INSTALL=ON is not supported in the package backend yet");
+                    "codegen: CPACK_PROJECT_CONFIG_FILE is not supported in the package backend yet");
+            return false;
+        }
+
+        if (grouping.count > 0 &&
+            !nob_sv_eq(grouping, nob_sv_from_cstr("ONE_PER_GROUP")) &&
+            !nob_sv_eq(grouping, nob_sv_from_cstr("IGNORE")) &&
+            !nob_sv_eq(grouping, nob_sv_from_cstr("ALL_COMPONENTS_IN_ONE"))) {
+            nob_log(NOB_ERROR,
+                    "codegen: unsupported CPACK_COMPONENTS_GROUPING '%.*s'",
+                    (int)grouping.count,
+                    grouping.data ? grouping.data : "");
             return false;
         }
 

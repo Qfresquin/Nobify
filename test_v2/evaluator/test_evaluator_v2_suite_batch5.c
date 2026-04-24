@@ -3194,6 +3194,10 @@ TEST(evaluator_include_cpack_materializes_package_snapshot_events) {
         "project(PackMe VERSION 1.4.2)\n"
         "set(CPACK_GENERATOR \"TGZ;ZIP\")\n"
         "set(CPACK_PACKAGE_DIRECTORY out/packages)\n"
+        "set(CPACK_ARCHIVE_FILE_NAME pack-archive)\n"
+        "set(CPACK_ARCHIVE_FILE_EXTENSION pkg)\n"
+        "set(CPACK_ARCHIVE_RUNTIME_FILE_NAME pack-runtime)\n"
+        "set(CPACK_COMPONENTS_GROUPING IGNORE)\n"
         "set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)\n"
         "include(CPack)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
@@ -3201,6 +3205,7 @@ TEST(evaluator_include_cpack_materializes_package_snapshot_events) {
     bool saw_declare = false;
     bool saw_tgz = false;
     bool saw_zip = false;
+    bool saw_runtime_override = false;
     for (size_t i = 0; i < stream->count; ++i) {
         const Cmake_Event *ev = &stream->items[i];
         if (ev->h.kind == EV_CPACK_PACKAGE_DECLARE) {
@@ -3208,15 +3213,24 @@ TEST(evaluator_include_cpack_materializes_package_snapshot_events) {
             ASSERT(nob_sv_eq(ev->as.cpack_package_declare.package_name, nob_sv_from_cstr("PackMe")));
             ASSERT(nob_sv_eq(ev->as.cpack_package_declare.package_version, nob_sv_from_cstr("1.4.2")));
             ASSERT(nob_sv_eq(ev->as.cpack_package_declare.package_directory, nob_sv_from_cstr("out/packages")));
+            ASSERT(nob_sv_eq(ev->as.cpack_package_declare.archive_file_name, nob_sv_from_cstr("pack-archive")));
+            ASSERT(nob_sv_eq(ev->as.cpack_package_declare.archive_file_extension, nob_sv_from_cstr("pkg")));
+            ASSERT(nob_sv_eq(ev->as.cpack_package_declare.components_grouping, nob_sv_from_cstr("IGNORE")));
             ASSERT(!ev->as.cpack_package_declare.include_toplevel_directory);
         } else if (ev->h.kind == EV_CPACK_PACKAGE_ADD_GENERATOR) {
             if (nob_sv_eq(ev->as.cpack_package_add_generator.generator, nob_sv_from_cstr("TGZ"))) saw_tgz = true;
             if (nob_sv_eq(ev->as.cpack_package_add_generator.generator, nob_sv_from_cstr("ZIP"))) saw_zip = true;
+        } else if (ev->h.kind == EV_CPACK_PACKAGE_ARCHIVE_NAME_OVERRIDE) {
+            if (nob_sv_eq(ev->as.cpack_package_archive_name_override.archive_key, nob_sv_from_cstr("RUNTIME")) &&
+                nob_sv_eq(ev->as.cpack_package_archive_name_override.archive_file_name, nob_sv_from_cstr("pack-runtime"))) {
+                saw_runtime_override = true;
+            }
         }
     }
     ASSERT(saw_declare);
     ASSERT(saw_tgz);
     ASSERT(saw_zip);
+    ASSERT(saw_runtime_override);
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);

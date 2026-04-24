@@ -293,19 +293,16 @@ TEST(codegen_rejects_macosx_bundle_targets) {
     TEST_PASS();
 }
 
-TEST(codegen_rejects_cpack_archive_component_install_before_render) {
+TEST(codegen_rejects_cpack_project_config_file_before_render) {
     Nob_String_Builder sb = {0};
     diag_reset();
     diag_set_strict(false);
     diag_telemetry_reset();
     ASSERT(!codegen_render_script(
         "project(Test C)\n"
-        "include(CPackComponent)\n"
-        "set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)\n"
+        "set(CPACK_PROJECT_CONFIG_FILE custom-cpack.cmake)\n"
         "set(CPACK_GENERATOR TGZ)\n"
         "include(CPack)\n"
-        "cpack_add_install_type(Full)\n"
-        "cpack_add_component(Runtime INSTALL_TYPES Full)\n"
         "add_executable(app main.c)\n",
         "CMakeLists.txt",
         "nob.c",
@@ -682,7 +679,7 @@ void run_codegen_v2_reject_tests(int *passed, int *failed, int *skipped) {
     test_codegen_rejects_export_setup_signature_boundary(passed, failed, skipped);
     test_codegen_rejects_invalid_platform_backend_pair(passed, failed, skipped);
     test_codegen_rejects_macosx_bundle_targets(passed, failed, skipped);
-    test_codegen_rejects_cpack_archive_component_install_before_render(passed, failed, skipped);
+    test_codegen_rejects_cpack_project_config_file_before_render(passed, failed, skipped);
     test_codegen_rejects_install_object_library_targets_before_render(passed, failed, skipped);
     test_codegen_rejects_install_utility_targets_before_render(passed, failed, skipped);
     test_codegen_rejects_install_unknown_library_targets_before_render(passed, failed, skipped);

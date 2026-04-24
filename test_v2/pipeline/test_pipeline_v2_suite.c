@@ -608,6 +608,14 @@ static void append_pipeline_build_graph_snapshot(Nob_String_Builder *sb, const B
         test_snapshot_append_escaped_sv(sb, bm_query_cpack_package_version(model, package_id));
         nob_sb_append_cstr(sb, " file=");
         test_snapshot_append_escaped_sv(sb, bm_query_cpack_package_file_name(model, package_id));
+        nob_sb_append_cstr(sb, " archive_file=");
+        test_snapshot_append_escaped_sv(sb, bm_query_cpack_package_archive_file_name(model, package_id));
+        nob_sb_append_cstr(sb, " archive_ext=");
+        test_snapshot_append_escaped_sv(sb, bm_query_cpack_package_archive_file_extension(model, package_id));
+        nob_sb_append_cstr(sb, " grouping=");
+        test_snapshot_append_escaped_sv(sb, bm_query_cpack_package_components_grouping(model, package_id));
+        nob_sb_append_cstr(sb, " project_config=");
+        test_snapshot_append_escaped_sv(sb, bm_query_cpack_package_project_config_file(model, package_id));
         nob_sb_append_cstr(sb, " output=");
         test_snapshot_append_escaped_sv(sb,
                                         scratch
@@ -628,6 +636,21 @@ static void append_pipeline_build_graph_snapshot(Nob_String_Builder *sb, const B
         for (size_t component_index = 0; component_index < components.count; ++component_index) {
             nob_sb_append_cstr(sb, "COMPONENT ");
             test_snapshot_append_escaped_sv(sb, components.items[component_index]);
+            nob_sb_append_cstr(sb, "\n");
+        }
+        for (size_t override_index = 0;
+             override_index < bm_query_cpack_package_archive_name_override_count(model, package_id);
+             ++override_index) {
+            nob_sb_append_cstr(sb, "ARCHIVE_OVERRIDE key=");
+            test_snapshot_append_escaped_sv(sb,
+                                            bm_query_cpack_package_archive_name_override_key(model,
+                                                                                            package_id,
+                                                                                            override_index));
+            nob_sb_append_cstr(sb, " file=");
+            test_snapshot_append_escaped_sv(sb,
+                                            bm_query_cpack_package_archive_name_override_file_name(model,
+                                                                                                  package_id,
+                                                                                                  override_index));
             nob_sb_append_cstr(sb, "\n");
         }
     }

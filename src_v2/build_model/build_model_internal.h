@@ -348,6 +348,11 @@ typedef struct {
 } BM_CPack_Component_Record;
 
 typedef struct {
+    String_View key;
+    String_View value;
+} BM_String_Pair;
+
+typedef struct {
     BM_CPack_Package_Id id;
     BM_Directory_Id owner_directory_id;
     BM_Provenance provenance;
@@ -356,8 +361,13 @@ typedef struct {
     String_View package_version;
     String_View package_file_name;
     String_View package_directory;
+    String_View archive_file_name;
+    String_View archive_file_extension;
+    String_View components_grouping;
+    String_View project_config_file;
     String_View *generators;
     String_View *components_all;
+    BM_String_Pair *archive_name_overrides;
     bool include_toplevel_directory;
     bool archive_component_install;
 } BM_CPack_Package_Record;

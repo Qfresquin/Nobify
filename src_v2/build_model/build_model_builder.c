@@ -90,6 +90,7 @@ static bool bm_is_supported_build_event(Event_Kind kind) {
         case EVENT_CPACK_ADD_COMPONENT:
         case EVENT_CPACK_PACKAGE_DECLARE:
         case EVENT_CPACK_PACKAGE_ADD_GENERATOR:
+        case EVENT_CPACK_PACKAGE_ARCHIVE_NAME_OVERRIDE:
         case EVENT_PACKAGE_FIND_RESULT:
             return true;
         case EVENT_KIND_COUNT:
@@ -745,6 +746,7 @@ bool bm_builder_apply_event(BM_Builder *builder, const Event *ev) {
         case EVENT_CPACK_ADD_COMPONENT:
         case EVENT_CPACK_PACKAGE_DECLARE:
         case EVENT_CPACK_PACKAGE_ADD_GENERATOR:
+        case EVENT_CPACK_PACKAGE_ARCHIVE_NAME_OVERRIDE:
             return bm_builder_handle_package_event(builder, ev);
 
         case EVENT_KIND_COUNT:

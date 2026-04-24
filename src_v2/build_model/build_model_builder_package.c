@@ -103,6 +103,10 @@ bool bm_builder_handle_package_event(BM_Builder *builder, const Event *ev) {
                 !bm_copy_string(builder->arena, ev->as.cpack_package_declare.package_version, &record.package_version) ||
                 !bm_copy_string(builder->arena, ev->as.cpack_package_declare.package_file_name, &record.package_file_name) ||
                 !bm_copy_string(builder->arena, ev->as.cpack_package_declare.package_directory, &record.package_directory) ||
+                !bm_copy_string(builder->arena, ev->as.cpack_package_declare.archive_file_name, &record.archive_file_name) ||
+                !bm_copy_string(builder->arena, ev->as.cpack_package_declare.archive_file_extension, &record.archive_file_extension) ||
+                !bm_copy_string(builder->arena, ev->as.cpack_package_declare.components_grouping, &record.components_grouping) ||
+                !bm_copy_string(builder->arena, ev->as.cpack_package_declare.project_config_file, &record.project_config_file) ||
                 !bm_split_cmake_list(builder->arena, ev->as.cpack_package_declare.components_all, &record.components_all) ||
                 !arena_arr_push(builder->arena, draft->cpack_packages, record)) {
                 return bm_builder_error(builder, ev, "failed to append CPack package plan", "increase arena capacity");
@@ -122,6 +126,24 @@ bool bm_builder_handle_package_event(BM_Builder *builder, const Event *ev) {
             if (!bm_copy_string(builder->arena, ev->as.cpack_package_add_generator.generator, &generator) ||
                 !bm_append_string(builder->arena, &record->generators, generator)) {
                 return bm_builder_error(builder, ev, "failed to append CPack package generator", "increase arena capacity");
+            }
+            return true;
+        }
+
+        case EVENT_CPACK_PACKAGE_ARCHIVE_NAME_OVERRIDE: {
+            BM_CPack_Package_Record *record =
+                bm_draft_find_cpack_package(draft, ev->as.cpack_package_archive_name_override.package_key);
+            BM_String_Pair pair = {0};
+            if (!record) {
+                return bm_builder_error(builder,
+                                        ev,
+                                        "CPack archive name override referenced unknown package plan",
+                                        "emit cpack_package_declare before cpack_package_archive_name_override");
+            }
+            if (!bm_copy_string(builder->arena, ev->as.cpack_package_archive_name_override.archive_key, &pair.key) ||
+                !bm_copy_string(builder->arena, ev->as.cpack_package_archive_name_override.archive_file_name, &pair.value) ||
+                !arena_arr_push(builder->arena, record->archive_name_overrides, pair)) {
+                return bm_builder_error(builder, ev, "failed to append CPack archive name override", "increase arena capacity");
             }
             return true;
         }

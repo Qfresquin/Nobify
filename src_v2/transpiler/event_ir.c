@@ -533,11 +533,20 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_package_declare.package_version)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_package_declare.package_file_name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_package_declare.package_directory)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_package_declare.archive_file_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_package_declare.archive_file_extension)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_package_declare.components_grouping)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_package_declare.project_config_file)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_package_declare.components_all)) return false;
             break;
         case EVENT_CPACK_PACKAGE_ADD_GENERATOR:
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_package_add_generator.package_key)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.cpack_package_add_generator.generator)) return false;
+            break;
+        case EVENT_CPACK_PACKAGE_ARCHIVE_NAME_OVERRIDE:
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_package_archive_name_override.package_key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_package_archive_name_override.archive_key)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.cpack_package_archive_name_override.archive_file_name)) return false;
             break;
         case EVENT_PACKAGE_FIND_RESULT:
             if (!event_copy_sv_inplace(arena, &ev->as.package_find_result.package_name)) return false;

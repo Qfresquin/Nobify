@@ -616,9 +616,20 @@ String_View bm_query_cpack_package_name(const Build_Model *model, BM_CPack_Packa
 String_View bm_query_cpack_package_version(const Build_Model *model, BM_CPack_Package_Id id);
 String_View bm_query_cpack_package_file_name(const Build_Model *model, BM_CPack_Package_Id id);
 String_View bm_query_cpack_package_output_directory(const Build_Model *model, BM_CPack_Package_Id id, Arena *scratch);
+String_View bm_query_cpack_package_archive_file_name(const Build_Model *model, BM_CPack_Package_Id id);
+String_View bm_query_cpack_package_archive_file_extension(const Build_Model *model, BM_CPack_Package_Id id);
+String_View bm_query_cpack_package_components_grouping(const Build_Model *model, BM_CPack_Package_Id id);
+String_View bm_query_cpack_package_project_config_file(const Build_Model *model, BM_CPack_Package_Id id);
 BM_String_Span bm_query_cpack_package_generators(const Build_Model *model, BM_CPack_Package_Id id);
 bool bm_query_cpack_package_include_toplevel_directory(const Build_Model *model, BM_CPack_Package_Id id);
 bool bm_query_cpack_package_archive_component_install(const Build_Model *model, BM_CPack_Package_Id id);
 BM_String_Span bm_query_cpack_package_components_all(const Build_Model *model, BM_CPack_Package_Id id);
+size_t bm_query_cpack_package_archive_name_override_count(const Build_Model *model, BM_CPack_Package_Id id);
+String_View bm_query_cpack_package_archive_name_override_key(const Build_Model *model,
+                                                            BM_CPack_Package_Id id,
+                                                            size_t override_index);
+String_View bm_query_cpack_package_archive_name_override_file_name(const Build_Model *model,
+                                                                   BM_CPack_Package_Id id,
+                                                                   size_t override_index);
 
 #endif

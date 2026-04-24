@@ -3253,6 +3253,26 @@ String_View bm_query_cpack_package_output_directory(const Build_Model *model,
     return bm_join_relative_path_query(scratch, owner->binary_dir, record->package_directory);
 }
 
+String_View bm_query_cpack_package_archive_file_name(const Build_Model *model, BM_CPack_Package_Id id) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    return record ? record->archive_file_name : (String_View){0};
+}
+
+String_View bm_query_cpack_package_archive_file_extension(const Build_Model *model, BM_CPack_Package_Id id) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    return record ? record->archive_file_extension : (String_View){0};
+}
+
+String_View bm_query_cpack_package_components_grouping(const Build_Model *model, BM_CPack_Package_Id id) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    return record ? record->components_grouping : (String_View){0};
+}
+
+String_View bm_query_cpack_package_project_config_file(const Build_Model *model, BM_CPack_Package_Id id) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    return record ? record->project_config_file : (String_View){0};
+}
+
 BM_String_Span bm_query_cpack_package_generators(const Build_Model *model, BM_CPack_Package_Id id) {
     const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
     return record ? bm_string_span(record->generators) : (BM_String_Span){0};
@@ -3271,4 +3291,25 @@ bool bm_query_cpack_package_archive_component_install(const Build_Model *model, 
 BM_String_Span bm_query_cpack_package_components_all(const Build_Model *model, BM_CPack_Package_Id id) {
     const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
     return record ? bm_string_span(record->components_all) : (BM_String_Span){0};
+}
+
+size_t bm_query_cpack_package_archive_name_override_count(const Build_Model *model, BM_CPack_Package_Id id) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    return record ? arena_arr_len(record->archive_name_overrides) : 0;
+}
+
+String_View bm_query_cpack_package_archive_name_override_key(const Build_Model *model,
+                                                            BM_CPack_Package_Id id,
+                                                            size_t override_index) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    if (!record || override_index >= arena_arr_len(record->archive_name_overrides)) return (String_View){0};
+    return record->archive_name_overrides[override_index].key;
+}
+
+String_View bm_query_cpack_package_archive_name_override_file_name(const Build_Model *model,
+                                                                   BM_CPack_Package_Id id,
+                                                                   size_t override_index) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    if (!record || override_index >= arena_arr_len(record->archive_name_overrides)) return (String_View){0};
+    return record->archive_name_overrides[override_index].value;
 }

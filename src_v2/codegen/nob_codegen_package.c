@@ -1,5 +1,7 @@
 #include "nob_codegen_internal.h"
 
+#include <ctype.h>
+
 static bool cg_package_has_generator(CG_Context *ctx, const char *generator_name) {
     if (!ctx || !generator_name) return false;
     for (size_t package_index = 0; package_index < bm_query_cpack_package_count(ctx->model); ++package_index) {
@@ -35,27 +37,257 @@ static bool cg_package_binary_root_path_abs(CG_Context *ctx,
     return cg_normalize_path_to_arena(ctx->scratch, joined, out);
 }
 
+typedef struct {
+    String_View name;
+    String_View group_name;
+} CG_Package_Component;
+
+typedef struct {
+    String_View archive_key;
+    String_View archive_file_name;
+    String_View *components;
+} CG_Package_Archive_Unit;
+
+static bool cg_package_string_array_contains(String_View *items, String_View value) {
+    for (size_t i = 0; i < arena_arr_len(items); ++i) {
+        if (nob_sv_eq(items[i], value)) return true;
+    }
+    return false;
+}
+
+static bool cg_package_append_unique_string(Arena *arena, String_View **items, String_View value) {
+    if (!arena || !items || value.count == 0) return false;
+    if (cg_package_string_array_contains(*items, value)) return true;
+    return arena_arr_push(arena, *items, value);
+}
+
+static String_View cg_package_component_group(CG_Context *ctx, String_View component_name) {
+    BM_CPack_Component_Id component_id = BM_CPACK_COMPONENT_ID_INVALID;
+    BM_CPack_Component_Group_Id group_id = BM_CPACK_COMPONENT_GROUP_ID_INVALID;
+    if (!ctx || component_name.count == 0) return (String_View){0};
+    component_id = bm_query_cpack_component_by_name(ctx->model, component_name);
+    if (component_id == BM_CPACK_COMPONENT_ID_INVALID) return (String_View){0};
+    group_id = bm_query_cpack_component_group(ctx->model, component_id);
+    if (group_id == BM_CPACK_COMPONENT_GROUP_ID_INVALID) return (String_View){0};
+    return bm_query_cpack_component_group_name(ctx->model, group_id);
+}
+
+static bool cg_package_collect_install_rule_component(CG_Context *ctx,
+                                                      String_View **components,
+                                                      String_View component,
+                                                      bool empty_is_unspecified) {
+    if (!ctx || !components) return false;
+    if (component.count == 0 && empty_is_unspecified) component = nob_sv_from_cstr("Unspecified");
+    if (component.count == 0) return true;
+    return cg_package_append_unique_string(ctx->scratch, components, component);
+}
+
+static bool cg_package_collect_components(CG_Context *ctx,
+                                          BM_CPack_Package_Id id,
+                                          CG_Package_Component **out_components) {
+    BM_String_Span components_all = {0};
+    String_View *names = NULL;
+    if (!ctx || !out_components) return false;
+    *out_components = NULL;
+    components_all = bm_query_cpack_package_components_all(ctx->model, id);
+    for (size_t i = 0; i < components_all.count; ++i) {
+        if (!cg_package_append_unique_string(ctx->scratch, &names, components_all.items[i])) return false;
+    }
+    if (arena_arr_len(names) == 0) {
+        for (size_t i = 0; i < bm_query_cpack_component_count(ctx->model); ++i) {
+            if (!cg_package_append_unique_string(ctx->scratch,
+                                                 &names,
+                                                 bm_query_cpack_component_name(ctx->model, (BM_CPack_Component_Id)i))) {
+                return false;
+            }
+        }
+    }
+    if (arena_arr_len(names) == 0) {
+        for (size_t i = 0; i < bm_query_install_rule_count(ctx->model); ++i) {
+            BM_Install_Rule_Id rule_id = (BM_Install_Rule_Id)i;
+            if (!cg_package_collect_install_rule_component(ctx,
+                                                          &names,
+                                                          bm_query_install_rule_component(ctx->model, rule_id),
+                                                          true) ||
+                !cg_package_collect_install_rule_component(ctx,
+                                                          &names,
+                                                          bm_query_install_rule_archive_component(ctx->model, rule_id),
+                                                          false) ||
+                !cg_package_collect_install_rule_component(ctx,
+                                                          &names,
+                                                          bm_query_install_rule_library_component(ctx->model, rule_id),
+                                                          false) ||
+                !cg_package_collect_install_rule_component(ctx,
+                                                          &names,
+                                                          bm_query_install_rule_runtime_component(ctx->model, rule_id),
+                                                          false) ||
+                !cg_package_collect_install_rule_component(ctx,
+                                                          &names,
+                                                          bm_query_install_rule_includes_component(ctx->model, rule_id),
+                                                          false) ||
+                !cg_package_collect_install_rule_component(ctx,
+                                                          &names,
+                                                          bm_query_install_rule_public_header_component(ctx->model, rule_id),
+                                                          false) ||
+                !cg_package_collect_install_rule_component(ctx,
+                                                          &names,
+                                                          bm_query_install_rule_namelink_component(ctx->model, rule_id),
+                                                          false)) {
+                return false;
+            }
+        }
+    }
+    for (size_t i = 0; i < arena_arr_len(names); ++i) {
+        CG_Package_Component component = {
+            .name = names[i],
+            .group_name = cg_package_component_group(ctx, names[i]),
+        };
+        if (!arena_arr_push(ctx->scratch, *out_components, component)) return false;
+    }
+    return true;
+}
+
+static String_View cg_package_archive_key_upper(CG_Context *ctx, String_View key) {
+    char *copy = NULL;
+    if (!ctx || key.count == 0) return (String_View){0};
+    copy = arena_alloc(ctx->scratch, key.count + 1);
+    if (!copy) return (String_View){0};
+    for (size_t i = 0; i < key.count; ++i) {
+        unsigned char ch = (unsigned char)key.data[i];
+        copy[i] = (char)toupper(ch);
+    }
+    copy[key.count] = '\0';
+    return nob_sv_from_parts(copy, key.count);
+}
+
+static String_View cg_package_archive_default_name(CG_Context *ctx,
+                                                   String_View base_name,
+                                                   String_View archive_key) {
+    Nob_String_Builder sb = {0};
+    char *copy = NULL;
+    if (!ctx) return (String_View){0};
+    nob_sb_append_buf(&sb, base_name.data ? base_name.data : "", base_name.count);
+    if (archive_key.count > 0) {
+        nob_sb_append_cstr(&sb, "-");
+        for (size_t i = 0; i < archive_key.count; ++i) {
+            char ch = archive_key.data[i];
+            nob_sb_append_cstr(&sb, ch == ' ' ? "-" : nob_temp_sprintf("%c", ch));
+        }
+    }
+    copy = arena_strndup(ctx->scratch, sb.items ? sb.items : "", sb.count);
+    nob_sb_free(sb);
+    return copy ? nob_sv_from_cstr(copy) : (String_View){0};
+}
+
+static String_View cg_package_archive_file_name_for_key(CG_Context *ctx,
+                                                        BM_CPack_Package_Id id,
+                                                        String_View archive_key) {
+    String_View key_upper = {0};
+    String_View base_name = bm_query_cpack_package_archive_file_name(ctx->model, id);
+    if (base_name.count == 0) base_name = bm_query_cpack_package_file_name(ctx->model, id);
+    if (archive_key.count == 0) return base_name;
+    key_upper = cg_package_archive_key_upper(ctx, archive_key);
+    for (size_t i = bm_query_cpack_package_archive_name_override_count(ctx->model, id); i-- > 0;) {
+        String_View override_key = bm_query_cpack_package_archive_name_override_key(ctx->model, id, i);
+        if (nob_sv_eq(override_key, key_upper)) {
+            return bm_query_cpack_package_archive_name_override_file_name(ctx->model, id, i);
+        }
+    }
+    return cg_package_archive_default_name(ctx, base_name, archive_key);
+}
+
+static CG_Package_Archive_Unit *cg_package_find_unit(CG_Package_Archive_Unit *units, String_View archive_key) {
+    for (size_t i = 0; i < arena_arr_len(units); ++i) {
+        if (nob_sv_eq(units[i].archive_key, archive_key)) return &units[i];
+    }
+    return NULL;
+}
+
+static bool cg_package_append_unit_component(Arena *arena,
+                                             CG_Package_Archive_Unit *unit,
+                                             String_View component) {
+    if (!arena || !unit || component.count == 0) return false;
+    return cg_package_append_unique_string(arena, &unit->components, component);
+}
+
+static bool cg_package_build_archive_units(CG_Context *ctx,
+                                           BM_CPack_Package_Id id,
+                                           CG_Package_Archive_Unit **out_units) {
+    CG_Package_Component *components = NULL;
+    String_View grouping = {0};
+    if (!ctx || !out_units) return false;
+    *out_units = NULL;
+    if (!bm_query_cpack_package_archive_component_install(ctx->model, id)) return true;
+    if (!cg_package_collect_components(ctx, id, &components)) return false;
+    grouping = bm_query_cpack_package_components_grouping(ctx->model, id);
+    if (grouping.count == 0) grouping = nob_sv_from_cstr("ONE_PER_GROUP");
+    if (arena_arr_len(components) == 0) {
+        CG_Package_Archive_Unit unit = {
+            .archive_key = nob_sv_from_cstr(""),
+            .archive_file_name = cg_package_archive_file_name_for_key(ctx, id, nob_sv_from_cstr("")),
+        };
+        return arena_arr_push(ctx->scratch, *out_units, unit);
+    }
+    if (nob_sv_eq(grouping, nob_sv_from_cstr("ALL_COMPONENTS_IN_ONE"))) {
+        CG_Package_Archive_Unit unit = {
+            .archive_key = nob_sv_from_cstr(""),
+            .archive_file_name = cg_package_archive_file_name_for_key(ctx, id, nob_sv_from_cstr("")),
+        };
+        for (size_t i = 0; i < arena_arr_len(components); ++i) {
+            if (!cg_package_append_unit_component(ctx->scratch, &unit, components[i].name)) return false;
+        }
+        return arena_arr_push(ctx->scratch, *out_units, unit);
+    }
+    for (size_t i = 0; i < arena_arr_len(components); ++i) {
+        String_View key = nob_sv_eq(grouping, nob_sv_from_cstr("ONE_PER_GROUP")) && components[i].group_name.count > 0
+            ? components[i].group_name
+            : components[i].name;
+        CG_Package_Archive_Unit *unit = cg_package_find_unit(*out_units, key);
+        if (!unit) {
+            CG_Package_Archive_Unit new_unit = {
+                .archive_key = key,
+                .archive_file_name = cg_package_archive_file_name_for_key(ctx, id, key),
+            };
+            if (!arena_arr_push(ctx->scratch, *out_units, new_unit)) return false;
+            unit = &(*out_units)[arena_arr_len(*out_units) - 1];
+        }
+        if (!cg_package_append_unit_component(ctx->scratch, unit, components[i].name)) return false;
+    }
+    return true;
+}
+
 static bool cg_emit_package_plan_tables(CG_Context *ctx, Nob_String_Builder *out) {
     if (!ctx || !out) return false;
 
     nob_sb_append_cstr(out,
         "typedef struct {\n"
+        "    const char *archive_file_name;\n"
+        "    const char **components;\n"
+        "    size_t component_count;\n"
+        "} Nob_Package_Archive_Unit;\n\n"
+        "typedef struct {\n"
         "    const char *package_name;\n"
         "    const char *package_version;\n"
         "    const char *package_file_name;\n"
+        "    const char *archive_file_name;\n"
+        "    const char *archive_file_extension;\n"
         "    const char *plan_root;\n"
         "    const char *default_output_dir;\n"
         "    const char *staging_root;\n"
         "    const char *payload_root;\n"
         "    const char *metadata_output_path;\n"
         "    bool include_toplevel_directory;\n"
+        "    bool archive_component_install;\n"
         "    const char **generators;\n"
         "    size_t generator_count;\n"
+        "    const Nob_Package_Archive_Unit *archive_units;\n"
+        "    size_t archive_unit_count;\n"
         "} Nob_Package_Plan;\n\n"
         "typedef struct {\n"
         "    const Nob_Package_Plan *plan;\n"
         "    const char *config;\n"
         "    const char *selected_generator;\n"
+        "    const char *archive_file_name;\n"
         "    const char *effective_output_dir;\n"
         "    const char *staging_root;\n"
         "    const char *payload_root;\n"
@@ -65,6 +297,7 @@ static bool cg_emit_package_plan_tables(CG_Context *ctx, Nob_String_Builder *out
     for (size_t package_index = 0; package_index < bm_query_cpack_package_count(ctx->model); ++package_index) {
         BM_CPack_Package_Id id = (BM_CPack_Package_Id)package_index;
         BM_String_Span generators = bm_query_cpack_package_generators(ctx->model, id);
+        CG_Package_Archive_Unit *units = NULL;
         nob_sb_append_cstr(out, "static const char *g_package_generators_");
         nob_sb_append_cstr(out, nob_temp_sprintf("%zu", package_index));
         nob_sb_append_cstr(out, "[] = {");
@@ -73,17 +306,53 @@ static bool cg_emit_package_plan_tables(CG_Context *ctx, Nob_String_Builder *out
             if (!cg_sb_append_c_string(out, generators.items[i])) return false;
         }
         nob_sb_append_cstr(out, "};\n");
+        if (!cg_package_build_archive_units(ctx, id, &units)) return false;
+        for (size_t unit_index = 0; unit_index < arena_arr_len(units); ++unit_index) {
+            if (arena_arr_len(units[unit_index].components) == 0) continue;
+            nob_sb_append_cstr(out, "static const char *g_package_archive_unit_components_");
+            nob_sb_append_cstr(out, nob_temp_sprintf("%zu_%zu", package_index, unit_index));
+            nob_sb_append_cstr(out, "[] = {");
+            for (size_t component_index = 0; component_index < arena_arr_len(units[unit_index].components); ++component_index) {
+                if (component_index > 0) nob_sb_append_cstr(out, ", ");
+                if (!cg_sb_append_c_string(out, units[unit_index].components[component_index])) return false;
+            }
+            nob_sb_append_cstr(out, "};\n");
+        }
+        if (arena_arr_len(units) > 0) {
+            nob_sb_append_cstr(out, "static const Nob_Package_Archive_Unit g_package_archive_units_");
+            nob_sb_append_cstr(out, nob_temp_sprintf("%zu", package_index));
+            nob_sb_append_cstr(out, "[] = {\n");
+            for (size_t unit_index = 0; unit_index < arena_arr_len(units); ++unit_index) {
+                nob_sb_append_cstr(out, "    { .archive_file_name = ");
+                if (!cg_sb_append_c_string(out, units[unit_index].archive_file_name)) return false;
+                nob_sb_append_cstr(out, ", .components = ");
+                if (arena_arr_len(units[unit_index].components) > 0) {
+                    nob_sb_append_cstr(out, "g_package_archive_unit_components_");
+                    nob_sb_append_cstr(out, nob_temp_sprintf("%zu_%zu", package_index, unit_index));
+                } else {
+                    nob_sb_append_cstr(out, "NULL");
+                }
+                nob_sb_append_cstr(out, ", .component_count = ");
+                nob_sb_append_cstr(out, nob_temp_sprintf("%zu", arena_arr_len(units[unit_index].components)));
+                nob_sb_append_cstr(out, " },\n");
+            }
+            nob_sb_append_cstr(out, "};\n");
+        }
     }
     nob_sb_append_cstr(out, "\nstatic const Nob_Package_Plan g_package_plans[] = {\n");
     for (size_t package_index = 0; package_index < bm_query_cpack_package_count(ctx->model); ++package_index) {
         BM_CPack_Package_Id id = (BM_CPack_Package_Id)package_index;
+        CG_Package_Archive_Unit *units = NULL;
         String_View output_dir = {0};
         String_View plan_root = {0};
         String_View staging_root = {0};
         String_View payload_root = {0};
         String_View metadata_path = {0};
         BM_String_Span generators = bm_query_cpack_package_generators(ctx->model, id);
+        String_View archive_file_name = bm_query_cpack_package_archive_file_name(ctx->model, id);
+        if (archive_file_name.count == 0) archive_file_name = bm_query_cpack_package_file_name(ctx->model, id);
         if (!cg_package_output_dir(ctx, id, &output_dir) ||
+            !cg_package_build_archive_units(ctx, id, &units) ||
             !cg_package_binary_root_path_abs(ctx,
                                              nob_sv_from_cstr(nob_temp_sprintf(".nob/package/plan%zu", package_index)),
                                              &plan_root) ||
@@ -106,6 +375,10 @@ static bool cg_emit_package_plan_tables(CG_Context *ctx, Nob_String_Builder *out
         if (!cg_sb_append_c_string(out, bm_query_cpack_package_version(ctx->model, id))) return false;
         nob_sb_append_cstr(out, ",\n        .package_file_name = ");
         if (!cg_sb_append_c_string(out, bm_query_cpack_package_file_name(ctx->model, id))) return false;
+        nob_sb_append_cstr(out, ",\n        .archive_file_name = ");
+        if (!cg_sb_append_c_string(out, archive_file_name)) return false;
+        nob_sb_append_cstr(out, ",\n        .archive_file_extension = ");
+        if (!cg_sb_append_c_string(out, bm_query_cpack_package_archive_file_extension(ctx->model, id))) return false;
         nob_sb_append_cstr(out, ",\n        .plan_root = ");
         if (!cg_sb_append_c_string(out, plan_root)) return false;
         nob_sb_append_cstr(out, ",\n        .default_output_dir = ");
@@ -118,10 +391,21 @@ static bool cg_emit_package_plan_tables(CG_Context *ctx, Nob_String_Builder *out
         if (!cg_sb_append_c_string(out, metadata_path)) return false;
         nob_sb_append_cstr(out, ",\n        .include_toplevel_directory = ");
         nob_sb_append_cstr(out, bm_query_cpack_package_include_toplevel_directory(ctx->model, id) ? "true" : "false");
+        nob_sb_append_cstr(out, ",\n        .archive_component_install = ");
+        nob_sb_append_cstr(out, bm_query_cpack_package_archive_component_install(ctx->model, id) ? "true" : "false");
         nob_sb_append_cstr(out, ",\n        .generators = g_package_generators_");
         nob_sb_append_cstr(out, nob_temp_sprintf("%zu", package_index));
         nob_sb_append_cstr(out, ",\n        .generator_count = ");
         nob_sb_append_cstr(out, nob_temp_sprintf("%zu", generators.count));
+        nob_sb_append_cstr(out, ",\n        .archive_units = ");
+        if (arena_arr_len(units) > 0) {
+            nob_sb_append_cstr(out, "g_package_archive_units_");
+            nob_sb_append_cstr(out, nob_temp_sprintf("%zu", package_index));
+        } else {
+            nob_sb_append_cstr(out, "NULL");
+        }
+        nob_sb_append_cstr(out, ",\n        .archive_unit_count = ");
+        nob_sb_append_cstr(out, nob_temp_sprintf("%zu", arena_arr_len(units)));
         nob_sb_append_cstr(out, "\n    },\n");
     }
     nob_sb_append_cstr(out,
@@ -161,12 +445,19 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "    if (!*b) return 1;\n"
         "    return strcmp(*a, *b);\n"
         "}\n\n"
-        "static const char *package_generator_extension(const char *generator) {\n"
+        "static const char *package_generator_default_extension(const char *generator) {\n"
         "    if (!generator) return \"\";\n"
         "    if (strcmp(generator, \"TGZ\") == 0) return \".tar.gz\";\n"
         "    if (strcmp(generator, \"TXZ\") == 0) return \".tar.xz\";\n"
         "    if (strcmp(generator, \"ZIP\") == 0) return \".zip\";\n"
         "    return \"\";\n"
+        "}\n\n"
+        "static const char *package_generator_extension(const Nob_Package_Plan *plan, const char *generator) {\n"
+        "    if (plan && plan->archive_file_extension && plan->archive_file_extension[0] != '\\0') {\n"
+        "        if (plan->archive_file_extension[0] == '.') return plan->archive_file_extension;\n"
+        "        return nob_temp_sprintf(\".%s\", plan->archive_file_extension);\n"
+        "    }\n"
+        "    return package_generator_default_extension(generator);\n"
         "}\n\n"
         "static bool package_generator_supported(const char *generator) {\n"
         "    return generator && (strcmp(generator, \"TGZ\") == 0 || strcmp(generator, \"TXZ\") == 0 || strcmp(generator, \"ZIP\") == 0);\n"
@@ -192,7 +483,7 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "    return package_join_path(nob_get_current_dir_temp(), path);\n"
         "}\n\n"
         "static const char *package_make_archive_name(const Nob_Package_Request *request, const char *generator) {\n"
-        "    return nob_temp_sprintf(\"%s%s\", request->plan->package_file_name, package_generator_extension(generator));\n"
+        "    return nob_temp_sprintf(\"%s%s\", request->archive_file_name, package_generator_extension(request->plan, generator));\n"
         "}\n\n"
         "static const char *package_make_archive_path(const Nob_Package_Request *request, const char *generator) {\n"
         "    return package_join_path(package_make_absolute_path(request->effective_output_dir),\n"
@@ -207,6 +498,7 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "    out->plan = plan;\n"
         "    out->config = g_build_config;\n"
         "    out->selected_generator = selected_generator;\n"
+        "    out->archive_file_name = plan->archive_file_name;\n"
         "    out->effective_output_dir = (output_dir_override && output_dir_override[0] != '\\0')\n"
         "        ? output_dir_override\n"
         "        : plan->default_output_dir;\n"
@@ -268,6 +560,20 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "        return install_copy_directory(request->staging_root, top_level_dir);\n"
         "    }\n"
         "    return package_copy_directory_contents(request->staging_root, request->payload_root);\n"
+        "}\n\n"
+        "static bool package_sync_component_payload(const Nob_Package_Request *request,\n"
+        "                                           const Nob_Package_Archive_Unit *unit) {\n"
+        "    if (!request || !request->plan || !unit) return false;\n"
+        "    if (!remove_path_recursive(request->staging_root) || !remove_path_recursive(request->payload_root)) return false;\n"
+        "    if (!ensure_dir(request->staging_root) || !ensure_dir(request->payload_root)) return false;\n"
+        "    if (unit->component_count == 0) {\n"
+        "        if (!install_all(request->staging_root, NULL)) return false;\n"
+        "    } else {\n"
+        "        for (size_t i = 0; i < unit->component_count; ++i) {\n"
+        "            if (!install_all(request->staging_root, unit->components[i])) return false;\n"
+        "        }\n"
+        "    }\n"
+        "    return true;\n"
         "}\n\n"
         "static const char *package_payload_source_root(const Nob_Package_Request *request) {\n"
         "    if (!request || !request->plan) return NULL;\n"
@@ -417,11 +723,16 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_VERSION_MAJOR\", version_major) ||\n"
         "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_VERSION_MINOR\", version_minor) ||\n"
         "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_VERSION_PATCH\", version_patch) ||\n"
-        "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_FILE_NAME\", request->plan->package_file_name ? request->plan->package_file_name : package_name) ||\n"
+        "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_FILE_NAME\", request->archive_file_name ? request->archive_file_name : package_name) ||\n"
         "        !package_write_cmake_set(fp, \"CPACK_GENERATOR\", generator) ||\n"
         "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_DIRECTORY\", output_dir) ||\n"
         "        !package_write_cmake_set(fp, \"CPACK_SYSTEM_NAME\", package_cpack_platform()) ||\n"
         "        !package_write_cmake_set(fp, \"CPACK_TOPLEVEL_TAG\", package_cpack_platform())) {\n"
+        "        fclose(fp);\n"
+        "        return false;\n"
+        "    }\n"
+        "    if (request->plan->archive_file_extension && request->plan->archive_file_extension[0] != '\\0' &&\n"
+        "        !package_write_cmake_set(fp, \"CPACK_ARCHIVE_FILE_EXTENSION\", request->plan->archive_file_extension)) {\n"
         "        fclose(fp);\n"
         "        return false;\n"
         "    }\n"
@@ -857,14 +1168,24 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "    if (!plan) return false;\n"
         "    if (!package_request_init(plan, selected_generator, output_dir_override, &request)) return false;\n"
         "    if (!remove_path_recursive(request.metadata_output_path)) return false;\n"
-        "    if (!package_sync_payload(&request)) return false;\n"
         "    for (size_t i = 0; i < plan->generator_count; ++i) {\n"
         "        const char *generator = plan->generators[i];\n"
         "        if (selected_generator && selected_generator[0] != '\\0' && strcmp(selected_generator, generator) != 0) {\n"
         "            continue;\n"
         "        }\n"
-        "        if (!package_generate_archive(&request, generator)) return false;\n"
-        "        if (executed) *executed = true;\n"
+        "        if (plan->archive_component_install) {\n"
+        "            for (size_t unit_index = 0; unit_index < plan->archive_unit_count; ++unit_index) {\n"
+        "                const Nob_Package_Archive_Unit *unit = &plan->archive_units[unit_index];\n"
+        "                request.archive_file_name = unit->archive_file_name;\n"
+        "                if (!package_sync_component_payload(&request, unit) ||\n"
+        "                    !package_generate_archive(&request, generator)) return false;\n"
+        "                if (executed) *executed = true;\n"
+        "            }\n"
+        "        } else {\n"
+        "            request.archive_file_name = plan->package_file_name;\n"
+        "            if (!package_sync_payload(&request) || !package_generate_archive(&request, generator)) return false;\n"
+        "            if (executed) *executed = true;\n"
+        "        }\n"
         "    }\n"
         "    return true;\n"
         "}\n\n"

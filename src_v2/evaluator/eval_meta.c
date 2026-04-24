@@ -1079,11 +1079,16 @@ static bool meta_export_execute_request(EvalExecContext *ctx,
 
 bool eval_finalize_cpack_package_snapshot(EvalExecContext *ctx) {
     SV_List generators = NULL;
+    SV_List visible_names = NULL;
     String_View generator_list = {0};
     String_View package_name = {0};
     String_View package_version = {0};
     String_View package_file_name = {0};
     String_View package_directory = {0};
+    String_View archive_file_name = {0};
+    String_View archive_file_extension = {0};
+    String_View components_grouping = {0};
+    String_View project_config_file = {0};
     String_View components_all = {0};
     String_View package_key = {0};
     Event_Origin origin = {0};
@@ -1127,6 +1132,10 @@ bool eval_finalize_cpack_package_snapshot(EvalExecContext *ctx) {
     }
 
     package_directory = meta_visible_var_or(ctx, "CPACK_PACKAGE_DIRECTORY", meta_current_bin_dir(ctx));
+    archive_file_name = eval_var_get_visible(ctx, nob_sv_from_cstr("CPACK_ARCHIVE_FILE_NAME"));
+    archive_file_extension = eval_var_get_visible(ctx, nob_sv_from_cstr("CPACK_ARCHIVE_FILE_EXTENSION"));
+    components_grouping = meta_visible_var_or(ctx, "CPACK_COMPONENTS_GROUPING", nob_sv_from_cstr("ONE_PER_GROUP"));
+    project_config_file = eval_var_get_visible(ctx, nob_sv_from_cstr("CPACK_PROJECT_CONFIG_FILE"));
     {
         String_View raw = eval_var_get_visible(ctx, nob_sv_from_cstr("CPACK_INCLUDE_TOPLEVEL_DIRECTORY"));
         if (raw.count > 0) include_toplevel_directory = eval_truthy(ctx, raw);
@@ -1145,10 +1154,30 @@ bool eval_finalize_cpack_package_snapshot(EvalExecContext *ctx) {
                                          package_version,
                                          package_file_name,
                                          package_directory,
+                                         archive_file_name,
+                                         archive_file_extension,
+                                         components_grouping,
+                                         project_config_file,
                                          include_toplevel_directory,
                                          archive_component_install,
                                          components_all)) {
         return false;
+    }
+
+    if (!eval_var_collect_visible_names(ctx, &visible_names)) return false;
+    for (size_t i = 0; i < arena_arr_len(visible_names); ++i) {
+        String_View name = visible_names[i];
+        String_View prefix = nob_sv_from_cstr("CPACK_ARCHIVE_");
+        String_View suffix = nob_sv_from_cstr("_FILE_NAME");
+        String_View archive_key = {0};
+        String_View value = {0};
+        if (name.count <= prefix.count + suffix.count) continue;
+        if (!nob_sv_starts_with(name, prefix) || !nob_sv_end_with(name, "_FILE_NAME")) continue;
+        if (nob_sv_eq(name, nob_sv_from_cstr("CPACK_ARCHIVE_FILE_NAME"))) continue;
+        archive_key = nob_sv_from_parts(name.data + prefix.count, name.count - prefix.count - suffix.count);
+        value = eval_var_get_visible(ctx, name);
+        if (archive_key.count == 0 || value.count == 0) continue;
+        if (!eval_emit_cpack_package_archive_name_override(ctx, origin, package_key, archive_key, value)) return false;
     }
 
     {

@@ -642,6 +642,18 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
                           "CPack package snapshot has no generators",
                           "package snapshots require at least one effective generator");
         }
+        if (!bm_string_view_is_empty(record->components_grouping) &&
+            !nob_sv_eq(record->components_grouping, nob_sv_from_cstr("ONE_PER_GROUP")) &&
+            !nob_sv_eq(record->components_grouping, nob_sv_from_cstr("IGNORE")) &&
+            !nob_sv_eq(record->components_grouping, nob_sv_from_cstr("ALL_COMPONENTS_IN_ONE"))) {
+            *had_error = true;
+            bm_diag_error(sink,
+                          record->provenance,
+                          "build_model_validate",
+                          "structural",
+                          "CPack package snapshot has unsupported CPACK_COMPONENTS_GROUPING",
+                          "supported archive component groupings are ONE_PER_GROUP, IGNORE, and ALL_COMPONENTS_IN_ONE");
+        }
         bm_validate_owner_directory(draft, record->owner_directory_id, record->provenance, "cpack package", sink, had_error);
     }
 

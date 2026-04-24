@@ -5782,7 +5782,12 @@ TEST(build_model_cpack_package_queries_surface_generation_plan) {
         "set(CPACK_GENERATOR \"TGZ;ZIP\")\n"
         "set(CPACK_PACKAGE_DIRECTORY packages/out)\n"
         "set(CPACK_PACKAGE_FILE_NAME PackMe-custom)\n"
+        "set(CPACK_ARCHIVE_FILE_NAME PackMe-archive)\n"
+        "set(CPACK_ARCHIVE_FILE_EXTENSION pkg)\n"
+        "set(CPACK_ARCHIVE_RUNTIME_FILE_NAME PackMe-runtime)\n"
+        "set(CPACK_COMPONENTS_GROUPING IGNORE)\n"
         "set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)\n"
+        "set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)\n"
         "set(CPACK_COMPONENTS_ALL Runtime)\n"
         "include(CPack)\n",
         &config));
@@ -5795,8 +5800,14 @@ TEST(build_model_cpack_package_queries_surface_generation_plan) {
     ASSERT(nob_sv_eq(bm_query_cpack_package_name(model, (BM_CPack_Package_Id)0), nob_sv_from_cstr("PackMe")));
     ASSERT(nob_sv_eq(bm_query_cpack_package_version(model, (BM_CPack_Package_Id)0), nob_sv_from_cstr("3.5.1")));
     ASSERT(nob_sv_eq(bm_query_cpack_package_file_name(model, (BM_CPack_Package_Id)0), nob_sv_from_cstr("PackMe-custom")));
+    ASSERT(nob_sv_eq(bm_query_cpack_package_archive_file_name(model, (BM_CPack_Package_Id)0), nob_sv_from_cstr("PackMe-archive")));
+    ASSERT(nob_sv_eq(bm_query_cpack_package_archive_file_extension(model, (BM_CPack_Package_Id)0), nob_sv_from_cstr("pkg")));
+    ASSERT(nob_sv_eq(bm_query_cpack_package_components_grouping(model, (BM_CPack_Package_Id)0), nob_sv_from_cstr("IGNORE")));
     ASSERT(!bm_query_cpack_package_include_toplevel_directory(model, (BM_CPack_Package_Id)0));
-    ASSERT(!bm_query_cpack_package_archive_component_install(model, (BM_CPack_Package_Id)0));
+    ASSERT(bm_query_cpack_package_archive_component_install(model, (BM_CPack_Package_Id)0));
+    ASSERT(bm_query_cpack_package_archive_name_override_count(model, (BM_CPack_Package_Id)0) == 1);
+    ASSERT(nob_sv_eq(bm_query_cpack_package_archive_name_override_key(model, (BM_CPack_Package_Id)0, 0), nob_sv_from_cstr("RUNTIME")));
+    ASSERT(nob_sv_eq(bm_query_cpack_package_archive_name_override_file_name(model, (BM_CPack_Package_Id)0, 0), nob_sv_from_cstr("PackMe-runtime")));
 
     output_dir = bm_query_cpack_package_output_directory(model, (BM_CPack_Package_Id)0, fixture.scratch_arena);
     ASSERT(build_model_sv_contains(output_dir, nob_sv_from_cstr("cpack_plan_build/packages/out")));

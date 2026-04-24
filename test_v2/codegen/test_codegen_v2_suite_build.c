@@ -3325,6 +3325,53 @@ TEST(codegen_package_include_toplevel_off_places_payload_at_archive_root) {
     TEST_PASS();
 }
 
+TEST(codegen_package_archive_component_install_groups_components) {
+    Codegen_Test_Config config = {
+        .input_path = "package_components_src/CMakeLists.txt",
+        .output_path = "package_components_nob.c",
+        .source_dir = "package_components_src",
+        .binary_dir = "package_components_build",
+    };
+    const char *script =
+        "project(Test NONE)\n"
+        "include(CPackComponent)\n"
+        "file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/runtime.txt\" \"runtime\\n\")\n"
+        "file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/dev.txt\" \"dev\\n\")\n"
+        "install(FILES \"${CMAKE_CURRENT_BINARY_DIR}/runtime.txt\" DESTINATION bin COMPONENT Runtime)\n"
+        "install(FILES \"${CMAKE_CURRENT_BINARY_DIR}/dev.txt\" DESTINATION include COMPONENT Development)\n"
+        "cpack_add_component_group(base)\n"
+        "cpack_add_component(Runtime GROUP base)\n"
+        "cpack_add_component(Development GROUP base)\n"
+        "set(CPACK_GENERATOR \"TGZ\")\n"
+        "set(CPACK_PACKAGE_NAME \"DemoPkg\")\n"
+        "set(CPACK_PACKAGE_VERSION \"1.2.3\")\n"
+        "set(CPACK_PACKAGE_FILE_NAME \"demo-pkg\")\n"
+        "set(CPACK_ARCHIVE_FILE_NAME \"demo-archive\")\n"
+        "set(CPACK_ARCHIVE_BASE_FILE_NAME \"demo-base\")\n"
+        "set(CPACK_PACKAGE_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}/packages\")\n"
+        "set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)\n"
+        "set(CPACK_ARCHIVE_COMPONENT_INSTALL ON)\n"
+        "set(CPACK_COMPONENTS_GROUPING ONE_PER_GROUP)\n"
+        "set(CPACK_COMPONENTS_ALL Runtime Development)\n"
+        "include(CPack)\n";
+    const char *argv[] = {"package", "--generator", "TGZ"};
+
+    if (!codegen_host_program_available("gzip")) {
+        TEST_SKIP("requires gzip for TGZ package generation");
+    }
+
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("package_components_nob.c", "package_components_nob_gen"));
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./package_components_nob_gen", argv, NOB_ARRAY_LEN(argv)));
+    ASSERT(test_ws_host_path_exists("package_components_build/packages/demo-base.tar.gz"));
+    ASSERT(codegen_extract_archive_to_dir("package_components_build/packages/demo-base.tar.gz",
+                                          "TGZ",
+                                          "package_components_extract"));
+    ASSERT(test_ws_host_path_exists("package_components_extract/bin/runtime.txt"));
+    ASSERT(test_ws_host_path_exists("package_components_extract/include/dev.txt"));
+    TEST_PASS();
+}
+
 void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_write_file_rebases_source_and_binary_roots_for_out_of_source_nob(passed, failed, skipped);
     test_codegen_default_out_of_source_top_level_targets_build_in_binary_root(passed, failed, skipped);
@@ -3384,4 +3431,5 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_package_zip_generator_creates_archive_in_custom_output_dir(passed, failed, skipped);
     test_codegen_package_without_generator_runs_all_configured_archives(passed, failed, skipped);
     test_codegen_package_include_toplevel_off_places_payload_at_archive_root(passed, failed, skipped);
+    test_codegen_package_archive_component_install_groups_components(passed, failed, skipped);
 }

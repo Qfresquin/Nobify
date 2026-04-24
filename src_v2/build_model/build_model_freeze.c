@@ -1407,12 +1407,25 @@ static bool bm_clone_cpack(const Build_Model_Draft *draft, Build_Model *model, A
             !bm_copy_string(arena, src->package_version, &record.package_version) ||
             !bm_copy_string(arena, src->package_file_name, &record.package_file_name) ||
             !bm_copy_string(arena, src->package_directory, &record.package_directory) ||
+            !bm_copy_string(arena, src->archive_file_name, &record.archive_file_name) ||
+            !bm_copy_string(arena, src->archive_file_extension, &record.archive_file_extension) ||
+            !bm_copy_string(arena, src->components_grouping, &record.components_grouping) ||
+            !bm_copy_string(arena, src->project_config_file, &record.project_config_file) ||
             !bm_clone_string_array(arena, &record.generators, src->generators) ||
             !bm_clone_string_array(arena, &record.components_all, src->components_all) ||
-            !bm_clone_provenance(arena, &record.provenance, src->provenance) ||
-            !arena_arr_push(arena, model->cpack_packages, record)) {
+            !bm_clone_provenance(arena, &record.provenance, src->provenance)) {
             return false;
         }
+        record.archive_name_overrides = NULL;
+        for (size_t override_index = 0; override_index < arena_arr_len(src->archive_name_overrides); ++override_index) {
+            BM_String_Pair pair = {0};
+            if (!bm_copy_string(arena, src->archive_name_overrides[override_index].key, &pair.key) ||
+                !bm_copy_string(arena, src->archive_name_overrides[override_index].value, &pair.value) ||
+                !arena_arr_push(arena, record.archive_name_overrides, pair)) {
+                return false;
+            }
+        }
+        if (!arena_arr_push(arena, model->cpack_packages, record)) return false;
     }
 
     return true;

@@ -570,6 +570,7 @@ static const char *snapshot_event_kind_name(const Cmake_Event *ev) {
         case EV_CPACK_ADD_COMPONENT: return "EV_CPACK_ADD_COMPONENT";
         case EV_CPACK_PACKAGE_DECLARE: return "EV_CPACK_PACKAGE_DECLARE";
         case EV_CPACK_PACKAGE_ADD_GENERATOR: return "EV_CPACK_PACKAGE_ADD_GENERATOR";
+        case EV_CPACK_PACKAGE_ARCHIVE_NAME_OVERRIDE: return "EV_CPACK_PACKAGE_ARCHIVE_NAME_OVERRIDE";
         case EV_FIND_PACKAGE: return "EV_FIND_PACKAGE";
         default: return "EV_UNKNOWN";
     }
@@ -620,6 +621,7 @@ static bool snapshot_event_is_visible(const Cmake_Event *ev) {
         case EV_CPACK_ADD_COMPONENT:
         case EV_CPACK_PACKAGE_DECLARE:
         case EV_CPACK_PACKAGE_ADD_GENERATOR:
+        case EV_CPACK_PACKAGE_ARCHIVE_NAME_OVERRIDE:
         case EV_FIND_PACKAGE:
             return true;
         default:
@@ -1021,6 +1023,14 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
             snapshot_append_escaped_sv(sb, ev->as.cpack_package_declare.package_file_name);
             nob_sb_append_cstr(sb, " package_directory=");
             snapshot_append_escaped_sv(sb, ev->as.cpack_package_declare.package_directory);
+            nob_sb_append_cstr(sb, " archive_file_name=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_package_declare.archive_file_name);
+            nob_sb_append_cstr(sb, " archive_file_extension=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_package_declare.archive_file_extension);
+            nob_sb_append_cstr(sb, " components_grouping=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_package_declare.components_grouping);
+            nob_sb_append_cstr(sb, " project_config_file=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_package_declare.project_config_file);
             nob_sb_append_cstr(sb, " components_all=");
             snapshot_append_escaped_sv(sb, ev->as.cpack_package_declare.components_all);
             nob_sb_append_cstr(sb,
@@ -1034,6 +1044,15 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
             snapshot_append_escaped_sv(sb, ev->as.cpack_package_add_generator.package_key);
             nob_sb_append_cstr(sb, " generator=");
             snapshot_append_escaped_sv(sb, ev->as.cpack_package_add_generator.generator);
+            break;
+
+        case EV_CPACK_PACKAGE_ARCHIVE_NAME_OVERRIDE:
+            nob_sb_append_cstr(sb, " key=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_package_archive_name_override.package_key);
+            nob_sb_append_cstr(sb, " archive_key=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_package_archive_name_override.archive_key);
+            nob_sb_append_cstr(sb, " archive_file_name=");
+            snapshot_append_escaped_sv(sb, ev->as.cpack_package_archive_name_override.archive_file_name);
             break;
 
         case EV_FIND_PACKAGE:
