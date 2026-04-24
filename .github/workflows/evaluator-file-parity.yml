@@ -46,15 +46,20 @@ jobs:
       - name: Build test runner
         run: |
           mkdir -p build
-          cc -D_GNU_SOURCE -std=c11 -Wall -Wextra -pedantic -Ivendor src_v2/build/nob_test.c -o build/nob_v2_test
+          cc -x c -D_GNU_SOURCE -Wall -Wextra -std=c11 -O2 -ggdb -Ivendor -Itest_v2 \
+            -o build/nob \
+            src_v2/build/nob.c \
+            src_v2/build/test_runner_core.c \
+            src_v2/build/test_daemon_protocol.c \
+            src_v2/build/test_daemon_client.c
 
       - name: Check semantic tidy conventions
         run: |
-          ./build/nob_v2_test test tidy semantic --verbose
+          ./build/nob test tidy semantic --verbose
 
-      - name: Run aggregate smoke suite (test-v2)
+      - name: Run aggregate smoke suite
         run: |
-          ./build/nob_v2_test test-v2
+          ./build/nob test smoke
 
   windows-file-parity:
     runs-on: windows-2022
@@ -100,12 +105,17 @@ jobs:
       - name: Build test runner
         run: |
           mkdir -p build
-          cc -D_GNU_SOURCE -std=c11 -Wall -Wextra -pedantic -Ivendor src_v2/build/nob_test.c -o build/nob_v2_test.exe
+          cc -x c -D_GNU_SOURCE -Wall -Wextra -std=c11 -O2 -ggdb -Ivendor -Itest_v2 \
+            -o build/nob.exe \
+            src_v2/build/nob.c \
+            src_v2/build/test_runner_core.c \
+            src_v2/build/test_daemon_protocol.c \
+            src_v2/build/test_daemon_client.c
 
       - name: Check result type conventions
         run: |
           bash test_v2/evaluator/check_result_type_conventions.sh
 
-      - name: Run aggregate smoke suite (test-v2)
+      - name: Run aggregate smoke suite
         run: |
-          ./build/nob_v2_test.exe test-v2
+          ./build/nob.exe test smoke

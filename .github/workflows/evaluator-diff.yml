@@ -40,18 +40,23 @@ jobs:
       - name: Build test runner
         run: |
           mkdir -p build
-          cc -D_GNU_SOURCE -std=c11 -Wall -Wextra -pedantic -Ivendor -Itest_v2 src_v2/build/nob_test.c -o build/nob_v2_test
+          cc -x c -D_GNU_SOURCE -Wall -Wextra -std=c11 -O2 -ggdb -Ivendor -Itest_v2 \
+            -o build/nob \
+            src_v2/build/nob.c \
+            src_v2/build/test_runner_core.c \
+            src_v2/build/test_daemon_protocol.c \
+            src_v2/build/test_daemon_client.c
 
       - name: Check semantic tidy conventions
         run: |
-          ./build/nob_v2_test test tidy semantic --verbose
+          ./build/nob test tidy semantic --verbose
 
       - name: Run evaluator differential suite
         env:
           NOB_DIFF_STATUS_OUT: ${{ runner.temp }}/evaluator-diff-status.md
         run: |
           export CMK2NOB_TEST_CMAKE_BIN="$(command -v cmake)"
-          ./build/nob_v2_test test-evaluator-diff
+          ./build/nob test evaluator-diff
 
       - name: Publish per-family status summary
         if: always()

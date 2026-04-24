@@ -1487,6 +1487,19 @@ static bool semantic_tidy_output_contains(const Nob_String_Builder *output, cons
     return false;
 }
 
+static bool semantic_tidy_output_file_contains(const char *path, const char *needle) {
+    Nob_String_Builder output = {0};
+    bool found = false;
+
+    if (!path || !needle) return false;
+    if (!nob_read_entire_file(path, &output)) goto defer;
+    found = semantic_tidy_output_contains(&output, needle);
+
+defer:
+    nob_sb_free(output);
+    return found;
+}
+
 static const char *semantic_tidy_llvm18_prefix(void) {
     const char *override = getenv("NOBIFY_LLVM18_PREFIX");
     static const char *const candidates[] = {
@@ -1599,7 +1612,12 @@ static bool run_semantic_tidy_one(const char *clang_tidy_path,
                                   bool expect_success) {
     Nob_Cmd cmd = {0};
     bool ok = false;
+    bool result = false;
     const char *language = semantic_tidy_language_for_source(source_path);
+    const char *stdout_path = NULL;
+    const char *stderr_path = NULL;
+    Nob_Log_Level previous_log_level = nob_minimal_log_level;
+    Nob_Log_Handler *previous_log_handler = nob_get_log_handler();
 
     nob_log(NOB_INFO, "[v2] semantic clang-tidy %s", source_path);
     nob_cmd_append(&cmd,
@@ -1618,16 +1636,59 @@ static bool run_semantic_tidy_one(const char *clang_tidy_path,
                    "-Wno-unused-function",
                    "-Wno-unused-variable",
                    "-Wno-unused-but-set-variable");
-    ok = nob_cmd_run(&cmd);
-    nob_cmd_free(cmd);
+
+    if (expect_success) {
+        ok = nob_cmd_run(&cmd);
+    } else {
+        stdout_path = nob_temp_sprintf("%s/semantic_tidy_negative.stdout.log", TEMP_TESTS_PROBES);
+        stderr_path = nob_temp_sprintf("%s/semantic_tidy_negative.stderr.log", TEMP_TESTS_PROBES);
+        nob_minimal_log_level = NOB_NO_LOGS;
+        nob_set_log_handler(nob_null_log_handler);
+        ok = nob_cmd_run(&cmd, .stdout_path = stdout_path, .stderr_path = stderr_path);
+        nob_set_log_handler(previous_log_handler);
+        nob_minimal_log_level = previous_log_level;
+    }
+
+    if (!expect_success && !ok) {
+        if (!semantic_tidy_output_file_contains(stdout_path, "nobify-") &&
+            !semantic_tidy_output_file_contains(stderr_path, "nobify-")) {
+            nob_log(NOB_ERROR,
+                    "[v2] semantic clang-tidy negative fixture failed without Nobify diagnostics: %s",
+                    source_path);
+            report_captured_test_output(
+                &(Test_Runner_Module_Def){ .name = "semantic-tidy" },
+                NULL,
+                stdout_path,
+                stderr_path);
+            goto defer;
+        }
+        nob_log(NOB_INFO, "[v2] semantic clang-tidy negative fixture produced expected diagnostics");
+        result = true;
+        goto defer;
+    }
+
     if (ok != expect_success) {
         nob_log(NOB_ERROR,
                 "[v2] semantic clang-tidy expected %s for %s",
                 expect_success ? "pass" : "failure",
                 source_path);
-        return false;
+        if (!expect_success) {
+            report_captured_test_output(
+                &(Test_Runner_Module_Def){ .name = "semantic-tidy" },
+                NULL,
+                stdout_path,
+                stderr_path);
+        }
+        goto defer;
     }
-    return true;
+
+    result = true;
+
+defer:
+    nob_set_log_handler(previous_log_handler);
+    nob_minimal_log_level = previous_log_level;
+    nob_cmd_free(cmd);
+    return result;
 }
 
 static bool semantic_tidy_validate_fixtures(const char *clang_tidy_path,
@@ -1642,19 +1703,14 @@ static bool semantic_tidy_validate_fixtures(const char *clang_tidy_path,
                                  false);
 }
 
-static bool run_semantic_tidy_for_sources(const Nob_File_Paths *sources,
-                                          bool validate_fixtures) {
+static bool run_semantic_tidy_fixture_evaluation(void) {
 #if defined(_WIN32)
-    (void)sources;
-    (void)validate_fixtures;
     nob_log(NOB_INFO, "[v2] semantic clang-tidy is Linux-first; skipping on Windows");
     return true;
 #else
     char clang_tidy[_TINYDIR_PATH_MAX] = {0};
     char clangxx[_TINYDIR_PATH_MAX] = {0};
     const char *plugin_path = semantic_tidy_plugin_path();
-    size_t passed = 0;
-    size_t failed = 0;
 
     if (!resolve_clang_tidy_path(clang_tidy)) {
         nob_log(NOB_ERROR, "[v2] missing clang-tidy executable; set CLANG_TIDY or install clang-tidy-18");
@@ -1669,45 +1725,19 @@ static bool run_semantic_tidy_for_sources(const Nob_File_Paths *sources,
         return false;
     }
     if (!semantic_tidy_build_plugin(clangxx, plugin_path)) return false;
-    if (validate_fixtures && !semantic_tidy_validate_fixtures(clang_tidy, plugin_path)) return false;
-
-    if (!sources || sources->count == 0) {
-        nob_log(NOB_ERROR, "[v2] no sources collected for semantic clang-tidy");
-        return false;
-    }
-    for (size_t i = 0; i < sources->count; ++i) {
-        if (strncmp(sources->items[i], "test_v2/semantic_tidy/fixtures/", 31) == 0) {
-            continue;
-        }
-        if (run_semantic_tidy_one(clang_tidy, plugin_path, sources->items[i], true)) passed++;
-        else failed++;
-    }
-    nob_log(NOB_INFO,
-            "[v2] semantic clang-tidy summary: passed=%zu failed=%zu",
-            passed,
-            failed);
-    return failed == 0;
+    return semantic_tidy_validate_fixtures(clang_tidy, plugin_path);
 #endif
 }
 
 static bool run_semantic_tidy_command(Test_Runner_Context *ctx,
                                       const Test_Runner_Module_Internal *module,
                                       bool run_all) {
-    Nob_File_Paths sources = {0};
-    bool ok = false;
     (void)ctx;
+    (void)module;
+    (void)run_all;
 
     if (!ensure_temp_tests_layout(&TEST_RUNNER_PROFILES[TEST_RUNNER_PROFILE_DEFAULT])) return false;
-    if (run_all) {
-        if (!collect_all_tidy_sources_unique(&sources)) goto defer;
-    } else {
-        if (!collect_module_sources_unique(module, &sources)) goto defer;
-    }
-    ok = run_semantic_tidy_for_sources(&sources, true);
-
-defer:
-    file_paths_free_owned(&sources);
-    return ok;
+    return run_semantic_tidy_fixture_evaluation();
 }
 
 static bool run_tidy_command(const Test_Runner_Module_Internal *module, bool run_all) {
@@ -1722,7 +1752,7 @@ static bool run_tidy_command(const Test_Runner_Module_Internal *module, bool run
     }
 
     ok = run_clang_tidy_for_sources(&sources) &&
-         run_semantic_tidy_for_sources(&sources, true);
+         run_semantic_tidy_fixture_evaluation();
 
 defer:
     file_paths_free_owned(&sources);
