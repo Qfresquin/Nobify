@@ -88,7 +88,14 @@ static bool bm_validate_replay_opcode_kind(const BM_Replay_Action_Record *action
     if ((action->opcode == BM_REPLAY_OPCODE_FS_MKDIR ||
          action->opcode == BM_REPLAY_OPCODE_FS_WRITE_TEXT ||
          action->opcode == BM_REPLAY_OPCODE_FS_APPEND_TEXT ||
-         action->opcode == BM_REPLAY_OPCODE_FS_COPY_FILE) &&
+         action->opcode == BM_REPLAY_OPCODE_FS_COPY_FILE ||
+         action->opcode == BM_REPLAY_OPCODE_FS_COPY_TREE ||
+         action->opcode == BM_REPLAY_OPCODE_FS_REMOVE ||
+         action->opcode == BM_REPLAY_OPCODE_FS_REMOVE_RECURSE ||
+         action->opcode == BM_REPLAY_OPCODE_FS_RENAME ||
+         action->opcode == BM_REPLAY_OPCODE_FS_CREATE_LINK ||
+         action->opcode == BM_REPLAY_OPCODE_FS_CHMOD ||
+         action->opcode == BM_REPLAY_OPCODE_FS_CHMOD_RECURSE) &&
         action->kind == BM_REPLAY_ACTION_FILESYSTEM) {
         return true;
     }
@@ -171,6 +178,28 @@ static bool bm_validate_replay_payload_shape(const BM_Replay_Action_Record *acti
 
         case BM_REPLAY_OPCODE_FS_COPY_FILE:
             ok = input_count == 1 && output_count == 1 && argv_count == 1 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_FS_COPY_TREE:
+            ok = input_count == 1 && output_count == 1 && argv_count == 2 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_FS_REMOVE:
+        case BM_REPLAY_OPCODE_FS_REMOVE_RECURSE:
+            ok = input_count == 0 && output_count > 0 && argv_count == 0 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_FS_RENAME:
+            ok = input_count == 1 && output_count == 1 && argv_count == 2 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_FS_CREATE_LINK:
+            ok = input_count == 1 && output_count == 1 && argv_count == 3 && env_count == 0;
+            break;
+
+        case BM_REPLAY_OPCODE_FS_CHMOD:
+        case BM_REPLAY_OPCODE_FS_CHMOD_RECURSE:
+            ok = input_count == 0 && output_count > 0 && argv_count == 1 && env_count == 0;
             break;
 
         case BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL:

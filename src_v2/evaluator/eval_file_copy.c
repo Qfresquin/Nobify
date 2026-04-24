@@ -127,6 +127,90 @@ static bool copy_permissions_pick_mode(const Copy_Permissions *perms, bool is_di
     return false;
 }
 
+static String_View copy_mode_arg_temp(EvalExecContext *ctx, mode_t mode, bool has_mode) {
+    if (!has_mode) return nob_sv_from_cstr("");
+    return eval_replay_mode_octal_temp(ctx, (unsigned int)mode);
+}
+
+static bool copy_emit_unsupported_replay_marker(EvalExecContext *ctx,
+                                                Cmake_Event_Origin origin,
+                                                String_View reason) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_FILESYSTEM,
+                                  EVENT_REPLAY_OPCODE_NONE,
+                                  eval_replay_phase_for_filesystem_effect(ctx, EVENT_REPLAY_PHASE_CONFIGURE),
+                                  eval_current_binary_dir(ctx),
+                                  &action_key)) {
+        return false;
+    }
+    (void)action_key;
+    (void)reason;
+    return true;
+}
+
+static bool copy_emit_replay(EvalExecContext *ctx,
+                             Cmake_Event_Origin origin,
+                             String_View src,
+                             String_View dst,
+                             bool src_is_dir,
+                             const Copy_Permissions *perms,
+                             bool use_source_permissions,
+                             const char *src_c) {
+    String_View action_key = nob_sv_from_cstr("");
+    Event_Replay_Opcode opcode = src_is_dir ? EVENT_REPLAY_OPCODE_FS_COPY_TREE
+                                            : EVENT_REPLAY_OPCODE_FS_COPY_FILE;
+    String_View file_mode = nob_sv_from_cstr("");
+    String_View dir_mode = nob_sv_from_cstr("");
+    mode_t mode = 0;
+    if (!ctx) return false;
+
+    if (perms) {
+        if (src_is_dir) {
+            if (perms->has_file_permissions) {
+                file_mode = copy_mode_arg_temp(ctx, perms->file_permissions_mode, true);
+            } else if (perms->has_permissions) {
+                file_mode = copy_mode_arg_temp(ctx, perms->permissions_mode, true);
+            }
+            if (perms->has_directory_permissions) {
+                dir_mode = copy_mode_arg_temp(ctx, perms->directory_permissions_mode, true);
+            } else if (perms->has_permissions) {
+                dir_mode = copy_mode_arg_temp(ctx, perms->permissions_mode, true);
+            }
+        } else if (copy_permissions_pick_mode(perms, false, &mode)) {
+            file_mode = copy_mode_arg_temp(ctx, mode, true);
+        } else if (use_source_permissions && src_c) {
+#if !defined(_WIN32)
+            struct stat src_st = {0};
+            if (stat(src_c, &src_st) == 0) {
+                file_mode = copy_mode_arg_temp(ctx, src_st.st_mode & 0777, true);
+            }
+#else
+            (void)src_c;
+#endif
+        }
+    }
+
+    if (!eval_begin_replay_action(ctx,
+                                  origin,
+                                  EVENT_REPLAY_ACTION_FILESYSTEM,
+                                  opcode,
+                                  eval_replay_phase_for_filesystem_effect(ctx, EVENT_REPLAY_PHASE_CONFIGURE),
+                                  eval_current_binary_dir(ctx),
+                                  &action_key) ||
+        !eval_emit_replay_action_add_input(ctx, origin, action_key, src) ||
+        !eval_emit_replay_action_add_output(ctx, origin, action_key, dst)) {
+        return false;
+    }
+
+    if (src_is_dir) {
+        return eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, file_mode) &&
+               eval_emit_replay_action_add_argv(ctx, origin, action_key, 1, dir_mode);
+    }
+    return eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, file_mode);
+}
+
 static bool copy_apply_permissions(const char *path, mode_t mode) {
     if (!path) return false;
 #if defined(_WIN32)
@@ -570,6 +654,8 @@ void eval_file_handle_copy(EvalExecContext *ctx, const Node *node, SV_List args)
     }
 
     bool applied_any_permissions = false;
+    bool emitted_unsupported_replay_marker = false;
+    bool replay_supported = !files_matching && filter_count == 0 && !follow_symlink_chain;
     for (size_t i = 1; i < dest_idx; i++) {
         String_View src = args[i];
         if (!eval_sv_is_abs_path(src)) {
@@ -594,6 +680,10 @@ void eval_file_handle_copy(EvalExecContext *ctx, const Node *node, SV_List args)
         if (follow_symlink_chain && copy_path_is_symlink(src_c)) {
             if (!copy_follow_symlink_chain(ctx, node, o, src, dest, &perms, &applied_any_permissions)) {
                 return;
+            }
+            if (!emitted_unsupported_replay_marker) {
+                (void)copy_emit_unsupported_replay_marker(ctx, o, nob_sv_from_cstr("file(COPY) FOLLOW_SYMLINK_CHAIN replay is not supported"));
+                emitted_unsupported_replay_marker = true;
             }
             continue;
         }
@@ -625,6 +715,23 @@ void eval_file_handle_copy(EvalExecContext *ctx, const Node *node, SV_List args)
             } else {
                 applied_any_permissions = true;
             }
+        }
+
+        if (replay_supported) {
+            (void)copy_emit_replay(ctx,
+                                   o,
+                                   src,
+                                   dst_sv,
+                                   src_is_dir,
+                                   &perms,
+                                   perms.saw_use_source_permissions &&
+                                       !perms.has_permissions &&
+                                       !perms.has_file_permissions &&
+                                       !perms.has_directory_permissions,
+                                   src_c);
+        } else if (!emitted_unsupported_replay_marker) {
+            (void)copy_emit_unsupported_replay_marker(ctx, o, nob_sv_from_cstr("file(COPY) filtered replay is not supported"));
+            emitted_unsupported_replay_marker = true;
         }
     }
 

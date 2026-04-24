@@ -1051,6 +1051,19 @@ TEST(codegen_configure_replay_supported_effects_and_phase_cli_work) {
         "file(MAKE_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}/configured/lock_dir\")\n"
         "file(LOCK \"${CMAKE_CURRENT_BINARY_DIR}/configured/lock_dir\" DIRECTORY)\n"
         "file(LOCK \"${CMAKE_CURRENT_BINARY_DIR}/configured/lock_dir\" DIRECTORY RELEASE)\n"
+        "file(COPY copy_file.txt copy_dir DESTINATION configured/copy_out)\n"
+        "file(INSTALL install_file.txt DESTINATION configured/install_out)\n"
+        "file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/configured/rename_src.txt\" \"rename-body\")\n"
+        "file(RENAME \"${CMAKE_CURRENT_BINARY_DIR}/configured/rename_src.txt\" \"${CMAKE_CURRENT_BINARY_DIR}/configured/renamed.txt\")\n"
+        "file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/configured/remove_me.txt\" \"remove\")\n"
+        "file(REMOVE \"${CMAKE_CURRENT_BINARY_DIR}/configured/remove_me.txt\")\n"
+        "file(MAKE_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}/configured/remove_tree/sub\")\n"
+        "file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/configured/remove_tree/sub/file.txt\" \"remove-tree\")\n"
+        "file(REMOVE_RECURSE \"${CMAKE_CURRENT_BINARY_DIR}/configured/remove_tree\")\n"
+        "file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/configured/link_src.txt\" \"link-body\")\n"
+        "file(CREATE_LINK \"${CMAKE_CURRENT_BINARY_DIR}/configured/link_src.txt\" \"${CMAKE_CURRENT_BINARY_DIR}/configured/link_out.txt\" COPY_ON_ERROR)\n"
+        "file(CHMOD \"${CMAKE_CURRENT_BINARY_DIR}/configured/link_src.txt\" PERMISSIONS OWNER_READ OWNER_WRITE)\n"
+        "file(CHMOD_RECURSE \"${CMAKE_CURRENT_BINARY_DIR}/configured/copy_out/copy_dir\" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)\n"
         "add_executable(app main.c)\n";
     Codegen_Test_Config config = {
         .input_path = "CMakeLists.txt",
@@ -1070,6 +1083,9 @@ TEST(codegen_configure_replay_supported_effects_and_phase_cli_work) {
     ASSERT(codegen_write_text_file("cfg_phase_src/download_src.txt", "download-body\n"));
     ASSERT(codegen_write_text_file("cfg_phase_src/archive_input/root.txt", "root\n"));
     ASSERT(codegen_write_text_file("cfg_phase_src/archive_input/sub/child.txt", "child\n"));
+    ASSERT(codegen_write_text_file("cfg_phase_src/copy_file.txt", "copy-file\n"));
+    ASSERT(codegen_write_text_file("cfg_phase_src/copy_dir/child.txt", "copy-dir\n"));
+    ASSERT(codegen_write_text_file("cfg_phase_src/install_file.txt", "install-file\n"));
     ASSERT(codegen_write_script_with_config(script, &config));
     ASSERT(codegen_compile_generated_nob("cfg_phase_nob.c", "cfg_phase_nob_gen"));
 
@@ -1081,16 +1097,32 @@ TEST(codegen_configure_replay_supported_effects_and_phase_cli_work) {
     ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/archive_out/cfg_phase_src/archive_input/root.txt"));
     ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/archive_out/cfg_phase_src/archive_input/sub/child.txt"));
     ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/lock_dir/cmake.lock"));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/copy_out/copy_file.txt"));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/copy_out/copy_dir/child.txt"));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/install_out/install_file.txt"));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/renamed.txt"));
+    ASSERT(!test_ws_host_path_exists("cfg_phase_build/configured/rename_src.txt"));
+    ASSERT(!test_ws_host_path_exists("cfg_phase_build/configured/remove_me.txt"));
+    ASSERT(!test_ws_host_path_exists("cfg_phase_build/configured/remove_tree"));
+    ASSERT(test_ws_host_path_exists("cfg_phase_build/configured/link_out.txt"));
     ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/legacy.txt", "legacy-body"));
     ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/file_write.txt", "alphabeta"));
     ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/configured.txt", "VALUE=42\n"));
     ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/generated.txt", "GEN"));
     ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/downloaded.txt", "download-body\n"));
+    ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/copy_out/copy_file.txt", "copy-file\n"));
+    ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/copy_out/copy_dir/child.txt", "copy-dir\n"));
+    ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/install_out/install_file.txt", "install-file\n"));
+    ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/renamed.txt", "rename-body"));
+    ASSERT(codegen_text_file_equals(arena, "cfg_phase_build/configured/link_out.txt", "link-body"));
     ASSERT(!test_ws_host_path_exists("cfg_phase_build/app"));
 
     ASSERT(codegen_run_binary_in_dir(".", "./cfg_phase_nob_gen", "clean", NULL));
     ASSERT(!test_ws_host_path_exists("cfg_phase_build/configured/legacy.txt"));
     ASSERT(!test_ws_host_path_exists("cfg_phase_build/configured/sample.tar"));
+    ASSERT(!test_ws_host_path_exists("cfg_phase_build/configured/copy_out/copy_file.txt"));
+    ASSERT(!test_ws_host_path_exists("cfg_phase_build/configured/renamed.txt"));
+    ASSERT(!test_ws_host_path_exists("cfg_phase_build/configured/link_out.txt"));
     ASSERT(!test_ws_host_path_exists("cfg_phase_build/app"));
 
     ASSERT(codegen_run_binary_in_dir(".", "./cfg_phase_nob_gen", NULL, NULL));

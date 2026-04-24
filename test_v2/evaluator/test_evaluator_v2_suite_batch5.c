@@ -2508,6 +2508,88 @@ TEST(evaluator_file_dispatcher_routes_glob_rw_and_copy_families) {
     TEST_PASS();
 }
 
+TEST(evaluator_file_deterministic_fsops_emit_replay_actions) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(WRITE replay_fs_src.txt \"copy-file\")\n"
+        "file(MAKE_DIRECTORY replay_fs_dir/sub)\n"
+        "file(WRITE replay_fs_dir/sub/child.txt \"copy-dir\")\n"
+        "file(COPY replay_fs_src.txt replay_fs_dir DESTINATION replay_fs_copy)\n"
+        "file(INSTALL replay_fs_src.txt DESTINATION replay_fs_install)\n"
+        "file(WRITE replay_rename_src.txt \"rename\")\n"
+        "file(RENAME replay_rename_src.txt replay_renamed.txt)\n"
+        "file(WRITE replay_remove.txt \"remove\")\n"
+        "file(REMOVE replay_remove.txt)\n"
+        "file(MAKE_DIRECTORY replay_remove_dir/sub)\n"
+        "file(REMOVE_RECURSE replay_remove_dir)\n"
+        "file(WRITE replay_link_src.txt \"link\")\n"
+        "file(CREATE_LINK replay_link_src.txt replay_link_out.txt COPY_ON_ERROR)\n"
+        "file(CHMOD replay_link_src.txt PERMISSIONS OWNER_READ OWNER_WRITE)\n"
+        "file(CHMOD_RECURSE replay_fs_copy/replay_fs_dir PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    size_t copy_file_count = 0;
+    size_t copy_tree_count = 0;
+    size_t remove_count = 0;
+    size_t remove_recurse_count = 0;
+    size_t rename_count = 0;
+    size_t create_link_count = 0;
+    size_t chmod_count = 0;
+    size_t chmod_recurse_count = 0;
+
+    for (size_t i = 0; i < stream->count; ++i) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EVENT_REPLAY_ACTION_DECLARE) continue;
+        switch (ev->as.replay_action_declare.opcode) {
+            case EVENT_REPLAY_OPCODE_FS_COPY_FILE: copy_file_count++; break;
+            case EVENT_REPLAY_OPCODE_FS_COPY_TREE: copy_tree_count++; break;
+            case EVENT_REPLAY_OPCODE_FS_REMOVE: remove_count++; break;
+            case EVENT_REPLAY_OPCODE_FS_REMOVE_RECURSE: remove_recurse_count++; break;
+            case EVENT_REPLAY_OPCODE_FS_RENAME: rename_count++; break;
+            case EVENT_REPLAY_OPCODE_FS_CREATE_LINK: create_link_count++; break;
+            case EVENT_REPLAY_OPCODE_FS_CHMOD: chmod_count++; break;
+            case EVENT_REPLAY_OPCODE_FS_CHMOD_RECURSE: chmod_recurse_count++; break;
+            default: break;
+        }
+    }
+
+    ASSERT(copy_file_count == 2);
+    ASSERT(copy_tree_count == 1);
+    ASSERT(remove_count == 1);
+    ASSERT(remove_recurse_count == 1);
+    ASSERT(rename_count == 1);
+    ASSERT(create_link_count == 1);
+    ASSERT(chmod_count == 1);
+    ASSERT(chmod_recurse_count == 1);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_file_glob_and_strings_cover_curl_style_queries) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3305,6 +3387,7 @@ void run_evaluator_v2_batch5(int *passed, int *failed, int *skipped) {
     test_evaluator_string_find_compare_configure_random_timestamp_and_uuid_cover_remaining_option_modes(passed, failed, skipped);
     test_evaluator_file_extra_subcommands_and_download_expected_hash(passed, failed, skipped);
     test_evaluator_file_dispatcher_routes_glob_rw_and_copy_families(passed, failed, skipped);
+    test_evaluator_file_deterministic_fsops_emit_replay_actions(passed, failed, skipped);
     test_evaluator_file_glob_and_strings_cover_curl_style_queries(passed, failed, skipped);
     test_evaluator_configure_file_expands_cmakedefines_and_copyonly(passed, failed, skipped);
     test_evaluator_file_real_path_cmp0152_old_and_new(passed, failed, skipped);

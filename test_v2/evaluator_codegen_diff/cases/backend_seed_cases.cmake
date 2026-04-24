@@ -91,6 +91,15 @@ include(CPack)
 #@@FILE_TEXT source/cfg_template.in
 VALUE=@GEN_VALUE@
 #@@END_FILE_TEXT
+#@@FILE_TEXT source/copy_file.txt
+copy-file
+#@@END_FILE_TEXT
+#@@FILE_TEXT source/copy_dir/child.txt
+copy-dir
+#@@END_FILE_TEXT
+#@@FILE_TEXT source/install_file.txt
+install-file
+#@@END_FILE_TEXT
 set(GEN_VALUE 42)
 write_file("${CMAKE_CURRENT_BINARY_DIR}/generated/legacy.txt" legacy-body)
 make_directory("${CMAKE_CURRENT_BINARY_DIR}/generated/legacy_dir/sub")
@@ -99,6 +108,18 @@ file(APPEND "${CMAKE_CURRENT_BINARY_DIR}/generated/write_append.txt" "beta")
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/file_dir/sub")
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cfg_template.in" "${CMAKE_CURRENT_BINARY_DIR}/generated/configured.txt" @ONLY)
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/generated.txt" CONTENT "GEN")
+file(COPY copy_file.txt copy_dir DESTINATION generated/copy_out)
+file(INSTALL install_file.txt DESTINATION generated/install_out)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/rename_src.txt" "rename-body")
+file(RENAME "${CMAKE_CURRENT_BINARY_DIR}/generated/rename_src.txt" "${CMAKE_CURRENT_BINARY_DIR}/generated/renamed.txt")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/remove_me.txt" "remove")
+file(REMOVE "${CMAKE_CURRENT_BINARY_DIR}/generated/remove_me.txt")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/remove_tree/sub")
+file(REMOVE_RECURSE "${CMAKE_CURRENT_BINARY_DIR}/generated/remove_tree")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/link_src.txt" "link-body")
+file(CREATE_LINK "${CMAKE_CURRENT_BINARY_DIR}/generated/link_src.txt" "${CMAKE_CURRENT_BINARY_DIR}/generated/link_out.txt" COPY_ON_ERROR)
+file(CHMOD "${CMAKE_CURRENT_BINARY_DIR}/generated/link_src.txt" PERMISSIONS OWNER_READ OWNER_WRITE)
+file(CHMOD_RECURSE "${CMAKE_CURRENT_BINARY_DIR}/generated/copy_out/copy_dir" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 #@@ENDCASE
 
 #@@CASE backend_configure_host_effect_supported_surface

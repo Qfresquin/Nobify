@@ -52,6 +52,101 @@ static bool file_fsops_emit_append_replay(EvalExecContext *ctx,
     return true;
 }
 
+static bool file_fsops_emit_bool_arg(EvalExecContext *ctx,
+                                     Cmake_Event_Origin origin,
+                                     String_View action_key,
+                                     uint32_t index,
+                                     bool value) {
+    return eval_emit_replay_action_add_argv(ctx,
+                                            origin,
+                                            action_key,
+                                            index,
+                                            value ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
+}
+
+static bool file_fsops_begin_replay(EvalExecContext *ctx,
+                                    Cmake_Event_Origin origin,
+                                    Event_Replay_Opcode opcode,
+                                    String_View *out_action_key) {
+    return eval_begin_replay_action(ctx,
+                                    origin,
+                                    EVENT_REPLAY_ACTION_FILESYSTEM,
+                                    opcode,
+                                    eval_replay_phase_for_filesystem_effect(ctx, EVENT_REPLAY_PHASE_CONFIGURE),
+                                    eval_current_binary_dir(ctx),
+                                    out_action_key);
+}
+
+static bool file_fsops_emit_rename_replay(EvalExecContext *ctx,
+                                          Cmake_Event_Origin origin,
+                                          String_View old_path,
+                                          String_View new_path,
+                                          bool no_replace,
+                                          bool result_form) {
+    String_View action_key = nob_sv_from_cstr("");
+    return file_fsops_begin_replay(ctx, origin, EVENT_REPLAY_OPCODE_FS_RENAME, &action_key) &&
+           eval_emit_replay_action_add_input(ctx, origin, action_key, old_path) &&
+           eval_emit_replay_action_add_output(ctx, origin, action_key, new_path) &&
+           file_fsops_emit_bool_arg(ctx, origin, action_key, 0, no_replace) &&
+           file_fsops_emit_bool_arg(ctx, origin, action_key, 1, result_form);
+}
+
+static bool file_fsops_emit_remove_replay(EvalExecContext *ctx,
+                                          Cmake_Event_Origin origin,
+                                          const String_View *paths,
+                                          size_t path_count,
+                                          bool recurse) {
+    String_View action_key = nob_sv_from_cstr("");
+    if (!file_fsops_begin_replay(ctx,
+                                 origin,
+                                 recurse ? EVENT_REPLAY_OPCODE_FS_REMOVE_RECURSE
+                                         : EVENT_REPLAY_OPCODE_FS_REMOVE,
+                                 &action_key)) {
+        return false;
+    }
+    for (size_t i = 0; i < path_count; ++i) {
+        if (!eval_emit_replay_action_add_output(ctx, origin, action_key, paths[i])) return false;
+    }
+    return true;
+}
+
+static bool file_fsops_emit_create_link_replay(EvalExecContext *ctx,
+                                               Cmake_Event_Origin origin,
+                                               String_View src,
+                                               String_View dst,
+                                               bool symbolic,
+                                               bool copy_on_error,
+                                               bool result_form) {
+    String_View action_key = nob_sv_from_cstr("");
+    return file_fsops_begin_replay(ctx, origin, EVENT_REPLAY_OPCODE_FS_CREATE_LINK, &action_key) &&
+           eval_emit_replay_action_add_input(ctx, origin, action_key, src) &&
+           eval_emit_replay_action_add_output(ctx, origin, action_key, dst) &&
+           file_fsops_emit_bool_arg(ctx, origin, action_key, 0, symbolic) &&
+           file_fsops_emit_bool_arg(ctx, origin, action_key, 1, copy_on_error) &&
+           file_fsops_emit_bool_arg(ctx, origin, action_key, 2, result_form);
+}
+
+static bool file_fsops_emit_chmod_replay(EvalExecContext *ctx,
+                                         Cmake_Event_Origin origin,
+                                         const String_View *paths,
+                                         size_t path_count,
+                                         mode_t mode,
+                                         bool recurse) {
+    String_View action_key = nob_sv_from_cstr("");
+    String_View mode_arg = eval_replay_mode_octal_temp(ctx, (unsigned int)mode);
+    if (!file_fsops_begin_replay(ctx,
+                                 origin,
+                                 recurse ? EVENT_REPLAY_OPCODE_FS_CHMOD_RECURSE
+                                         : EVENT_REPLAY_OPCODE_FS_CHMOD,
+                                 &action_key)) {
+        return false;
+    }
+    for (size_t i = 0; i < path_count; ++i) {
+        if (!eval_emit_replay_action_add_output(ctx, origin, action_key, paths[i])) return false;
+    }
+    return eval_emit_replay_action_add_argv(ctx, origin, action_key, 0, mode_arg);
+}
+
 static bool file_parse_permission_token(mode_t *mode, String_View token) {
     if (!mode) return false;
     if (eval_sv_eq_ci_lit(token, "OWNER_READ")) {
@@ -479,6 +574,7 @@ static bool handle_file_rename(EvalExecContext *ctx, const Node *node, SV_List a
     }
 
     if (no_replace && file_leaf_exists(new_c)) {
+        (void)file_fsops_emit_rename_replay(ctx, o, old_path, new_path, no_replace, result_var.count > 0);
         if (result_var.count > 0) (void)file_emit_result_code(ctx, result_var, 1, "NO_REPLACE");
         return true;
     }
@@ -493,6 +589,7 @@ static bool handle_file_rename(EvalExecContext *ctx, const Node *node, SV_List a
     }
 
     if (result_var.count > 0) (void)file_emit_result_code(ctx, result_var, 0, "OK");
+    (void)file_fsops_emit_rename_replay(ctx, o, old_path, new_path, no_replace, result_var.count > 0);
     return true;
 }
 
@@ -505,6 +602,7 @@ static bool handle_file_remove(EvalExecContext *ctx, const Node *node, SV_List a
         return true;
     }
 
+    String_View *removed_paths = NULL;
     for (size_t i = 1; i < arena_arr_len(args); i++) {
         String_View path = nob_sv_from_cstr("");
         if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[i], eval_file_current_bin_dir(ctx), &path)) return true;
@@ -518,7 +616,9 @@ static bool handle_file_remove(EvalExecContext *ctx, const Node *node, SV_List a
                                    : nob_sv_from_cstr("file(REMOVE) failed to remove path"), path);
             return true;
         }
+        if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), removed_paths, path)) return true;
     }
+    (void)file_fsops_emit_remove_replay(ctx, o, removed_paths, arena_arr_len(removed_paths), recurse);
     return true;
 }
 
@@ -602,6 +702,13 @@ static bool handle_file_create_link(EvalExecContext *ctx, const Node *node, SV_L
     }
 
     if (result_var.count > 0) (void)file_emit_result_code(ctx, result_var, 0, "OK");
+    (void)file_fsops_emit_create_link_replay(ctx,
+                                             o,
+                                             src,
+                                             dst,
+                                             symbolic,
+                                             copy_on_error,
+                                             result_var.count > 0);
     return true;
 }
 
@@ -654,6 +761,7 @@ static bool handle_file_chmod(EvalExecContext *ctx, const Node *node, SV_List ar
         return true;
     }
 
+    String_View *chmod_paths = NULL;
     for (size_t i = 1; i < perm_idx; i++) {
         String_View path = nob_sv_from_cstr("");
         if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[i], eval_file_current_bin_dir(ctx), &path)) return true;
@@ -665,7 +773,9 @@ static bool handle_file_chmod(EvalExecContext *ctx, const Node *node, SV_List ar
                                    : nob_sv_from_cstr("file(CHMOD) failed"), path);
             return true;
         }
+        if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), chmod_paths, path)) return true;
     }
+    (void)file_fsops_emit_chmod_replay(ctx, o, chmod_paths, arena_arr_len(chmod_paths), mode, recurse);
     return true;
 }
 

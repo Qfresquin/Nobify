@@ -158,6 +158,13 @@ static const char *event_replay_opcode_name(Event_Replay_Opcode opcode) {
         case EVENT_REPLAY_OPCODE_FS_WRITE_TEXT: return "fs_write_text";
         case EVENT_REPLAY_OPCODE_FS_APPEND_TEXT: return "fs_append_text";
         case EVENT_REPLAY_OPCODE_FS_COPY_FILE: return "fs_copy_file";
+        case EVENT_REPLAY_OPCODE_FS_COPY_TREE: return "fs_copy_tree";
+        case EVENT_REPLAY_OPCODE_FS_REMOVE: return "fs_remove";
+        case EVENT_REPLAY_OPCODE_FS_REMOVE_RECURSE: return "fs_remove_recurse";
+        case EVENT_REPLAY_OPCODE_FS_RENAME: return "fs_rename";
+        case EVENT_REPLAY_OPCODE_FS_CREATE_LINK: return "fs_create_link";
+        case EVENT_REPLAY_OPCODE_FS_CHMOD: return "fs_chmod";
+        case EVENT_REPLAY_OPCODE_FS_CHMOD_RECURSE: return "fs_chmod_recurse";
         case EVENT_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL: return "host_download_local";
         case EVENT_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR: return "host_archive_create_paxr";
         case EVENT_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR: return "host_archive_extract_tar";

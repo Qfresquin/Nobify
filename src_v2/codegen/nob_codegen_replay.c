@@ -77,12 +77,47 @@ static bool cg_rebase_replay_archive_input_from_render_cwd(CG_Context *ctx,
     return cg_relative_path_to_arena(ctx->scratch, ctx->cwd_abs, input_abs, out);
 }
 
+static bool cg_replay_configure_output_removed_in_config(CG_Context *ctx,
+                                                         String_View candidate,
+                                                         String_View config,
+                                                         bool *out_removed) {
+    if (!ctx || !out_removed) return false;
+    *out_removed = false;
+    if (candidate.count == 0) return true;
+    for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
+        BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
+        BM_Replay_Opcode opcode = bm_query_replay_action_opcode(ctx->model, id);
+        const String_View *outputs = NULL;
+        if (bm_query_replay_action_phase(ctx->model, id) != BM_REPLAY_PHASE_CONFIGURE) continue;
+        if (opcode != BM_REPLAY_OPCODE_FS_REMOVE &&
+            opcode != BM_REPLAY_OPCODE_FS_REMOVE_RECURSE) {
+            continue;
+        }
+        if (!cg_resolve_replay_operands_for_config(ctx, id, BM_REPLAY_OPERAND_OUTPUTS, config, &outputs)) {
+            return false;
+        }
+        for (size_t i = 0; i < arena_arr_len(outputs); ++i) {
+            if (nob_sv_eq(outputs[i], candidate)) {
+                *out_removed = true;
+                return true;
+            }
+        }
+    }
+    return true;
+}
+
 static bool cg_emit_replay_configure_helpers(CG_Context *ctx, Nob_String_Builder *out) {
     String_View state_dir = {0};
     bool needs_apply_mode = false;
+    bool needs_apply_tree_mode = false;
     bool needs_write_text = false;
     bool needs_append_text = false;
     bool needs_copy_file = false;
+    bool needs_copy_tree = false;
+    bool needs_remove = false;
+    bool needs_rename = false;
+    bool needs_create_link = false;
+    bool needs_chmod = false;
     bool needs_download = false;
     bool needs_tar = false;
     bool needs_sha256 = false;
@@ -106,6 +141,30 @@ static bool cg_emit_replay_configure_helpers(CG_Context *ctx, Nob_String_Builder
             case BM_REPLAY_OPCODE_FS_COPY_FILE:
                 needs_apply_mode = true;
                 needs_copy_file = true;
+                break;
+            case BM_REPLAY_OPCODE_FS_COPY_TREE:
+                needs_apply_mode = true;
+                needs_apply_tree_mode = true;
+                needs_copy_tree = true;
+                break;
+            case BM_REPLAY_OPCODE_FS_REMOVE:
+            case BM_REPLAY_OPCODE_FS_REMOVE_RECURSE:
+                needs_remove = true;
+                break;
+            case BM_REPLAY_OPCODE_FS_RENAME:
+                needs_rename = true;
+                break;
+            case BM_REPLAY_OPCODE_FS_CREATE_LINK:
+                needs_create_link = true;
+                break;
+            case BM_REPLAY_OPCODE_FS_CHMOD:
+                needs_apply_mode = true;
+                needs_chmod = true;
+                break;
+            case BM_REPLAY_OPCODE_FS_CHMOD_RECURSE:
+                needs_apply_mode = true;
+                needs_apply_tree_mode = true;
+                needs_chmod = true;
                 break;
             case BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL:
                 needs_download = true;
@@ -250,6 +309,112 @@ static bool cg_emit_replay_configure_helpers(CG_Context *ctx, Nob_String_Builder
         "        return false;\n"
         "    }\n"
         "    return replay_apply_mode(dst_path, mode_octal);\n"
+            "}\n\n");
+    }
+
+    if (needs_apply_tree_mode) {
+        nob_sb_append_cstr(out,
+            "typedef struct {\n"
+            "    const char *file_mode;\n"
+            "    const char *dir_mode;\n"
+            "    bool ok;\n"
+            "} Replay_Tree_Mode_State;\n\n"
+            "static bool replay_apply_tree_mode_entry(Nob_Walk_Entry entry) {\n"
+            "    Replay_Tree_Mode_State *state = (Replay_Tree_Mode_State *)entry.data;\n"
+            "    const char *mode = NULL;\n"
+            "    bool ok = true;\n"
+            "    if (!state) return false;\n"
+            "    mode = entry.type == NOB_FILE_DIRECTORY ? state->dir_mode : state->file_mode;\n"
+            "    ok = replay_apply_mode(entry.path, mode);\n"
+            "    state->ok = state->ok && ok;\n"
+            "    return ok;\n"
+            "}\n\n"
+            "static bool replay_apply_tree_modes(const char *path, const char *file_mode, const char *dir_mode) {\n"
+            "    Replay_Tree_Mode_State state = {0};\n"
+            "    if (!file_mode || file_mode[0] == '\\0') file_mode = \"\";\n"
+            "    if (!dir_mode || dir_mode[0] == '\\0') dir_mode = \"\";\n"
+            "    if (file_mode[0] == '\\0' && dir_mode[0] == '\\0') return true;\n"
+            "    if (!path || !nob_file_exists(path)) return false;\n"
+            "    if (nob_get_file_type(path) != NOB_FILE_DIRECTORY) return replay_apply_mode(path, file_mode);\n"
+            "    state.file_mode = file_mode;\n"
+            "    state.dir_mode = dir_mode;\n"
+            "    state.ok = true;\n"
+            "    if (!nob_walk_dir(path, replay_apply_tree_mode_entry, .data = &state)) return false;\n"
+            "    return state.ok;\n"
+            "}\n\n");
+    }
+
+    if (needs_copy_tree) {
+        nob_sb_append_cstr(out,
+            "static bool replay_copy_tree_with_modes(const char *src_path, const char *dst_path, const char *file_mode, const char *dir_mode) {\n"
+            "    if (!src_path || !dst_path) return false;\n"
+            "    if (!ensure_parent_dir(dst_path)) return false;\n"
+            "    if (!nob_copy_directory_recursively(src_path, dst_path)) {\n"
+            "        nob_log(NOB_ERROR, \"configure: failed to copy tree %s -> %s\", src_path, dst_path);\n"
+            "        return false;\n"
+            "    }\n"
+            "    return replay_apply_tree_modes(dst_path, file_mode, dir_mode);\n"
+            "}\n\n");
+    }
+
+    if (needs_remove) {
+        nob_sb_append_cstr(out,
+            "static bool replay_remove_path(const char *path, bool recurse) {\n"
+            "    if (!path || path[0] == '\\0') return true;\n"
+            "    if (!nob_file_exists(path)) return true;\n"
+            "    if (recurse) {\n"
+            "        if (nob_get_file_type(path) != NOB_FILE_DIRECTORY) return nob_delete_file(path);\n"
+            "        return remove_path_recursive(path);\n"
+            "    }\n"
+            "    if (nob_get_file_type(path) == NOB_FILE_DIRECTORY) {\n"
+            "        nob_log(NOB_ERROR, \"configure: non-recursive remove refused directory %s\", path);\n"
+            "        return false;\n"
+            "    }\n"
+            "    return nob_delete_file(path);\n"
+            "}\n\n");
+    }
+
+    if (needs_rename) {
+        nob_sb_append_cstr(out,
+            "static bool replay_rename_path(const char *old_path, const char *new_path, bool no_replace, bool result_form) {\n"
+            "    if (!old_path || !new_path) return false;\n"
+            "    if (!ensure_parent_dir(new_path)) return false;\n"
+            "    if (no_replace && nob_file_exists(new_path)) return true;\n"
+            "    if (!nob_rename(old_path, new_path)) {\n"
+            "        if (result_form) return true;\n"
+            "        nob_log(NOB_ERROR, \"configure: failed to rename %s -> %s\", old_path, new_path);\n"
+            "        return false;\n"
+            "    }\n"
+            "    return true;\n"
+            "}\n\n");
+    }
+
+    if (needs_create_link) {
+        nob_sb_append_cstr(out,
+            "static bool replay_create_link_path(const char *src_path, const char *dst_path, bool symbolic, bool copy_on_error, bool result_form) {\n"
+            "    bool ok = false;\n"
+            "    if (!src_path || !dst_path) return false;\n"
+            "    if (!ensure_parent_dir(dst_path)) return false;\n"
+            "#if defined(_WIN32)\n"
+            "    if (symbolic) ok = CreateSymbolicLinkA(dst_path, src_path, 0) != 0;\n"
+            "    else ok = CreateHardLinkA(dst_path, src_path, NULL) != 0;\n"
+            "#else\n"
+            "    if (symbolic) ok = symlink(src_path, dst_path) == 0;\n"
+            "    else ok = link(src_path, dst_path) == 0;\n"
+            "#endif\n"
+            "    if (!ok && copy_on_error) ok = nob_copy_file(src_path, dst_path);\n"
+            "    if (!ok && result_form) return true;\n"
+            "    if (!ok) nob_log(NOB_ERROR, \"configure: failed to create link %s -> %s\", dst_path, src_path);\n"
+            "    return ok;\n"
+            "}\n\n");
+    }
+
+    if (needs_chmod) {
+        nob_sb_append_cstr(out,
+            "static bool replay_chmod_path(const char *path, const char *mode_octal, bool recurse) {\n"
+            "    if (!path || !mode_octal) return false;\n"
+            "    if (recurse) return replay_apply_tree_modes(path, mode_octal, mode_octal);\n"
+            "    return replay_apply_mode(path, mode_octal);\n"
             "}\n\n");
     }
 
@@ -576,7 +741,12 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
     for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
         BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
         if (bm_query_replay_action_phase(ctx->model, id) == BM_REPLAY_PHASE_CONFIGURE) {
+            BM_Replay_Opcode opcode = bm_query_replay_action_opcode(ctx->model, id);
             configure_count++;
+            if (opcode == BM_REPLAY_OPCODE_FS_REMOVE ||
+                opcode == BM_REPLAY_OPCODE_FS_REMOVE_RECURSE) {
+                continue;
+            }
             for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
                 const String_View *outputs = NULL;
                 String_View config = branch < arena_arr_len(ctx->known_configs)
@@ -589,7 +759,16 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
                                                            &outputs)) {
                     return false;
                 }
-                if (arena_arr_len(outputs) > 0) has_output_guards = true;
+                for (size_t output_index = 0; output_index < arena_arr_len(outputs); ++output_index) {
+                    bool removed_later = false;
+                    if (!cg_replay_configure_output_removed_in_config(ctx,
+                                                                      outputs[output_index],
+                                                                      config,
+                                                                      &removed_later)) {
+                        return false;
+                    }
+                    if (!removed_later) has_output_guards = true;
+                }
             }
         }
     }
@@ -609,11 +788,24 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
             if (!cg_emit_runtime_config_branches_prefix(ctx, out, branch)) return false;
             for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {
                 BM_Replay_Action_Id id = (BM_Replay_Action_Id)replay_index;
+                BM_Replay_Opcode opcode = bm_query_replay_action_opcode(ctx->model, id);
                 const String_View *outputs = NULL;
                 if (bm_query_replay_action_phase(ctx->model, id) != BM_REPLAY_PHASE_CONFIGURE) continue;
+                if (opcode == BM_REPLAY_OPCODE_FS_REMOVE ||
+                    opcode == BM_REPLAY_OPCODE_FS_REMOVE_RECURSE) {
+                    continue;
+                }
                 if (!cg_resolve_replay_operands_for_config(ctx, id, BM_REPLAY_OPERAND_OUTPUTS, config, &outputs)) return false;
                 for (size_t output_index = 0; output_index < arena_arr_len(outputs); ++output_index) {
                     String_View path = {0};
+                    bool removed_later = false;
+                    if (!cg_replay_configure_output_removed_in_config(ctx,
+                                                                      outputs[output_index],
+                                                                      config,
+                                                                      &removed_later)) {
+                        return false;
+                    }
+                    if (removed_later) continue;
                     if (!cg_resolve_replay_path_for_config(ctx,
                                                            id,
                                                            BM_REPLAY_OPERAND_OUTPUTS,
@@ -705,6 +897,91 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
                     nob_sb_append_cstr(out, ")) return false;\n");
                     break;
                 }
+
+                case BM_REPLAY_OPCODE_FS_COPY_TREE: {
+                    String_View input_path = {0};
+                    String_View output_path = {0};
+                    if (!cg_rebase_path_from_cwd(ctx, resolved_inputs[0], &input_path) ||
+                        !cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &output_path)) {
+                        return false;
+                    }
+                    nob_sb_append_cstr(out, "        if (!replay_copy_tree_with_modes(");
+                    if (!cg_sb_append_c_string(out, input_path)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, output_path)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, resolved_argv[1])) return false;
+                    nob_sb_append_cstr(out, ")) return false;\n");
+                    break;
+                }
+
+                case BM_REPLAY_OPCODE_FS_REMOVE:
+                case BM_REPLAY_OPCODE_FS_REMOVE_RECURSE:
+                    for (size_t output_index = 0; output_index < arena_arr_len(resolved_outputs); ++output_index) {
+                        String_View output_path = {0};
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[output_index], &output_path)) return false;
+                        nob_sb_append_cstr(out, "        if (!replay_remove_path(");
+                        if (!cg_sb_append_c_string(out, output_path)) return false;
+                        nob_sb_append_cstr(out, opcode == BM_REPLAY_OPCODE_FS_REMOVE_RECURSE ? ", true)) return false;\n"
+                                                                                              : ", false)) return false;\n");
+                    }
+                    break;
+
+                case BM_REPLAY_OPCODE_FS_RENAME: {
+                    String_View input_path = {0};
+                    String_View output_path = {0};
+                    if (!cg_rebase_path_from_cwd(ctx, resolved_inputs[0], &input_path) ||
+                        !cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &output_path)) {
+                        return false;
+                    }
+                    nob_sb_append_cstr(out, "        if (!replay_rename_path(");
+                    if (!cg_sb_append_c_string(out, input_path)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, output_path)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    nob_sb_append_cstr(out, nob_sv_eq(resolved_argv[0], nob_sv_from_cstr("1")) ? "true" : "false");
+                    nob_sb_append_cstr(out, ", ");
+                    nob_sb_append_cstr(out, nob_sv_eq(resolved_argv[1], nob_sv_from_cstr("1")) ? "true" : "false");
+                    nob_sb_append_cstr(out, ")) return false;\n");
+                    break;
+                }
+
+                case BM_REPLAY_OPCODE_FS_CREATE_LINK: {
+                    String_View input_path = {0};
+                    String_View output_path = {0};
+                    if (!cg_rebase_path_from_cwd(ctx, resolved_inputs[0], &input_path) ||
+                        !cg_rebase_path_from_cwd(ctx, resolved_outputs[0], &output_path)) {
+                        return false;
+                    }
+                    nob_sb_append_cstr(out, "        if (!replay_create_link_path(");
+                    if (!cg_sb_append_c_string(out, input_path)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    if (!cg_sb_append_c_string(out, output_path)) return false;
+                    nob_sb_append_cstr(out, ", ");
+                    nob_sb_append_cstr(out, nob_sv_eq(resolved_argv[0], nob_sv_from_cstr("1")) ? "true" : "false");
+                    nob_sb_append_cstr(out, ", ");
+                    nob_sb_append_cstr(out, nob_sv_eq(resolved_argv[1], nob_sv_from_cstr("1")) ? "true" : "false");
+                    nob_sb_append_cstr(out, ", ");
+                    nob_sb_append_cstr(out, nob_sv_eq(resolved_argv[2], nob_sv_from_cstr("1")) ? "true" : "false");
+                    nob_sb_append_cstr(out, ")) return false;\n");
+                    break;
+                }
+
+                case BM_REPLAY_OPCODE_FS_CHMOD:
+                case BM_REPLAY_OPCODE_FS_CHMOD_RECURSE:
+                    for (size_t output_index = 0; output_index < arena_arr_len(resolved_outputs); ++output_index) {
+                        String_View output_path = {0};
+                        if (!cg_rebase_path_from_cwd(ctx, resolved_outputs[output_index], &output_path)) return false;
+                        nob_sb_append_cstr(out, "        if (!replay_chmod_path(");
+                        if (!cg_sb_append_c_string(out, output_path)) return false;
+                        nob_sb_append_cstr(out, ", ");
+                        if (!cg_sb_append_c_string(out, resolved_argv[0])) return false;
+                        nob_sb_append_cstr(out, opcode == BM_REPLAY_OPCODE_FS_CHMOD_RECURSE ? ", true)) return false;\n"
+                                                                                            : ", false)) return false;\n");
+                    }
+                    break;
 
                 case BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL: {
                     String_View input_path = {0};
@@ -2842,6 +3119,13 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
                     case BM_REPLAY_OPCODE_NONE:
                         break;
                     case BM_REPLAY_OPCODE_FS_COPY_FILE:
+                    case BM_REPLAY_OPCODE_FS_COPY_TREE:
+                    case BM_REPLAY_OPCODE_FS_REMOVE:
+                    case BM_REPLAY_OPCODE_FS_REMOVE_RECURSE:
+                    case BM_REPLAY_OPCODE_FS_RENAME:
+                    case BM_REPLAY_OPCODE_FS_CREATE_LINK:
+                    case BM_REPLAY_OPCODE_FS_CHMOD:
+                    case BM_REPLAY_OPCODE_FS_CHMOD_RECURSE:
                     case BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL:
                     case BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR:
                     case BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR:

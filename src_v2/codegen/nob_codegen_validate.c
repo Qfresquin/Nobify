@@ -32,6 +32,13 @@ static const char *cg_replay_opcode_name(BM_Replay_Opcode opcode) {
         case BM_REPLAY_OPCODE_FS_WRITE_TEXT: return "fs_write_text";
         case BM_REPLAY_OPCODE_FS_APPEND_TEXT: return "fs_append_text";
         case BM_REPLAY_OPCODE_FS_COPY_FILE: return "fs_copy_file";
+        case BM_REPLAY_OPCODE_FS_COPY_TREE: return "fs_copy_tree";
+        case BM_REPLAY_OPCODE_FS_REMOVE: return "fs_remove";
+        case BM_REPLAY_OPCODE_FS_REMOVE_RECURSE: return "fs_remove_recurse";
+        case BM_REPLAY_OPCODE_FS_RENAME: return "fs_rename";
+        case BM_REPLAY_OPCODE_FS_CREATE_LINK: return "fs_create_link";
+        case BM_REPLAY_OPCODE_FS_CHMOD: return "fs_chmod";
+        case BM_REPLAY_OPCODE_FS_CHMOD_RECURSE: return "fs_chmod_recurse";
         case BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL: return "host_download_local";
         case BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR: return "host_archive_create_paxr";
         case BM_REPLAY_OPCODE_HOST_ARCHIVE_EXTRACT_TAR: return "host_archive_extract_tar";
@@ -219,7 +226,14 @@ bool cg_validate_model_for_backend(CG_Context *ctx) {
                  (opcode == BM_REPLAY_OPCODE_FS_MKDIR ||
                   opcode == BM_REPLAY_OPCODE_FS_WRITE_TEXT ||
                   opcode == BM_REPLAY_OPCODE_FS_APPEND_TEXT ||
-                  opcode == BM_REPLAY_OPCODE_FS_COPY_FILE)) ||
+                  opcode == BM_REPLAY_OPCODE_FS_COPY_FILE ||
+                  opcode == BM_REPLAY_OPCODE_FS_COPY_TREE ||
+                  opcode == BM_REPLAY_OPCODE_FS_REMOVE ||
+                  opcode == BM_REPLAY_OPCODE_FS_REMOVE_RECURSE ||
+                  opcode == BM_REPLAY_OPCODE_FS_RENAME ||
+                  opcode == BM_REPLAY_OPCODE_FS_CREATE_LINK ||
+                  opcode == BM_REPLAY_OPCODE_FS_CHMOD ||
+                  opcode == BM_REPLAY_OPCODE_FS_CHMOD_RECURSE)) ||
                 (kind == BM_REPLAY_ACTION_HOST_EFFECT &&
                  (opcode == BM_REPLAY_OPCODE_HOST_DOWNLOAD_LOCAL ||
                   opcode == BM_REPLAY_OPCODE_HOST_ARCHIVE_CREATE_PAXR ||

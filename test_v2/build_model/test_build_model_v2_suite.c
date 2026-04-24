@@ -2147,6 +2147,128 @@ TEST(build_model_replay_actions_accept_c3_opcodes_and_queries) {
     TEST_PASS();
 }
 
+TEST(build_model_replay_actions_accept_extended_filesystem_opcodes) {
+    Arena *arena = arena_create(2 * 1024 * 1024);
+    Arena *validate_arena = arena_create(512 * 1024);
+    Arena *model_arena = arena_create(2 * 1024 * 1024);
+    Test_Semantic_Pipeline_Build_Result build = {0};
+    Event_Stream *stream = NULL;
+    Event ev = {0};
+    const Build_Model *model = NULL;
+    int line = 1;
+
+    ASSERT(arena != NULL);
+    ASSERT(validate_arena != NULL);
+    ASSERT(model_arena != NULL);
+
+    stream = event_stream_create(arena);
+    ASSERT(stream != NULL);
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_ENTER, line++);
+    ev.as.directory_enter.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_enter.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+#define PUSH_REPLAY_DECLARE(key_, opcode_) \
+    do { \
+        build_model_init_event(&ev, EVENT_REPLAY_ACTION_DECLARE, line++); \
+        ev.as.replay_action_declare.action_key = nob_sv_from_cstr(key_); \
+        ev.as.replay_action_declare.action_kind = EVENT_REPLAY_ACTION_FILESYSTEM; \
+        ev.as.replay_action_declare.opcode = (opcode_); \
+        ev.as.replay_action_declare.phase = EVENT_REPLAY_PHASE_CONFIGURE; \
+        ev.as.replay_action_declare.working_directory = nob_sv_from_cstr("."); \
+        ASSERT(event_stream_push(stream, &ev)); \
+    } while (0)
+#define PUSH_REPLAY_INPUT(key_, path_) \
+    do { \
+        build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_INPUT, line++); \
+        ev.as.replay_action_add_input.action_key = nob_sv_from_cstr(key_); \
+        ev.as.replay_action_add_input.path = nob_sv_from_cstr(path_); \
+        ASSERT(event_stream_push(stream, &ev)); \
+    } while (0)
+#define PUSH_REPLAY_OUTPUT(key_, path_) \
+    do { \
+        build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_OUTPUT, line++); \
+        ev.as.replay_action_add_output.action_key = nob_sv_from_cstr(key_); \
+        ev.as.replay_action_add_output.path = nob_sv_from_cstr(path_); \
+        ASSERT(event_stream_push(stream, &ev)); \
+    } while (0)
+#define PUSH_REPLAY_ARG(key_, index_, value_) \
+    do { \
+        build_model_init_event(&ev, EVENT_REPLAY_ACTION_ADD_ARGV, line++); \
+        ev.as.replay_action_add_argv.action_key = nob_sv_from_cstr(key_); \
+        ev.as.replay_action_add_argv.arg_index = (index_); \
+        ev.as.replay_action_add_argv.value = nob_sv_from_cstr(value_); \
+        ASSERT(event_stream_push(stream, &ev)); \
+    } while (0)
+
+    PUSH_REPLAY_DECLARE("copy_tree", EVENT_REPLAY_OPCODE_FS_COPY_TREE);
+    PUSH_REPLAY_INPUT("copy_tree", "src/tree");
+    PUSH_REPLAY_OUTPUT("copy_tree", "build/tree");
+    PUSH_REPLAY_ARG("copy_tree", 0, "0644");
+    PUSH_REPLAY_ARG("copy_tree", 1, "0755");
+
+    PUSH_REPLAY_DECLARE("remove_file", EVENT_REPLAY_OPCODE_FS_REMOVE);
+    PUSH_REPLAY_OUTPUT("remove_file", "build/old.txt");
+
+    PUSH_REPLAY_DECLARE("remove_tree", EVENT_REPLAY_OPCODE_FS_REMOVE_RECURSE);
+    PUSH_REPLAY_OUTPUT("remove_tree", "build/old-tree");
+
+    PUSH_REPLAY_DECLARE("rename_file", EVENT_REPLAY_OPCODE_FS_RENAME);
+    PUSH_REPLAY_INPUT("rename_file", "build/tmp.txt");
+    PUSH_REPLAY_OUTPUT("rename_file", "build/final.txt");
+    PUSH_REPLAY_ARG("rename_file", 0, "0");
+    PUSH_REPLAY_ARG("rename_file", 1, "0");
+
+    PUSH_REPLAY_DECLARE("link_file", EVENT_REPLAY_OPCODE_FS_CREATE_LINK);
+    PUSH_REPLAY_INPUT("link_file", "build/final.txt");
+    PUSH_REPLAY_OUTPUT("link_file", "build/link.txt");
+    PUSH_REPLAY_ARG("link_file", 0, "0");
+    PUSH_REPLAY_ARG("link_file", 1, "1");
+    PUSH_REPLAY_ARG("link_file", 2, "0");
+
+    PUSH_REPLAY_DECLARE("chmod_file", EVENT_REPLAY_OPCODE_FS_CHMOD);
+    PUSH_REPLAY_OUTPUT("chmod_file", "build/link.txt");
+    PUSH_REPLAY_ARG("chmod_file", 0, "0600");
+
+    PUSH_REPLAY_DECLARE("chmod_tree", EVENT_REPLAY_OPCODE_FS_CHMOD_RECURSE);
+    PUSH_REPLAY_OUTPUT("chmod_tree", "build/tree");
+    PUSH_REPLAY_ARG("chmod_tree", 0, "0755");
+
+#undef PUSH_REPLAY_ARG
+#undef PUSH_REPLAY_OUTPUT
+#undef PUSH_REPLAY_INPUT
+#undef PUSH_REPLAY_DECLARE
+
+    build_model_init_event(&ev, EVENT_DIRECTORY_LEAVE, line++);
+    ev.as.directory_leave.source_dir = nob_sv_from_cstr(".");
+    ev.as.directory_leave.binary_dir = nob_sv_from_cstr(".");
+    ASSERT(event_stream_push(stream, &ev));
+
+    ASSERT(test_semantic_pipeline_build_model_from_stream(arena, validate_arena, model_arena, stream, &build));
+    ASSERT(build.builder_ok);
+    ASSERT(build.validate_ok);
+    ASSERT(build.freeze_ok);
+    ASSERT(build.model != NULL);
+
+    model = build.model;
+    ASSERT(bm_query_replay_action_count(model) == 7);
+    ASSERT(bm_query_replay_action_opcode(model, (BM_Replay_Action_Id)0) == BM_REPLAY_OPCODE_FS_COPY_TREE);
+    ASSERT(bm_query_replay_action_opcode(model, (BM_Replay_Action_Id)1) == BM_REPLAY_OPCODE_FS_REMOVE);
+    ASSERT(bm_query_replay_action_opcode(model, (BM_Replay_Action_Id)2) == BM_REPLAY_OPCODE_FS_REMOVE_RECURSE);
+    ASSERT(bm_query_replay_action_opcode(model, (BM_Replay_Action_Id)3) == BM_REPLAY_OPCODE_FS_RENAME);
+    ASSERT(bm_query_replay_action_opcode(model, (BM_Replay_Action_Id)4) == BM_REPLAY_OPCODE_FS_CREATE_LINK);
+    ASSERT(bm_query_replay_action_opcode(model, (BM_Replay_Action_Id)5) == BM_REPLAY_OPCODE_FS_CHMOD);
+    ASSERT(bm_query_replay_action_opcode(model, (BM_Replay_Action_Id)6) == BM_REPLAY_OPCODE_FS_CHMOD_RECURSE);
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, (BM_Replay_Action_Id)0), 1, "0755"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_outputs(model, (BM_Replay_Action_Id)3), 0, "build/final.txt"));
+
+    arena_destroy(arena);
+    arena_destroy(validate_arena);
+    arena_destroy(model_arena);
+    TEST_PASS();
+}
+
 TEST(build_model_replay_actions_accept_c5_ctest_coverage_and_memcheck_queries) {
     Arena *arena = arena_create(2 * 1024 * 1024);
     Arena *validate_arena = arena_create(512 * 1024);
@@ -5864,6 +5986,7 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_replay_actions_reject_invalid_opcode_payload_shapes(passed, failed, skipped);
     test_build_model_tests_freeze_owner_working_dir_expand_lists_and_configurations(passed, failed, skipped);
     test_build_model_replay_actions_accept_c3_opcodes_and_queries(passed, failed, skipped);
+    test_build_model_replay_actions_accept_extended_filesystem_opcodes(passed, failed, skipped);
     test_build_model_replay_actions_accept_c5_ctest_coverage_and_memcheck_queries(passed, failed, skipped);
     test_build_model_ctest_memcheck_preserves_registered_test_command_surface(passed, failed, skipped);
     test_build_model_ctest_local_memcheck_relative_command_surface(passed, failed, skipped);
