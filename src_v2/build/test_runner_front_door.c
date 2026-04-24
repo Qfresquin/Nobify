@@ -6,7 +6,7 @@ static void log_test_front_door_usage(const char *argv0) {
             "Usage: %s test clean [--force]",
             argv0);
     nob_log(NOB_INFO,
-            "Usage: %s test tidy <all|module> [--verbose]",
+            "Usage: %s test tidy <all|module|semantic> [--verbose]",
             argv0);
     nob_log(NOB_INFO,
             "Usage: %s test watch <module|auto> [--verbose] [--asan|--ubsan|--msan|--san|--cov]",
@@ -171,6 +171,11 @@ bool test_runner_parse_front_door(const char *argv0,
                 tidy_target_seen = true;
                 continue;
             }
+            if (cstr_equals(arg, "semantic")) {
+                action = TEST_RUNNER_ACTION_RUN_TIDY_SEMANTIC;
+                tidy_target_seen = true;
+                continue;
+            }
             module = test_runner_find_module_def_by_name(arg);
             if (!module) {
                 nob_log(NOB_ERROR, "unknown tidy module: %s", arg);
@@ -229,6 +234,7 @@ bool test_runner_parse_front_door(const char *argv0,
     }
 
     if (action == TEST_RUNNER_ACTION_RUN_TIDY_AGGREGATE ||
+        action == TEST_RUNNER_ACTION_RUN_TIDY_SEMANTIC ||
         action == TEST_RUNNER_ACTION_RUN_TIDY_MODULE) {
         if (force || case_name) {
             nob_log(NOB_ERROR, "`./build/nob test tidy ...` does not accept `--force` or `--case`");

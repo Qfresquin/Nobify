@@ -102,7 +102,8 @@ static bool custom_command_effective_first_output(EvalExecContext *ctx,
     if (!ctx || !outputs || !out || arena_arr_len(*outputs) == 0) return false;
     directory_binary_dir = eval_current_binary_dir(ctx);
     *out = eval_path_resolve_for_cmake_arg(ctx, (*outputs)[0], directory_binary_dir, true);
-    return !eval_should_stop(ctx);
+    if (eval_should_stop(ctx)) return false;
+    return out->count > 0;
 }
 
 static const Eval_Custom_Command_Output_Step *custom_command_find_output_step(EvalExecContext *ctx,

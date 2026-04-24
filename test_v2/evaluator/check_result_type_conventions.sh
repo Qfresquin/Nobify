@@ -19,42 +19,6 @@ check_forbidden_pattern() {
     fi
 }
 
-check_forbidden_pattern \
-    "forbidden return !eval_should_stop(ctx) pattern" \
-    'return[[:space:]]+!eval_should_stop\(ctx\);' \
-    src_v2/evaluator \
-    '-RIn --include=*.c --include=*.h'
-
-check_forbidden_pattern \
-    "forbidden bool eval_handle_* signatures" \
-    '^bool[[:space:]]+eval_handle_' \
-    src_v2/evaluator \
-    '-RIn --include=*.c --include=*.h'
-
-check_forbidden_pattern \
-    "legacy bool Eval_Native_Command_Handler signature" \
-    'typedef[[:space:]]+bool[[:space:]]*\(\*[[:space:]]*Eval_Native_Command_Handler[[:space:]]*\)' \
-    src_v2/evaluator/evaluator.h \
-    '-In'
-
-check_forbidden_pattern \
-    "legacy bool propagation via eval_result_from_ctx" \
-    'return[[:space:]]+!eval_result_is_fatal\(eval_result_from_ctx\(ctx\)\);' \
-    src_v2/evaluator \
-    '-RIn --include=*.c --include=*.h'
-
-check_forbidden_pattern \
-    "legacy eval_result_from_bool helper usage" \
-    'eval_result_from_bool\(' \
-    src_v2/evaluator \
-    '-RIn --include=*.c --include=*.h'
-
-check_forbidden_pattern \
-    "legacy eval_clear_stop_if_not_oom helper usage" \
-    'eval_clear_stop_if_not_oom\(' \
-    src_v2/evaluator \
-    '-RIn --include=*.c --include=*.h'
-
 system_matches=$(grep -RIn --include='*.c' --include='*.h' -E '\bsystem[[:space:]]*\(' src_v2 test_v2 || true)
 if [[ -n "$system_matches" ]]; then
     unauthorized=$(printf '%s\n' "$system_matches" | grep -v '^test_v2/evaluator/test_evaluator_v2_common.h:' || true)
@@ -89,15 +53,5 @@ for main_file in test_v2/*/test_*_main.c; do
         exit 1
     fi
 done
-
-state_write_matches=$(grep -RIn --include='*.c' --include='*.h' -E 'ctx->(oom|stop_requested)[[:space:]]*=' src_v2/evaluator || true)
-if [[ -n "$state_write_matches" ]]; then
-    unauthorized=$(printf '%s\n' "$state_write_matches" | grep -v '^src_v2/evaluator/evaluator.c:' || true)
-    if [[ -n "$unauthorized" ]]; then
-        echo "[FAIL] direct writes to ctx->oom/ctx->stop_requested outside evaluator.c"
-        echo "$unauthorized"
-        exit 1
-    fi
-fi
 
 echo "[OK] result type conventions checks passed"

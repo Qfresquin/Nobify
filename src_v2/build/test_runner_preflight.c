@@ -14,6 +14,12 @@ bool test_runner_preflight_fingerprint(uint64_t *out_fingerprint) {
         "src_v2/build/test_runner_exec.c",
         "src_v2/build/test_runner_preflight.c",
         "src_v2/build/test_runner_registry.c",
+        "tools/clang_tidy/nobify_semantic_tidy.cpp",
+        "test_v2/semantic_tidy/fixtures/good.c",
+        "test_v2/semantic_tidy/fixtures/bad.c",
+        "vendor/clang-tidy-18/clang-tidy/ClangTidyCheck.h",
+        "vendor/clang-tidy-18/clang-tidy/ClangTidyModule.h",
+        "vendor/clang-tidy-18/clang-tidy/ClangTidyModuleRegistry.h",
         "test_v2/evaluator/check_result_type_conventions.sh",
         "test_v2/test_v2_suite.h",
         "test_v2/test_workspace.h",
@@ -117,13 +123,21 @@ static bool resolve_executable_from_env_or_fallbacks(const char *env_var,
 
 static bool resolve_clang_tidy_path(char out_path[_TINYDIR_PATH_MAX]) {
     static const char *const fallbacks[] = {
-        "clang-tidy",
-        "clang-tidy-19",
         "clang-tidy-18",
-        "clang-tidy-17",
-        "clang-tidy-16",
+        "clang-tidy",
     };
     return resolve_executable_from_env_or_fallbacks("CLANG_TIDY",
+                                                    fallbacks,
+                                                    NOB_ARRAY_LEN(fallbacks),
+                                                    out_path);
+}
+
+static bool resolve_clangxx_path(char out_path[_TINYDIR_PATH_MAX]) {
+    static const char *const fallbacks[] = {
+        "clang++-18",
+        "clang++",
+    };
+    return resolve_executable_from_env_or_fallbacks("CLANGXX",
                                                     fallbacks,
                                                     NOB_ARRAY_LEN(fallbacks),
                                                     out_path);
@@ -253,6 +267,7 @@ static bool run_test_preflight(Test_Runner_Context *ctx,
                                const Test_Runner_Profile_Internal *profile) {
     if (!ensure_temp_tests_layout(profile)) return false;
     if (!run_result_type_conventions_check(ctx)) return false;
+    if (!run_semantic_tidy_command(ctx, NULL, true)) return false;
     nob_log(NOB_INFO, "[v2] validate workspace infra");
     if (!validate_coverage_tools_support(profile)) return false;
     return validate_test_profile_support(profile);

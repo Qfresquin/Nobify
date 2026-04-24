@@ -374,6 +374,7 @@ static bool run_test_front_door(int argc, char **argv) {
     if (!test_runner_parse_front_door(argv[0], argc - 2, argv + 2, &request)) return false;
     switch (request.action) {
         case TEST_RUNNER_ACTION_RUN_TIDY_AGGREGATE:
+        case TEST_RUNNER_ACTION_RUN_TIDY_SEMANTIC:
         case TEST_RUNNER_ACTION_RUN_TIDY_MODULE:
             return test_runner_execute(&request, &result);
 
@@ -655,7 +656,7 @@ int main(int argc, char **argv) {
             "Test front door: %s test [smoke|<module>] [--verbose] [--asan|--ubsan|--msan|--san|--cov]",
             argv[0]);
     nob_log(NOB_INFO,
-            "Test utility commands: %s test clean [--force] | %s test tidy <all|module> [--verbose]",
+            "Test utility commands: %s test clean [--force] | %s test tidy <all|module|semantic> [--verbose]",
             argv[0],
             argv[0]);
     nob_log(NOB_INFO,

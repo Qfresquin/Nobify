@@ -173,7 +173,13 @@ static bool append_runner_build_inputs(Nob_File_Paths *inputs) {
            append_runner_owned_input(inputs, TEST_RUNNER_CORE_FILE) &&
            append_runner_owned_input(inputs, TEST_RUNNER_REGISTRY_FILE) &&
            append_runner_owned_input(inputs, TEST_RUNNER_EXEC_FILE) &&
-           append_runner_owned_input(inputs, TEST_RUNNER_PREFLIGHT_FILE);
+           append_runner_owned_input(inputs, TEST_RUNNER_PREFLIGHT_FILE) &&
+           append_runner_owned_input(inputs, "tools/clang_tidy/nobify_semantic_tidy.cpp") &&
+           append_runner_owned_input(inputs, "test_v2/semantic_tidy/fixtures/good.c") &&
+           append_runner_owned_input(inputs, "test_v2/semantic_tidy/fixtures/bad.c") &&
+           append_runner_owned_input(inputs, "vendor/clang-tidy-18/clang-tidy/ClangTidyCheck.h") &&
+           append_runner_owned_input(inputs, "vendor/clang-tidy-18/clang-tidy/ClangTidyModule.h") &&
+           append_runner_owned_input(inputs, "vendor/clang-tidy-18/clang-tidy/ClangTidyModuleRegistry.h");
 }
 
 static bool test_runner_copy_string(char *dst, size_t dst_size, const char *src) {
@@ -205,6 +211,7 @@ static void test_runner_result_set_summary(Test_Runner_Context *ctx, const char 
 static const Test_Runner_Module_Internal *find_test_module_internal(const char *name);
 static const Test_Runner_Profile_Internal *find_test_profile_by_front_door_flag(const char *flag);
 static bool resolve_clang_tidy_path(char out_path[_TINYDIR_PATH_MAX]);
+static bool resolve_clangxx_path(char out_path[_TINYDIR_PATH_MAX]);
 static bool resolve_llvm_cov_path(char out_path[_TINYDIR_PATH_MAX]);
 static bool resolve_llvm_profdata_path(char out_path[_TINYDIR_PATH_MAX]);
 

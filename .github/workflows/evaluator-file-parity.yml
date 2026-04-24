@@ -23,6 +23,10 @@ jobs:
             curl \
             libcurl4-openssl-dev \
             libarchive-dev \
+            clang-18 \
+            clang-tidy-18 \
+            libclang-18-dev \
+            llvm-18-dev \
             pkg-config \
             python3-pip
 
@@ -44,9 +48,9 @@ jobs:
           mkdir -p build
           cc -D_GNU_SOURCE -std=c11 -Wall -Wextra -pedantic -Ivendor src_v2/build/nob_test.c -o build/nob_v2_test
 
-      - name: Check result type conventions
+      - name: Check semantic tidy conventions
         run: |
-          bash test_v2/evaluator/check_result_type_conventions.sh
+          ./build/nob_v2_test test tidy semantic --verbose
 
       - name: Run aggregate smoke suite (test-v2)
         run: |
