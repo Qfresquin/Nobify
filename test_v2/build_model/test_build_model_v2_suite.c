@@ -273,6 +273,26 @@ static BM_Replay_Action_Id build_model_find_replay_action_by_output_and_content(
     return BM_REPLAY_ACTION_ID_INVALID;
 }
 
+static BM_Replay_Action_Id build_model_find_replay_action_by_opcode(const Build_Model *model,
+                                                                    BM_Replay_Opcode opcode) {
+    size_t count = bm_query_replay_action_count(model);
+    for (size_t i = 0; i < count; ++i) {
+        BM_Replay_Action_Id id = (BM_Replay_Action_Id)i;
+        if (bm_query_replay_action_opcode(model, id) == opcode) return id;
+    }
+    return BM_REPLAY_ACTION_ID_INVALID;
+}
+
+static size_t build_model_count_replay_actions_by_opcode(const Build_Model *model,
+                                                         BM_Replay_Opcode opcode) {
+    size_t result = 0;
+    size_t count = bm_query_replay_action_count(model);
+    for (size_t i = 0; i < count; ++i) {
+        if (bm_query_replay_action_opcode(model, (BM_Replay_Action_Id)i) == opcode) result++;
+    }
+    return result;
+}
+
 TEST(build_model_builder_directory_scope_events) {
     Arena *arena = arena_create(2 * 1024 * 1024);
     Arena *validate_arena = arena_create(512 * 1024);
@@ -2708,6 +2728,349 @@ TEST(build_model_ctest_external_project_query_preserves_post_memcheck_exists_sur
     ASSERT(memcheck_flag_argv.count >= 1);
     ASSERT(build_model_string_equals_at(test_flag_argv, 0, "TEST_WORKDIR_EXISTS=1\n"));
     ASSERT(build_model_string_equals_at(memcheck_flag_argv, 0, "MEMCHECK_ARGS_EXISTS=1\n"));
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_ctest_local_replay_closure_freezes_all_local_driver_opcodes) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_Test_Id test_id = BM_TEST_ID_INVALID;
+    BM_Replay_Action_Id empty_id = BM_REPLAY_ACTION_ID_INVALID;
+    BM_Replay_Action_Id start_id = BM_REPLAY_ACTION_ID_INVALID;
+    BM_Replay_Action_Id configure_id = BM_REPLAY_ACTION_ID_INVALID;
+    BM_Replay_Action_Id build_id = BM_REPLAY_ACTION_ID_INVALID;
+    BM_Replay_Action_Id test_action_id = BM_REPLAY_ACTION_ID_INVALID;
+    BM_Replay_Action_Id sleep_id = BM_REPLAY_ACTION_ID_INVALID;
+    BM_Replay_Action_Id coverage_id = BM_REPLAY_ACTION_ID_INVALID;
+    BM_Replay_Action_Id memcheck_id = BM_REPLAY_ACTION_ID_INVALID;
+    const BM_Replay_Opcode expected_opcodes[] = {
+        BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY,
+        BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL,
+        BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF,
+        BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF,
+        BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST,
+        BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP,
+        BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL,
+        BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL,
+    };
+
+    ASSERT(build_model_write_text_file("ctest_local_replay_closure/source/project_src/CMakeLists.txt",
+                                       "cmake_minimum_required(VERSION 3.28)\n"
+                                       "project(NobDiffCtestLocalClosure NONE)\n"
+                                       "enable_testing()\n"
+                                       "add_test(NAME pass\n"
+                                       "  COMMAND /bin/sh \"${CMAKE_CURRENT_SOURCE_DIR}/tools/test_runner.sh\" pass\n"
+                                       "  WORKING_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}/memcheck_work\")\n"
+                                       "set_source_files_properties(\"${CMAKE_CURRENT_SOURCE_DIR}/src/main.c\" PROPERTIES LABELS \"core;ui\")\n"
+                                       "set_source_files_properties(\"${CMAKE_CURRENT_SOURCE_DIR}/src/net.c\" PROPERTIES LABELS infra)\n"));
+    ASSERT(build_model_write_text_file("ctest_local_replay_closure/source/project_src/src/main.c",
+                                       "int main(void) { return 0; }\n"));
+    ASSERT(build_model_write_text_file("ctest_local_replay_closure/source/project_src/src/net.c",
+                                       "int net(void) { return 0; }\n"));
+    ASSERT(build_model_write_text_file("ctest_local_replay_closure/source/project_src/tools/coverage.sh",
+                                       "#!/bin/sh\n"
+                                       "pwd > coverage.pwd\n"
+                                       "printf 'coverage ok\\n'\n"
+                                       "exit 0\n"));
+    ASSERT(build_model_write_text_file("ctest_local_replay_closure/source/project_src/tools/test_runner.sh",
+                                       "#!/bin/sh\n"
+                                       "mode=\"$1\"\n"
+                                       "pwd > \"test-${mode}.pwd\"\n"
+                                       "printf '%s\\n' \"$mode\"\n"
+                                       "exit 0\n"));
+    ASSERT(build_model_write_text_file("ctest_local_replay_closure/source/project_src/tools/memcheck.sh",
+                                       "#!/bin/sh\n"
+                                       "printf '%s\\n' \"$*\" >> memcheck-args.log\n"
+                                       "pwd >> memcheck-cwd.log\n"
+                                       "while [ \"$#\" -gt 0 ] && [ \"$1\" != \"--\" ]; do shift; done\n"
+                                       "if [ \"$#\" -gt 0 ]; then shift; fi\n"
+                                       "\"$@\"\n"
+                                       "exit $?\n"));
+    ASSERT(build_model_make_executable("ctest_local_replay_closure/source/project_src/tools/coverage.sh"));
+    ASSERT(build_model_make_executable("ctest_local_replay_closure/source/project_src/tools/test_runner.sh"));
+    ASSERT(build_model_make_executable("ctest_local_replay_closure/source/project_src/tools/memcheck.sh"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "ctest_local_replay_closure/source/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("ctest_local_replay_closure/source");
+    config.binary_dir = nob_sv_from_cstr("ctest_local_replay_closure/build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "set(CTEST_SOURCE_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}/project_src\")\n"
+        "set(CTEST_BINARY_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}\")\n"
+        "set(CMAKE_GENERATOR \"Unix Makefiles\")\n"
+        "set(CTEST_CMAKE_GENERATOR \"${CMAKE_GENERATOR}\")\n"
+        "file(RELATIVE_PATH _source_from_build \"${CTEST_BINARY_DIRECTORY}\" \"${CTEST_SOURCE_DIRECTORY}\")\n"
+        "file(MAKE_DIRECTORY \"${CTEST_SOURCE_DIRECTORY}/memcheck_work\")\n"
+        "set(COVERAGE_COMMAND \"/bin/sh;${_source_from_build}/tools/coverage.sh\")\n"
+        "set(CTEST_MEMORYCHECK_COMMAND \"${CTEST_SOURCE_DIRECTORY}/tools/memcheck.sh\")\n"
+        "set(CTEST_MEMORYCHECK_TYPE Valgrind)\n"
+        "enable_testing()\n"
+        "add_test(NAME local_pass\n"
+        "  COMMAND /bin/sh \"${CTEST_SOURCE_DIRECTORY}/tools/test_runner.sh\" pass\n"
+        "  WORKING_DIRECTORY \"${CTEST_SOURCE_DIRECTORY}/memcheck_work\")\n"
+        "ctest_empty_binary_directory(\"${CTEST_BINARY_DIRECTORY}\")\n"
+        "ctest_start(Experimental \"${CTEST_SOURCE_DIRECTORY}\" \"${CTEST_BINARY_DIRECTORY}\" QUIET)\n"
+        "ctest_configure(QUIET)\n"
+        "ctest_build(QUIET)\n"
+        "ctest_test(QUIET)\n"
+        "ctest_sleep(0)\n"
+        "ctest_coverage(LABELS core ui APPEND QUIET)\n"
+        "ctest_memcheck(APPEND QUIET)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.builder_ok);
+    ASSERT(fixture.build.validate_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    ASSERT(bm_query_test_count(model) >= 1);
+    test_id = bm_query_test_by_name(model, nob_sv_from_cstr("local_pass"));
+    ASSERT(test_id != BM_TEST_ID_INVALID);
+    ASSERT(build_model_sv_contains(bm_query_test_command(model, test_id),
+                                   nob_sv_from_cstr("tools/test_runner.sh")));
+    ASSERT(build_model_sv_contains(bm_query_test_working_directory(model, test_id),
+                                   nob_sv_from_cstr("memcheck_work")));
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(expected_opcodes); ++i) {
+        BM_Replay_Action_Id id = build_model_find_replay_action_by_opcode(model, expected_opcodes[i]);
+        ASSERT(id != BM_REPLAY_ACTION_ID_INVALID);
+        ASSERT(build_model_count_replay_actions_by_opcode(model, expected_opcodes[i]) == 1);
+        ASSERT(bm_query_replay_action_kind(model, id) == BM_REPLAY_ACTION_TEST_DRIVER);
+        ASSERT(bm_query_replay_action_phase(model, id) == BM_REPLAY_PHASE_TEST);
+        ASSERT(bm_query_replay_action_environment(model, id).count == 0);
+    }
+
+    empty_id = build_model_find_replay_action_by_opcode(model,
+                                                        BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_EMPTY_BINARY_DIRECTORY);
+    start_id = build_model_find_replay_action_by_opcode(model,
+                                                        BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_START_LOCAL);
+    configure_id = build_model_find_replay_action_by_opcode(model,
+                                                            BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_CONFIGURE_SELF);
+    build_id = build_model_find_replay_action_by_opcode(model,
+                                                        BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_BUILD_SELF);
+    test_action_id = build_model_find_replay_action_by_opcode(model,
+                                                              BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_TEST);
+    sleep_id = build_model_find_replay_action_by_opcode(model,
+                                                        BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_SLEEP);
+    coverage_id = build_model_find_replay_action_by_opcode(model,
+                                                           BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_COVERAGE_LOCAL);
+    memcheck_id = build_model_find_replay_action_by_opcode(model,
+                                                           BM_REPLAY_OPCODE_TEST_DRIVER_CTEST_MEMCHECK_LOCAL);
+
+    ASSERT(bm_query_replay_action_inputs(model, empty_id).count == 0);
+    ASSERT(bm_query_replay_action_outputs(model, empty_id).count == 1);
+    ASSERT(bm_query_replay_action_argv(model, empty_id).count == 0);
+
+    ASSERT(bm_query_replay_action_inputs(model, start_id).count == 0);
+    ASSERT(bm_query_replay_action_outputs(model, start_id).count == 2);
+    ASSERT(bm_query_replay_action_argv(model, start_id).count == 3);
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, start_id), 0, "Experimental"));
+
+    ASSERT(bm_query_replay_action_inputs(model, configure_id).count == 0);
+    ASSERT(bm_query_replay_action_outputs(model, configure_id).count == 2);
+    ASSERT(bm_query_replay_action_argv(model, configure_id).count == 0);
+
+    ASSERT(bm_query_replay_action_inputs(model, build_id).count == 0);
+    ASSERT(bm_query_replay_action_outputs(model, build_id).count == 1);
+    ASSERT(bm_query_replay_action_argv(model, build_id).count == 2);
+
+    ASSERT(bm_query_replay_action_inputs(model, test_action_id).count == 0);
+    ASSERT(bm_query_replay_action_outputs(model, test_action_id).count == 1);
+    ASSERT(bm_query_replay_action_argv(model, test_action_id).count == 2);
+    ASSERT(build_model_sv_contains(bm_query_replay_action_outputs(model, test_action_id).items[0],
+                                   nob_sv_from_cstr("ctest_local_replay_closure/build")));
+
+    ASSERT(bm_query_replay_action_inputs(model, sleep_id).count == 0);
+    ASSERT(bm_query_replay_action_outputs(model, sleep_id).count == 0);
+    ASSERT(bm_query_replay_action_argv(model, sleep_id).count == 1);
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, sleep_id), 0, "0"));
+
+    ASSERT(bm_query_replay_action_outputs(model, coverage_id).count == 1);
+    ASSERT(bm_query_replay_action_argv(model, coverage_id).count >= 4);
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, coverage_id), 0, "Experimental"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, coverage_id), 3, "2"));
+    ASSERT(bm_query_replay_action_argv(model, coverage_id).count == 6);
+    ASSERT(build_model_string_span_contains_substring(bm_query_replay_action_argv(model, coverage_id),
+                                                      "coverage.sh"));
+
+    ASSERT(bm_query_replay_action_inputs(model, memcheck_id).count == 2);
+    ASSERT(bm_query_replay_action_outputs(model, memcheck_id).count == 2);
+    ASSERT(bm_query_replay_action_argv(model, memcheck_id).count >= 14);
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, memcheck_id), 0, "Experimental"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, memcheck_id), 12, "Valgrind"));
+    ASSERT(build_model_string_equals_at(bm_query_replay_action_argv(model, memcheck_id), 13, "1"));
+    ASSERT(bm_query_replay_action_argv(model, memcheck_id).count == 15);
+    ASSERT(build_model_string_span_contains_substring(bm_query_replay_action_argv(model, memcheck_id),
+                                                      "memcheck.sh"));
+
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
+TEST(build_model_fetchcontent_local_dependency_materialization_closure_freezes_source_dir_and_archive_opcodes) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    const Build_Model *model = NULL;
+    BM_Replay_Action_Id saved_source_id = BM_REPLAY_ACTION_ID_INVALID;
+    BM_Replay_Action_Id archive_make_id = BM_REPLAY_ACTION_ID_INVALID;
+    BM_Replay_Action_Id direct_source_id = BM_REPLAY_ACTION_ID_INVALID;
+    BM_Replay_Action_Id direct_archive_id = BM_REPLAY_ACTION_ID_INVALID;
+    BM_String_Span inputs = {0};
+    BM_String_Span outputs = {0};
+    BM_String_Span argv = {0};
+    static const BM_Replay_Opcode expected_opcodes[] = {
+        BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR,
+        BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE,
+    };
+
+    ASSERT(build_model_write_text_file("fetchcontent_dependency_closure/source/saved_src/CMakeLists.txt",
+                                       "add_library(saved_dep INTERFACE)\n"));
+    ASSERT(build_model_write_text_file("fetchcontent_dependency_closure/source/archive_src/CMakeLists.txt",
+                                       "add_library(archive_dep INTERFACE)\n"));
+    ASSERT(build_model_write_text_file("fetchcontent_dependency_closure/source/direct_src/CMakeLists.txt",
+                                       "add_library(direct_dep INTERFACE)\n"));
+    ASSERT(build_model_write_text_file("fetchcontent_dependency_closure/source/direct_archive_src/CMakeLists.txt",
+                                       "add_library(direct_archive_dep INTERFACE)\n"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "fetchcontent_dependency_closure/source/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("fetchcontent_dependency_closure/source");
+    config.binary_dir = nob_sv_from_cstr("fetchcontent_dependency_closure/build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(FetchContentDependencyClosure NONE)\n"
+        "include(FetchContent)\n"
+        "set(FETCHCONTENT_BASE_DIR \"${CMAKE_CURRENT_BINARY_DIR}/fc_base\")\n"
+        "set(ARCHIVE_PATH \"${CMAKE_CURRENT_SOURCE_DIR}/archive_dep.tar\")\n"
+        "set(DIRECT_ARCHIVE_PATH \"${CMAKE_CURRENT_SOURCE_DIR}/direct_archive_dep.tar\")\n"
+        "file(ARCHIVE_CREATE\n"
+        "  OUTPUT \"${ARCHIVE_PATH}\"\n"
+        "  PATHS \"${CMAKE_CURRENT_SOURCE_DIR}/archive_src/CMakeLists.txt\"\n"
+        "  FORMAT paxr\n"
+        "  MTIME 0)\n"
+        "file(ARCHIVE_CREATE\n"
+        "  OUTPUT \"${DIRECT_ARCHIVE_PATH}\"\n"
+        "  PATHS \"${CMAKE_CURRENT_SOURCE_DIR}/direct_archive_src/CMakeLists.txt\"\n"
+        "  FORMAT paxr\n"
+        "  MTIME 0)\n"
+        "file(SHA256 \"${ARCHIVE_PATH}\" ARCHIVE_HASH)\n"
+        "file(SHA256 \"${DIRECT_ARCHIVE_PATH}\" DIRECT_ARCHIVE_HASH)\n"
+        "FetchContent_Declare(SavedDep\n"
+        "  SOURCE_DIR \"${CMAKE_CURRENT_SOURCE_DIR}/saved_src\")\n"
+        "FetchContent_Declare(ArchiveDep\n"
+        "  URL \"${ARCHIVE_PATH}\"\n"
+        "  URL_HASH \"SHA256=${ARCHIVE_HASH}\")\n"
+        "FetchContent_MakeAvailable(SavedDep ArchiveDep)\n"
+        "FetchContent_Populate(DirectSource\n"
+        "  SOURCE_DIR \"${CMAKE_CURRENT_SOURCE_DIR}/direct_src\"\n"
+        "  BINARY_DIR \"${CMAKE_CURRENT_BINARY_DIR}/direct_src_build\")\n"
+        "FetchContent_Populate(DirectArchive\n"
+        "  URL \"${DIRECT_ARCHIVE_PATH}\"\n"
+        "  URL_HASH \"SHA256=${DIRECT_ARCHIVE_HASH}\"\n"
+        "  BINARY_DIR \"${CMAKE_CURRENT_BINARY_DIR}/direct_archive_build\")\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.builder_ok);
+    ASSERT(fixture.build.validate_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    ASSERT(build_model_count_replay_actions_by_opcode(model,
+                                                      BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR) == 2);
+    ASSERT(build_model_count_replay_actions_by_opcode(model,
+                                                      BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE) == 2);
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(expected_opcodes); ++i) {
+        BM_Replay_Action_Id id = build_model_find_replay_action_by_opcode(model, expected_opcodes[i]);
+        ASSERT(id != BM_REPLAY_ACTION_ID_INVALID);
+        ASSERT(bm_query_replay_action_kind(model, id) == BM_REPLAY_ACTION_DEPENDENCY_MATERIALIZATION);
+        ASSERT(bm_query_replay_action_phase(model, id) == BM_REPLAY_PHASE_CONFIGURE);
+        ASSERT(bm_query_replay_action_environment(model, id).count == 0);
+    }
+
+    saved_source_id = build_model_find_replay_action_by_output_and_content(
+        model,
+        BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR,
+        "saved_src",
+        "SavedDep");
+    archive_make_id = build_model_find_replay_action_by_output_and_content(
+        model,
+        BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE,
+        "archivedep-src",
+        "ArchiveDep");
+    direct_source_id = build_model_find_replay_action_by_output_and_content(
+        model,
+        BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_SOURCE_DIR,
+        "direct_src",
+        "DirectSource");
+    direct_archive_id = build_model_find_replay_action_by_output_and_content(
+        model,
+        BM_REPLAY_OPCODE_DEPS_FETCHCONTENT_LOCAL_ARCHIVE,
+        "directarchive-src",
+        "DirectArchive");
+
+    ASSERT(saved_source_id != BM_REPLAY_ACTION_ID_INVALID);
+    ASSERT(archive_make_id != BM_REPLAY_ACTION_ID_INVALID);
+    ASSERT(direct_source_id != BM_REPLAY_ACTION_ID_INVALID);
+    ASSERT(direct_archive_id != BM_REPLAY_ACTION_ID_INVALID);
+
+    inputs = bm_query_replay_action_inputs(model, saved_source_id);
+    outputs = bm_query_replay_action_outputs(model, saved_source_id);
+    argv = bm_query_replay_action_argv(model, saved_source_id);
+    ASSERT(inputs.count == 0);
+    ASSERT(outputs.count == 2);
+    ASSERT(argv.count == 1);
+    ASSERT(build_model_string_equals_at(argv, 0, "SavedDep"));
+    ASSERT(build_model_sv_contains(outputs.items[0], nob_sv_from_cstr("saved_src")));
+    ASSERT(build_model_sv_contains(outputs.items[1], nob_sv_from_cstr("saveddep-build")));
+
+    inputs = bm_query_replay_action_inputs(model, archive_make_id);
+    outputs = bm_query_replay_action_outputs(model, archive_make_id);
+    argv = bm_query_replay_action_argv(model, archive_make_id);
+    ASSERT(inputs.count == 1);
+    ASSERT(outputs.count == 2);
+    ASSERT(argv.count == 4);
+    ASSERT(build_model_sv_contains(inputs.items[0], nob_sv_from_cstr("archive_dep.tar")));
+    ASSERT(build_model_string_equals_at(argv, 0, "ArchiveDep"));
+    ASSERT(build_model_string_equals_at(argv, 1, "SHA256"));
+    ASSERT(argv.items[2].count > 0);
+    ASSERT(build_model_string_equals_at(argv, 3, "0"));
+    ASSERT(build_model_sv_contains(outputs.items[0], nob_sv_from_cstr("archivedep-src")));
+    ASSERT(build_model_sv_contains(outputs.items[1], nob_sv_from_cstr("archivedep-build")));
+
+    inputs = bm_query_replay_action_inputs(model, direct_source_id);
+    outputs = bm_query_replay_action_outputs(model, direct_source_id);
+    argv = bm_query_replay_action_argv(model, direct_source_id);
+    ASSERT(inputs.count == 0);
+    ASSERT(outputs.count == 2);
+    ASSERT(argv.count == 1);
+    ASSERT(build_model_string_equals_at(argv, 0, "DirectSource"));
+    ASSERT(build_model_sv_contains(outputs.items[0], nob_sv_from_cstr("direct_src")));
+    ASSERT(build_model_sv_contains(outputs.items[1], nob_sv_from_cstr("direct_src_build")));
+
+    inputs = bm_query_replay_action_inputs(model, direct_archive_id);
+    outputs = bm_query_replay_action_outputs(model, direct_archive_id);
+    argv = bm_query_replay_action_argv(model, direct_archive_id);
+    ASSERT(inputs.count == 1);
+    ASSERT(outputs.count == 2);
+    ASSERT(argv.count == 4);
+    ASSERT(build_model_sv_contains(inputs.items[0], nob_sv_from_cstr("direct_archive_dep.tar")));
+    ASSERT(build_model_string_equals_at(argv, 0, "DirectArchive"));
+    ASSERT(build_model_string_equals_at(argv, 1, "SHA256"));
+    ASSERT(argv.items[2].count > 0);
+    ASSERT(build_model_string_equals_at(argv, 3, "0"));
+    ASSERT(build_model_sv_contains(outputs.items[0], nob_sv_from_cstr("directarchive-src")));
+    ASSERT(build_model_sv_contains(outputs.items[1], nob_sv_from_cstr("direct_archive_build")));
 
     test_semantic_pipeline_fixture_destroy(&fixture);
     TEST_PASS();
@@ -5991,6 +6354,8 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_ctest_memcheck_preserves_registered_test_command_surface(passed, failed, skipped);
     test_build_model_ctest_local_memcheck_relative_command_surface(passed, failed, skipped);
     test_build_model_ctest_external_project_query_preserves_post_memcheck_exists_surface(passed, failed, skipped);
+    test_build_model_ctest_local_replay_closure_freezes_all_local_driver_opcodes(passed, failed, skipped);
+    test_build_model_fetchcontent_local_dependency_materialization_closure_freezes_source_dir_and_archive_opcodes(passed, failed, skipped);
     test_build_model_replay_actions_reject_malformed_ordering(passed, failed, skipped);
     test_build_model_context_aware_queries_expand_usage_requirements_and_target_property_genex(passed, failed, skipped);
     test_build_model_context_queries_support_build_local_install_prefix_target_genex_eval_and_link_literals(passed, failed, skipped);
