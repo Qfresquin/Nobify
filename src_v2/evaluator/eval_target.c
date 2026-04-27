@@ -26,6 +26,42 @@ static bool eval_property_write_current_directory_shadow(EvalExecContext *ctx,
         ctx, origin, scope_upper, scoped_object, property_name, value, op, emit_var_event);
 }
 
+static Event_Property_Mutate_Op eval_property_mutate_op_from_legacy(Cmake_Target_Property_Op op) {
+    switch (op) {
+        case EV_PROP_SET: return EVENT_PROPERTY_MUTATE_SET;
+        case EV_PROP_APPEND_LIST: return EVENT_PROPERTY_MUTATE_APPEND_LIST;
+        case EV_PROP_APPEND_STRING: return EVENT_PROPERTY_MUTATE_APPEND_STRING;
+        case EV_PROP_PREPEND_LIST: return EVENT_PROPERTY_MUTATE_PREPEND_LIST;
+    }
+    return EVENT_PROPERTY_MUTATE_SET;
+}
+
+static bool eval_emit_test_property_mutation_from_value(EvalExecContext *ctx,
+                                                        Event_Origin origin,
+                                                        String_View test_name,
+                                                        String_View directory,
+                                                        String_View key,
+                                                        String_View value,
+                                                        Cmake_Target_Property_Op op) {
+    SV_List items = NULL;
+    if (!ctx) return false;
+    if (value.count > 0) {
+        if (op == EV_PROP_APPEND_STRING) {
+            if (!svu_list_push_temp(ctx, &items, value)) return false;
+        } else if (!eval_sv_split_semicolon_genex_aware(eval_temp_arena(ctx), value, &items)) {
+            return false;
+        }
+    }
+    return eval_emit_test_property_mutate(ctx,
+                                          origin,
+                                          test_name,
+                                          directory,
+                                          key,
+                                          eval_property_mutate_op_from_legacy(op),
+                                          EVENT_PROPERTY_MODIFIER_NONE,
+                                          &items);
+}
+
 static bool eval_emit_generated_source_mark_for_directory(EvalExecContext *ctx,
                                                           Event_Origin origin,
                                                           String_View source_file,
@@ -460,6 +496,15 @@ Eval_Result eval_handle_set_tests_properties(EvalExecContext *ctx, const Node *n
                                                               a[pi + 1],
                                                               EV_PROP_SET,
                                                               true)) {
+                return eval_result_from_ctx(ctx);
+            }
+            if (!eval_emit_test_property_mutation_from_value(ctx,
+                                                             o,
+                                                             tests[ti],
+                                                             test_dir,
+                                                             a[pi],
+                                                             a[pi + 1],
+                                                             EV_PROP_SET)) {
                 return eval_result_from_ctx(ctx);
             }
         }
@@ -1004,6 +1049,15 @@ Eval_Result eval_handle_set_property(EvalExecContext *ctx, const Node *node) {
                                          true)) {
                     return eval_result_from_ctx(ctx);
                 }
+                if (!eval_emit_test_property_mutation_from_value(ctx,
+                                                                 o,
+                                                                 objects[oi],
+                                                                 test_scope_dir,
+                                                                 key,
+                                                                 value,
+                                                                 op)) {
+                    return eval_result_from_ctx(ctx);
+                }
             }
             return eval_result_from_ctx(ctx);
         }
@@ -1027,6 +1081,15 @@ Eval_Result eval_handle_set_property(EvalExecContext *ctx, const Node *node) {
                                                               value,
                                                               op,
                                                               true)) {
+                return eval_result_from_ctx(ctx);
+            }
+            if (!eval_emit_test_property_mutation_from_value(ctx,
+                                                             o,
+                                                             objects[oi],
+                                                             test_scope_dir,
+                                                             key,
+                                                             value,
+                                                             op)) {
                 return eval_result_from_ctx(ctx);
             }
         }

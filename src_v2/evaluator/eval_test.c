@@ -116,11 +116,14 @@ Eval_Result eval_handle_add_test(EvalExecContext *ctx, const Node *node) {
 
     String_View name = nob_sv_from_cstr("");
     String_View command = nob_sv_from_cstr("");
+    SV_List command_argv = NULL;
     String_View working_dir = nob_sv_from_cstr("");
     bool command_expand_lists = false;
+    bool uses_name_signature = false;
     SV_List configurations = NULL;
 
     if (eval_sv_eq_ci_lit(a[0], "NAME")) {
+        uses_name_signature = true;
         if (arena_arr_len(a) < 4) {
             EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "dispatcher", nob_sv_from_cstr("add_test(NAME ...) requires COMMAND clause"), nob_sv_from_cstr("Usage: add_test(NAME <name> COMMAND <cmd...>)"));
             return eval_result_from_ctx(ctx);
@@ -149,6 +152,9 @@ Eval_Result eval_handle_add_test(EvalExecContext *ctx, const Node *node) {
             return eval_result_from_ctx(ctx);
         }
         command = svu_join_space_temp(ctx, &a[cmd_start], cmd_end - cmd_start);
+        for (size_t ai = cmd_start; ai < cmd_end; ++ai) {
+            if (!svu_list_push_temp(ctx, &command_argv, a[ai])) return eval_result_from_ctx(ctx);
+        }
 
         Add_Test_Option_State st = {
             .origin = o,
@@ -181,6 +187,9 @@ Eval_Result eval_handle_add_test(EvalExecContext *ctx, const Node *node) {
     } else {
         name = a[0];
         command = svu_join_space_temp(ctx, &a[1], arena_arr_len(a) - 1);
+        for (size_t ai = 1; ai < arena_arr_len(a); ++ai) {
+            if (!svu_list_push_temp(ctx, &command_argv, a[ai])) return eval_result_from_ctx(ctx);
+        }
     }
 
     String_View global_marker = test_global_marker_key_temp(ctx, name);
@@ -201,8 +210,10 @@ Eval_Result eval_handle_add_test(EvalExecContext *ctx, const Node *node) {
                             o,
                             name,
                             command,
+                            &command_argv,
                             working_dir,
                             command_expand_lists,
+                            uses_name_signature,
                             &configurations)) {
         return eval_result_from_ctx(ctx);
     }

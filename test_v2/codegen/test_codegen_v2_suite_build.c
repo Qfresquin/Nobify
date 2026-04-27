@@ -1258,6 +1258,131 @@ TEST(codegen_test_phase_auto_builds_registered_targets_and_honors_config_filters
     TEST_PASS();
 }
 
+TEST(codegen_test_phase_honors_test_properties_and_target_command_argv) {
+    Arena *arena = arena_create(128 * 1024);
+    const char *positive_argv[] = {
+        "test",
+        "depends_user",
+        "target_argv_env",
+        "env_mod",
+        "regex_skip",
+        "will_fail",
+        "skip_code",
+        "disabled",
+        "required_missing",
+        "timeout_pass",
+        "fixture_user",
+    };
+    const char *negative_argv[] = {"test", "fail_regex"};
+    const char *timeout_negative_argv[] = {"test", "timeout_fail"};
+    const char *script =
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(TestProps C)\n"
+        "enable_testing()\n"
+        "add_executable(app main.c)\n"
+        "add_test(NAME target_argv_env COMMAND app ok \"two words\")\n"
+        "set_tests_properties(target_argv_env PROPERTIES\n"
+        "  ENVIRONMENT \"NOBIFY_TEST_ENV=present\"\n"
+        "  PASS_REGULAR_EXPRESSION \"mode=ok\"\n"
+        "  LABELS \"fast;unit\"\n"
+        "  FIXTURES_SETUP data)\n"
+        "add_test(NAME depends_user COMMAND app depends_user)\n"
+        "set_tests_properties(depends_user PROPERTIES DEPENDS target_argv_env)\n"
+        "add_test(NAME env_mod COMMAND app env_mod)\n"
+        "set_tests_properties(env_mod PROPERTIES\n"
+        "  ENVIRONMENT \"NOBIFY_MOD_ENV=base\"\n"
+        "  ENVIRONMENT_MODIFICATION \"NOBIFY_MOD_ENV=string_append:-tail\")\n"
+        "add_test(NAME regex_skip COMMAND \"${CMAKE_COMMAND}\" -E echo \"skip: intentional\")\n"
+        "set_tests_properties(regex_skip PROPERTIES SKIP_REGULAR_EXPRESSION \"skip:.*intentional\")\n"
+        "add_test(NAME will_fail COMMAND app fail)\n"
+        "set_tests_properties(will_fail PROPERTIES WILL_FAIL TRUE)\n"
+        "add_test(NAME skip_code COMMAND app skip_code)\n"
+        "set_tests_properties(skip_code PROPERTIES SKIP_RETURN_CODE 77)\n"
+        "add_test(NAME disabled COMMAND \"${CMAKE_COMMAND}\" -E false)\n"
+        "set_tests_properties(disabled PROPERTIES DISABLED TRUE)\n"
+        "add_test(NAME required_missing COMMAND \"${CMAKE_COMMAND}\" -E false)\n"
+        "set_tests_properties(required_missing PROPERTIES REQUIRED_FILES \"${CMAKE_CURRENT_BINARY_DIR}/missing.txt\")\n"
+        "add_test(NAME timeout_pass COMMAND \"${CMAKE_COMMAND}\" -E sleep 0)\n"
+        "set_tests_properties(timeout_pass PROPERTIES TIMEOUT 2)\n"
+        "add_test(NAME timeout_fail COMMAND \"${CMAKE_COMMAND}\" -E sleep 2)\n"
+        "set_tests_properties(timeout_fail PROPERTIES TIMEOUT 1)\n"
+        "add_test(NAME fixture_setup COMMAND app fixture_setup)\n"
+        "set_tests_properties(fixture_setup PROPERTIES FIXTURES_SETUP generated_data)\n"
+        "add_test(NAME fixture_user COMMAND app fixture_user)\n"
+        "set_tests_properties(fixture_user PROPERTIES FIXTURES_REQUIRED generated_data)\n"
+        "add_test(NAME fixture_cleanup COMMAND app fixture_cleanup)\n"
+        "set_tests_properties(fixture_cleanup PROPERTIES FIXTURES_CLEANUP generated_data)\n"
+        "add_test(NAME fail_regex COMMAND \"${CMAKE_COMMAND}\" -E echo \"bad output\")\n"
+        "set_tests_properties(fail_regex PROPERTIES FAIL_REGULAR_EXPRESSION \"bad output\")\n";
+    Codegen_Test_Config config = {
+        .input_path = "CMakeLists.txt",
+        .output_path = "test_props_nob.c",
+        .source_dir = "test_props_src",
+        .binary_dir = "test_props_build",
+    };
+
+    ASSERT(arena != NULL);
+    ASSERT(codegen_write_text_file(
+        "test_props_src/main.c",
+        "#include <stdio.h>\n"
+        "#include <stdlib.h>\n"
+        "#include <string.h>\n"
+        "static int file_exists(const char *path) {\n"
+        "    FILE *fp = fopen(path, \"rb\");\n"
+        "    if (!fp) return 0;\n"
+        "    fclose(fp);\n"
+        "    return 1;\n"
+        "}\n"
+        "static int write_file(const char *path, const char *text) {\n"
+        "    FILE *fp = fopen(path, \"wb\");\n"
+        "    if (!fp) return 0;\n"
+        "    fputs(text, fp);\n"
+        "    fclose(fp);\n"
+        "    return 1;\n"
+        "}\n"
+        "int main(int argc, char **argv) {\n"
+        "    const char *mode = argc > 1 ? argv[1] : \"\";\n"
+        "    printf(\"mode=%s\\n\", mode);\n"
+        "    if (strcmp(mode, \"ok\") == 0) {\n"
+        "        const char *env = getenv(\"NOBIFY_TEST_ENV\");\n"
+        "        if (!env || strcmp(env, \"present\") != 0) return 2;\n"
+        "        if (argc != 3 || strcmp(argv[2], \"two words\") != 0) return 3;\n"
+        "        if (!write_file(\"ok-target.txt\", \"ok\\n\")) return 4;\n"
+        "        return 0;\n"
+        "    }\n"
+        "    if (strcmp(mode, \"depends_user\") == 0) return file_exists(\"ok-target.txt\") ? 0 : 9;\n"
+        "    if (strcmp(mode, \"env_mod\") == 0) {\n"
+        "        const char *env = getenv(\"NOBIFY_MOD_ENV\");\n"
+        "        return env && strcmp(env, \"base-tail\") == 0 ? 0 : 10;\n"
+        "    }\n"
+        "    if (strcmp(mode, \"fixture_setup\") == 0) return write_file(\"fixture-setup.txt\", \"setup\\n\") ? 0 : 11;\n"
+        "    if (strcmp(mode, \"fixture_user\") == 0) {\n"
+        "        if (!file_exists(\"fixture-setup.txt\")) return 12;\n"
+        "        return write_file(\"fixture-user.txt\", \"user\\n\") ? 0 : 13;\n"
+        "    }\n"
+        "    if (strcmp(mode, \"fixture_cleanup\") == 0) {\n"
+        "        if (!file_exists(\"fixture-user.txt\")) return 14;\n"
+        "        return write_file(\"fixture-cleanup.txt\", \"cleanup\\n\") ? 0 : 15;\n"
+        "    }\n"
+        "    if (strcmp(mode, \"skip_code\") == 0) return 77;\n"
+        "    if (strcmp(mode, \"fail\") == 0) return 5;\n"
+        "    return 0;\n"
+        "}\n"));
+    ASSERT(codegen_write_script_with_config(script, &config));
+    ASSERT(codegen_compile_generated_nob("test_props_nob.c", "test_props_nob_gen"));
+
+    ASSERT(codegen_run_binary_in_dir_argv(".", "./test_props_nob_gen", positive_argv, NOB_ARRAY_LEN(positive_argv)));
+    ASSERT(test_ws_host_path_exists("test_props_build/app"));
+    ASSERT(codegen_text_file_equals(arena, "test_props_build/ok-target.txt", "ok\n"));
+    ASSERT(codegen_text_file_equals(arena, "test_props_build/fixture-cleanup.txt", "cleanup\n"));
+
+    ASSERT(!codegen_run_binary_in_dir_argv(".", "./test_props_nob_gen", negative_argv, NOB_ARRAY_LEN(negative_argv)));
+    ASSERT(!codegen_run_binary_in_dir_argv(".", "./test_props_nob_gen", timeout_negative_argv, NOB_ARRAY_LEN(timeout_negative_argv)));
+
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(codegen_test_replay_resolves_filesystem_operands_per_config_filter) {
     Arena *arena = arena_create(128 * 1024);
     Arena *validate_arena = arena_create(64 * 1024);
@@ -3418,6 +3543,7 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_configure_replay_resolves_genex_per_runtime_config(passed, failed, skipped);
     test_codegen_configure_replay_discovers_strequal_config_catalog_branches(passed, failed, skipped);
     test_codegen_test_phase_auto_builds_registered_targets_and_honors_config_filters(passed, failed, skipped);
+    test_codegen_test_phase_honors_test_properties_and_target_command_argv(passed, failed, skipped);
     test_codegen_test_replay_resolves_filesystem_operands_per_config_filter(passed, failed, skipped);
     test_codegen_fetchcontent_local_materialization_replays_from_clean_workspace(passed, failed, skipped);
     test_codegen_ctest_local_dashboard_replay_stages_testing_tree(passed, failed, skipped);

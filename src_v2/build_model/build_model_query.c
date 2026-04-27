@@ -2731,6 +2731,11 @@ String_View bm_query_test_command(const Build_Model *model, BM_Test_Id id) {
     return test ? test->command : (String_View){0};
 }
 
+BM_String_Span bm_query_test_command_argv(const Build_Model *model, BM_Test_Id id) {
+    const BM_Test_Record *test = bm_model_test(model, id);
+    return test ? bm_string_span(test->command_argv) : (BM_String_Span){0};
+}
+
 BM_Directory_Id bm_query_test_owner_directory(const Build_Model *model, BM_Test_Id id) {
     const BM_Test_Record *test = bm_model_test(model, id);
     return test ? test->owner_directory_id : BM_DIRECTORY_ID_INVALID;
@@ -2749,6 +2754,203 @@ bool bm_query_test_command_expand_lists(const Build_Model *model, BM_Test_Id id)
 BM_String_Span bm_query_test_configurations(const Build_Model *model, BM_Test_Id id) {
     const BM_Test_Record *test = bm_model_test(model, id);
     return test ? bm_string_span(test->configurations) : (BM_String_Span){0};
+}
+
+BM_Target_Id bm_query_test_resolved_command_target(const Build_Model *model, BM_Test_Id id) {
+    const BM_Test_Record *test = bm_model_test(model, id);
+    return test ? test->resolved_command_target_id : BM_TARGET_ID_INVALID;
+}
+
+bool bm_query_test_uses_name_signature(const Build_Model *model, BM_Test_Id id) {
+    const BM_Test_Record *test = bm_model_test(model, id);
+    return test ? test->uses_name_signature : false;
+}
+
+BM_String_Span bm_query_test_raw_property_items(const Build_Model *model,
+                                                BM_Test_Id id,
+                                                String_View property_name) {
+    const BM_Test_Record *test = bm_model_test(model, id);
+    const BM_Raw_Property_Record *record = NULL;
+    if (!test) return (BM_String_Span){0};
+    record = bm_find_raw_property(test->raw_properties, property_name);
+    return record ? bm_string_span(record->items) : (BM_String_Span){0};
+}
+
+static bool bm_query_push_test_property_item(Arena *scratch,
+                                             String_View **items,
+                                             String_View value) {
+    return scratch && items && arena_arr_push(scratch, *items, value);
+}
+
+static bool bm_query_append_string_to_last_property_item(Arena *scratch,
+                                                        String_View **items,
+                                                        String_View value) {
+    Nob_String_Builder sb = {0};
+    char *copy = NULL;
+    size_t count = arena_arr_len(*items);
+    if (!scratch || !items) return false;
+    if (count == 0) return bm_query_push_test_property_item(scratch, items, value);
+    String_View previous = (*items)[count - 1];
+    nob_sb_append_buf(&sb, previous.data ? previous.data : "", previous.count);
+    nob_sb_append_buf(&sb, value.data ? value.data : "", value.count);
+    copy = arena_strndup(scratch, sb.items ? sb.items : "", sb.count);
+    count = sb.count;
+    nob_sb_free(sb);
+    if (!copy) return false;
+    (*items)[arena_arr_len(*items) - 1] = nob_sv_from_parts(copy, count);
+    return true;
+}
+
+bool bm_query_test_effective_property_items(const Build_Model *model,
+                                            BM_Test_Id id,
+                                            String_View property_name,
+                                            Arena *scratch,
+                                            BM_String_Span *out) {
+    const BM_Test_Record *test = bm_model_test(model, id);
+    String_View *items = NULL;
+    if (!scratch || !out) return false;
+    *out = (BM_String_Span){0};
+    if (!test) return true;
+    for (size_t i = 0; i < arena_arr_len(test->raw_properties); ++i) {
+        const BM_Raw_Property_Record *record = &test->raw_properties[i];
+        if (!bm_sv_eq_ci_query(record->name, property_name)) continue;
+        if (record->op == EVENT_PROPERTY_MUTATE_SET) items = NULL;
+        for (size_t item_index = 0; item_index < arena_arr_len(record->items); ++item_index) {
+            if (record->op == EVENT_PROPERTY_MUTATE_APPEND_STRING) {
+                if (!bm_query_append_string_to_last_property_item(scratch, &items, record->items[item_index])) {
+                    return false;
+                }
+            } else if (!bm_query_push_test_property_item(scratch, &items, record->items[item_index])) {
+                return false;
+            }
+        }
+    }
+    out->items = items;
+    out->count = arena_arr_len(items);
+    return true;
+}
+
+static bool bm_append_split_string_views(Arena *scratch, String_View **out, String_View value) {
+    Genex_Context gx = {0};
+    Gx_Sv_List pieces = {0};
+    if (!scratch || !out) return false;
+    if (value.count == 0) return true;
+    gx.arena = scratch;
+    pieces = gx_split_top_level_alloc(&gx, value, ';');
+    if (pieces.count == 0) return false;
+    for (size_t i = 0; i < pieces.count; ++i) {
+        String_View piece = nob_sv_trim(pieces.items[i]);
+        char *copy = NULL;
+        if (piece.count == 0) continue;
+        copy = arena_strndup(scratch, piece.data, piece.count);
+        if (!copy) return false;
+        if (!arena_arr_push(scratch, *out, nob_sv_from_parts(copy, piece.count))) return false;
+    }
+    return true;
+}
+
+static bool bm_query_target_list_property_items(const Build_Model *model,
+                                                BM_Target_Id id,
+                                                String_View property_name,
+                                                Arena *scratch,
+                                                BM_String_Span *out) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    String_View *items = NULL;
+    if (!scratch || !out) return false;
+    *out = (BM_String_Span){0};
+    if (!target) return true;
+    for (size_t i = 0; i < arena_arr_len(target->raw_properties); ++i) {
+        const BM_Raw_Property_Record *record = &target->raw_properties[i];
+        if (!bm_sv_eq_ci_query(record->name, property_name)) continue;
+        if (record->op == EVENT_PROPERTY_MUTATE_SET) items = NULL;
+        for (size_t item_index = 0; item_index < arena_arr_len(record->items); ++item_index) {
+            if (record->op == EVENT_PROPERTY_MUTATE_APPEND_STRING && arena_arr_len(items) > 0) {
+                String_View last = items[arena_arr_len(items) - 1];
+                String_View next = record->items[item_index];
+                char *joined = arena_alloc(scratch, last.count + next.count + 1);
+                if (!joined) return false;
+                if (last.count > 0 && last.data) memcpy(joined, last.data, last.count);
+                if (next.count > 0 && next.data) memcpy(joined + last.count, next.data, next.count);
+                joined[last.count + next.count] = '\0';
+                arena_arr_set_len(items, arena_arr_len(items) - 1);
+                if (!bm_append_split_string_views(scratch,
+                                                  &items,
+                                                  nob_sv_from_parts(joined, last.count + next.count))) {
+                    return false;
+                }
+            } else if (!bm_append_split_string_views(scratch, &items, record->items[item_index])) {
+                return false;
+            }
+        }
+    }
+    out->items = items;
+    out->count = arena_arr_len(items);
+    return true;
+}
+
+bool bm_query_test_effective_command(const Build_Model *model,
+                                     BM_Test_Id id,
+                                     const BM_Query_Eval_Context *ctx,
+                                     Arena *scratch,
+                                     BM_Test_Effective_Command_View *out) {
+    const BM_Test_Record *test = bm_model_test(model, id);
+    BM_Query_Eval_Context default_ctx = {0};
+    String_View *argv = NULL;
+    BM_String_Span emulator = {0};
+    if (!scratch || !out) return false;
+    *out = (BM_Test_Effective_Command_View){0};
+    if (!test) return true;
+    if (!ctx) {
+        default_ctx = bm_default_query_eval_context(BM_TARGET_ID_INVALID, BM_QUERY_USAGE_LINK);
+        ctx = &default_ctx;
+    }
+
+    BM_String_Span raw_argv = bm_string_span(test->command_argv);
+    for (size_t i = 0; i < raw_argv.count; ++i) {
+        String_View value = raw_argv.items[i];
+        if (i == 0 && bm_target_id_is_valid(test->resolved_command_target_id)) {
+            BM_Target_Artifact_View artifact = {0};
+            if (!bm_query_target_effective_artifact(model,
+                                                    test->resolved_command_target_id,
+                                                    BM_TARGET_ARTIFACT_RUNTIME,
+                                                    ctx,
+                                                    scratch,
+                                                    &artifact)) {
+                return false;
+            }
+            if (artifact.emits && artifact.path.count > 0) value = artifact.path;
+            if (!bm_query_test_effective_property_items(model,
+                                                        id,
+                                                        nob_sv_from_cstr("CROSSCOMPILING_EMULATOR"),
+                                                        scratch,
+                                                        &emulator)) {
+                return false;
+            }
+        }
+        if (!arena_arr_push(scratch, argv, value)) return false;
+    }
+
+    if (bm_target_id_is_valid(test->resolved_command_target_id)) {
+        const BM_Target_Record *target = bm_model_target(model, test->resolved_command_target_id);
+        if (target) {
+            BM_String_Span target_emulator = {0};
+            if (!bm_query_target_list_property_items(model,
+                                                     test->resolved_command_target_id,
+                                                     nob_sv_from_cstr("CROSSCOMPILING_EMULATOR"),
+                                                     scratch,
+                                                     &target_emulator)) {
+                return false;
+            }
+            if (target_emulator.count > 0) emulator = target_emulator;
+        }
+    }
+
+    out->argv = bm_string_span(argv);
+    out->emulator_argv = emulator;
+    out->working_directory = test->working_dir;
+    out->resolved_command_target_id = test->resolved_command_target_id;
+    out->uses_name_signature = test->uses_name_signature;
+    return true;
 }
 
 BM_Install_Rule_Kind bm_query_install_rule_kind(const Build_Model *model, BM_Install_Rule_Id id) {

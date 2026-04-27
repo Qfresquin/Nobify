@@ -1143,6 +1143,51 @@ static bool cg_emit_configure_functions(CG_Context *ctx, Nob_String_Builder *out
     return true;
 }
 
+static bool cg_emit_c_string_array(Nob_String_Builder *out, const char *name, BM_String_Span values) {
+    nob_sb_append_cstr(out, "static const char *const ");
+    nob_sb_append_cstr(out, name);
+    nob_sb_append_cstr(out, "[] = {");
+    for (size_t i = 0; i < values.count; ++i) {
+        if (i > 0) nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, values.items[i])) return false;
+    }
+    nob_sb_append_cstr(out, "};\n");
+    return true;
+}
+
+static String_View cg_test_property_first(const Build_Model *model,
+                                          BM_Test_Id id,
+                                          String_View property_name,
+                                          Arena *scratch,
+                                          BM_String_Span *out_span) {
+    BM_String_Span span = {0};
+    if (out_span) *out_span = (BM_String_Span){0};
+    if (!bm_query_test_effective_property_items(model, id, property_name, scratch, &span)) {
+        return nob_sv_from_cstr("");
+    }
+    if (out_span) *out_span = span;
+    return span.count > 0 ? span.items[0] : nob_sv_from_cstr("");
+}
+
+static bool cg_join_string_span(Arena *scratch, BM_String_Span span, String_View *out) {
+    Nob_String_Builder sb = {0};
+    char *copy = NULL;
+    size_t count = 0;
+    if (!scratch || !out) return false;
+    *out = nob_sv_from_cstr("");
+    for (size_t i = 0; i < span.count; ++i) {
+        if (span.items[i].count == 0) continue;
+        if (sb.count > 0) nob_sb_append_cstr(&sb, ";");
+        nob_sb_append_buf(&sb, span.items[i].data ? span.items[i].data : "", span.items[i].count);
+    }
+    count = sb.count;
+    copy = arena_strndup(scratch, sb.items ? sb.items : "", count);
+    nob_sb_free(sb);
+    if (!copy) return false;
+    *out = nob_sv_from_parts(copy, count);
+    return true;
+}
+
 static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
     size_t test_count = 0;
     size_t test_driver_count = 0;
@@ -1176,13 +1221,41 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    size_t capacity;\n"
         "} Nob_Test_String_List;\n\n"
         "typedef struct {\n"
+        "    char **names;\n"
+        "    char **values;\n"
+        "    bool *had_values;\n"
+        "    size_t count;\n"
+        "    size_t capacity;\n"
+        "} Nob_Test_Env_Snapshot;\n\n"
+        "typedef struct {\n"
         "    const char *name;\n"
         "    const char *command;\n"
+        "    const char *const *command_argv;\n"
+        "    size_t command_arg_count;\n"
+        "    const char *const *emulator_argv;\n"
+        "    size_t emulator_arg_count;\n"
         "    const char *command_base_dir;\n"
         "    const char *working_dir;\n"
         "    bool command_expand_lists;\n"
+        "    bool uses_name_signature;\n"
         "    const char *const *configurations;\n"
         "    size_t configuration_count;\n"
+        "    const char *disabled;\n"
+        "    const char *will_fail;\n"
+        "    const char *skip_return_code;\n"
+        "    const char *pass_regex;\n"
+        "    const char *fail_regex;\n"
+        "    const char *skip_regex;\n"
+        "    const char *timeout;\n"
+        "    const char *timeout_after_match;\n"
+        "    const char *required_files;\n"
+        "    const char *environment;\n"
+        "    const char *environment_modification;\n"
+        "    const char *depends;\n"
+        "    const char *fixtures_setup;\n"
+        "    const char *fixtures_required;\n"
+        "    const char *fixtures_cleanup;\n"
+        "    const char *labels;\n"
         "} Nob_Generated_Test_Case;\n\n"
         "typedef struct {\n"
         "    const char *name;\n"
@@ -1306,7 +1379,7 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    list->count = 0;\n"
         "    list->capacity = 0;\n"
         "}\n\n"
-        "static bool test_parse_command_tokens(const char *raw, bool expand_lists, Nob_Test_String_List *out) {\n"
+        "static bool __attribute__((unused)) test_parse_command_tokens(const char *raw, bool expand_lists, Nob_Test_String_List *out) {\n"
         "    Nob_String_Builder token = {0};\n"
         "    bool in_single = false;\n"
         "    bool in_double = false;\n"
@@ -1360,6 +1433,14 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    nob_sb_free(token);\n"
         "    return true;\n"
         "}\n\n"
+        "static bool test_copy_static_argv(const char *const *items, size_t count, Nob_Test_String_List *out) {\n"
+        "    if (!out) return false;\n"
+        "    for (size_t i = 0; i < count; ++i) {\n"
+        "        const char *item = items && items[i] ? items[i] : \"\";\n"
+        "        if (!test_string_list_push(out, item, strlen(item))) return false;\n"
+        "    }\n"
+        "    return true;\n"
+        "}\n\n"
         "static bool test_eq_ci(const char *lhs, const char *rhs) {\n"
         "    if (!lhs || !rhs) return false;\n"
         "    while (*lhs && *rhs) {\n"
@@ -1368,6 +1449,329 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "        ++rhs;\n"
         "    }\n"
         "    return *lhs == '\\0' && *rhs == '\\0';\n"
+        "}\n\n"
+        "static bool test_truthy_property(const char *text) {\n"
+        "    if (!text || text[0] == '\\0') return false;\n"
+        "    return !(test_eq_ci(text, \"0\") || test_eq_ci(text, \"FALSE\") || test_eq_ci(text, \"OFF\") ||\n"
+        "             test_eq_ci(text, \"NO\") || test_eq_ci(text, \"N\") || test_eq_ci(text, \"IGNORE\") ||\n"
+        "             strstr(text, \"-NOTFOUND\") != NULL);\n"
+        "}\n\n"
+        "static bool __attribute__((unused)) test_list_contains_name(const char *list, const char *name) {\n"
+        "    const char *start = list;\n"
+        "    if (!list || !name || name[0] == '\\0') return false;\n"
+        "    while (start && *start) {\n"
+        "        const char *end = strchr(start, ';');\n"
+        "        size_t len = end ? (size_t)(end - start) : strlen(start);\n"
+        "        if (strlen(name) == len && strncmp(start, name, len) == 0) return true;\n"
+        "        start = end ? end + 1 : NULL;\n"
+        "    }\n"
+        "    return false;\n"
+        "}\n\n"
+        "static bool test_list_intersects(const char *lhs, const char *rhs) {\n"
+        "    const char *start = lhs;\n"
+        "    if (!lhs || !rhs || lhs[0] == '\\0' || rhs[0] == '\\0') return false;\n"
+        "    while (start && *start) {\n"
+        "        const char *end = strchr(start, ';');\n"
+        "        size_t len = end ? (size_t)(end - start) : strlen(start);\n"
+        "        char *item = test_strdup_n(start, len);\n"
+        "        bool found = false;\n"
+        "        if (!item) return false;\n"
+        "        found = item[0] != '\\0' && test_list_contains_name(rhs, item);\n"
+        "        free(item);\n"
+        "        if (found) return true;\n"
+        "        start = end ? end + 1 : NULL;\n"
+        "    }\n"
+        "    return false;\n"
+        "}\n\n"
+        "static bool test_case_should_precede(const Nob_Generated_Test_Case *candidate,\n"
+        "                                     const Nob_Generated_Test_Case *subject) {\n"
+        "    if (!candidate || !subject || candidate == subject) return false;\n"
+        "    if (test_list_contains_name(subject->depends, candidate->name)) return true;\n"
+        "    if (test_list_intersects(candidate->fixtures_setup, subject->fixtures_required)) return true;\n"
+        "    if (test_list_intersects(candidate->fixtures_required, subject->fixtures_cleanup)) return true;\n"
+        "    return false;\n"
+        "}\n\n"
+        "static bool test_matched_contains_index(const size_t *matched, size_t matched_count, size_t index) {\n"
+        "    for (size_t i = 0; i < matched_count; ++i) if (matched[i] == index) return true;\n"
+        "    return false;\n"
+        "}\n\n"
+        "static void test_expand_fixture_matches(size_t *matched,\n"
+        "                                        size_t *matched_count,\n"
+        "                                        size_t total_tests,\n"
+        "                                        const Nob_Generated_Test_Case *cases) {\n"
+        "    size_t scan_count = matched_count ? *matched_count : 0;\n"
+        "    if (!matched || !matched_count || !cases) return;\n"
+        "    for (size_t i = 0; i < scan_count; ++i) {\n"
+        "        const Nob_Generated_Test_Case *selected = &cases[matched[i]];\n"
+        "        if (!selected->fixtures_required || selected->fixtures_required[0] == '\\0') continue;\n"
+        "        for (size_t j = 0; j < total_tests; ++j) {\n"
+        "            const Nob_Generated_Test_Case *candidate = &cases[j];\n"
+        "            if (test_matched_contains_index(matched, *matched_count, j)) continue;\n"
+        "            if (test_list_intersects(candidate->fixtures_setup, selected->fixtures_required) ||\n"
+        "                test_list_intersects(candidate->fixtures_cleanup, selected->fixtures_required)) {\n"
+        "                matched[(*matched_count)++] = j;\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "}\n\n"
+        "static void test_order_matched_tests(size_t *matched, size_t matched_count, const Nob_Generated_Test_Case *cases) {\n"
+        "    if (!matched || !cases || matched_count < 2u) return;\n"
+        "    for (size_t pass = 0; pass < matched_count; ++pass) {\n"
+        "        bool changed = false;\n"
+        "        for (size_t i = 1; i < matched_count; ++i) {\n"
+        "            const Nob_Generated_Test_Case *prev = &cases[matched[i - 1u]];\n"
+        "            const Nob_Generated_Test_Case *curr = &cases[matched[i]];\n"
+        "            if (test_case_should_precede(curr, prev)) {\n"
+        "                size_t tmp = matched[i - 1u];\n"
+        "                matched[i - 1u] = matched[i];\n"
+        "                matched[i] = tmp;\n"
+        "                changed = true;\n"
+        "            }\n"
+        "        }\n"
+        "        if (!changed) break;\n"
+        "    }\n"
+        "}\n\n"
+        "static bool test_regex_matches_text(const char *pattern, const char *text) {\n"
+        "    if (!pattern || !text) return false;\n"
+        "#if !defined(_WIN32)\n"
+        "    {\n"
+        "        regex_t regex;\n"
+        "        bool matched = false;\n"
+        "        if (regcomp(&regex, pattern, REG_EXTENDED | REG_NOSUB) != 0) return false;\n"
+        "        matched = regexec(&regex, text, 0, NULL, 0) == 0;\n"
+        "        regfree(&regex);\n"
+        "        return matched;\n"
+        "    }\n"
+        "#else\n"
+        "    return strstr(text, pattern) != NULL;\n"
+        "#endif\n"
+        "}\n\n"
+        "static bool test_output_matches_any(const char *patterns, const char *stdout_text, const char *stderr_text) {\n"
+        "    const char *start = patterns;\n"
+        "    if (!patterns || patterns[0] == '\\0') return false;\n"
+        "    while (start && *start) {\n"
+        "        const char *end = strchr(start, ';');\n"
+        "        size_t len = end ? (size_t)(end - start) : strlen(start);\n"
+        "        char *pattern = test_strdup_n(start, len);\n"
+        "        bool matched = false;\n"
+        "        if (!pattern) return false;\n"
+        "        matched = test_regex_matches_text(pattern, stdout_text) || test_regex_matches_text(pattern, stderr_text);\n"
+        "        free(pattern);\n"
+        "        if (matched) return true;\n"
+        "        start = end ? end + 1 : NULL;\n"
+        "    }\n"
+        "    return false;\n"
+        "}\n\n"
+        "static bool test_required_files_exist(const char *required_files) {\n"
+        "    const char *start = required_files;\n"
+        "    if (!required_files || required_files[0] == '\\0') return true;\n"
+        "    while (start && *start) {\n"
+        "        const char *end = strchr(start, ';');\n"
+        "        size_t len = end ? (size_t)(end - start) : strlen(start);\n"
+        "        char *path = test_strdup_n(start, len);\n"
+        "        bool exists = path && (path[0] == '\\0' || nob_file_exists(path));\n"
+        "        free(path);\n"
+        "        if (!exists) return false;\n"
+        "        start = end ? end + 1 : NULL;\n"
+        "    }\n"
+        "    return true;\n"
+        "}\n\n"
+        "static bool test_env_set(const char *name, const char *value) {\n"
+        "    if (!name || name[0] == '\\0') return false;\n"
+        "#if defined(_WIN32)\n"
+        "    return _putenv_s(name, value ? value : \"\") == 0;\n"
+        "#else\n"
+        "    return setenv(name, value ? value : \"\", 1) == 0;\n"
+        "#endif\n"
+        "}\n\n"
+        "static bool test_env_unset(const char *name) {\n"
+        "    if (!name || name[0] == '\\0') return false;\n"
+        "#if defined(_WIN32)\n"
+        "    return _putenv_s(name, \"\") == 0;\n"
+        "#else\n"
+        "    return unsetenv(name) == 0;\n"
+        "#endif\n"
+        "}\n\n"
+        "static void test_env_snapshot_free(Nob_Test_Env_Snapshot *snapshot) {\n"
+        "    if (!snapshot) return;\n"
+        "    for (size_t i = 0; i < snapshot->count; ++i) {\n"
+        "        free(snapshot->names[i]);\n"
+        "        free(snapshot->values[i]);\n"
+        "    }\n"
+        "    free(snapshot->names);\n"
+        "    free(snapshot->values);\n"
+        "    free(snapshot->had_values);\n"
+        "    snapshot->names = NULL;\n"
+        "    snapshot->values = NULL;\n"
+        "    snapshot->had_values = NULL;\n"
+        "    snapshot->count = 0;\n"
+        "    snapshot->capacity = 0;\n"
+        "}\n\n"
+        "static bool test_env_snapshot_capture_once(Nob_Test_Env_Snapshot *snapshot, const char *name) {\n"
+        "    char **grown_names = NULL;\n"
+        "    char **grown_values = NULL;\n"
+        "    bool *grown_had_values = NULL;\n"
+        "    const char *current = NULL;\n"
+        "    size_t new_capacity = 0;\n"
+        "    if (!snapshot || !name || name[0] == '\\0') return false;\n"
+        "    for (size_t i = 0; i < snapshot->count; ++i) {\n"
+        "        if (snapshot->names[i] && strcmp(snapshot->names[i], name) == 0) return true;\n"
+        "    }\n"
+        "    if (snapshot->count == snapshot->capacity) {\n"
+        "        new_capacity = snapshot->capacity > 0 ? snapshot->capacity * 2u : 8u;\n"
+        "        grown_names = (char **)realloc(snapshot->names, new_capacity * sizeof(snapshot->names[0]));\n"
+        "        if (!grown_names) return false;\n"
+        "        snapshot->names = grown_names;\n"
+        "        grown_values = (char **)realloc(snapshot->values, new_capacity * sizeof(snapshot->values[0]));\n"
+        "        if (!grown_values) return false;\n"
+        "        snapshot->values = grown_values;\n"
+        "        grown_had_values = (bool *)realloc(snapshot->had_values, new_capacity * sizeof(snapshot->had_values[0]));\n"
+        "        if (!grown_had_values) return false;\n"
+        "        snapshot->had_values = grown_had_values;\n"
+        "        snapshot->capacity = new_capacity;\n"
+        "    }\n"
+        "    current = getenv(name);\n"
+        "    snapshot->names[snapshot->count] = test_strdup_n(name, strlen(name));\n"
+        "    snapshot->values[snapshot->count] = current ? test_strdup_n(current, strlen(current)) : NULL;\n"
+        "    snapshot->had_values[snapshot->count] = current != NULL;\n"
+        "    if (!snapshot->names[snapshot->count] || (current && !snapshot->values[snapshot->count])) return false;\n"
+        "    snapshot->count++;\n"
+        "    return true;\n"
+        "}\n\n"
+        "static const char *test_env_snapshot_original(const Nob_Test_Env_Snapshot *snapshot,\n"
+        "                                              const char *name,\n"
+        "                                              bool *out_had_value) {\n"
+        "    if (out_had_value) *out_had_value = false;\n"
+        "    if (!snapshot || !name) return NULL;\n"
+        "    for (size_t i = 0; i < snapshot->count; ++i) {\n"
+        "        if (snapshot->names[i] && strcmp(snapshot->names[i], name) == 0) {\n"
+        "            if (out_had_value) *out_had_value = snapshot->had_values[i];\n"
+        "            return snapshot->values[i];\n"
+        "        }\n"
+        "    }\n"
+        "    return NULL;\n"
+        "}\n\n"
+        "static bool test_env_snapshot_restore(const Nob_Test_Env_Snapshot *snapshot) {\n"
+        "    if (!snapshot) return true;\n"
+        "    for (size_t i = snapshot->count; i > 0; --i) {\n"
+        "        size_t index = i - 1u;\n"
+        "        if (snapshot->had_values[index]) {\n"
+        "            if (!test_env_set(snapshot->names[index], snapshot->values[index] ? snapshot->values[index] : \"\")) return false;\n"
+        "        } else if (!test_env_unset(snapshot->names[index])) {\n"
+        "            return false;\n"
+        "        }\n"
+        "    }\n"
+        "    return true;\n"
+        "}\n\n"
+        "static bool test_apply_environment_with_snapshot(const char *environment, Nob_Test_Env_Snapshot *snapshot) {\n"
+        "    const char *start = environment;\n"
+        "    if (!environment || environment[0] == '\\0') return true;\n"
+        "    while (start && *start) {\n"
+        "        const char *end = strchr(start, ';');\n"
+        "        size_t len = end ? (size_t)(end - start) : strlen(start);\n"
+        "        char *entry = test_strdup_n(start, len);\n"
+        "        char *eq = entry ? strchr(entry, '=') : NULL;\n"
+        "        bool ok = true;\n"
+        "        if (!entry) return false;\n"
+        "        if (eq && eq != entry) {\n"
+        "            *eq = '\\0';\n"
+        "            ok = test_env_snapshot_capture_once(snapshot, entry) && test_env_set(entry, eq + 1);\n"
+        "        }\n"
+        "        free(entry);\n"
+        "        if (!ok) return false;\n"
+        "        start = end ? end + 1 : NULL;\n"
+        "    }\n"
+        "    return true;\n"
+        "}\n\n"
+        "static char *test_join_env_value(const char *lhs, const char *rhs, const char *sep) {\n"
+        "    size_t lhs_len = lhs ? strlen(lhs) : 0;\n"
+        "    size_t rhs_len = rhs ? strlen(rhs) : 0;\n"
+        "    size_t sep_len = (sep && lhs_len > 0 && rhs_len > 0) ? strlen(sep) : 0;\n"
+        "    char *joined = (char *)malloc(lhs_len + sep_len + rhs_len + 1u);\n"
+        "    if (!joined) return NULL;\n"
+        "    if (lhs_len > 0) memcpy(joined, lhs, lhs_len);\n"
+        "    if (sep_len > 0) memcpy(joined + lhs_len, sep, sep_len);\n"
+        "    if (rhs_len > 0) memcpy(joined + lhs_len + sep_len, rhs, rhs_len);\n"
+        "    joined[lhs_len + sep_len + rhs_len] = '\\0';\n"
+        "    return joined;\n"
+        "}\n\n"
+        "static bool test_apply_environment_modification(const char *modification, Nob_Test_Env_Snapshot *snapshot) {\n"
+        "    const char *start = modification;\n"
+        "    if (!modification || modification[0] == '\\0') return true;\n"
+        "    while (start && *start) {\n"
+        "        const char *end = strchr(start, ';');\n"
+        "        size_t len = end ? (size_t)(end - start) : strlen(start);\n"
+        "        char *entry = test_strdup_n(start, len);\n"
+        "        char *eq = entry ? strchr(entry, '=') : NULL;\n"
+        "        char *colon = eq ? strchr(eq + 1, ':') : NULL;\n"
+        "        bool ok = true;\n"
+        "        if (!entry) return false;\n"
+        "        if (eq && colon && eq != entry) {\n"
+        "            const char *current = NULL;\n"
+        "            char *joined = NULL;\n"
+        "            bool had_original = false;\n"
+        "            const char *original = NULL;\n"
+        "            *eq = '\\0';\n"
+        "            *colon = '\\0';\n"
+        "            ok = test_env_snapshot_capture_once(snapshot, entry);\n"
+        "            if (ok && strcmp(eq + 1, \"reset\") == 0) {\n"
+        "                original = test_env_snapshot_original(snapshot, entry, &had_original);\n"
+        "                ok = had_original ? test_env_set(entry, original ? original : \"\") : test_env_unset(entry);\n"
+        "            } else if (ok && strcmp(eq + 1, \"set\") == 0) {\n"
+        "                ok = test_env_set(entry, colon + 1);\n"
+        "            } else if (ok && strcmp(eq + 1, \"unset\") == 0) {\n"
+        "                ok = test_env_unset(entry);\n"
+        "            } else if (ok && strcmp(eq + 1, \"string_append\") == 0) {\n"
+        "                current = getenv(entry);\n"
+        "                joined = test_join_env_value(current ? current : \"\", colon + 1, \"\");\n"
+        "                ok = joined && test_env_set(entry, joined);\n"
+        "            } else if (ok && strcmp(eq + 1, \"string_prepend\") == 0) {\n"
+        "                current = getenv(entry);\n"
+        "                joined = test_join_env_value(colon + 1, current ? current : \"\", \"\");\n"
+        "                ok = joined && test_env_set(entry, joined);\n"
+        "            } else if (ok && strcmp(eq + 1, \"path_list_append\") == 0) {\n"
+        "                current = getenv(entry);\n"
+        "#if defined(_WIN32)\n"
+        "                joined = test_join_env_value(current ? current : \"\", colon + 1, \";\");\n"
+        "#else\n"
+        "                joined = test_join_env_value(current ? current : \"\", colon + 1, \":\");\n"
+        "#endif\n"
+        "                ok = joined && test_env_set(entry, joined);\n"
+        "            } else if (ok && strcmp(eq + 1, \"path_list_prepend\") == 0) {\n"
+        "                current = getenv(entry);\n"
+        "#if defined(_WIN32)\n"
+        "                joined = test_join_env_value(colon + 1, current ? current : \"\", \";\");\n"
+        "#else\n"
+        "                joined = test_join_env_value(colon + 1, current ? current : \"\", \":\");\n"
+        "#endif\n"
+        "                ok = joined && test_env_set(entry, joined);\n"
+        "            } else if (ok && strcmp(eq + 1, \"cmake_list_append\") == 0) {\n"
+        "                current = getenv(entry);\n"
+        "                joined = test_join_env_value(current ? current : \"\", colon + 1, \";\");\n"
+        "                ok = joined && test_env_set(entry, joined);\n"
+        "            } else if (ok && strcmp(eq + 1, \"cmake_list_prepend\") == 0) {\n"
+        "                current = getenv(entry);\n"
+        "                joined = test_join_env_value(colon + 1, current ? current : \"\", \";\");\n"
+        "                ok = joined && test_env_set(entry, joined);\n"
+        "            } else {\n"
+        "                ok = false;\n"
+        "            }\n"
+        "            free(joined);\n"
+        "        }\n"
+        "        free(entry);\n"
+        "        if (!ok) return false;\n"
+        "        start = end ? end + 1 : NULL;\n"
+        "    }\n"
+        "    return true;\n"
+        "}\n\n"
+        "static int test_timeout_seconds(const char *timeout) {\n"
+        "    char *end = NULL;\n"
+        "    double value = 0.0;\n"
+        "    if (!timeout || timeout[0] == '\\0') return -1;\n"
+        "    value = strtod(timeout, &end);\n"
+        "    if (end == timeout || value < 0.0) return -1;\n"
+        "    if (value > 2147483646.0) return 2147483646;\n"
+        "    return (int)(value + 0.999999);\n"
         "}\n\n"
         "static bool test_name_selected(const char *name, const char *const *selected_names, size_t selected_count) {\n"
         "    if (!name) return false;\n"
@@ -1619,15 +2023,30 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
     for (size_t test_index = 0; test_index < test_count; ++test_index) {
         BM_Test_Id id = (BM_Test_Id)test_index;
         BM_String_Span configs = bm_query_test_configurations(ctx->model, id);
-        if (configs.count == 0) continue;
-        nob_sb_append_cstr(out, "static const char *const g_test_configs_");
-        nob_sb_append_cstr(out, nob_temp_sprintf("%zu", test_index));
-        nob_sb_append_cstr(out, "[] = {");
-        for (size_t cfg_index = 0; cfg_index < configs.count; ++cfg_index) {
-            if (cfg_index > 0) nob_sb_append_cstr(out, ", ");
-            if (!cg_sb_append_c_string(out, configs.items[cfg_index])) return false;
+        BM_String_Span command_argv = bm_query_test_command_argv(ctx->model, id);
+        BM_Target_Id command_target = bm_query_test_resolved_command_target(ctx->model, id);
+        BM_String_Span emulator_argv = {0};
+        if (bm_target_id_is_valid(command_target)) {
+            emulator_argv = bm_query_target_raw_property_items(ctx->model,
+                                                               command_target,
+                                                               nob_sv_from_cstr("CROSSCOMPILING_EMULATOR"));
         }
-        nob_sb_append_cstr(out, "};\n");
+        if (command_argv.count > 0) {
+            char name[64] = {0};
+            snprintf(name, sizeof(name), "g_test_command_argv_%zu", test_index);
+            if (!cg_emit_c_string_array(out, name, command_argv)) return false;
+        }
+        if (emulator_argv.count > 0) {
+            char name[64] = {0};
+            snprintf(name, sizeof(name), "g_test_emulator_argv_%zu", test_index);
+            if (!cg_emit_c_string_array(out, name, emulator_argv)) return false;
+        }
+        if (configs.count == 0) continue;
+        {
+            char name[64] = {0};
+            snprintf(name, sizeof(name), "g_test_configs_%zu", test_index);
+            if (!cg_emit_c_string_array(out, name, configs)) return false;
+        }
     }
     if (test_count > 0) nob_sb_append_cstr(out, "\n");
 
@@ -1644,6 +2063,47 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         String_View emitted_command_base_dir = {0};
         String_View emitted_working_dir = {0};
         BM_String_Span configs = bm_query_test_configurations(ctx->model, id);
+        BM_String_Span command_argv = bm_query_test_command_argv(ctx->model, id);
+        BM_Target_Id command_target = bm_query_test_resolved_command_target(ctx->model, id);
+        BM_String_Span emulator_argv = {0};
+        BM_String_Span property_span = {0};
+        String_View required_files = {0};
+        String_View environment = {0};
+        String_View environment_modification = {0};
+        String_View depends = {0};
+        String_View fixtures_setup = {0};
+        String_View fixtures_required = {0};
+        String_View fixtures_cleanup = {0};
+        String_View labels = {0};
+        String_View disabled = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("DISABLED"), ctx->scratch, NULL);
+        String_View will_fail = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("WILL_FAIL"), ctx->scratch, NULL);
+        String_View skip_return_code = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("SKIP_RETURN_CODE"), ctx->scratch, NULL);
+        String_View pass_regex = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("PASS_REGULAR_EXPRESSION"), ctx->scratch, NULL);
+        String_View fail_regex = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("FAIL_REGULAR_EXPRESSION"), ctx->scratch, NULL);
+        String_View skip_regex = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("SKIP_REGULAR_EXPRESSION"), ctx->scratch, NULL);
+        String_View timeout = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("TIMEOUT"), ctx->scratch, NULL);
+        String_View timeout_after_match = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("TIMEOUT_AFTER_MATCH"), ctx->scratch, NULL);
+        if (bm_target_id_is_valid(command_target)) {
+            emulator_argv = bm_query_target_raw_property_items(ctx->model,
+                                                               command_target,
+                                                               nob_sv_from_cstr("CROSSCOMPILING_EMULATOR"));
+        }
+        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("REQUIRED_FILES"), ctx->scratch, &property_span);
+        if (!cg_join_string_span(ctx->scratch, property_span, &required_files)) return false;
+        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("ENVIRONMENT"), ctx->scratch, &property_span);
+        if (!cg_join_string_span(ctx->scratch, property_span, &environment)) return false;
+        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("ENVIRONMENT_MODIFICATION"), ctx->scratch, &property_span);
+        if (!cg_join_string_span(ctx->scratch, property_span, &environment_modification)) return false;
+        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("DEPENDS"), ctx->scratch, &property_span);
+        if (!cg_join_string_span(ctx->scratch, property_span, &depends)) return false;
+        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("FIXTURES_SETUP"), ctx->scratch, &property_span);
+        if (!cg_join_string_span(ctx->scratch, property_span, &fixtures_setup)) return false;
+        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("FIXTURES_REQUIRED"), ctx->scratch, &property_span);
+        if (!cg_join_string_span(ctx->scratch, property_span, &fixtures_required)) return false;
+        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("FIXTURES_CLEANUP"), ctx->scratch, &property_span);
+        if (!cg_join_string_span(ctx->scratch, property_span, &fixtures_cleanup)) return false;
+        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("LABELS"), ctx->scratch, &property_span);
+        if (!cg_join_string_span(ctx->scratch, property_span, &labels)) return false;
         if (!bm_directory_id_is_valid(owner) ||
             !cg_effective_owner_binary_dir(ctx, owner, &effective_owner_binary_dir)) {
             effective_owner_binary_dir = ctx->binary_root_abs;
@@ -1667,11 +2127,31 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         nob_sb_append_cstr(out, ", ");
         if (!cg_sb_append_c_string(out, bm_query_test_command(ctx->model, id))) return false;
         nob_sb_append_cstr(out, ", ");
+        if (command_argv.count > 0) {
+            nob_sb_append_cstr(out, "g_test_command_argv_");
+            nob_sb_append_cstr(out, nob_temp_sprintf("%zu", test_index));
+        } else {
+            nob_sb_append_cstr(out, "NULL");
+        }
+        nob_sb_append_cstr(out, ", ");
+        nob_sb_append_cstr(out, nob_temp_sprintf("%zu", command_argv.count));
+        nob_sb_append_cstr(out, ", ");
+        if (emulator_argv.count > 0) {
+            nob_sb_append_cstr(out, "g_test_emulator_argv_");
+            nob_sb_append_cstr(out, nob_temp_sprintf("%zu", test_index));
+        } else {
+            nob_sb_append_cstr(out, "NULL");
+        }
+        nob_sb_append_cstr(out, ", ");
+        nob_sb_append_cstr(out, nob_temp_sprintf("%zu", emulator_argv.count));
+        nob_sb_append_cstr(out, ", ");
         if (!cg_sb_append_c_string(out, emitted_command_base_dir)) return false;
         nob_sb_append_cstr(out, ", ");
         if (!cg_sb_append_c_string(out, emitted_working_dir)) return false;
         nob_sb_append_cstr(out, ", ");
         nob_sb_append_cstr(out, bm_query_test_command_expand_lists(ctx->model, id) ? "true" : "false");
+        nob_sb_append_cstr(out, ", ");
+        nob_sb_append_cstr(out, bm_query_test_uses_name_signature(ctx->model, id) ? "true" : "false");
         nob_sb_append_cstr(out, ", ");
         if (configs.count > 0) {
             nob_sb_append_cstr(out, "g_test_configs_");
@@ -1681,6 +2161,38 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         }
         nob_sb_append_cstr(out, ", ");
         nob_sb_append_cstr(out, nob_temp_sprintf("%zu", configs.count));
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, disabled)) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, will_fail)) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, skip_return_code)) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, pass_regex)) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, fail_regex)) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, skip_regex)) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, timeout)) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, timeout_after_match)) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, required_files)) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, environment)) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, environment_modification)) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, depends)) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, fixtures_setup)) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, fixtures_required)) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, fixtures_cleanup)) return false;
+        nob_sb_append_cstr(out, ", ");
+        if (!cg_sb_append_c_string(out, labels)) return false;
         nob_sb_append_cstr(out, "},\n");
     }
     nob_sb_append_cstr(out,
@@ -1761,9 +2273,9 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "            !test_config_selected(test_case, config_filter)) {\n"
         "            continue;\n"
         "        }\n"
-        "        if (!test_parse_command_tokens(test_case->command, test_case->command_expand_lists, &argv)) return false;\n"
+        "        if (!test_copy_static_argv(test_case->command_argv, test_case->command_arg_count, &argv)) return false;\n"
         "        if (argv.count > 0) {\n"
-        "            (void)resolve_test_target_path(argv.items[0], &buildable);\n"
+        "            if (test_case->uses_name_signature) (void)resolve_test_target_path(argv.items[0], &buildable);\n"
         "            if (buildable && !build_test_target_if_needed(argv.items[0])) {\n"
         "                test_string_list_free(&argv);\n"
         "                return false;\n"
@@ -1779,13 +2291,16 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    const char *resolved_target_path = NULL;\n"
         "    bool buildable = false;\n"
         "    if (!test_case || !argv) return false;\n"
-        "    if (!test_parse_command_tokens(test_case->command, test_case->command_expand_lists, argv)) return false;\n"
+        "    if (!test_copy_static_argv(test_case->emulator_argv, test_case->emulator_arg_count, argv)) return false;\n"
+        "    if (!test_copy_static_argv(test_case->command_argv, test_case->command_arg_count, argv)) return false;\n"
         "    if (argv->count == 0) {\n"
         "        nob_log(NOB_ERROR, \"test: empty command for %s\", test_case->name ? test_case->name : \"<unnamed>\");\n"
         "        return false;\n"
         "    }\n"
-        "    resolved_target_path = resolve_test_target_path(argv->items[0], &buildable);\n"
-        "    if (auto_build && buildable && !build_test_target_if_needed(argv->items[0])) return false;\n"
+        "    size_t command_index = test_case->emulator_arg_count;\n"
+        "    if (command_index >= argv->count) command_index = 0;\n"
+        "    if (test_case->uses_name_signature) resolved_target_path = resolve_test_target_path(argv->items[command_index], &buildable);\n"
+        "    if (auto_build && buildable && !build_test_target_if_needed(argv->items[command_index])) return false;\n"
         "    if (resolved_target_path) {\n"
         "        const char *resolved_command_path = resolved_target_path;\n"
         "        char *replacement = NULL;\n"
@@ -1796,8 +2311,8 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "        }\n"
         "        replacement = test_strdup_n(resolved_command_path, strlen(resolved_command_path));\n"
         "        if (!replacement) return false;\n"
-        "        free(argv->items[0]);\n"
-        "        argv->items[0] = replacement;\n"
+        "        free(argv->items[command_index]);\n"
+        "        argv->items[command_index] = replacement;\n"
         "    }\n"
         "    if (!test_normalize_command_tokens(argv, test_case->command_base_dir)) return false;\n"
         "    return true;\n"
@@ -2354,7 +2869,9 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "        nob_log(NOB_INFO, \"test: no tests matched the current filter\");\n"
         "        return true;\n"
         "    }\n"
+        "    test_expand_fixture_matches(matched, &matched_count, total_tests, g_generated_tests);\n"
         "    if (schedule_random) test_sort_indices_deterministic(matched, matched_count, g_generated_tests);\n"
+        "    test_order_matched_tests(matched, matched_count, g_generated_tests);\n"
         "    results = (Nob_Generated_Test_Result *)calloc(matched_count, sizeof(*results));\n"
         "    if (!results) {\n"
         "        free(matched);\n"
@@ -2363,10 +2880,42 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "    for (size_t match_index = 0; match_index < matched_count; ++match_index) {\n"
         "        const Nob_Generated_Test_Case *test_case = &g_generated_tests[matched[match_index]];\n"
         "        Nob_Test_String_List argv = {0};\n"
+        "        Nob_Test_Env_Snapshot env_snapshot = {0};\n"
+        "        char *stdout_text = NULL;\n"
+        "        char *stderr_text = NULL;\n"
         "        bool ok = false;\n"
+        "        int exit_code = 1;\n"
+        "        int timeout_seconds = test_timeout_seconds(test_case->timeout);\n"
+        "        if (timeout_seconds < 0) timeout_seconds = test_timeout_seconds(test_case->timeout_after_match);\n"
         "        results[match_index].name = test_case->name;\n"
         "        results[match_index].exit_code = 1;\n"
+        "        if (test_truthy_property(test_case->disabled)) {\n"
+        "            nob_log(NOB_INFO, \"test: disabled %s\", test_case->name ? test_case->name : \"<unnamed>\");\n"
+        "            results[match_index].passed = true;\n"
+        "            results[match_index].exit_code = 0;\n"
+        "            continue;\n"
+        "        }\n"
+        "        if (!test_required_files_exist(test_case->required_files)) {\n"
+        "            nob_log(NOB_INFO, \"test: required files missing for %s\", test_case->name ? test_case->name : \"<unnamed>\");\n"
+        "            results[match_index].passed = true;\n"
+        "            results[match_index].exit_code = 0;\n"
+        "            continue;\n"
+        "        }\n"
+        "        if (!test_apply_environment_with_snapshot(test_case->environment, &env_snapshot) ||\n"
+        "            !test_apply_environment_modification(test_case->environment_modification, &env_snapshot)) {\n"
+        "            test_env_snapshot_free(&env_snapshot);\n"
+        "            free(results);\n"
+        "            free(matched);\n"
+        "            return false;\n"
+        "        }\n"
+        "        (void)test_case->depends;\n"
+        "        (void)test_case->fixtures_setup;\n"
+        "        (void)test_case->fixtures_required;\n"
+        "        (void)test_case->fixtures_cleanup;\n"
+        "        (void)test_case->labels;\n"
         "        if (!prepare_test_command_argv(test_case, &argv, auto_build)) {\n"
+        "            (void)test_env_snapshot_restore(&env_snapshot);\n"
+        "            test_env_snapshot_free(&env_snapshot);\n"
         "            free(results);\n"
         "            free(matched);\n"
         "            return false;\n"
@@ -2376,12 +2925,46 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         "            for (size_t arg_index = 0; arg_index < argv.count; ++arg_index) {\n"
         "                nob_cmd_append(&cmd, argv.items[arg_index]);\n"
         "            }\n"
-        "            ok = run_cmd_in_dir(test_case->working_dir, &cmd);\n"
+        "            ok = run_cmd_capture_status_in_dir_timeout(test_case->working_dir, &cmd, &stdout_text, &stderr_text, &exit_code, timeout_seconds);\n"
         "            nob_cmd_free(cmd);\n"
         "        }\n"
+        "        if (!test_env_snapshot_restore(&env_snapshot)) {\n"
+        "            test_env_snapshot_free(&env_snapshot);\n"
+        "            free(stdout_text);\n"
+        "            free(stderr_text);\n"
+        "            test_string_list_free(&argv);\n"
+        "            free(results);\n"
+        "            free(matched);\n"
+        "            return false;\n"
+        "        }\n"
+        "        test_env_snapshot_free(&env_snapshot);\n"
+        "        if (ok) ok = exit_code == 0;\n"
+        "        if (test_case->skip_return_code && test_case->skip_return_code[0] != '\\0' && exit_code == atoi(test_case->skip_return_code)) {\n"
+        "            results[match_index].passed = true;\n"
+        "            results[match_index].exit_code = 0;\n"
+        "            free(stdout_text);\n"
+        "            free(stderr_text);\n"
+        "            test_string_list_free(&argv);\n"
+        "            continue;\n"
+        "        }\n"
+        "        if (test_output_matches_any(test_case->skip_regex, stdout_text, stderr_text)) {\n"
+        "            results[match_index].passed = true;\n"
+        "            results[match_index].exit_code = 0;\n"
+        "            free(stdout_text);\n"
+        "            free(stderr_text);\n"
+        "            test_string_list_free(&argv);\n"
+        "            continue;\n"
+        "        }\n"
+        "        if (test_case->pass_regex && test_case->pass_regex[0] != '\\0') {\n"
+        "            ok = ok && test_output_matches_any(test_case->pass_regex, stdout_text, stderr_text);\n"
+        "        }\n"
+        "        if (test_output_matches_any(test_case->fail_regex, stdout_text, stderr_text)) ok = false;\n"
+        "        if (test_truthy_property(test_case->will_fail)) ok = !ok;\n"
         "        results[match_index].passed = ok;\n"
-        "        results[match_index].exit_code = ok ? 0 : 1;\n"
+        "        results[match_index].exit_code = exit_code;\n"
         "        if (!ok) all_passed = false;\n"
+        "        free(stdout_text);\n"
+        "        free(stderr_text);\n"
         "        test_string_list_free(&argv);\n"
         "    }\n"
         "    if (stage_ctest && ctest_build_dir && ctest_build_dir[0] != '\\0' &&\n"

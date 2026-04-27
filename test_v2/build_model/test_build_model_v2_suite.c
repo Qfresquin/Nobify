@@ -2042,6 +2042,125 @@ TEST(build_model_tests_freeze_owner_working_dir_expand_lists_and_configurations)
     TEST_PASS();
 }
 
+TEST(build_model_tests_preserve_argv_properties_scope_and_target_resolution) {
+    Test_Semantic_Pipeline_Config config = {0};
+    Test_Semantic_Pipeline_Fixture fixture = {0};
+    Arena *query_arena = arena_create(512 * 1024);
+    const Build_Model *model = NULL;
+    BM_Target_Id tool_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id alias_id = BM_TARGET_ID_INVALID;
+    BM_Target_Id resolved_target_id = BM_TARGET_ID_INVALID;
+    BM_Test_Id target_test = BM_TEST_ID_INVALID;
+    BM_Test_Id legacy_test = BM_TEST_ID_INVALID;
+    BM_Test_Id sub_test = BM_TEST_ID_INVALID;
+    BM_String_Span argv = {0};
+    BM_String_Span raw_labels = {0};
+    BM_String_Span effective_labels = {0};
+    BM_Test_Effective_Command_View effective = {0};
+    BM_Query_Eval_Context ctx = {0};
+
+    ASSERT(query_arena != NULL);
+    ASSERT(build_model_write_text_file("test_domain_query_src/main.c", "int main(void) { return 0; }\n"));
+    ASSERT(build_model_write_text_file("test_domain_query_src/sub/CMakeLists.txt",
+                                       "add_test(NAME sub_run COMMAND \"${CMAKE_COMMAND}\" -E echo sub)\n"));
+
+    test_semantic_pipeline_config_init(&config);
+    config.current_file = "test_domain_query_src/CMakeLists.txt";
+    config.source_dir = nob_sv_from_cstr("test_domain_query_src");
+    config.binary_dir = nob_sv_from_cstr("test_domain_query_build");
+
+    ASSERT(test_semantic_pipeline_fixture_from_script(
+        &fixture,
+        "cmake_minimum_required(VERSION 3.28)\n"
+        "project(TestDomain C)\n"
+        "enable_testing()\n"
+        "add_executable(tool main.c)\n"
+        "add_executable(alias_tool ALIAS tool)\n"
+        "set_property(TARGET tool PROPERTY CROSSCOMPILING_EMULATOR \"/bin/echo;emu\")\n"
+        "add_test(NAME target_run COMMAND alias_tool \"two words\" tail)\n"
+        "add_test(legacy alias_tool \"legacy words\")\n"
+        "set_tests_properties(target_run PROPERTIES\n"
+        "  LABELS \"fast;unit\"\n"
+        "  WORKING_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}/wd\")\n"
+        "set_property(TEST target_run APPEND PROPERTY LABELS extra)\n"
+        "set_property(TEST target_run APPEND_STRING PROPERTY LABELS -suffix)\n"
+        "add_subdirectory(sub)\n"
+        "set_tests_properties(sub_run DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}/sub\" PROPERTIES LABELS subdir)\n",
+        &config));
+    ASSERT(fixture.eval_ok);
+    ASSERT(fixture.build.builder_ok);
+    ASSERT(fixture.build.validate_ok);
+    ASSERT(fixture.build.freeze_ok);
+    ASSERT(fixture.build.model != NULL);
+
+    model = fixture.build.model;
+    tool_id = bm_query_target_by_name(model, nob_sv_from_cstr("tool"));
+    alias_id = bm_query_target_by_name(model, nob_sv_from_cstr("alias_tool"));
+    target_test = bm_query_test_by_name(model, nob_sv_from_cstr("target_run"));
+    legacy_test = bm_query_test_by_name(model, nob_sv_from_cstr("legacy"));
+    sub_test = bm_query_test_by_name(model, nob_sv_from_cstr("sub_run"));
+    ASSERT(tool_id != BM_TARGET_ID_INVALID);
+    ASSERT(alias_id != BM_TARGET_ID_INVALID);
+    ASSERT(target_test != BM_TEST_ID_INVALID);
+    ASSERT(legacy_test != BM_TEST_ID_INVALID);
+    ASSERT(sub_test != BM_TEST_ID_INVALID);
+
+    argv = bm_query_test_command_argv(model, target_test);
+    ASSERT(argv.count == 3);
+    ASSERT(build_model_string_equals_at(argv, 0, "alias_tool"));
+    ASSERT(build_model_string_equals_at(argv, 1, "two words"));
+    ASSERT(build_model_string_equals_at(argv, 2, "tail"));
+    ASSERT(bm_query_test_uses_name_signature(model, target_test));
+    resolved_target_id = bm_query_test_resolved_command_target(model, target_test);
+    ASSERT(resolved_target_id == tool_id ||
+           (resolved_target_id == alias_id && bm_query_target_alias_of(model, resolved_target_id) == tool_id));
+
+    argv = bm_query_test_command_argv(model, legacy_test);
+    ASSERT(argv.count == 2);
+    ASSERT(build_model_string_equals_at(argv, 0, "alias_tool"));
+    ASSERT(build_model_string_equals_at(argv, 1, "legacy words"));
+    ASSERT(!bm_query_test_uses_name_signature(model, legacy_test));
+    ASSERT(bm_query_test_resolved_command_target(model, legacy_test) == BM_TARGET_ID_INVALID);
+
+    raw_labels = bm_query_test_raw_property_items(model, target_test, nob_sv_from_cstr("LABELS"));
+    ASSERT(raw_labels.count == 2);
+    ASSERT(build_model_string_equals_at(raw_labels, 0, "fast"));
+    ASSERT(build_model_string_equals_at(raw_labels, 1, "unit"));
+    ASSERT(bm_query_test_effective_property_items(model,
+                                                  target_test,
+                                                  nob_sv_from_cstr("LABELS"),
+                                                  query_arena,
+                                                  &effective_labels));
+    ASSERT(effective_labels.count == 3);
+    ASSERT(build_model_string_equals_at(effective_labels, 0, "fast"));
+    ASSERT(build_model_string_equals_at(effective_labels, 1, "unit"));
+    ASSERT(build_model_string_equals_at(effective_labels, 2, "extra-suffix"));
+
+    ctx.config = nob_sv_from_cstr("Debug");
+    ctx.platform_id = nob_sv_from_cstr("Linux");
+    ASSERT(bm_query_test_effective_command(model, target_test, &ctx, query_arena, &effective));
+    ASSERT(effective.argv.count == 3);
+    ASSERT(build_model_string_contains_at(effective.argv, 0, "tool"));
+    ASSERT(build_model_string_equals_at(effective.argv, 1, "two words"));
+    ASSERT(build_model_string_equals_at(effective.argv, 2, "tail"));
+    ASSERT(effective.emulator_argv.count == 2);
+    ASSERT(build_model_string_equals_at(effective.emulator_argv, 0, "/bin/echo"));
+    ASSERT(build_model_string_equals_at(effective.emulator_argv, 1, "emu"));
+    ASSERT(build_model_sv_contains(effective.working_directory, nob_sv_from_cstr("test_domain_query_build/wd")));
+
+    ASSERT(bm_query_test_effective_property_items(model,
+                                                  sub_test,
+                                                  nob_sv_from_cstr("LABELS"),
+                                                  query_arena,
+                                                  &effective_labels));
+    ASSERT(effective_labels.count == 1);
+    ASSERT(build_model_string_equals_at(effective_labels, 0, "subdir"));
+
+    arena_destroy(query_arena);
+    test_semantic_pipeline_fixture_destroy(&fixture);
+    TEST_PASS();
+}
+
 TEST(build_model_replay_actions_accept_c3_opcodes_and_queries) {
     Arena *arena = arena_create(2 * 1024 * 1024);
     Arena *validate_arena = arena_create(512 * 1024);
@@ -6348,6 +6467,7 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_replay_action_resolved_operands_use_query_context(passed, failed, skipped);
     test_build_model_replay_actions_reject_invalid_opcode_payload_shapes(passed, failed, skipped);
     test_build_model_tests_freeze_owner_working_dir_expand_lists_and_configurations(passed, failed, skipped);
+    test_build_model_tests_preserve_argv_properties_scope_and_target_resolution(passed, failed, skipped);
     test_build_model_replay_actions_accept_c3_opcodes_and_queries(passed, failed, skipped);
     test_build_model_replay_actions_accept_extended_filesystem_opcodes(passed, failed, skipped);
     test_build_model_replay_actions_accept_c5_ctest_coverage_and_memcheck_queries(passed, failed, skipped);

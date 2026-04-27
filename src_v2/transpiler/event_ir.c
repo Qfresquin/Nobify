@@ -467,10 +467,25 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
         case EVENT_TEST_ADD:
             if (!event_copy_sv_inplace(arena, &ev->as.test_add.name)) return false;
             if (!event_copy_sv_inplace(arena, &ev->as.test_add.command)) return false;
+            if (!event_copy_sv_array_inplace(arena,
+                                             &ev->as.test_add.command_argv,
+                                             ev->as.test_add.command_arg_count)) {
+                return false;
+            }
             if (!event_copy_sv_inplace(arena, &ev->as.test_add.working_dir)) return false;
             if (!event_copy_sv_array_inplace(arena,
                                              &ev->as.test_add.configurations,
                                              ev->as.test_add.configuration_count)) {
+                return false;
+            }
+            break;
+        case EVENT_TEST_PROPERTY_MUTATE:
+            if (!event_copy_sv_inplace(arena, &ev->as.test_property_mutate.test_name)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.test_property_mutate.directory)) return false;
+            if (!event_copy_sv_inplace(arena, &ev->as.test_property_mutate.property_name)) return false;
+            if (!event_copy_sv_array_inplace(arena,
+                                             &ev->as.test_property_mutate.items,
+                                             ev->as.test_property_mutate.item_count)) {
                 return false;
             }
             break;
@@ -1070,15 +1085,28 @@ static void event_dump_one(const Event *ev) {
                    ev->as.build_step_add_command.argc);
             break;
         case EVENT_TEST_ADD:
-            printf(" name=%.*s command=%.*s working_dir=%.*s expand_lists=%d configurations=%zu",
+            printf(" name=%.*s command=%.*s argc=%zu working_dir=%.*s expand_lists=%d name_sig=%d configurations=%zu",
                    (int)ev->as.test_add.name.count,
                    ev->as.test_add.name.data ? ev->as.test_add.name.data : "",
                    (int)ev->as.test_add.command.count,
                    ev->as.test_add.command.data ? ev->as.test_add.command.data : "",
+                   ev->as.test_add.command_arg_count,
                    (int)ev->as.test_add.working_dir.count,
                    ev->as.test_add.working_dir.data ? ev->as.test_add.working_dir.data : "",
                    ev->as.test_add.command_expand_lists ? 1 : 0,
+                   ev->as.test_add.uses_name_signature ? 1 : 0,
                    ev->as.test_add.configuration_count);
+            break;
+        case EVENT_TEST_PROPERTY_MUTATE:
+            printf(" test=%.*s directory=%.*s property=%.*s op=%d items=%zu",
+                   (int)ev->as.test_property_mutate.test_name.count,
+                   ev->as.test_property_mutate.test_name.data ? ev->as.test_property_mutate.test_name.data : "",
+                   (int)ev->as.test_property_mutate.directory.count,
+                   ev->as.test_property_mutate.directory.data ? ev->as.test_property_mutate.directory.data : "",
+                   (int)ev->as.test_property_mutate.property_name.count,
+                   ev->as.test_property_mutate.property_name.data ? ev->as.test_property_mutate.property_name.data : "",
+                   (int)ev->as.test_property_mutate.op,
+                   ev->as.test_property_mutate.item_count);
             break;
         case EVENT_REPLAY_ACTION_DECLARE:
             printf(" action=%.*s kind=%s opcode=%s phase=%s",

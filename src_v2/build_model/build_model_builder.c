@@ -80,6 +80,7 @@ static bool bm_is_supported_build_event(Event_Kind kind) {
         case EVENT_TARGET_COMPILE_FEATURES:
         case EVENT_TEST_ENABLE:
         case EVENT_TEST_ADD:
+        case EVENT_TEST_PROPERTY_MUTATE:
         case EVENT_INSTALL_RULE_ADD:
         case EVENT_EXPORT_INSTALL:
         case EVENT_EXPORT_BUILD_DECLARE:
@@ -736,6 +737,7 @@ bool bm_builder_apply_event(BM_Builder *builder, const Event *ev) {
 
         case EVENT_TEST_ENABLE:
         case EVENT_TEST_ADD:
+        case EVENT_TEST_PROPERTY_MUTATE:
             return bm_builder_handle_test_event(builder, ev);
 
         case EVENT_INSTALL_RULE_ADD:

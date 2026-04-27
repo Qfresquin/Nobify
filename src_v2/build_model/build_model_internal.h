@@ -243,9 +243,13 @@ typedef struct {
     BM_Directory_Id owner_directory_id;
     BM_Provenance provenance;
     String_View command;
+    String_View *command_argv;
     String_View working_dir;
     bool command_expand_lists;
+    bool uses_name_signature;
+    BM_Target_Id resolved_command_target_id;
     String_View *configurations;
+    BM_Raw_Property_Record *raw_properties;
 } BM_Test_Record;
 
 typedef struct {

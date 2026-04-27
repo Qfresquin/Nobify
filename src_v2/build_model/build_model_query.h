@@ -83,6 +83,14 @@ typedef struct {
 } BM_Query_Eval_Context;
 
 typedef struct {
+    BM_String_Span argv;
+    BM_String_Span emulator_argv;
+    String_View working_directory;
+    BM_Target_Id resolved_command_target_id;
+    bool uses_name_signature;
+} BM_Test_Effective_Command_View;
+
+typedef struct {
     size_t effective_item_hits;
     size_t effective_item_misses;
     size_t effective_value_hits;
@@ -518,10 +526,24 @@ bool bm_query_session_target_effective_link_language(BM_Query_Session *session,
 bool bm_query_testing_enabled(const Build_Model *model);
 String_View bm_query_test_name(const Build_Model *model, BM_Test_Id id);
 String_View bm_query_test_command(const Build_Model *model, BM_Test_Id id);
+BM_String_Span bm_query_test_command_argv(const Build_Model *model, BM_Test_Id id);
 BM_Directory_Id bm_query_test_owner_directory(const Build_Model *model, BM_Test_Id id);
 String_View bm_query_test_working_directory(const Build_Model *model, BM_Test_Id id);
 bool bm_query_test_command_expand_lists(const Build_Model *model, BM_Test_Id id);
 BM_String_Span bm_query_test_configurations(const Build_Model *model, BM_Test_Id id);
+BM_Target_Id bm_query_test_resolved_command_target(const Build_Model *model, BM_Test_Id id);
+bool bm_query_test_uses_name_signature(const Build_Model *model, BM_Test_Id id);
+BM_String_Span bm_query_test_raw_property_items(const Build_Model *model, BM_Test_Id id, String_View property_name);
+bool bm_query_test_effective_property_items(const Build_Model *model,
+                                            BM_Test_Id id,
+                                            String_View property_name,
+                                            Arena *scratch,
+                                            BM_String_Span *out);
+bool bm_query_test_effective_command(const Build_Model *model,
+                                     BM_Test_Id id,
+                                     const BM_Query_Eval_Context *ctx,
+                                     Arena *scratch,
+                                     BM_Test_Effective_Command_View *out);
 
 BM_Install_Rule_Kind bm_query_install_rule_kind(const Build_Model *model, BM_Install_Rule_Id id);
 BM_Directory_Id bm_query_install_rule_owner_directory(const Build_Model *model, BM_Install_Rule_Id id);

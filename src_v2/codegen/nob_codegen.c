@@ -2468,7 +2468,10 @@ bool nob_codegen_render(const Build_Model *model,
         "#include <sys/stat.h>\n"
         "#if !defined(_WIN32)\n"
         "#include <fcntl.h>\n"
+        "#include <regex.h>\n"
+        "#include <signal.h>\n"
         "#include <sys/file.h>\n"
+        "#include <sys/wait.h>\n"
         "#include <unistd.h>\n"
         "#endif\n"
         "\n");

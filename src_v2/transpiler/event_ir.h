@@ -119,6 +119,7 @@ typedef enum {
     X(EVENT_PATH_CONVERT, EVENT_FAMILY_PATH, "path_convert", EVENT_ROLE_RUNTIME_EFFECT) \
     X(EVENT_TEST_ENABLE, EVENT_FAMILY_TEST, "test_enable", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_TEST_ADD, EVENT_FAMILY_TEST, "test_add", EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TEST_PROPERTY_MUTATE, EVENT_FAMILY_TEST, "test_property_mutate", EVENT_ROLE_STATE | EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_INSTALL_RULE_ADD, EVENT_FAMILY_INSTALL, "install_rule_add", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_CPACK_ADD_INSTALL_TYPE, EVENT_FAMILY_CPACK, "cpack_add_install_type", EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_CPACK_ADD_COMPONENT_GROUP, EVENT_FAMILY_CPACK, "cpack_add_component_group", EVENT_ROLE_BUILD_SEMANTIC) \
@@ -702,11 +703,24 @@ typedef struct {
 typedef struct {
     String_View name;
     String_View command;
+    String_View *command_argv;
+    size_t command_arg_count;
     String_View working_dir;
     bool command_expand_lists;
+    bool uses_name_signature;
     String_View *configurations;
     size_t configuration_count;
 } Event_Test_Add;
+
+typedef struct {
+    String_View test_name;
+    String_View directory;
+    String_View property_name;
+    Event_Property_Mutate_Op op;
+    uint32_t flags;
+    String_View *items;
+    size_t item_count;
+} Event_Test_Property_Mutate;
 
 typedef struct {
     Cmake_Install_Rule_Type rule_type;
@@ -1147,6 +1161,7 @@ typedef struct {
         Event_Test_Enable test_enable;
         Event_Test_Enable testing_enable; // legacy alias
         Event_Test_Add test_add;
+        Event_Test_Property_Mutate test_property_mutate;
         Event_Install_Rule_Add install_rule_add;
         Event_Install_Rule_Add install_add_rule; // legacy alias
         Event_Cpack_Add_Install_Type cpack_add_install_type;
@@ -1244,6 +1259,7 @@ typedef Event_Diag_Severity Cmake_Diag_Severity;
 #define EV_DIR_POP EVENT_DIRECTORY_LEAVE
 #define EV_TESTING_ENABLE EVENT_TEST_ENABLE
 #define EV_TEST_ADD EVENT_TEST_ADD
+#define EV_TEST_PROPERTY_MUTATE EVENT_TEST_PROPERTY_MUTATE
 #define EV_INSTALL_ADD_RULE EVENT_INSTALL_RULE_ADD
 #define EV_CPACK_ADD_INSTALL_TYPE EVENT_CPACK_ADD_INSTALL_TYPE
 #define EV_CPACK_ADD_COMPONENT_GROUP EVENT_CPACK_ADD_COMPONENT_GROUP

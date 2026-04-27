@@ -897,10 +897,24 @@ static void append_event_line(Nob_String_Builder *sb, size_t index, const Cmake_
             snapshot_append_escaped_sv(sb, ev->as.test_add.name);
             nob_sb_append_cstr(sb, " command=");
             snapshot_append_escaped_sv(sb, ev->as.test_add.command);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" argc=%zu", ev->as.test_add.command_arg_count));
             nob_sb_append_cstr(sb, " working_dir=");
             snapshot_append_escaped_sv(sb, ev->as.test_add.working_dir);
-            nob_sb_append_cstr(sb, nob_temp_sprintf(" command_expand_lists=%d",
-                ev->as.test_add.command_expand_lists ? 1 : 0));
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" command_expand_lists=%d uses_name_signature=%d",
+                ev->as.test_add.command_expand_lists ? 1 : 0,
+                ev->as.test_add.uses_name_signature ? 1 : 0));
+            break;
+
+        case EV_TEST_PROPERTY_MUTATE:
+            nob_sb_append_cstr(sb, " test=");
+            snapshot_append_escaped_sv(sb, ev->as.test_property_mutate.test_name);
+            nob_sb_append_cstr(sb, " directory=");
+            snapshot_append_escaped_sv(sb, ev->as.test_property_mutate.directory);
+            nob_sb_append_cstr(sb, " property=");
+            snapshot_append_escaped_sv(sb, ev->as.test_property_mutate.property_name);
+            nob_sb_append_cstr(sb, nob_temp_sprintf(" op=%d items=%zu",
+                (int)ev->as.test_property_mutate.op,
+                ev->as.test_property_mutate.item_count));
             break;
 
         case EV_INSTALL_ADD_RULE:

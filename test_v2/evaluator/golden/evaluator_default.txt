@@ -111,8 +111,8 @@ DIAG errors=0 warnings=0
 EVENTS count=23
 EV[0] kind=EV_PROJECT_DECLARE file='CMakeLists.txt' line=1 col=1 name='CTestDemo' version='' description='' languages='C;CXX'
 EV[1] kind=EV_TESTING_ENABLE file='CMakeLists.txt' line=2 col=1 enabled=1
-EV[2] kind=EV_TEST_ADD file='CMakeLists.txt' line=3 col=1 name='smoke' command='app' working_dir='' command_expand_lists=0
-EV[3] kind=EV_TEST_ADD file='CMakeLists.txt' line=4 col=1 name='legacy' command='app' working_dir='' command_expand_lists=0
+EV[2] kind=EV_TEST_ADD file='CMakeLists.txt' line=3 col=1 name='smoke' command='app' argc=1 working_dir='' command_expand_lists=0 uses_name_signature=1
+EV[3] kind=EV_TEST_ADD file='CMakeLists.txt' line=4 col=1 name='legacy' command='app' argc=1 working_dir='' command_expand_lists=0 uses_name_signature=0
 EV[4] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=5 col=1 name='app' type=EXECUTABLE
 EV[5] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=5 col=1 target='app' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
 EV[6] kind=EV_INSTALL_ADD_RULE file='CMakeLists.txt' line=6 col=1 rule_type=0 item='app' destination='bin'
@@ -276,7 +276,7 @@ EV[2] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=6 col=1 targ
 === CASE expr_test_and_path_predicates ===
 DIAG errors=0 warnings=0
 EVENTS count=6
-EV[0] kind=EV_TEST_ADD file='CMakeLists.txt' line=3 col=1 name='smoke_expr' command='expr_tool' working_dir='' command_expand_lists=0
+EV[0] kind=EV_TEST_ADD file='CMakeLists.txt' line=3 col=1 name='smoke_expr' command='expr_tool' argc=1 working_dir='' command_expand_lists=0 uses_name_signature=1
 EV[1] kind=EV_TARGET_DECLARE file='CMakeLists.txt' line=13 col=1 name='expr_preds' type=EXECUTABLE
 EV[2] kind=EV_TARGET_ADD_SOURCE file='CMakeLists.txt' line=13 col=1 target='expr_preds' path='main.c' vis=PRIVATE kind=REGULAR file_set=''
 EV[3] kind=EV_TARGET_COMPILE_DEFINITIONS file='CMakeLists.txt' line=14 col=1 target='expr_preds' item='HAS_TEST=1' vis=PRIVATE

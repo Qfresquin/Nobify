@@ -641,6 +641,54 @@ add_custom_target(row55_all ALL
 add_dependencies(row55_all ext)
 #@@ENDCASE
 
+#@@CASE backend_row62_test_domain_closure_surface
+#@@OUTCOME SUCCESS
+#@@FILE_TEXT source/src/test_probe.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(int argc, char **argv) {
+    const char *env = getenv("ROW62_ENV");
+    FILE *f = fopen("target-command.txt", "wb");
+    if (!f) return 2;
+    fprintf(f, "argv1=%s\n", argc > 1 ? argv[1] : "");
+    fprintf(f, "argv2=%s\n", argc > 2 ? argv[2] : "");
+    fprintf(f, "env=%s\n", env ? env : "");
+    fclose(f);
+    printf("row62 pass\n");
+    return argc == 3 &&
+           strcmp(argv[1], "alpha") == 0 &&
+           strcmp(argv[2], "two words") == 0 &&
+           env &&
+           strcmp(env, "from-env") == 0 ? 0 : 1;
+}
+#@@END_FILE_TEXT
+cmake_minimum_required(VERSION 3.28)
+project(Row62TestDomain LANGUAGES C)
+enable_testing()
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/reports")
+add_executable(row62_probe src/test_probe.c)
+add_executable(row62_alias ALIAS row62_probe)
+set_target_properties(row62_probe PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/artifacts/bin")
+add_test(NAME target_command
+  COMMAND row62_alias alpha "two words"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/reports")
+set_tests_properties(target_command PROPERTIES
+  ENVIRONMENT "ROW62_ENV=from-env"
+  PASS_REGULAR_EXPRESSION "row62 pass"
+  LABELS "row62;target-command")
+add_test(NAME regex_skip
+  COMMAND "${CMAKE_COMMAND}" -E echo "skip row62"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/reports")
+set_property(TEST regex_skip PROPERTY SKIP_REGULAR_EXPRESSION "skip row62")
+add_test(NAME disabled
+  COMMAND "${CMAKE_COMMAND}" -E false
+  WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/reports")
+set_tests_properties(disabled PROPERTIES DISABLED TRUE LABELS row62)
+#@@ENDCASE
+
 #@@CASE backend_reject_target_precompile_headers
 #@@OUTCOME SUCCESS
 #@@FILE_TEXT source/src/main.c

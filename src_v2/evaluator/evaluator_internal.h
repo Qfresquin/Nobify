@@ -2057,18 +2057,44 @@ static inline bool eval_emit_test_add(EvalExecContext *ctx,
                                       Event_Origin origin,
                                       String_View name,
                                       String_View command,
+                                      const SV_List *command_argv,
                                       String_View working_dir,
                                       bool command_expand_lists,
+                                      bool uses_name_signature,
                                       const SV_List *configurations) {
     Event ev = {0};
     ev.h.kind = EVENT_TEST_ADD;
     ev.h.origin = origin;
     ev.as.test_add.name = sv_copy_to_event_arena(ctx, name);
     ev.as.test_add.command = sv_copy_to_event_arena(ctx, command);
+    ev.as.test_add.command_arg_count = command_argv ? arena_arr_len(*command_argv) : 0;
+    ev.as.test_add.command_argv = eval_sv_list_copy_to_event_arena(ctx, command_argv);
     ev.as.test_add.working_dir = sv_copy_to_event_arena(ctx, working_dir);
     ev.as.test_add.command_expand_lists = command_expand_lists;
+    ev.as.test_add.uses_name_signature = uses_name_signature;
     ev.as.test_add.configuration_count = configurations ? arena_arr_len(*configurations) : 0;
     ev.as.test_add.configurations = eval_sv_list_copy_to_event_arena(ctx, configurations);
+    if (eval_should_stop(ctx)) return false;
+    return emit_event(ctx, ev);
+}
+static inline bool eval_emit_test_property_mutate(EvalExecContext *ctx,
+                                                  Event_Origin origin,
+                                                  String_View test_name,
+                                                  String_View directory,
+                                                  String_View property_name,
+                                                  Event_Property_Mutate_Op op,
+                                                  uint32_t flags,
+                                                  const SV_List *items) {
+    Event ev = {0};
+    ev.h.kind = EVENT_TEST_PROPERTY_MUTATE;
+    ev.h.origin = origin;
+    ev.as.test_property_mutate.test_name = sv_copy_to_event_arena(ctx, test_name);
+    ev.as.test_property_mutate.directory = sv_copy_to_event_arena(ctx, directory);
+    ev.as.test_property_mutate.property_name = sv_copy_to_event_arena(ctx, property_name);
+    ev.as.test_property_mutate.op = op;
+    ev.as.test_property_mutate.flags = flags;
+    ev.as.test_property_mutate.item_count = items ? arena_arr_len(*items) : 0;
+    ev.as.test_property_mutate.items = eval_sv_list_copy_to_event_arena(ctx, items);
     if (eval_should_stop(ctx)) return false;
     return emit_event(ctx, ev);
 }

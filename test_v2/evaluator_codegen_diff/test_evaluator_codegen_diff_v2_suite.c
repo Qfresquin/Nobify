@@ -361,6 +361,14 @@ static const EGD_Observed_Output s_egd_ctest_extended_outputs[] = {
     {"ctest_extended_report", "__oracle/ctest_extended_report.txt", EGD_DIFF_FILE_TEXT},
 };
 
+static const Test_Manifest_Request s_egd_row62_test_domain_manifests[] = {
+    {TEST_MANIFEST_CAPTURE_TREE, "row62_reports", "reports"},
+};
+
+static const EGD_Observed_Output s_egd_row62_test_domain_outputs[] = {
+    {"row62_reports", "reports", EGD_DIFF_TREE},
+};
+
 static const EGD_Observed_Output s_egd_install_outputs[] = {
     {"install_tree", "", EGD_DIFF_TREE},
 };
@@ -416,6 +424,7 @@ static const EGD_Case_Def s_egd_cases[] = {
     {"backend_row53_output_naming_artifact_path_closure_surface", EGD_PACK_SEEDS, "set_target_properties|file(GENERATE)", "row-53 integrated closure", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE, "build-model.query.artifact-path", "integrated row-53 proof for output naming, type/config directories, prefix/suffix, and TARGET_FILE/TARGET_LINKER_FILE metadata", NULL, "workload.codegen.row53-artifact-path", s_egd_row53_artifact_outputs, NOB_ARRAY_LEN(s_egd_row53_artifact_outputs), s_egd_row53_artifact_manifests, NOB_ARRAY_LEN(s_egd_row53_artifact_manifests), NULL, "RelWithDebInfo"},
     {"backend_row54_custom_command_target_graph_closure_surface", EGD_PACK_SEEDS, "add_custom_command|add_custom_target", "row-54 integrated closure", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE, "build-model.build-step", "integrated row-54 proof for generated sources, byproduct producer dependencies, APPEND, custom target ALL, target executable commands, target-file genex dependencies, and config-resolved outputs", NULL, "workload.codegen.row54-build-step-graph", s_egd_row54_build_step_outputs, NOB_ARRAY_LEN(s_egd_row54_build_step_outputs), s_egd_row54_build_step_manifests, NOB_ARRAY_LEN(s_egd_row54_build_step_manifests), NULL, "RelWithDebInfo"},
     {"backend_row55_explicit_dependency_ordering_closure_surface", EGD_PACK_SEEDS, "add_dependencies|target_link_libraries|add_custom_target", "row-55 integrated closure", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD, EGD_TOOL_CMAKE, "build-model.build-order", "integrated row-55 proof for explicit interface/imported prerequisites, generated-source producer ordering, target hooks, custom target ALL ordering, and config-selected link prerequisites", NULL, "workload.codegen.row55-build-order", s_egd_row55_build_order_outputs, NOB_ARRAY_LEN(s_egd_row55_build_order_outputs), s_egd_row55_build_order_manifests, NOB_ARRAY_LEN(s_egd_row55_build_order_manifests), NULL, "RelWithDebInfo"},
+    {"backend_row62_test_domain_closure_surface", EGD_PACK_SEEDS, "add_test|set_tests_properties", "row-62 integrated closure", EGD_CLASS_PARITY_PASS, EGD_PARITY_BUILD_TREE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_BUILD | EGD_PHASE_TEST, EGD_TOOL_CMAKE, "build-model.test", "integrated row-62 proof for preserved test argv, typed properties, working directory, environment, regex evaluation, and target-command artifact replacement through generated nob test", NULL, "workload.codegen.test-domain", s_egd_row62_test_domain_outputs, NOB_ARRAY_LEN(s_egd_row62_test_domain_outputs), s_egd_row62_test_domain_manifests, NOB_ARRAY_LEN(s_egd_row62_test_domain_manifests), NULL},
     {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package TGZ", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_TAR | EGD_TOOL_GZIP, "build-model.package", "positive full-package parity for TGZ", NULL, "workload.codegen.package-tgz", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "TGZ"},
     {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package TXZ", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_TAR | EGD_TOOL_XZ, "build-model.package", "positive full-package parity for TXZ", NULL, "workload.codegen.package-txz", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "TXZ"},
     {"backend_package_supported_archives", EGD_PACK_SEEDS, "include(CPack)", "package ZIP", EGD_CLASS_PARITY_PASS, EGD_PARITY_PACKAGE_ARCHIVE, EGD_OUTCOME_SUCCESS, EGD_PHASE_CONFIGURE | EGD_PHASE_PACKAGE, EGD_TOOL_CMAKE | EGD_TOOL_CPACK | EGD_TOOL_PYTHON, "build-model.package", "positive full-package parity for ZIP", NULL, "workload.codegen.package-zip", s_egd_package_outputs, NOB_ARRAY_LEN(s_egd_package_outputs), NULL, 0, "ZIP"},
@@ -1280,6 +1289,7 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
     const char *script_cmake_argv[] = {"", "-P", ""};
     const char *script_ctest_argv[] = {"", "-S", "", "-VV"};
     const char *build_argv[] = {"", "--build", cmake_build};
+    const char *project_ctest_argv[] = {"", "--test-dir", cmake_build, "--output-on-failure"};
     const char *install_argv[] = {"", "--install", cmake_build, "--prefix", cmake_install};
     const char *nob_test_base_argv[] = {"test"};
     const char *nob_install_base_argv[] = {"install", "--prefix", nob_install};
@@ -1433,7 +1443,8 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
         arena_destroy(arena);
         return false;
     }
-    if (egd_case_uses_ctest_oracle(case_def, &parsed) &&
+    if (((case_def->phase_mask & EGD_PHASE_TEST) != 0u ||
+         egd_case_uses_ctest_oracle(case_def, &parsed)) &&
         !egd_resolve_host_ctest_bin(cmake_bin, ctest_bin)) {
         arena_destroy(arena);
         return false;
@@ -1446,6 +1457,7 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
     script_cmake_argv[2] = "CMakeLists.txt";
     script_ctest_argv[0] = ctest_bin;
     script_ctest_argv[2] = "CMakeLists.txt";
+    project_ctest_argv[0] = ctest_bin;
 
     if ((case_def->phase_mask & EGD_PHASE_TEST) != 0u) {
         if (!egd_build_nob_argv(case_def->nob_config,
@@ -1638,6 +1650,9 @@ static bool egd_run_case(const EGD_Case_Def *case_def,
         case EGD_PARITY_BUILD_TREE:
             ok = (parsed.mode == EGD_MODE_SCRIPT ||
                   egd_run_argv_in_dir(".", build_argv, NOB_ARRAY_LEN(build_argv))) &&
+                 (parsed.mode == EGD_MODE_SCRIPT ||
+                  (case_def->phase_mask & EGD_PHASE_TEST) == 0u ||
+                  egd_run_argv_in_dir(".", project_ctest_argv, NOB_ARRAY_LEN(project_ctest_argv))) &&
                  codegen_run_binary_in_dir_argv(nob_temp_dir_name(generated_nob),
                                                 nob_temp_sprintf("./%s", nob_temp_file_name(generated_bin)),
                                                 nob_run_argv,
