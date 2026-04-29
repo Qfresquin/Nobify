@@ -1,5 +1,7 @@
 #include "evaluator_internal.h"
 #include "arena_dyn.h"
+#include "eval_file_backend_archive.h"
+#include "eval_file_backend_curl.h"
 #include "sv_utils.h"
 #include "stb_ds.h"
 #include <ctype.h>
@@ -16,6 +18,8 @@
 #include <windows.h>
 #else
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/file.h>
 #include <sys/types.h>
 #include <utime.h>
 #include <unistd.h>
@@ -1034,6 +1038,617 @@ bool eval_service_readlink(EvalExecContext *ctx, String_View path, String_View *
     *out_target = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(buf, (size_t)n));
     return !eval_should_stop(ctx);
 #endif
+}
+
+static void eval_service_normalize_slashes_in_place(char *s) {
+    if (!s) return;
+    for (size_t i = 0; s[i] != '\0'; i++) {
+        if (s[i] == '\\') s[i] = '/';
+    }
+}
+
+static bool eval_service_canonicalize_existing_cstr(EvalExecContext *ctx,
+                                                    const char *path_c,
+                                                    String_View *out_path) {
+    if (out_path) *out_path = nob_sv_from_cstr("");
+    if (!ctx || !path_c || !out_path) return false;
+
+#if defined(_WIN32)
+    HANDLE h = CreateFileA(path_c,
+                           FILE_READ_ATTRIBUTES,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL,
+                           OPEN_EXISTING,
+                           FILE_FLAG_BACKUP_SEMANTICS,
+                           NULL);
+    if (h == INVALID_HANDLE_VALUE) return true;
+
+    DWORD need = GetFinalPathNameByHandleA(h, NULL, 0, FILE_NAME_NORMALIZED);
+    if (need == 0) {
+        CloseHandle(h);
+        return true;
+    }
+
+    DWORD cap = need + 1;
+    char *raw = (char*)arena_alloc(eval_temp_arena(ctx), (size_t)cap);
+    EVAL_OOM_RETURN_IF_NULL(ctx, raw, false);
+
+    DWORD wrote = GetFinalPathNameByHandleA(h, raw, cap, FILE_NAME_NORMALIZED);
+    CloseHandle(h);
+    if (wrote == 0 || wrote >= cap) return true;
+
+    const char *view = raw;
+    char *unc_fixed = NULL;
+    if (strncmp(view, "\\\\?\\UNC\\", 8) == 0) {
+        size_t rest = strlen(view + 8);
+        unc_fixed = (char*)arena_alloc(eval_temp_arena(ctx), rest + 3);
+        EVAL_OOM_RETURN_IF_NULL(ctx, unc_fixed, false);
+        unc_fixed[0] = '/';
+        unc_fixed[1] = '/';
+        memcpy(unc_fixed + 2, view + 8, rest + 1);
+        view = unc_fixed;
+    } else if (strncmp(view, "\\\\?\\", 4) == 0) {
+        view += 4;
+    }
+
+    size_t len = strlen(view);
+    char *norm = (char*)arena_alloc(eval_temp_arena(ctx), len + 1);
+    EVAL_OOM_RETURN_IF_NULL(ctx, norm, false);
+    memcpy(norm, view, len + 1);
+    eval_service_normalize_slashes_in_place(norm);
+    *out_path = nob_sv_from_parts(norm, len);
+    return true;
+#else
+    char *real = realpath(path_c, NULL);
+    if (!real) return true;
+    size_t len = strlen(real);
+    char *norm = (char*)arena_alloc(eval_temp_arena(ctx), len + 1);
+    if (!norm) {
+        free(real);
+        return ctx_oom(ctx);
+    }
+    memcpy(norm, real, len + 1);
+    free(real);
+    *out_path = nob_sv_from_parts(norm, len);
+    return true;
+#endif
+}
+
+bool eval_service_canonicalize_path(EvalExecContext *ctx,
+                                    const Eval_Path_Canonicalize_Request *req,
+                                    Eval_Path_Canonicalize_Result *out) {
+    if (out) *out = (Eval_Path_Canonicalize_Result){0};
+    if (!ctx || !req || !out || req->path.count == 0) return false;
+
+    if (ctx->services && ctx->services->fs_canonicalize_path) {
+        return ctx->services->fs_canonicalize_path(ctx->services->user_data,
+                                                   eval_temp_arena(ctx),
+                                                   req,
+                                                   out);
+    }
+
+    char *probe = eval_sv_to_cstr_temp(ctx, req->path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, probe, false);
+    eval_service_normalize_slashes_in_place(probe);
+
+    for (;;) {
+        String_View canon = nob_sv_from_cstr("");
+        if (!eval_service_canonicalize_existing_cstr(ctx, probe, &canon)) return false;
+        if (canon.count > 0) {
+            out->found = true;
+            out->path = canon;
+            return true;
+        }
+        if (!req->existing_parent) return true;
+
+        size_t len = strlen(probe);
+        while (len > 0 && probe[len - 1] == '/') {
+            if (len == 1) break;
+            if (len == 3 && isalpha((unsigned char)probe[0]) && probe[1] == ':') break;
+            probe[--len] = '\0';
+        }
+
+        char *last = strrchr(probe, '/');
+        if (!last) return true;
+
+        if (last == probe) {
+            probe[1] = '\0';
+            continue;
+        }
+        if (last == probe + 2 && isalpha((unsigned char)probe[0]) && probe[1] == ':') {
+            probe[3] = '\0';
+            continue;
+        }
+        *last = '\0';
+    }
+}
+
+bool eval_service_lock_acquire(EvalExecContext *ctx,
+                               const Eval_Host_Lock_Request *req,
+                               Eval_Host_Lock_Result *out) {
+    if (out) *out = (Eval_Host_Lock_Result){.message = nob_sv_from_cstr("")};
+    if (!ctx || !req || !out || req->path.count == 0) return false;
+
+    if (ctx->services && ctx->services->host_lock_acquire) {
+        return ctx->services->host_lock_acquire(ctx->services->user_data, req, out);
+    }
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, req->path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+
+#if defined(_WIN32)
+    HANDLE h = CreateFileA(path_c,
+                           GENERIC_READ | GENERIC_WRITE,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE,
+                           NULL,
+                           OPEN_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL,
+                           NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        out->message = nob_sv_from_cstr("failed to open lock file");
+        return true;
+    }
+
+    bool ok = false;
+    DWORD start_ms = GetTickCount();
+    for (;;) {
+        OVERLAPPED ov = {0};
+        if (LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, MAXDWORD, MAXDWORD, &ov) != 0) {
+            ok = true;
+            break;
+        }
+        DWORD err = GetLastError();
+        if (err != ERROR_LOCK_VIOLATION) break;
+        if (req->has_timeout) {
+            DWORD elapsed = GetTickCount() - start_ms;
+            if ((size_t)(elapsed / 1000) >= req->timeout_sec) break;
+        }
+        Sleep(100);
+    }
+    if (!ok) {
+        CloseHandle(h);
+        out->message = nob_sv_from_cstr("failed to acquire lock");
+        return true;
+    }
+    out->acquired = true;
+    out->token = (uintptr_t)h;
+    out->message = nob_sv_from_cstr("0");
+    return true;
+#else
+    int fd = open(path_c, O_RDWR | O_CREAT, 0666);
+    if (fd < 0) {
+        out->message = nob_sv_from_cstr("failed to open lock file");
+        return true;
+    }
+
+    bool ok = false;
+    time_t start = time(NULL);
+    for (;;) {
+        if (flock(fd, LOCK_EX | LOCK_NB) == 0) {
+            ok = true;
+            break;
+        }
+        if (errno != EWOULDBLOCK && errno != EAGAIN) break;
+        if (req->has_timeout) {
+            time_t now = time(NULL);
+            if ((size_t)(now - start) >= req->timeout_sec) break;
+        }
+        struct timespec sleep_req = {.tv_sec = 0, .tv_nsec = 100000000L};
+        nanosleep(&sleep_req, NULL);
+    }
+
+    if (!ok) {
+        close(fd);
+        out->message = nob_sv_from_cstr("failed to acquire lock");
+        return true;
+    }
+    out->acquired = true;
+    out->token = (uintptr_t)fd;
+    out->message = nob_sv_from_cstr("0");
+    return true;
+#endif
+}
+
+bool eval_service_lock_release(EvalExecContext *ctx, uintptr_t token) {
+    if (!ctx || token == 0) return false;
+    if (ctx->services && ctx->services->host_lock_release) {
+        return ctx->services->host_lock_release(ctx->services->user_data, token);
+    }
+#if defined(_WIN32)
+    HANDLE h = (HANDLE)token;
+    OVERLAPPED ov = {0};
+    (void)UnlockFileEx(h, 0, MAXDWORD, MAXDWORD, &ov);
+    CloseHandle(h);
+#else
+    int fd = (int)token;
+    (void)flock(fd, LOCK_UN);
+    (void)close(fd);
+#endif
+    return true;
+}
+
+static bool eval_service_argv_push(EvalExecContext *ctx, SV_List *argv, String_View arg) {
+    if (!ctx || !argv) return false;
+    if (!arena_arr_push(eval_temp_arena(ctx), *argv, arg)) return ctx_oom(ctx);
+    return true;
+}
+
+static bool eval_service_run_argv(EvalExecContext *ctx,
+                                  SV_List argv,
+                                  int *out_status_code,
+                                  String_View *out_log) {
+    if (out_status_code) *out_status_code = 1;
+    if (out_log) *out_log = nob_sv_from_cstr("");
+    if (!ctx || !argv || arena_arr_len(argv) == 0 || !out_status_code || !out_log) return false;
+
+    Eval_Process_Run_Request proc_req = {
+        .argv = argv,
+        .argc = arena_arr_len(argv),
+    };
+    Eval_Process_Run_Result proc = {0};
+    if (!eval_process_run_capture(ctx, &proc_req, &proc)) return false;
+
+    *out_status_code = proc.started ? proc.exit_code : 1;
+    if (proc.stdout_text.count > 0 && proc.stderr_text.count > 0) {
+        char *buf = arena_alloc(eval_temp_arena(ctx), proc.stdout_text.count + proc.stderr_text.count + 2);
+        EVAL_OOM_RETURN_IF_NULL(ctx, buf, false);
+        memcpy(buf, proc.stdout_text.data, proc.stdout_text.count);
+        buf[proc.stdout_text.count] = '\n';
+        memcpy(buf + proc.stdout_text.count + 1, proc.stderr_text.data, proc.stderr_text.count);
+        *out_log = nob_sv_from_parts(buf, proc.stdout_text.count + proc.stderr_text.count + 1);
+    } else if (proc.stdout_text.count > 0) {
+        *out_log = proc.stdout_text;
+    } else if (proc.stderr_text.count > 0) {
+        *out_log = proc.stderr_text;
+    } else {
+        *out_log = proc.result_text;
+    }
+    return true;
+}
+
+static bool eval_service_archive_create_cli(EvalExecContext *ctx,
+                                            const Eval_Archive_Create_Request *req,
+                                            Eval_Backend_Result *out) {
+    String_View cwd = eval_sv_path_normalize_temp(ctx, eval_process_cwd_temp(ctx));
+    bool format_zip = eval_sv_eq_ci_lit(req->format, "ZIP");
+    SV_List argv = NULL;
+
+    if (format_zip) {
+        if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("zip")) ||
+            !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("-r")) ||
+            !eval_service_argv_push(ctx, &argv, req->output)) {
+            return false;
+        }
+        for (size_t i = 0; i < req->path_count; i++) {
+            if (!eval_service_argv_push(ctx, &argv, req->paths[i])) return false;
+        }
+    } else {
+        if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("tar"))) return false;
+        if (req->compression.count == 0 || eval_sv_eq_ci_lit(req->compression, "NONE")) {
+            if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("-cf"))) return false;
+        } else if (eval_sv_eq_ci_lit(req->compression, "GZIP")) {
+            if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("-czf"))) return false;
+        } else if (eval_sv_eq_ci_lit(req->compression, "BZIP2")) {
+            if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("-cjf"))) return false;
+        } else if (eval_sv_eq_ci_lit(req->compression, "XZ")) {
+            if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("-cJf"))) return false;
+        } else if (eval_sv_eq_ci_lit(req->compression, "ZSTD")) {
+            if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--zstd")) ||
+                !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("-cf"))) return false;
+        } else {
+            out->status_code = 1;
+            out->log = nob_sv_from_cstr("unsupported COMPRESSION in local archive backend");
+            return true;
+        }
+
+        if (!eval_service_argv_push(ctx, &argv, req->output)) return false;
+        if (eval_sv_eq_ci_lit(req->format, "PAXR")) {
+            if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--format=pax")) ||
+                !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--pax-option=delete=atime,delete=ctime"))) return false;
+        } else if (eval_sv_eq_ci_lit(req->format, "PAX")) {
+            if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--format=pax"))) return false;
+        } else if (eval_sv_eq_ci_lit(req->format, "GNUTAR")) {
+            if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--format=gnu"))) return false;
+        }
+        if (req->has_mtime) {
+            char *mtime = arena_alloc(eval_temp_arena(ctx), 64);
+            EVAL_OOM_RETURN_IF_NULL(ctx, mtime, false);
+            int n = snprintf(mtime, 64, "--mtime=@%lld", req->mtime_epoch);
+            if (n < 0 || n >= 64) return ctx_oom(ctx);
+            if (!eval_service_argv_push(ctx, &argv, nob_sv_from_parts(mtime, (size_t)n)) ||
+                !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--"))) return false;
+        } else if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--"))) {
+            return false;
+        }
+
+        for (size_t i = 0; i < req->path_count; i++) {
+            String_View p = req->paths[i];
+            if (cwd.count > 0 && p.count > cwd.count &&
+                memcmp(p.data, cwd.data, cwd.count) == 0 &&
+                (p.data[cwd.count] == '/' || p.data[cwd.count] == '\\')) {
+                p = nob_sv_from_parts(p.data + cwd.count + 1, p.count - cwd.count - 1);
+            }
+            if (!eval_service_argv_push(ctx, &argv, p)) return false;
+        }
+    }
+
+    return eval_service_run_argv(ctx, argv, &out->status_code, &out->log);
+}
+
+bool eval_service_archive_create(EvalExecContext *ctx,
+                                 const Eval_Archive_Create_Request *req,
+                                 Eval_Backend_Result *out) {
+    if (out) *out = (Eval_Backend_Result){.status_code = 1, .log = nob_sv_from_cstr("")};
+    if (!ctx || !req || !out) return false;
+
+    if (ctx->services && ctx->services->archive_create) {
+        return ctx->services->archive_create(ctx->services->user_data, req, out);
+    }
+
+    Eval_File_Archive_Create_Options bopt = {0};
+    bopt.output = req->output;
+    bopt.paths = (String_View*)req->paths;
+    bopt.format = req->format;
+    bopt.compression = req->compression;
+    bopt.has_compression_level = req->has_compression_level;
+    bopt.compression_level = req->compression_level;
+    bopt.has_mtime = req->has_mtime;
+    bopt.mtime_epoch = req->mtime_epoch;
+    bopt.verbose = req->verbose;
+
+    bool replay_compatible_tar_backend = eval_sv_eq_ci_lit(req->format, "PAXR") &&
+                                         (req->compression.count == 0 || eval_sv_eq_ci_lit(req->compression, "NONE")) &&
+                                         !req->has_compression_level &&
+                                         req->has_mtime;
+    bool backend_ok = false;
+    if (!replay_compatible_tar_backend) {
+        backend_ok = eval_file_backend_archive_create(ctx, &bopt, &out->status_code, &out->log);
+    }
+    if (backend_ok) return true;
+    if (ctx->oom) return false;
+    return eval_service_archive_create_cli(ctx, req, out);
+}
+
+static bool eval_service_archive_extract_cli(EvalExecContext *ctx,
+                                             const Eval_Archive_Extract_Request *req,
+                                             Eval_Backend_Result *out) {
+    SV_List argv = NULL;
+    bool is_zip = req->input.count >= 4 &&
+                  eval_sv_eq_ci_lit(nob_sv_from_parts(req->input.data + req->input.count - 4, 4), ".zip");
+    if (is_zip) {
+        if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("unzip")) ||
+            !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("-o")) ||
+            !eval_service_argv_push(ctx, &argv, req->input) ||
+            !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("-d")) ||
+            !eval_service_argv_push(ctx, &argv, req->destination)) return false;
+    } else {
+        if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("tar")) ||
+            !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("-xf")) ||
+            !eval_service_argv_push(ctx, &argv, req->input) ||
+            !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("-C")) ||
+            !eval_service_argv_push(ctx, &argv, req->destination)) return false;
+    }
+    return eval_service_run_argv(ctx, argv, &out->status_code, &out->log);
+}
+
+bool eval_service_archive_extract(EvalExecContext *ctx,
+                                  const Eval_Archive_Extract_Request *req,
+                                  Eval_Backend_Result *out) {
+    if (out) *out = (Eval_Backend_Result){.status_code = 1, .log = nob_sv_from_cstr("")};
+    if (!ctx || !req || !out) return false;
+
+    if (ctx->services && ctx->services->archive_extract) {
+        return ctx->services->archive_extract(ctx->services->user_data, req, out);
+    }
+
+    Eval_File_Archive_Extract_Options bopt = {0};
+    bopt.input = req->input;
+    bopt.destination = req->destination;
+    bopt.patterns = (String_View*)req->patterns;
+    bopt.list_only = req->list_only;
+    bopt.verbose = req->verbose;
+    bopt.touch = req->touch;
+
+    bool backend_ok = eval_file_backend_archive_extract(ctx, &bopt, &out->status_code, &out->log);
+    if (backend_ok) return true;
+    if (ctx->oom) return false;
+    return eval_service_archive_extract_cli(ctx, req, out);
+}
+
+static Eval_File_Netrc_Mode eval_transfer_to_file_netrc_mode(Eval_Transfer_Netrc_Mode mode) {
+    switch (mode) {
+        case EVAL_TRANSFER_NETRC_IGNORED: return EVAL_FILE_NETRC_IGNORED;
+        case EVAL_TRANSFER_NETRC_OPTIONAL: return EVAL_FILE_NETRC_OPTIONAL;
+        case EVAL_TRANSFER_NETRC_REQUIRED: return EVAL_FILE_NETRC_REQUIRED;
+        case EVAL_TRANSFER_NETRC_DEFAULT:
+        default: return EVAL_FILE_NETRC_DEFAULT;
+    }
+}
+
+static void eval_transfer_to_curl_options(const Eval_Transfer_Options *src, Eval_File_Curl_Options *dst) {
+    memset(dst, 0, sizeof(*dst));
+    if (!src) return;
+    dst->has_timeout = src->has_timeout;
+    dst->has_inactivity_timeout = src->has_inactivity_timeout;
+    dst->timeout_sec = src->timeout_sec;
+    dst->inactivity_timeout_sec = src->inactivity_timeout_sec;
+    dst->has_range_start = src->has_range_start;
+    dst->has_range_end = src->has_range_end;
+    dst->range_start = src->range_start;
+    dst->range_end = src->range_end;
+    dst->has_tls_verify = src->has_tls_verify;
+    dst->tls_verify = src->tls_verify;
+    dst->show_progress = src->show_progress;
+    dst->userpwd = src->userpwd;
+    dst->tls_cainfo = src->tls_cainfo;
+    dst->netrc_file = src->netrc_file;
+    dst->netrc_mode = eval_transfer_to_file_netrc_mode(src->netrc_mode);
+    dst->http_headers = (String_View*)src->http_headers;
+}
+
+static bool eval_service_transfer_download_cli(EvalExecContext *ctx,
+                                               const Eval_Transfer_Download_Request *req,
+                                               Eval_Backend_Result *out) {
+    if (!req->has_dst_path) {
+        out->status_code = 1;
+        out->log = nob_sv_from_cstr("probe-only remote DOWNLOAD requires libcurl backend");
+        return true;
+    }
+
+    SV_List argv = NULL;
+    char timeout_buf[64] = {0};
+    char inactivity_buf[64] = {0};
+    char range_buf[96] = {0};
+
+    if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("curl"))) return false;
+    if (!req->options.show_progress &&
+        !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--silent"))) return false;
+    if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--show-error")) ||
+        !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--location")) ||
+        !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--output")) ||
+        !eval_service_argv_push(ctx, &argv, req->dst_path)) return false;
+
+    if (req->options.has_timeout) {
+        snprintf(timeout_buf, sizeof(timeout_buf), "%ld", req->options.timeout_sec);
+        if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--max-time")) ||
+            !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr(timeout_buf))) return false;
+    }
+    if (req->options.has_inactivity_timeout) {
+        snprintf(inactivity_buf, sizeof(inactivity_buf), "%ld", req->options.inactivity_timeout_sec);
+        if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--speed-time")) ||
+            !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr(inactivity_buf)) ||
+            !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--speed-limit")) ||
+            !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("1"))) return false;
+    }
+    if (req->options.userpwd.count > 0 &&
+        (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--user")) ||
+         !eval_service_argv_push(ctx, &argv, req->options.userpwd))) return false;
+    if (req->options.has_tls_verify && !req->options.tls_verify &&
+        !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--insecure"))) return false;
+    if (req->options.tls_cainfo.count > 0 &&
+        (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--cacert")) ||
+         !eval_service_argv_push(ctx, &argv, req->options.tls_cainfo))) return false;
+    if (req->options.netrc_mode == EVAL_TRANSFER_NETRC_OPTIONAL) {
+        if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--netrc-optional"))) return false;
+    } else if (req->options.netrc_mode == EVAL_TRANSFER_NETRC_REQUIRED) {
+        if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--netrc"))) return false;
+    }
+    if (req->options.netrc_file.count > 0 &&
+        (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--netrc-file")) ||
+         !eval_service_argv_push(ctx, &argv, req->options.netrc_file))) return false;
+    for (size_t i = 0; i < req->options.http_headers_count; i++) {
+        if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--header")) ||
+            !eval_service_argv_push(ctx, &argv, req->options.http_headers[i])) return false;
+    }
+    if (req->options.has_range_start || req->options.has_range_end) {
+        if (req->options.has_range_start && req->options.has_range_end) {
+            snprintf(range_buf, sizeof(range_buf), "%zu-%zu", req->options.range_start, req->options.range_end);
+        } else if (req->options.has_range_start) {
+            snprintf(range_buf, sizeof(range_buf), "%zu-", req->options.range_start);
+        } else {
+            snprintf(range_buf, sizeof(range_buf), "0-%zu", req->options.range_end);
+        }
+        if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--range")) ||
+            !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr(range_buf))) return false;
+    }
+    if (!eval_service_argv_push(ctx, &argv, req->url)) return false;
+    return eval_service_run_argv(ctx, argv, &out->status_code, &out->log);
+}
+
+bool eval_service_transfer_download(EvalExecContext *ctx,
+                                    const Eval_Transfer_Download_Request *req,
+                                    Eval_Backend_Result *out) {
+    if (out) *out = (Eval_Backend_Result){.status_code = 1, .log = nob_sv_from_cstr("")};
+    if (!ctx || !req || !out) return false;
+    if (ctx->services && ctx->services->transfer_download) {
+        return ctx->services->transfer_download(ctx->services->user_data, req, out);
+    }
+
+    Eval_File_Curl_Options bopt = {0};
+    eval_transfer_to_curl_options(&req->options, &bopt);
+    bool backend_ok = eval_file_backend_curl_download(ctx,
+                                                      req->url,
+                                                      req->dst_path,
+                                                      req->has_dst_path,
+                                                      &bopt,
+                                                      &out->status_code,
+                                                      &out->log);
+    if (backend_ok) return true;
+    if (ctx->oom) return false;
+    return eval_service_transfer_download_cli(ctx, req, out);
+}
+
+static bool eval_service_transfer_upload_cli(EvalExecContext *ctx,
+                                             const Eval_Transfer_Upload_Request *req,
+                                             Eval_Backend_Result *out) {
+    SV_List argv = NULL;
+    char timeout_buf[64] = {0};
+    char inactivity_buf[64] = {0};
+
+    if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("curl"))) return false;
+    if (!req->options.show_progress &&
+        !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--silent"))) return false;
+    if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--show-error")) ||
+        !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--location")) ||
+        !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--upload-file")) ||
+        !eval_service_argv_push(ctx, &argv, req->src_path)) return false;
+
+    if (req->options.has_timeout) {
+        snprintf(timeout_buf, sizeof(timeout_buf), "%ld", req->options.timeout_sec);
+        if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--max-time")) ||
+            !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr(timeout_buf))) return false;
+    }
+    if (req->options.has_inactivity_timeout) {
+        snprintf(inactivity_buf, sizeof(inactivity_buf), "%ld", req->options.inactivity_timeout_sec);
+        if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--speed-time")) ||
+            !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr(inactivity_buf)) ||
+            !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--speed-limit")) ||
+            !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("1"))) return false;
+    }
+    if (req->options.userpwd.count > 0 &&
+        (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--user")) ||
+         !eval_service_argv_push(ctx, &argv, req->options.userpwd))) return false;
+    if (req->options.has_tls_verify && !req->options.tls_verify &&
+        !eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--insecure"))) return false;
+    if (req->options.tls_cainfo.count > 0 &&
+        (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--cacert")) ||
+         !eval_service_argv_push(ctx, &argv, req->options.tls_cainfo))) return false;
+    if (req->options.netrc_mode == EVAL_TRANSFER_NETRC_OPTIONAL) {
+        if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--netrc-optional"))) return false;
+    } else if (req->options.netrc_mode == EVAL_TRANSFER_NETRC_REQUIRED) {
+        if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--netrc"))) return false;
+    }
+    if (req->options.netrc_file.count > 0 &&
+        (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--netrc-file")) ||
+         !eval_service_argv_push(ctx, &argv, req->options.netrc_file))) return false;
+    for (size_t i = 0; i < req->options.http_headers_count; i++) {
+        if (!eval_service_argv_push(ctx, &argv, nob_sv_from_cstr("--header")) ||
+            !eval_service_argv_push(ctx, &argv, req->options.http_headers[i])) return false;
+    }
+    if (!eval_service_argv_push(ctx, &argv, req->url)) return false;
+    return eval_service_run_argv(ctx, argv, &out->status_code, &out->log);
+}
+
+bool eval_service_transfer_upload(EvalExecContext *ctx,
+                                  const Eval_Transfer_Upload_Request *req,
+                                  Eval_Backend_Result *out) {
+    if (out) *out = (Eval_Backend_Result){.status_code = 1, .log = nob_sv_from_cstr("")};
+    if (!ctx || !req || !out) return false;
+    if (ctx->services && ctx->services->transfer_upload) {
+        return ctx->services->transfer_upload(ctx->services->user_data, req, out);
+    }
+
+    Eval_File_Curl_Options bopt = {0};
+    eval_transfer_to_curl_options(&req->options, &bopt);
+    bool backend_ok = eval_file_backend_curl_upload(ctx,
+                                                    req->src_path,
+                                                    req->url,
+                                                    &bopt,
+                                                    &out->status_code,
+                                                    &out->log);
+    if (backend_ok) return true;
+    if (ctx->oom) return false;
+    return eval_service_transfer_upload_cli(ctx, req, out);
 }
 
 bool eval_service_host_read_file(EvalExecContext *ctx,

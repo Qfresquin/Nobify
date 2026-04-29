@@ -1,7 +1,6 @@
 #include "eval_file_internal.h"
 #include "eval_hash.h"
 #include "eval_expr.h"
-#include "eval_file_backend_curl.h"
 #include "sv_utils.h"
 
 #include <ctype.h>
@@ -10,11 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-
-#if !defined(_WIN32)
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
 
 static bool file_transfer_sv_eq_ci(String_View a, String_View b) {
     if (a.count != b.count) return false;
@@ -47,7 +41,7 @@ typedef struct {
     bool has_tls_verify;
     bool tls_verify;
     bool show_progress;
-    Eval_File_Netrc_Mode netrc_mode;
+    Eval_Transfer_Netrc_Mode netrc_mode;
     String_View http_headers[16];
     size_t http_headers_count;
 } File_Transfer_Options;
@@ -277,9 +271,9 @@ static bool file_transfer_parse_options(EvalExecContext *ctx,
                 return false;
             }
             String_View mode = args[++i];
-            if (eval_sv_eq_ci_lit(mode, "IGNORED")) out->netrc_mode = EVAL_FILE_NETRC_IGNORED;
-            else if (eval_sv_eq_ci_lit(mode, "OPTIONAL")) out->netrc_mode = EVAL_FILE_NETRC_OPTIONAL;
-            else if (eval_sv_eq_ci_lit(mode, "REQUIRED")) out->netrc_mode = EVAL_FILE_NETRC_REQUIRED;
+            if (eval_sv_eq_ci_lit(mode, "IGNORED")) out->netrc_mode = EVAL_TRANSFER_NETRC_IGNORED;
+            else if (eval_sv_eq_ci_lit(mode, "OPTIONAL")) out->netrc_mode = EVAL_TRANSFER_NETRC_OPTIONAL;
+            else if (eval_sv_eq_ci_lit(mode, "REQUIRED")) out->netrc_mode = EVAL_TRANSFER_NETRC_REQUIRED;
             else {
                 EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file() NETRC requires IGNORED/OPTIONAL/REQUIRED"), mode);
                 return false;
@@ -360,292 +354,27 @@ static bool file_transfer_verify_download_hash(EvalExecContext *ctx,
     return true;
 }
 
-#if !defined(_WIN32)
-static bool file_transfer_run_capture(EvalExecContext *ctx,
-                                      char *const argv[],
-                                      int *out_status_code,
-                                      String_View *out_log) {
-    if (!ctx || !argv || !out_status_code || !out_log) return false;
-    *out_status_code = 1;
-    *out_log = nob_sv_from_cstr("");
-
-    int pipefd[2] = {-1, -1};
-    if (pipe(pipefd) != 0) {
-        *out_log = nob_sv_from_cstr("failed to create pipe for curl backend");
-        return false;
-    }
-
-    pid_t pid = fork();
-    if (pid < 0) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        *out_log = nob_sv_from_cstr("failed to fork curl backend process");
-        return false;
-    }
-
-    if (pid == 0) {
-        dup2(pipefd[1], STDOUT_FILENO);
-        dup2(pipefd[1], STDERR_FILENO);
-        close(pipefd[0]);
-        close(pipefd[1]);
-        execvp(argv[0], argv);
-        dprintf(STDERR_FILENO, "failed to execute curl backend: %s\n", strerror(errno));
-        _exit(127);
-    }
-
-    close(pipefd[1]);
-    Nob_String_Builder sb = {0};
-    for (;;) {
-        char buf[512];
-        ssize_t n = read(pipefd[0], buf, sizeof(buf));
-        if (n <= 0) break;
-        nob_sb_append_buf(&sb, buf, (size_t)n);
-    }
-    close(pipefd[0]);
-
-    int wait_status = 0;
-    if (waitpid(pid, &wait_status, 0) < 0) {
-        nob_sb_free(sb);
-        *out_log = nob_sv_from_cstr("failed to wait curl backend process");
-        return false;
-    }
-
-    nob_sb_append_null(&sb);
-
-    String_View raw_log = nob_sv_from_parts(sb.items, sb.count > 0 ? sb.count - 1 : 0);
-    *out_log = sv_copy_to_temp_arena(ctx, raw_log);
-    nob_sb_free(sb);
-    if (ctx->oom) return false;
-
-    if (WIFEXITED(wait_status)) {
-        *out_status_code = WEXITSTATUS(wait_status);
-    } else if (WIFSIGNALED(wait_status)) {
-        *out_status_code = 128 + WTERMSIG(wait_status);
-    } else {
-        *out_status_code = 1;
-    }
-    return true;
-}
-#else
-static bool file_transfer_run_capture(EvalExecContext *ctx,
-                                      char *const argv[],
-                                      int *out_status_code,
-                                      String_View *out_log) {
-    (void)ctx;
-    (void)argv;
-    if (!out_status_code || !out_log) return false;
-    *out_status_code = 1;
-    *out_log = nob_sv_from_cstr("remote transfer backend via curl is not implemented on Windows");
-    return false;
-}
-#endif
-
-static bool file_transfer_remote_download(EvalExecContext *ctx,
-                                          const Node *node,
-                                          Cmake_Event_Origin o,
-                                          String_View url,
-                                          String_View dst,
-                                          const File_Transfer_Options *opt,
-                                          int *out_status_code,
-                                          String_View *out_log) {
-    (void)node;
-    (void)o;
-    if (!ctx || !opt || !out_status_code || !out_log) return false;
-
-    Eval_File_Curl_Options bopt = {0};
-    bopt.has_timeout = opt->has_timeout;
-    bopt.has_inactivity_timeout = opt->has_inactivity_timeout;
-    bopt.timeout_sec = (long)opt->timeout_sec;
-    bopt.inactivity_timeout_sec = (long)opt->inactivity_timeout_sec;
-    bopt.has_range_start = opt->has_range_start;
-    bopt.has_range_end = opt->has_range_end;
-    bopt.range_start = opt->range_start;
-    bopt.range_end = opt->range_end;
-    bopt.has_tls_verify = opt->has_tls_verify;
-    bopt.tls_verify = opt->tls_verify;
-    bopt.show_progress = opt->show_progress;
-    bopt.userpwd = opt->userpwd;
-    bopt.tls_cainfo = opt->tls_cainfo;
-    bopt.netrc_file = opt->netrc_file;
-    bopt.netrc_mode = opt->netrc_mode;
-    SV_List header_list = (String_View*)opt->http_headers;
-    bopt.http_headers = header_list;
-
-    bool has_dst = dst.count > 0;
-    bool backend_ok = eval_file_backend_curl_download(ctx, url, dst, has_dst, &bopt, out_status_code, out_log);
-    if (backend_ok) return true;
-    if (ctx->oom) return false;
-    if (!has_dst) {
-        *out_status_code = 1;
-        *out_log = nob_sv_from_cstr("probe-only remote DOWNLOAD requires libcurl backend");
-        return true;
-    }
-
-    char *url_c = eval_sv_to_cstr_temp(ctx, url);
-    char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
-    EVAL_OOM_RETURN_IF_NULL(ctx, url_c, false);
-    EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, false);
-
-    char timeout_buf[64] = {0};
-    char inactivity_buf[64] = {0};
-    char range_buf[96] = {0};
-
-    char *argv[96] = {0};
-    size_t argc = 0;
-    argv[argc++] = "curl";
-    if (!opt->show_progress) argv[argc++] = "--silent";
-    argv[argc++] = "--show-error";
-    argv[argc++] = "--location";
-    argv[argc++] = "--output";
-    argv[argc++] = dst_c;
-
-    if (opt->has_timeout) {
-        snprintf(timeout_buf, sizeof(timeout_buf), "%zu", opt->timeout_sec);
-        argv[argc++] = "--max-time";
-        argv[argc++] = timeout_buf;
-    }
-    if (opt->has_inactivity_timeout) {
-        snprintf(inactivity_buf, sizeof(inactivity_buf), "%zu", opt->inactivity_timeout_sec);
-        argv[argc++] = "--speed-time";
-        argv[argc++] = inactivity_buf;
-        argv[argc++] = "--speed-limit";
-        argv[argc++] = "1";
-    }
-    if (opt->userpwd.count > 0) {
-        argv[argc++] = "--user";
-        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->userpwd);
-        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
-    }
-    if (opt->has_tls_verify && !opt->tls_verify) argv[argc++] = "--insecure";
-    if (opt->tls_cainfo.count > 0) {
-        argv[argc++] = "--cacert";
-        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->tls_cainfo);
-        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
-    }
-    if (opt->netrc_mode == EVAL_FILE_NETRC_OPTIONAL) {
-        argv[argc++] = "--netrc-optional";
-    } else if (opt->netrc_mode == EVAL_FILE_NETRC_REQUIRED) {
-        argv[argc++] = "--netrc";
-    }
-    if (opt->netrc_file.count > 0) {
-        argv[argc++] = "--netrc-file";
-        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->netrc_file);
-        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
-    }
-    for (size_t i = 0; i < opt->http_headers_count; i++) {
-        argv[argc++] = "--header";
-        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->http_headers[i]);
-        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
-    }
-    if (opt->has_range_start || opt->has_range_end) {
-        if (opt->has_range_start && opt->has_range_end) {
-            snprintf(range_buf, sizeof(range_buf), "%zu-%zu", opt->range_start, opt->range_end);
-        } else if (opt->has_range_start) {
-            snprintf(range_buf, sizeof(range_buf), "%zu-", opt->range_start);
-        } else {
-            snprintf(range_buf, sizeof(range_buf), "0-%zu", opt->range_end);
-        }
-        argv[argc++] = "--range";
-        argv[argc++] = range_buf;
-    }
-
-    argv[argc++] = url_c;
-    argv[argc] = NULL;
-
-    return file_transfer_run_capture(ctx, argv, out_status_code, out_log);
-}
-
-static bool file_transfer_remote_upload(EvalExecContext *ctx,
-                                        const Node *node,
-                                        Cmake_Event_Origin o,
-                                        String_View src,
-                                        String_View url,
-                                        const File_Transfer_Options *opt,
-                                        int *out_status_code,
-                                        String_View *out_log) {
-    (void)node;
-    (void)o;
-    if (!ctx || !opt || !out_status_code || !out_log) return false;
-
-    Eval_File_Curl_Options bopt = {0};
-    bopt.has_timeout = opt->has_timeout;
-    bopt.has_inactivity_timeout = opt->has_inactivity_timeout;
-    bopt.timeout_sec = (long)opt->timeout_sec;
-    bopt.inactivity_timeout_sec = (long)opt->inactivity_timeout_sec;
-    bopt.has_tls_verify = opt->has_tls_verify;
-    bopt.tls_verify = opt->tls_verify;
-    bopt.show_progress = opt->show_progress;
-    bopt.userpwd = opt->userpwd;
-    bopt.tls_cainfo = opt->tls_cainfo;
-    bopt.netrc_file = opt->netrc_file;
-    bopt.netrc_mode = opt->netrc_mode;
-    SV_List header_list = (String_View*)opt->http_headers;
-    bopt.http_headers = header_list;
-
-    bool backend_ok = eval_file_backend_curl_upload(ctx, src, url, &bopt, out_status_code, out_log);
-    if (backend_ok) return true;
-    if (ctx->oom) return false;
-
-    char *src_c = eval_sv_to_cstr_temp(ctx, src);
-    char *url_c = eval_sv_to_cstr_temp(ctx, url);
-    EVAL_OOM_RETURN_IF_NULL(ctx, src_c, false);
-    EVAL_OOM_RETURN_IF_NULL(ctx, url_c, false);
-
-    char timeout_buf[64] = {0};
-    char inactivity_buf[64] = {0};
-
-    char *argv[96] = {0};
-    size_t argc = 0;
-    argv[argc++] = "curl";
-    if (!opt->show_progress) argv[argc++] = "--silent";
-    argv[argc++] = "--show-error";
-    argv[argc++] = "--location";
-    argv[argc++] = "--upload-file";
-    argv[argc++] = src_c;
-
-    if (opt->has_timeout) {
-        snprintf(timeout_buf, sizeof(timeout_buf), "%zu", opt->timeout_sec);
-        argv[argc++] = "--max-time";
-        argv[argc++] = timeout_buf;
-    }
-    if (opt->has_inactivity_timeout) {
-        snprintf(inactivity_buf, sizeof(inactivity_buf), "%zu", opt->inactivity_timeout_sec);
-        argv[argc++] = "--speed-time";
-        argv[argc++] = inactivity_buf;
-        argv[argc++] = "--speed-limit";
-        argv[argc++] = "1";
-    }
-    if (opt->userpwd.count > 0) {
-        argv[argc++] = "--user";
-        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->userpwd);
-        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
-    }
-    if (opt->has_tls_verify && !opt->tls_verify) argv[argc++] = "--insecure";
-    if (opt->tls_cainfo.count > 0) {
-        argv[argc++] = "--cacert";
-        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->tls_cainfo);
-        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
-    }
-    if (opt->netrc_mode == EVAL_FILE_NETRC_OPTIONAL) {
-        argv[argc++] = "--netrc-optional";
-    } else if (opt->netrc_mode == EVAL_FILE_NETRC_REQUIRED) {
-        argv[argc++] = "--netrc";
-    }
-    if (opt->netrc_file.count > 0) {
-        argv[argc++] = "--netrc-file";
-        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->netrc_file);
-        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
-    }
-    for (size_t i = 0; i < opt->http_headers_count; i++) {
-        argv[argc++] = "--header";
-        argv[argc++] = eval_sv_to_cstr_temp(ctx, opt->http_headers[i]);
-        EVAL_OOM_RETURN_IF_NULL(ctx, argv[argc - 1], false);
-    }
-
-    argv[argc++] = url_c;
-    argv[argc] = NULL;
-
-    return file_transfer_run_capture(ctx, argv, out_status_code, out_log);
+static Eval_Transfer_Options file_transfer_service_options(const File_Transfer_Options *opt) {
+    Eval_Transfer_Options out = {0};
+    if (!opt) return out;
+    out.has_timeout = opt->has_timeout;
+    out.has_inactivity_timeout = opt->has_inactivity_timeout;
+    out.timeout_sec = (long)opt->timeout_sec;
+    out.inactivity_timeout_sec = (long)opt->inactivity_timeout_sec;
+    out.has_range_start = opt->has_range_start;
+    out.has_range_end = opt->has_range_end;
+    out.range_start = opt->range_start;
+    out.range_end = opt->range_end;
+    out.has_tls_verify = opt->has_tls_verify;
+    out.tls_verify = opt->tls_verify;
+    out.show_progress = opt->show_progress;
+    out.userpwd = opt->userpwd;
+    out.tls_cainfo = opt->tls_cainfo;
+    out.netrc_file = opt->netrc_file;
+    out.netrc_mode = opt->netrc_mode;
+    out.http_headers = opt->http_headers;
+    out.http_headers_count = opt->http_headers_count;
+    return out;
 }
 
 static bool handle_file_download(EvalExecContext *ctx, const Node *node, SV_List args) {
@@ -709,31 +438,36 @@ static bool handle_file_download(EvalExecContext *ctx, const Node *node, SV_List
             return true;
         }
 
-        int rc = 1;
-        String_View log_sv = nob_sv_from_cstr("");
-        if (!file_transfer_remote_download(ctx, node, o, args[1], dst, &opt, &rc, &log_sv)) {
+        Eval_Transfer_Download_Request transfer_req = {
+            .url = args[1],
+            .dst_path = dst,
+            .has_dst_path = has_dst,
+            .options = file_transfer_service_options(&opt),
+        };
+        Eval_Backend_Result transfer = {0};
+        if (!eval_service_transfer_download(ctx, &transfer_req, &transfer)) {
             if (ctx->oom) return true;
             file_transfer_fail(ctx,
                                node,
                                o,
                                &opt,
                                1,
-                               nob_sv_from_cstr("curl backend failed"),
-                               file_transfer_trim_temp(ctx, log_sv),
+                               nob_sv_from_cstr("remote transfer backend failed"),
+                               file_transfer_trim_temp(ctx, transfer.log),
                                nob_sv_from_cstr("file(DOWNLOAD) remote backend failure"),
                                args[1]);
             return true;
         }
 
-        String_View log_trim = file_transfer_trim_temp(ctx, log_sv);
+        String_View log_trim = file_transfer_trim_temp(ctx, transfer.log);
         String_View first = file_transfer_first_line_temp(ctx, log_trim);
-        if (rc != 0) {
-            if (first.count == 0) first = nob_sv_from_cstr("curl transfer failed");
+        if (transfer.status_code != 0) {
+            if (first.count == 0) first = nob_sv_from_cstr("remote transfer failed");
             file_transfer_fail(ctx,
                                node,
                                o,
                                &opt,
-                               rc,
+                               transfer.status_code,
                                first,
                                log_trim,
                                nob_sv_from_cstr("file(DOWNLOAD) failed to fetch remote URL"),
@@ -850,7 +584,7 @@ static bool handle_file_download(EvalExecContext *ctx, const Node *node, SV_List
                          opt.userpwd.count == 0 &&
                          opt.tls_cainfo.count == 0 &&
                          opt.netrc_file.count == 0 &&
-                         opt.netrc_mode == EVAL_FILE_NETRC_DEFAULT &&
+                         opt.netrc_mode == EVAL_TRANSFER_NETRC_DEFAULT &&
                          !opt.expected_md5.count;
         String_View hash_algo = nob_sv_from_cstr("");
         String_View hash_digest = nob_sv_from_cstr("");
@@ -894,31 +628,35 @@ static bool handle_file_upload(EvalExecContext *ctx, const Node *node, SV_List a
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_file_current_src_dir(ctx), &src)) return true;
 
     if (file_transfer_is_remote_url(args[2])) {
-        int rc = 1;
-        String_View log_sv = nob_sv_from_cstr("");
-        if (!file_transfer_remote_upload(ctx, node, o, src, args[2], &opt, &rc, &log_sv)) {
+        Eval_Transfer_Upload_Request transfer_req = {
+            .src_path = src,
+            .url = args[2],
+            .options = file_transfer_service_options(&opt),
+        };
+        Eval_Backend_Result transfer = {0};
+        if (!eval_service_transfer_upload(ctx, &transfer_req, &transfer)) {
             if (ctx->oom) return true;
             file_transfer_fail(ctx,
                                node,
                                o,
                                &opt,
                                1,
-                               nob_sv_from_cstr("curl backend failed"),
-                               file_transfer_trim_temp(ctx, log_sv),
+                               nob_sv_from_cstr("remote transfer backend failed"),
+                               file_transfer_trim_temp(ctx, transfer.log),
                                nob_sv_from_cstr("file(UPLOAD) remote backend failure"),
                                args[2]);
             return true;
         }
 
-        String_View log_trim = file_transfer_trim_temp(ctx, log_sv);
+        String_View log_trim = file_transfer_trim_temp(ctx, transfer.log);
         String_View first = file_transfer_first_line_temp(ctx, log_trim);
-        if (rc != 0) {
-            if (first.count == 0) first = nob_sv_from_cstr("curl transfer failed");
+        if (transfer.status_code != 0) {
+            if (first.count == 0) first = nob_sv_from_cstr("remote transfer failed");
             file_transfer_fail(ctx,
                                node,
                                o,
                                &opt,
-                               rc,
+                               transfer.status_code,
                                first,
                                log_trim,
                                nob_sv_from_cstr("file(UPLOAD) failed to send to remote URL"),

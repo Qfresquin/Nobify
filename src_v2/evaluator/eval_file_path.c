@@ -4,9 +4,6 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
-#if defined(_WIN32)
-#include <windows.h>
-#endif
 
 String_View eval_file_current_src_dir(EvalExecContext *ctx) {
     return eval_current_source_dir(ctx);
@@ -98,115 +95,19 @@ static bool scope_path_has_prefix(String_View path, String_View prefix, bool ci)
     return svu_is_path_sep(path.data[prefix.count]);
 }
 
-static void scope_normalize_slashes_in_place(char *s) {
-    if (!s) return;
-    for (size_t i = 0; s[i] != '\0'; i++) {
-        if (s[i] == '\\') s[i] = '/';
-    }
-}
-
-static bool scope_canonicalize_existing_cstr_temp(EvalExecContext *ctx,
-                                                  const char *path_c,
-                                                  char **out_canon_cstr) {
-    if (!ctx || !path_c || !out_canon_cstr) return false;
-    *out_canon_cstr = NULL;
-
-#if defined(_WIN32)
-    HANDLE h = CreateFileA(path_c,
-                           FILE_READ_ATTRIBUTES,
-                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                           NULL,
-                           OPEN_EXISTING,
-                           FILE_FLAG_BACKUP_SEMANTICS,
-                           NULL);
-    if (h == INVALID_HANDLE_VALUE) return false;
-
-    DWORD need = GetFinalPathNameByHandleA(h, NULL, 0, FILE_NAME_NORMALIZED);
-    if (need == 0) {
-        CloseHandle(h);
-        return false;
-    }
-
-    DWORD cap = need + 1;
-    char *raw = (char*)arena_alloc(eval_temp_arena(ctx), (size_t)cap);
-    EVAL_OOM_RETURN_IF_NULL(ctx, raw, false);
-
-    DWORD wrote = GetFinalPathNameByHandleA(h, raw, cap, FILE_NAME_NORMALIZED);
-    CloseHandle(h);
-    if (wrote == 0 || wrote >= cap) return false;
-
-    const char *view = raw;
-    char *unc_fixed = NULL;
-    if (strncmp(view, "\\\\?\\UNC\\", 8) == 0) {
-        size_t rest = strlen(view + 8);
-        unc_fixed = (char*)arena_alloc(eval_temp_arena(ctx), rest + 3);
-        EVAL_OOM_RETURN_IF_NULL(ctx, unc_fixed, false);
-        unc_fixed[0] = '/';
-        unc_fixed[1] = '/';
-        memcpy(unc_fixed + 2, view + 8, rest + 1);
-        view = unc_fixed;
-    } else if (strncmp(view, "\\\\?\\", 4) == 0) {
-        view += 4;
-    }
-
-    size_t len = strlen(view);
-    char *norm = (char*)arena_alloc(eval_temp_arena(ctx), len + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, norm, false);
-    memcpy(norm, view, len + 1);
-    scope_normalize_slashes_in_place(norm);
-    *out_canon_cstr = norm;
-    return true;
-#else
-    char *real = realpath(path_c, NULL);
-    if (!real) return false;
-    size_t len = strlen(real);
-    char *norm = (char*)arena_alloc(eval_temp_arena(ctx), len + 1);
-    EVAL_OOM_RETURN_IF_NULL(ctx, norm, false);
-    memcpy(norm, real, len + 1);
-    free(real);
-    *out_canon_cstr = norm;
-    return true;
-#endif
-}
-
 static bool scope_canonicalize_existing_or_parent_temp(EvalExecContext *ctx,
                                                        String_View path,
                                                        String_View *out) {
     if (!ctx || !out || path.count == 0) return false;
-
-    char *probe = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, probe, false);
-    scope_normalize_slashes_in_place(probe);
-
-    for (;;) {
-        char *canon = NULL;
-        if (scope_canonicalize_existing_cstr_temp(ctx, probe, &canon)) {
-            *out = nob_sv_from_cstr(canon);
-            return true;
-        }
-
-        size_t len = strlen(probe);
-        while (len > 0 && probe[len - 1] == '/') {
-            if (len == 1) break;
-            if (len == 3 && isalpha((unsigned char)probe[0]) && probe[1] == ':') break;
-            probe[--len] = '\0';
-        }
-
-        char *last = strrchr(probe, '/');
-        if (!last) return false;
-
-        if (last == probe) {
-            probe[1] = '\0';
-            continue;
-        }
-        if (last == probe + 2 && isalpha((unsigned char)probe[0]) && probe[1] == ':') {
-            probe[3] = '\0';
-            continue;
-        }
-        *last = '\0';
-    }
-
-    return false;
+    Eval_Path_Canonicalize_Request req = {
+        .path = path,
+        .existing_parent = true,
+    };
+    Eval_Path_Canonicalize_Result res = {0};
+    if (!eval_service_canonicalize_path(ctx, &req, &res)) return false;
+    if (!res.found) return false;
+    *out = res.path;
+    return true;
 }
 
 bool eval_file_resolve_path(EvalExecContext *ctx,
@@ -366,13 +267,14 @@ bool eval_file_canonicalize_existing_path_temp(EvalExecContext *ctx, String_View
     if (!ctx || !out_path || path.count == 0) return false;
     *out_path = nob_sv_from_cstr("");
 
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-    scope_normalize_slashes_in_place(path_c);
-
-    char *canon = NULL;
-    if (!scope_canonicalize_existing_cstr_temp(ctx, path_c, &canon)) return false;
-    *out_path = nob_sv_from_cstr(canon);
+    Eval_Path_Canonicalize_Request req = {
+        .path = path,
+        .existing_parent = false,
+    };
+    Eval_Path_Canonicalize_Result res = {0};
+    if (!eval_service_canonicalize_path(ctx, &req, &res)) return false;
+    if (!res.found) return false;
+    *out_path = res.path;
     return true;
 }
 

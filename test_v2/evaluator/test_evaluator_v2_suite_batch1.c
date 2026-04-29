@@ -20,12 +20,26 @@ typedef struct {
     size_t touch_count;
     size_t link_count;
     size_t readlink_count;
+    size_t canonicalize_count;
+    size_t lock_acquire_count;
+    size_t lock_release_count;
+    size_t archive_create_count;
+    size_t archive_extract_count;
+    size_t transfer_download_count;
+    size_t transfer_upload_count;
     String_View last_read_path;
     String_View last_write_path;
     String_View last_write_contents;
     String_View last_mkdir_path;
     String_View last_copy_src;
     String_View last_copy_dst;
+    String_View last_canonicalize_path;
+    String_View last_lock_path;
+    uintptr_t last_lock_token;
+    String_View last_archive_output;
+    String_View last_archive_input;
+    String_View last_transfer_download_url;
+    String_View last_transfer_upload_url;
     bool last_write_append;
     bool saw_read_svc_in;
     bool saw_write_svc_out;
@@ -43,6 +57,13 @@ typedef struct {
     bool saw_touch_nocreate;
     bool saw_link_symbolic;
     bool saw_readlink;
+    bool saw_canonicalize_existing;
+    bool saw_lock_acquire;
+    bool saw_lock_release;
+    bool saw_archive_create;
+    bool saw_archive_extract;
+    bool saw_transfer_download;
+    bool saw_transfer_upload;
     bool saw_append_two;
 } File_Service_Mock_Data;
 
@@ -317,6 +338,112 @@ static bool evaluator_file_service_mock_readlink(void *user_data,
         data->saw_readlink = true;
     }
     *out_target = nob_sv_from_cstr("svc_link_src.txt");
+    return true;
+}
+
+static bool evaluator_file_service_mock_canonicalize(void *user_data,
+                                                     Arena *scratch_arena,
+                                                     const Eval_Path_Canonicalize_Request *request,
+                                                     Eval_Path_Canonicalize_Result *out_result) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    (void)scratch_arena;
+    if (!data || !request || !out_result) return false;
+    data->canonicalize_count++;
+    data->last_canonicalize_path = request->path;
+    if (!request->existing_parent) data->saw_canonicalize_existing = true;
+    out_result->found = true;
+    out_result->path = request->path;
+    return true;
+}
+
+static bool evaluator_file_service_mock_lock_acquire(void *user_data,
+                                                     const Eval_Host_Lock_Request *request,
+                                                     Eval_Host_Lock_Result *out_result) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    if (!data || !request || !out_result) return false;
+    data->lock_acquire_count++;
+    data->last_lock_path = request->path;
+    data->last_lock_token = (uintptr_t)0xC0FFEEu;
+    data->saw_lock_acquire = true;
+    *out_result = (Eval_Host_Lock_Result){
+        .acquired = true,
+        .token = data->last_lock_token,
+        .message = nob_sv_from_cstr("0"),
+    };
+    return true;
+}
+
+static bool evaluator_file_service_mock_lock_release(void *user_data, uintptr_t token) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    if (!data) return false;
+    data->lock_release_count++;
+    data->last_lock_token = token;
+    data->saw_lock_release = token == (uintptr_t)0xC0FFEEu;
+    return true;
+}
+
+static bool evaluator_file_service_mock_archive_create(void *user_data,
+                                                       const Eval_Archive_Create_Request *request,
+                                                       Eval_Backend_Result *out_result) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    if (!data || !request || !out_result) return false;
+    data->archive_create_count++;
+    data->last_archive_output = request->output;
+    data->saw_archive_create = request->path_count == 1 &&
+                               sv_contains_sv(request->output, nob_sv_from_cstr("svc_archive.tar")) &&
+                               sv_contains_sv(request->paths[0], nob_sv_from_cstr("svc_dir"));
+    *out_result = (Eval_Backend_Result){
+        .status_code = 0,
+        .log = nob_sv_from_cstr("archive create ok"),
+    };
+    return true;
+}
+
+static bool evaluator_file_service_mock_archive_extract(void *user_data,
+                                                        const Eval_Archive_Extract_Request *request,
+                                                        Eval_Backend_Result *out_result) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    if (!data || !request || !out_result) return false;
+    data->archive_extract_count++;
+    data->last_archive_input = request->input;
+    data->saw_archive_extract = sv_contains_sv(request->input, nob_sv_from_cstr("svc_archive.tar")) &&
+                                sv_contains_sv(request->destination, nob_sv_from_cstr("svc_extract"));
+    *out_result = (Eval_Backend_Result){
+        .status_code = 0,
+        .log = nob_sv_from_cstr("archive extract ok"),
+    };
+    return true;
+}
+
+static bool evaluator_file_service_mock_transfer_download(void *user_data,
+                                                          const Eval_Transfer_Download_Request *request,
+                                                          Eval_Backend_Result *out_result) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    if (!data || !request || !out_result) return false;
+    data->transfer_download_count++;
+    data->last_transfer_download_url = request->url;
+    data->saw_transfer_download = request->has_dst_path &&
+                                  sv_contains_sv(request->url, nob_sv_from_cstr("download.example"));
+    *out_result = (Eval_Backend_Result){
+        .status_code = 0,
+        .log = nob_sv_from_cstr("download ok"),
+    };
+    return true;
+}
+
+static bool evaluator_file_service_mock_transfer_upload(void *user_data,
+                                                        const Eval_Transfer_Upload_Request *request,
+                                                        Eval_Backend_Result *out_result) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    if (!data || !request || !out_result) return false;
+    data->transfer_upload_count++;
+    data->last_transfer_upload_url = request->url;
+    data->saw_transfer_upload = sv_contains_sv(request->src_path, nob_sv_from_cstr("svc_upload.txt")) &&
+                                sv_contains_sv(request->url, nob_sv_from_cstr("upload.example"));
+    *out_result = (Eval_Backend_Result){
+        .status_code = 0,
+        .log = nob_sv_from_cstr("upload ok"),
+    };
     return true;
 }
 
@@ -905,6 +1032,106 @@ TEST(evaluator_file_commands_route_structural_fs_ops_through_services) {
     ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_LINK_TARGET")),
                      nob_sv_from_cstr("svc_link_src.txt")));
 
+    TEST_PASS();
+}
+
+TEST(evaluator_file_host_backed_lanes_route_through_backend_services) {
+    File_Service_Mock_Data fs_data = {0};
+    EvalServices services = {
+        .user_data = &fs_data,
+        .fs_mkdir = evaluator_file_service_mock_mkdir,
+        .fs_stat = evaluator_file_service_mock_stat,
+        .fs_canonicalize_path = evaluator_file_service_mock_canonicalize,
+        .host_lock_acquire = evaluator_file_service_mock_lock_acquire,
+        .host_lock_release = evaluator_file_service_mock_lock_release,
+        .archive_create = evaluator_file_service_mock_archive_create,
+        .archive_extract = evaluator_file_service_mock_archive_extract,
+        .transfer_download = evaluator_file_service_mock_transfer_download,
+        .transfer_upload = evaluator_file_service_mock_transfer_upload,
+    };
+    Eval_Test_Init init = {
+        .services = &services,
+    };
+    Eval_Test_Fixture *fixture = eval_test_fixture_create(2 * 1024 * 1024,
+                                                          2 * 1024 * 1024,
+                                                          &init);
+    ASSERT(fixture != NULL);
+    ASSERT(fixture->ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        fixture->temp_arena,
+        "file(REAL_PATH svc_existing.txt SVC_REAL)\n"
+        "file(LOCK svc_lock DIRECTORY RESULT_VARIABLE SVC_LOCK)\n"
+        "file(LOCK svc_lock DIRECTORY RELEASE RESULT_VARIABLE SVC_UNLOCK)\n"
+        "file(ARCHIVE_CREATE OUTPUT svc_archive.tar FORMAT PAXR MTIME 0 PATHS svc_dir)\n"
+        "file(ARCHIVE_EXTRACT INPUT svc_archive.tar DESTINATION svc_extract)\n"
+        "file(DOWNLOAD https://download.example/payload svc_download.out STATUS SVC_DL_STATUS LOG SVC_DL_LOG)\n"
+        "file(UPLOAD svc_upload.txt https://upload.example/payload STATUS SVC_UL_STATUS LOG SVC_UL_LOG)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(fixture->ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(fixture->ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(fs_data.canonicalize_count >= 1);
+    ASSERT(fs_data.lock_acquire_count == 1);
+    ASSERT(fs_data.lock_release_count == 1);
+    ASSERT(fs_data.archive_create_count == 1);
+    ASSERT(fs_data.archive_extract_count == 1);
+    ASSERT(fs_data.transfer_download_count == 1);
+    ASSERT(fs_data.transfer_upload_count == 1);
+    ASSERT(fs_data.saw_canonicalize_existing);
+    ASSERT(fs_data.saw_lock_acquire);
+    ASSERT(fs_data.saw_lock_release);
+    ASSERT(fs_data.saw_archive_create);
+    ASSERT(fs_data.saw_archive_extract);
+    ASSERT(fs_data.saw_transfer_download);
+    ASSERT(fs_data.saw_transfer_upload);
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_LOCK")),
+                     nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_UNLOCK")),
+                     nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_DL_STATUS")),
+                     nob_sv_from_cstr("0;No error")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_UL_STATUS")),
+                     nob_sv_from_cstr("0;No error")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_DL_LOG")),
+                     nob_sv_from_cstr("download ok")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_UL_LOG")),
+                     nob_sv_from_cstr("upload ok")));
+
+    TEST_PASS();
+}
+
+static bool evaluator_handler_source_lacks(Arena *arena,
+                                           const char *relative_path,
+                                           const char *needle) {
+    const char *repo_root = getenv(CMK2NOB_TEST_REPO_ROOT_ENV);
+    char path[_TINYDIR_PATH_MAX] = {0};
+    String_View content = {0};
+    int n = 0;
+
+    if (!arena || !relative_path || !needle || !repo_root || repo_root[0] == '\0') return false;
+    n = snprintf(path, sizeof(path), "%s/%s", repo_root, relative_path);
+    if (n <= 0 || n >= (int)sizeof(path)) return false;
+    if (!evaluator_load_text_file_to_arena(arena, path, &content)) return false;
+    return !sv_contains_sv(content, nob_sv_from_cstr(needle));
+}
+
+TEST(evaluator_file_handlers_keep_host_backends_behind_services) {
+    Arena *arena = arena_create(512 * 1024);
+    ASSERT(arena != NULL);
+
+    ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_path.c", "realpath"));
+    ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_path.c", "GetFinalPathNameByHandleA"));
+    ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_path.c", "CreateFileA"));
+    ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_generate_lock_archive.c", "LockFileEx"));
+    ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_generate_lock_archive.c", "flock("));
+    ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_generate_lock_archive.c", "eval_file_backend_archive_"));
+    ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_generate_lock_archive.c", "nob_cmd_run"));
+    ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_transfer.c", "eval_file_backend_curl_"));
+    ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_transfer.c", "\"curl\""));
+
+    arena_destroy(arena);
     TEST_PASS();
 }
 
@@ -3038,6 +3265,8 @@ void run_evaluator_v2_batch1(int *passed, int *failed, int *skipped) {
     test_evaluator_native_command_registry_case_insensitive_index_lookup(passed, failed, skipped);
     test_evaluator_file_commands_route_supported_fs_effects_through_services(passed, failed, skipped);
     test_evaluator_file_commands_route_structural_fs_ops_through_services(passed, failed, skipped);
+    test_evaluator_file_host_backed_lanes_route_through_backend_services(passed, failed, skipped);
+    test_evaluator_file_handlers_keep_host_backends_behind_services(passed, failed, skipped);
     test_evaluator_compat_refresh_snapshot_applies_next_command_cycle(passed, failed, skipped);
     test_evaluator_global_diag_strict_controls_event_report_and_runtime_gating(passed, failed, skipped);
     test_evaluator_unsupported_policy_snapshot_applies_next_command_cycle(passed, failed, skipped);

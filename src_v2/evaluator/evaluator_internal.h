@@ -148,11 +148,8 @@ typedef struct {
     size_t owner_file_depth;
     size_t owner_function_depth;
     String_View path;
-#if defined(_WIN32)
-    void *handle;
-#else
-    int fd;
-#endif
+    uintptr_t token;
+    bool has_token;
 } Eval_File_Lock;
 
 typedef Eval_File_Lock *Eval_File_Lock_List;
@@ -3106,6 +3103,25 @@ bool eval_service_link(EvalExecContext *ctx,
                        String_View dst,
                        Eval_Fs_Link_Kind kind);
 bool eval_service_readlink(EvalExecContext *ctx, String_View path, String_View *out_target);
+bool eval_service_canonicalize_path(EvalExecContext *ctx,
+                                    const Eval_Path_Canonicalize_Request *req,
+                                    Eval_Path_Canonicalize_Result *out);
+bool eval_service_lock_acquire(EvalExecContext *ctx,
+                               const Eval_Host_Lock_Request *req,
+                               Eval_Host_Lock_Result *out);
+bool eval_service_lock_release(EvalExecContext *ctx, uintptr_t token);
+bool eval_service_archive_create(EvalExecContext *ctx,
+                                 const Eval_Archive_Create_Request *req,
+                                 Eval_Backend_Result *out);
+bool eval_service_archive_extract(EvalExecContext *ctx,
+                                  const Eval_Archive_Extract_Request *req,
+                                  Eval_Backend_Result *out);
+bool eval_service_transfer_download(EvalExecContext *ctx,
+                                    const Eval_Transfer_Download_Request *req,
+                                    Eval_Backend_Result *out);
+bool eval_service_transfer_upload(EvalExecContext *ctx,
+                                  const Eval_Transfer_Upload_Request *req,
+                                  Eval_Backend_Result *out);
 bool eval_service_host_read_file(EvalExecContext *ctx,
                                  String_View path,
                                  String_View *out_contents,

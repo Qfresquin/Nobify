@@ -1,53 +1,18 @@
 #include "eval_file_internal.h"
 #include "eval_expr.h"
-#include "eval_file_backend_archive.h"
 #include "sv_utils.h"
 #include "arena_dyn.h"
 
-#include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#if defined(_WIN32)
-#include <windows.h>
-#include <direct.h>
-#else
-#include <fcntl.h>
-#include <sys/file.h>
-#include <unistd.h>
-#include <time.h>
-#endif
 
 enum {
     EVAL_FILE_LOCK_GUARD_PROCESS = 0,
     EVAL_FILE_LOCK_GUARD_FILE = 1,
     EVAL_FILE_LOCK_GUARD_FUNCTION = 2,
 };
-
-static bool file_cmd_append_checked(EvalExecContext *ctx, Nob_Cmd *cmd, const char *arg) {
-    if (!ctx || !cmd || !arg) return false;
-    if (cmd->count == cmd->capacity) {
-        size_t new_cap = cmd->capacity > 0 ? cmd->capacity * 2 : 8;
-        if (new_cap < cmd->count + 1) new_cap = cmd->count + 1;
-        if (new_cap > (SIZE_MAX / sizeof(cmd->items[0]))) return ctx_oom(ctx);
-
-        const char **grown = (const char**)realloc((void*)cmd->items, new_cap * sizeof(cmd->items[0]));
-        EVAL_OOM_RETURN_IF_NULL(ctx, grown, false);
-        cmd->items = grown;
-        cmd->capacity = new_cap;
-    }
-    cmd->items[cmd->count++] = arg;
-    return true;
-}
-
-static void file_cmd_reset(Nob_Cmd *cmd) {
-    if (!cmd) return;
-    nob_cmd_free((*cmd));
-    cmd->items = NULL;
-    cmd->count = 0;
-    cmd->capacity = 0;
-}
 
 static ssize_t eval_file_lock_find(EvalExecContext *ctx, String_View path) {
     if (!ctx) return -1;
@@ -57,19 +22,11 @@ static ssize_t eval_file_lock_find(EvalExecContext *ctx, String_View path) {
     return -1;
 }
 
-static void eval_file_lock_close_entry(Eval_File_Lock *lock) {
-    if (!lock) return;
-#if defined(_WIN32)
-    HANDLE h = (HANDLE)lock->handle;
-    if (h) CloseHandle(h);
-    lock->handle = NULL;
-#else
-    if (lock->fd >= 0) {
-        (void)flock(lock->fd, LOCK_UN);
-        (void)close(lock->fd);
-        lock->fd = -1;
-    }
-#endif
+static void eval_file_lock_close_entry(EvalExecContext *ctx, Eval_File_Lock *lock) {
+    if (!ctx || !lock || !lock->has_token) return;
+    (void)eval_service_lock_release(ctx, lock->token);
+    lock->token = 0;
+    lock->has_token = false;
 }
 
 static void eval_file_lock_release_by_scope(EvalExecContext *ctx, int guard_kind, size_t owner_depth) {
@@ -87,7 +44,7 @@ static void eval_file_lock_release_by_scope(EvalExecContext *ctx, int guard_kind
             continue;
         }
 
-        eval_file_lock_close_entry(lock);
+        eval_file_lock_close_entry(ctx, lock);
         ctx->file_state.file_locks[i] = ctx->file_state.file_locks[arena_arr_len(ctx->file_state.file_locks) - 1];
         arena_arr_set_len(ctx->file_state.file_locks, arena_arr_len(ctx->file_state.file_locks) - 1);
     }
@@ -163,25 +120,22 @@ static bool file_parse_permission_token(mode_t *mode, String_View token) {
 void eval_file_lock_cleanup(EvalExecContext *ctx) {
     if (!ctx) return;
     for (size_t i = 0; i < arena_arr_len(ctx->file_state.file_locks); i++) {
-        eval_file_lock_close_entry(&ctx->file_state.file_locks[i]);
+        eval_file_lock_close_entry(ctx, &ctx->file_state.file_locks[i]);
     }
     if (ctx->file_state.file_locks) {
         arena_arr_set_len(ctx->file_state.file_locks, 0);
     }
 }
 
-static bool eval_file_lock_add(EvalExecContext *ctx, String_View path, intptr_t fd_or_dummy, int guard_kind) {
+static bool eval_file_lock_add(EvalExecContext *ctx, String_View path, uintptr_t token, int guard_kind) {
     if (!ctx) return false;
     Eval_File_Lock lock = {0};
     lock.path = sv_copy_to_event_arena(ctx, path);
     lock.guard_kind = guard_kind;
     lock.owner_file_depth = ctx->file_eval_depth;
     lock.owner_function_depth = ctx->function_eval_depth;
-#if defined(_WIN32)
-    lock.handle = (void*)(uintptr_t)fd_or_dummy;
-#else
-    lock.fd = (int)fd_or_dummy;
-#endif
+    lock.token = token;
+    lock.has_token = token != 0;
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->file_state.file_locks, lock);
 }
 
@@ -655,7 +609,7 @@ static bool handle_file_lock(EvalExecContext *ctx, const Node *node, SV_List arg
     ssize_t existing = eval_file_lock_find(ctx, lock_path);
     if (release) {
         if (existing >= 0) {
-            eval_file_lock_close_entry(&ctx->file_state.file_locks[existing]);
+            eval_file_lock_close_entry(ctx, &ctx->file_state.file_locks[existing]);
             eval_file_lock_remove_at(ctx, (size_t)existing);
         }
         if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("0"));
@@ -672,104 +626,32 @@ static bool handle_file_lock(EvalExecContext *ctx, const Node *node, SV_List arg
         return true;
     }
 
-    char *path_c = eval_sv_to_cstr_temp(ctx, lock_path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, true);
+    Eval_Host_Lock_Request lock_req = {
+        .path = lock_path,
+        .has_timeout = has_timeout,
+        .timeout_sec = timeout_sec,
+    };
+    Eval_Host_Lock_Result lock_res = {0};
+    if (!eval_service_lock_acquire(ctx, &lock_req, &lock_res)) return true;
 
-#if defined(_WIN32)
-    HANDLE h = CreateFileA(path_c,
-                           GENERIC_READ | GENERIC_WRITE,
-                           FILE_SHARE_READ | FILE_SHARE_WRITE,
-                           NULL,
-                           OPEN_ALWAYS,
-                           FILE_ATTRIBUTE_NORMAL,
-                           NULL);
-    if (h == INVALID_HANDLE_VALUE) {
-        if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("failed to open lock file"));
-        else {
-            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(LOCK) failed to open lock file"), lock_path);
+    if (!lock_res.acquired) {
+        String_View msg = lock_res.message.count > 0 ? lock_res.message : nob_sv_from_cstr("failed to acquire lock");
+        if (result_var.count > 0) {
+            (void)eval_var_set_current(ctx, result_var, msg);
+        } else {
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(LOCK) failed to acquire lock"), msg);
         }
         return true;
     }
 
-    bool ok = false;
-    DWORD start_ms = GetTickCount();
-    for (;;) {
-        OVERLAPPED ov = {0};
-        if (LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, MAXDWORD, MAXDWORD, &ov) != 0) {
-            ok = true;
-            break;
-        }
-        DWORD err = GetLastError();
-        if (err != ERROR_LOCK_VIOLATION) break;
-        if (has_timeout) {
-            DWORD elapsed = GetTickCount() - start_ms;
-            if ((size_t)(elapsed / 1000) >= timeout_sec) break;
-        }
-        Sleep(100);
-    }
-    if (!ok) {
-        CloseHandle(h);
-        if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("failed to acquire lock"));
-        else {
-            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(LOCK) failed to acquire lock"), lock_path);
-        }
-        return true;
-    }
-
-    if (!eval_file_lock_add(ctx, lock_path, (intptr_t)h, guard_kind)) {
-        OVERLAPPED ov = {0};
-        (void)UnlockFileEx(h, 0, MAXDWORD, MAXDWORD, &ov);
-        CloseHandle(h);
-        return true;
-    }
-    if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("0"));
-    (void)file_emit_replay_lock(ctx, o, EVENT_REPLAY_OPCODE_HOST_LOCK_ACQUIRE, lock_path);
-    return true;
-#else
-    int fd = open(path_c, O_RDWR | O_CREAT, 0666);
-    if (fd < 0) {
-        if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("failed to open lock file"));
-        else {
-            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(LOCK) failed to open lock file"), lock_path);
-        }
-        return true;
-    }
-
-    bool ok = false;
-    time_t start = time(NULL);
-    for (;;) {
-        if (flock(fd, LOCK_EX | LOCK_NB) == 0) {
-            ok = true;
-            break;
-        }
-        if (errno != EWOULDBLOCK && errno != EAGAIN) break;
-        if (has_timeout) {
-            time_t now = time(NULL);
-            if ((size_t)(now - start) >= timeout_sec) break;
-        }
-        struct timespec req = {.tv_sec = 0, .tv_nsec = 100000000L};
-        nanosleep(&req, NULL);
-    }
-
-    if (!ok) {
-        close(fd);
-        if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("failed to acquire lock"));
-        else {
-            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(LOCK) failed to acquire lock"), lock_path);
-        }
-        return true;
-    }
-
-    if (!eval_file_lock_add(ctx, lock_path, (intptr_t)fd, guard_kind)) {
-        (void)flock(fd, LOCK_UN);
-        close(fd);
+    if (!eval_file_lock_add(ctx, lock_path, lock_res.token, guard_kind)) {
+        (void)eval_service_lock_release(ctx, lock_res.token);
         return true;
     }
 
     if (result_var.count > 0) (void)eval_var_set_current(ctx, result_var, nob_sv_from_cstr("0"));
     (void)file_emit_replay_lock(ctx, o, EVENT_REPLAY_OPCODE_HOST_LOCK_ACQUIRE, lock_path);
     return true;
-#endif
 }
 
 static bool handle_file_archive_create(EvalExecContext *ctx, const Node *node, SV_List args) {
@@ -857,162 +739,25 @@ static bool handle_file_archive_create(EvalExecContext *ctx, const Node *node, S
         if (!svu_list_push_temp(ctx, &resolved_paths, p)) return true;
     }
 
-    Eval_File_Archive_Create_Options bopt = {0};
-    bopt.output = out_path;
-    bopt.paths = resolved_paths;
-    bopt.format = format;
-    bopt.compression = compression;
-    bopt.has_compression_level = has_compression_level;
-    bopt.compression_level = compression_level;
-    bopt.has_mtime = has_mtime;
-    bopt.mtime_epoch = mtime_epoch;
-    bopt.verbose = verbose;
-
-    bool replay_compatible_tar_backend = eval_sv_eq_ci_lit(format, "PAXR") &&
-                                         (compression.count == 0 || eval_sv_eq_ci_lit(compression, "NONE")) &&
-                                         !has_compression_level &&
-                                         has_mtime;
-    int rc_backend = 1;
-    String_View backend_log = nob_sv_from_cstr("");
-    bool backend_ok = false;
-    if (!replay_compatible_tar_backend) {
-        backend_ok = eval_file_backend_archive_create(ctx, &bopt, &rc_backend, &backend_log);
-        if (backend_ok) {
-            if (rc_backend != 0) {
-                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(ARCHIVE_CREATE) failed in libarchive backend"), backend_log.count > 0 ? backend_log : out_path);
-            }
-            return true;
-        }
+    Eval_Archive_Create_Request req = {
+        .output = out_path,
+        .paths = resolved_paths,
+        .path_count = arena_arr_len(resolved_paths),
+        .format = format,
+        .compression = compression,
+        .has_compression_level = has_compression_level,
+        .compression_level = compression_level,
+        .has_mtime = has_mtime,
+        .mtime_epoch = mtime_epoch,
+        .verbose = verbose,
+    };
+    Eval_Backend_Result backend = {0};
+    if (!eval_service_archive_create(ctx, &req, &backend)) return true;
+    if (backend.status_code != 0) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(ARCHIVE_CREATE) failed in archive backend"), backend.log.count > 0 ? backend.log : out_path);
+        return true;
     }
 
-    char *out_c = eval_sv_to_cstr_temp(ctx, out_path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, out_c, true);
-
-    char cwd_buf[4096] = {0};
-#if defined(_WIN32)
-    if (!_getcwd(cwd_buf, (int)sizeof(cwd_buf) - 1)) cwd_buf[0] = '\0';
-#else
-    if (!getcwd(cwd_buf, sizeof(cwd_buf) - 1)) cwd_buf[0] = '\0';
-#endif
-    size_t cwd_len = strlen(cwd_buf);
-    for (size_t i = 0; i < cwd_len; i++) {
-        if (cwd_buf[i] == '\\') cwd_buf[i] = '/';
-    }
-
-    SV_List mapped_paths = {0};
-    for (size_t i = 0; i < arena_arr_len(resolved_paths); i++) {
-        String_View p = resolved_paths[i];
-        String_View p_arg = p;
-        if (cwd_len > 0 && p.count > cwd_len && memcmp(p.data, cwd_buf, cwd_len) == 0) {
-            size_t off = cwd_len;
-            if (off < p.count && (p.data[off] == '/' || p.data[off] == '\\')) off++;
-            p_arg = nob_sv_from_parts(p.data + off, p.count - off);
-        }
-        if (!svu_list_push_temp(ctx, &mapped_paths, p_arg)) return true;
-    }
-
-    Nob_Cmd cmd = {0};
-    if (format_zip) {
-        if (!file_cmd_append_checked(ctx, &cmd, "zip")) return true;
-        if (!file_cmd_append_checked(ctx, &cmd, "-r")) {
-            file_cmd_reset(&cmd);
-            return true;
-        }
-        if (!file_cmd_append_checked(ctx, &cmd, out_c)) {
-            file_cmd_reset(&cmd);
-            return true;
-        }
-        for (size_t i = 0; i < arena_arr_len(mapped_paths); i++) {
-            char *pc = eval_sv_to_cstr_temp(ctx, mapped_paths[i]);
-            EVAL_OOM_RETURN_IF_NULL(ctx, pc, true);
-            if (!file_cmd_append_checked(ctx, &cmd, pc)) {
-                file_cmd_reset(&cmd);
-                return true;
-            }
-        }
-    } else {
-        if (!file_cmd_append_checked(ctx, &cmd, "tar")) return true;
-        if (compression.count == 0 || eval_sv_eq_ci_lit(compression, "NONE")) {
-            if (!file_cmd_append_checked(ctx, &cmd, "-cf")) {
-                file_cmd_reset(&cmd);
-                return true;
-            }
-        } else if (eval_sv_eq_ci_lit(compression, "GZIP")) {
-            if (!file_cmd_append_checked(ctx, &cmd, "-czf")) {
-                file_cmd_reset(&cmd);
-                return true;
-            }
-        } else if (eval_sv_eq_ci_lit(compression, "BZIP2")) {
-            if (!file_cmd_append_checked(ctx, &cmd, "-cjf")) {
-                file_cmd_reset(&cmd);
-                return true;
-            }
-        } else if (eval_sv_eq_ci_lit(compression, "XZ")) {
-            if (!file_cmd_append_checked(ctx, &cmd, "-cJf")) {
-                file_cmd_reset(&cmd);
-                return true;
-            }
-        } else if (eval_sv_eq_ci_lit(compression, "ZSTD")) {
-            if (!file_cmd_append_checked(ctx, &cmd, "--zstd") ||
-                !file_cmd_append_checked(ctx, &cmd, "-cf")) {
-                file_cmd_reset(&cmd);
-                return true;
-            }
-        } else {
-            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNSUPPORTED_OPERATION, "eval_file", nob_sv_from_cstr("file(ARCHIVE_CREATE) unsupported COMPRESSION in local backend"), compression);
-            file_cmd_reset(&cmd);
-            return true;
-        }
-        if (!file_cmd_append_checked(ctx, &cmd, out_c)) {
-            file_cmd_reset(&cmd);
-            return true;
-        }
-        if (eval_sv_eq_ci_lit(format, "PAXR")) {
-            if (!file_cmd_append_checked(ctx, &cmd, "--format=pax")) {
-                file_cmd_reset(&cmd);
-                return true;
-            }
-            if (!file_cmd_append_checked(ctx, &cmd, "--pax-option=delete=atime,delete=ctime")) {
-                file_cmd_reset(&cmd);
-                return true;
-            }
-        } else if (eval_sv_eq_ci_lit(format, "PAX")) {
-            if (!file_cmd_append_checked(ctx, &cmd, "--format=pax")) {
-                file_cmd_reset(&cmd);
-                return true;
-            }
-        } else if (eval_sv_eq_ci_lit(format, "GNUTAR")) {
-            if (!file_cmd_append_checked(ctx, &cmd, "--format=gnu")) {
-                file_cmd_reset(&cmd);
-                return true;
-            }
-        }
-        if (has_mtime) {
-            char *mtime_flag = eval_sv_to_cstr_temp(ctx, nob_sv_from_cstr(nob_temp_sprintf("--mtime=@%lld", mtime_epoch)));
-            EVAL_OOM_RETURN_IF_NULL(ctx, mtime_flag, true);
-            if (!file_cmd_append_checked(ctx, &cmd, mtime_flag)) {
-                file_cmd_reset(&cmd);
-                return true;
-            }
-        }
-        if (!file_cmd_append_checked(ctx, &cmd, "--")) {
-            file_cmd_reset(&cmd);
-            return true;
-        }
-        for (size_t i = 0; i < arena_arr_len(mapped_paths); i++) {
-            char *pc = eval_sv_to_cstr_temp(ctx, mapped_paths[i]);
-            EVAL_OOM_RETURN_IF_NULL(ctx, pc, true);
-            if (!file_cmd_append_checked(ctx, &cmd, pc)) {
-                file_cmd_reset(&cmd);
-                return true;
-            }
-        }
-    }
-
-    if (!nob_cmd_run(&cmd)) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(ARCHIVE_CREATE) failed to run tar backend"), out_path);
-    }
-    file_cmd_reset(&cmd);
     if (eval_sv_eq_ci_lit(format, "PAXR") &&
         (compression.count == 0 || eval_sv_eq_ci_lit(compression, "NONE")) &&
         !has_compression_level &&
@@ -1066,54 +811,22 @@ static bool handle_file_archive_extract(EvalExecContext *ctx, const Node *node, 
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, dst, eval_file_current_bin_dir(ctx), &dst_path)) return true;
     if (!list_only && !eval_file_mkdir_p(ctx, dst_path)) return true;
 
-    Eval_File_Archive_Extract_Options bopt = {0};
-    bopt.input = in_path;
-    bopt.destination = dst_path;
-    bopt.patterns = patterns;
-    bopt.list_only = list_only;
-    bopt.verbose = verbose;
-    bopt.touch = touch;
-
-    int rc_backend = 1;
-    String_View backend_log = nob_sv_from_cstr("");
-    bool backend_ok = eval_file_backend_archive_extract(ctx, &bopt, &rc_backend, &backend_log);
-    if (backend_ok) {
-        if (rc_backend != 0) {
-            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(ARCHIVE_EXTRACT) failed in libarchive backend"), backend_log.count > 0 ? backend_log : in_path);
-        }
+    Eval_Archive_Extract_Request req = {
+        .input = in_path,
+        .destination = dst_path,
+        .patterns = patterns,
+        .pattern_count = arena_arr_len(patterns),
+        .list_only = list_only,
+        .verbose = verbose,
+        .touch = touch,
+    };
+    Eval_Backend_Result backend = {0};
+    if (!eval_service_archive_extract(ctx, &req, &backend)) return true;
+    if (backend.status_code != 0) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(ARCHIVE_EXTRACT) failed in archive backend"), backend.log.count > 0 ? backend.log : in_path);
         return true;
     }
 
-    char *in_c = eval_sv_to_cstr_temp(ctx, in_path);
-    char *dst_c = eval_sv_to_cstr_temp(ctx, dst_path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, in_c, true);
-    EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, true);
-
-    Nob_Cmd cmd = {0};
-    if (in_path.count >= 4 &&
-        (eval_sv_eq_ci_lit(nob_sv_from_parts(in_path.data + in_path.count - 4, 4), ".zip"))) {
-        if (!file_cmd_append_checked(ctx, &cmd, "unzip") ||
-            !file_cmd_append_checked(ctx, &cmd, "-o") ||
-            !file_cmd_append_checked(ctx, &cmd, in_c) ||
-            !file_cmd_append_checked(ctx, &cmd, "-d") ||
-            !file_cmd_append_checked(ctx, &cmd, dst_c)) {
-            file_cmd_reset(&cmd);
-            return true;
-        }
-    } else {
-        if (!file_cmd_append_checked(ctx, &cmd, "tar") ||
-            !file_cmd_append_checked(ctx, &cmd, "-xf") ||
-            !file_cmd_append_checked(ctx, &cmd, in_c) ||
-            !file_cmd_append_checked(ctx, &cmd, "-C") ||
-            !file_cmd_append_checked(ctx, &cmd, dst_c)) {
-            file_cmd_reset(&cmd);
-            return true;
-        }
-    }
-    if (!nob_cmd_run(&cmd)) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(ARCHIVE_EXTRACT) failed to run tar backend"), in_path);
-    }
-    file_cmd_reset(&cmd);
     if (!list_only &&
         !verbose &&
         !touch &&

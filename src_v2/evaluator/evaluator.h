@@ -185,6 +185,96 @@ typedef enum {
     EVAL_FS_LINK_SYMBOLIC,
 } Eval_Fs_Link_Kind;
 
+typedef struct {
+    String_View path;
+    bool existing_parent;
+} Eval_Path_Canonicalize_Request;
+
+typedef struct {
+    bool found;
+    String_View path;
+} Eval_Path_Canonicalize_Result;
+
+typedef struct {
+    String_View path;
+    bool has_timeout;
+    size_t timeout_sec;
+} Eval_Host_Lock_Request;
+
+typedef struct {
+    bool acquired;
+    uintptr_t token;
+    String_View message;
+} Eval_Host_Lock_Result;
+
+typedef struct {
+    String_View output;
+    const String_View *paths;
+    size_t path_count;
+    String_View format;
+    String_View compression;
+    bool has_compression_level;
+    long compression_level;
+    bool has_mtime;
+    long long mtime_epoch;
+    bool verbose;
+} Eval_Archive_Create_Request;
+
+typedef struct {
+    String_View input;
+    String_View destination;
+    const String_View *patterns;
+    size_t pattern_count;
+    bool list_only;
+    bool verbose;
+    bool touch;
+} Eval_Archive_Extract_Request;
+
+typedef struct {
+    int status_code;
+    String_View log;
+} Eval_Backend_Result;
+
+typedef enum {
+    EVAL_TRANSFER_NETRC_DEFAULT = 0,
+    EVAL_TRANSFER_NETRC_IGNORED,
+    EVAL_TRANSFER_NETRC_OPTIONAL,
+    EVAL_TRANSFER_NETRC_REQUIRED,
+} Eval_Transfer_Netrc_Mode;
+
+typedef struct {
+    bool has_timeout;
+    bool has_inactivity_timeout;
+    long timeout_sec;
+    long inactivity_timeout_sec;
+    bool has_range_start;
+    bool has_range_end;
+    size_t range_start;
+    size_t range_end;
+    bool has_tls_verify;
+    bool tls_verify;
+    bool show_progress;
+    String_View userpwd;
+    String_View tls_cainfo;
+    String_View netrc_file;
+    Eval_Transfer_Netrc_Mode netrc_mode;
+    const String_View *http_headers;
+    size_t http_headers_count;
+} Eval_Transfer_Options;
+
+typedef struct {
+    String_View url;
+    String_View dst_path;
+    bool has_dst_path;
+    Eval_Transfer_Options options;
+} Eval_Transfer_Download_Request;
+
+typedef struct {
+    String_View src_path;
+    String_View url;
+    Eval_Transfer_Options options;
+} Eval_Transfer_Upload_Request;
+
 typedef bool (*Eval_Service_Read_File_Fn)(void *user_data,
                                           Arena *scratch_arena,
                                           String_View path,
@@ -229,6 +319,33 @@ typedef bool (*Eval_Service_Readlink_Fn)(void *user_data,
                                          Arena *scratch_arena,
                                          String_View path,
                                          String_View *out_target);
+typedef bool (*Eval_Service_Canonicalize_Path_Fn)(
+    void *user_data,
+    Arena *scratch_arena,
+    const Eval_Path_Canonicalize_Request *request,
+    Eval_Path_Canonicalize_Result *out_result);
+typedef bool (*Eval_Service_Host_Lock_Acquire_Fn)(
+    void *user_data,
+    const Eval_Host_Lock_Request *request,
+    Eval_Host_Lock_Result *out_result);
+typedef bool (*Eval_Service_Host_Lock_Release_Fn)(void *user_data,
+                                                  uintptr_t token);
+typedef bool (*Eval_Service_Archive_Create_Fn)(
+    void *user_data,
+    const Eval_Archive_Create_Request *request,
+    Eval_Backend_Result *out_result);
+typedef bool (*Eval_Service_Archive_Extract_Fn)(
+    void *user_data,
+    const Eval_Archive_Extract_Request *request,
+    Eval_Backend_Result *out_result);
+typedef bool (*Eval_Service_Transfer_Download_Fn)(
+    void *user_data,
+    const Eval_Transfer_Download_Request *request,
+    Eval_Backend_Result *out_result);
+typedef bool (*Eval_Service_Transfer_Upload_Fn)(
+    void *user_data,
+    const Eval_Transfer_Upload_Request *request,
+    Eval_Backend_Result *out_result);
 typedef const char *(*Eval_Service_Get_Env_Fn)(void *user_data,
                                                Arena *scratch_arena,
                                                const char *name);
@@ -265,6 +382,13 @@ struct EvalServices {
     Eval_Service_Touch_Fn fs_touch;
     Eval_Service_Link_Fn fs_link;
     Eval_Service_Readlink_Fn fs_readlink;
+    Eval_Service_Canonicalize_Path_Fn fs_canonicalize_path;
+    Eval_Service_Host_Lock_Acquire_Fn host_lock_acquire;
+    Eval_Service_Host_Lock_Release_Fn host_lock_release;
+    Eval_Service_Archive_Create_Fn archive_create;
+    Eval_Service_Archive_Extract_Fn archive_extract;
+    Eval_Service_Transfer_Download_Fn transfer_download;
+    Eval_Service_Transfer_Upload_Fn transfer_upload;
     Eval_Service_Get_Env_Fn env_get;
     Eval_Service_Get_Cwd_Fn process_get_cwd;
     Eval_Service_Process_Run_Fn process_run_capture;
