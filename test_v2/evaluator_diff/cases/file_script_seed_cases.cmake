@@ -10,6 +10,18 @@ file(READ io.txt READ_HEX HEX)
 file(STRINGS io.txt STR_LINES REGEX "^(alpha|gamma)$")
 #@@ENDCASE
 
+#@@CASE file_configure_empty_content_and_read_invalid_limit_surface
+#@@MODE SCRIPT
+#@@OUTCOME SUCCESS
+#@@QUERY FILE_TEXT empty_configure.txt
+#@@QUERY VAR EMPTY_CONFIGURE_OUT
+#@@QUERY VAR READ_LIMIT_OUT
+file(CONFIGURE OUTPUT empty_configure.txt CONTENT "")
+file(READ empty_configure.txt EMPTY_CONFIGURE_OUT)
+file(WRITE read_limit_src.txt "abc")
+file(READ read_limit_src.txt READ_LIMIT_OUT LIMIT nope)
+#@@ENDCASE
+
 #@@CASE file_glob_and_real_path_surface
 #@@MODE SCRIPT
 #@@OUTCOME SUCCESS
@@ -58,4 +70,31 @@ file(REMOVE_RECURSE rm_tree)
 file()
 file(WRITE)
 file(READ)
+#@@ENDCASE
+
+#@@CASE file_rejects_unknown_rename_argument
+#@@MODE SCRIPT
+#@@OUTCOME ERROR
+file(WRITE reject_rename_src.txt "x")
+file(RENAME reject_rename_src.txt reject_rename_dst.txt JUNK)
+#@@ENDCASE
+
+#@@CASE file_rejects_unknown_create_link_argument
+#@@MODE SCRIPT
+#@@OUTCOME ERROR
+file(WRITE reject_link_src.txt "x")
+file(CREATE_LINK reject_link_src.txt reject_link_dst.txt JUNK)
+#@@ENDCASE
+
+#@@CASE file_rejects_unknown_real_path_argument
+#@@MODE SCRIPT
+#@@OUTCOME ERROR
+file(REAL_PATH . REAL_OUT JUNK)
+#@@ENDCASE
+
+#@@CASE file_rejects_unknown_copy_argument
+#@@MODE SCRIPT
+#@@OUTCOME ERROR
+file(WRITE reject_copy_src.txt "x")
+file(COPY reject_copy_src.txt DESTINATION reject_copy_dst JUNK)
 #@@ENDCASE

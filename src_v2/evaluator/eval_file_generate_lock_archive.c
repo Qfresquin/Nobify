@@ -758,6 +758,7 @@ static bool handle_file_archive_create(EvalExecContext *ctx, const Node *node, S
         return true;
     }
 
+    (void)eval_emit_fs_archive_create(ctx, o, out_path);
     if (eval_sv_eq_ci_lit(format, "PAXR") &&
         (compression.count == 0 || eval_sv_eq_ci_lit(compression, "NONE")) &&
         !has_compression_level &&
@@ -827,6 +828,7 @@ static bool handle_file_archive_extract(EvalExecContext *ctx, const Node *node, 
         return true;
     }
 
+    if (!list_only) (void)eval_emit_fs_archive_extract(ctx, o, in_path, dst_path);
     if (!list_only &&
         !verbose &&
         !touch &&

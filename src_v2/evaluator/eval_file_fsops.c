@@ -433,6 +433,7 @@ static bool handle_file_append(EvalExecContext *ctx, const Node *node, SV_List a
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(APPEND) failed to open file"), path);
         return true;
     }
+    (void)eval_emit_fs_append_file(ctx, o, path);
     (void)file_fsops_emit_append_replay(ctx, o, path, contents);
     return true;
 }
@@ -468,8 +469,15 @@ static bool handle_file_rename(EvalExecContext *ctx, const Node *node, SV_List a
     for (size_t i = 3; i < arena_arr_len(args); i++) {
         if (eval_sv_eq_ci_lit(args[i], "NO_REPLACE")) {
             no_replace = true;
-        } else if (eval_sv_eq_ci_lit(args[i], "RESULT") && i + 1 < arena_arr_len(args)) {
+        } else if (eval_sv_eq_ci_lit(args[i], "RESULT")) {
+            if (i + 1 >= arena_arr_len(args)) {
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(RENAME) RESULT requires a variable name"), args[i]);
+                return true;
+            }
             result_var = args[++i];
+        } else {
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "eval_file", nob_sv_from_cstr("file(RENAME) received unexpected argument"), args[i]);
+            return true;
         }
     }
 
@@ -500,6 +508,7 @@ static bool handle_file_rename(EvalExecContext *ctx, const Node *node, SV_List a
     }
 
     if (result_var.count > 0) (void)file_emit_result_code(ctx, result_var, 0, "OK");
+    (void)eval_emit_fs_rename(ctx, o, old_path, new_path);
     (void)file_fsops_emit_rename_replay(ctx, o, old_path, new_path, no_replace, result_var.count > 0);
     return true;
 }
@@ -524,6 +533,9 @@ static bool handle_file_remove(EvalExecContext *ctx, const Node *node, SV_List a
             return true;
         }
         if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), removed_paths, path)) return true;
+    }
+    for (size_t i = 0; i < arena_arr_len(removed_paths); i++) {
+        (void)eval_emit_fs_remove(ctx, o, removed_paths[i], recurse);
     }
     (void)file_fsops_emit_remove_replay(ctx, o, removed_paths, arena_arr_len(removed_paths), recurse);
     return true;
@@ -561,7 +573,16 @@ static bool handle_file_create_link(EvalExecContext *ctx, const Node *node, SV_L
     for (size_t i = 3; i < arena_arr_len(args); i++) {
         if (eval_sv_eq_ci_lit(args[i], "SYMBOLIC")) symbolic = true;
         else if (eval_sv_eq_ci_lit(args[i], "COPY_ON_ERROR")) copy_on_error = true;
-        else if (eval_sv_eq_ci_lit(args[i], "RESULT") && i + 1 < arena_arr_len(args)) result_var = args[++i];
+        else if (eval_sv_eq_ci_lit(args[i], "RESULT")) {
+            if (i + 1 >= arena_arr_len(args)) {
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(CREATE_LINK) RESULT requires a variable name"), args[i]);
+                return true;
+            }
+            result_var = args[++i];
+        } else {
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "eval_file", nob_sv_from_cstr("file(CREATE_LINK) received unexpected argument"), args[i]);
+            return true;
+        }
     }
 
     String_View src = nob_sv_from_cstr("");
@@ -584,6 +605,7 @@ static bool handle_file_create_link(EvalExecContext *ctx, const Node *node, SV_L
     }
 
     if (result_var.count > 0) (void)file_emit_result_code(ctx, result_var, 0, "OK");
+    (void)eval_emit_fs_create_link(ctx, o, src, dst, symbolic);
     (void)file_fsops_emit_create_link_replay(ctx,
                                              o,
                                              src,
@@ -654,6 +676,9 @@ static bool handle_file_chmod(EvalExecContext *ctx, const Node *node, SV_List ar
         }
         if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), chmod_paths, path)) return true;
     }
+    for (size_t i = 0; i < arena_arr_len(chmod_paths); i++) {
+        (void)eval_emit_fs_chmod(ctx, o, chmod_paths[i], recurse);
+    }
     (void)file_fsops_emit_chmod_replay(ctx, o, chmod_paths, arena_arr_len(chmod_paths), mode, recurse);
     return true;
 }
@@ -668,10 +693,17 @@ static bool handle_file_real_path(EvalExecContext *ctx, const Node *node, SV_Lis
     String_View base_dir = eval_file_current_src_dir(ctx);
     bool expand_tilde = false;
     for (size_t i = 3; i < arena_arr_len(args); i++) {
-        if (eval_sv_eq_ci_lit(args[i], "BASE_DIRECTORY") && i + 1 < arena_arr_len(args)) {
+        if (eval_sv_eq_ci_lit(args[i], "BASE_DIRECTORY")) {
+            if (i + 1 >= arena_arr_len(args)) {
+                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(REAL_PATH) BASE_DIRECTORY requires a directory"), args[i]);
+                return true;
+            }
             base_dir = args[++i];
         } else if (eval_sv_eq_ci_lit(args[i], "EXPAND_TILDE")) {
             expand_tilde = true;
+        } else {
+            EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "eval_file", nob_sv_from_cstr("file(REAL_PATH) received unexpected argument"), args[i]);
+            return true;
         }
     }
 

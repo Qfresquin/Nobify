@@ -3019,6 +3019,256 @@ TEST(evaluator_file_download_probe_mode_without_destination) {
     TEST_PASS();
 }
 
+TEST(evaluator_file_download_range_start_beyond_source_matches_cmake_failure_surface) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(WRITE range_src.txt \"abc\")\n"
+        "file(DOWNLOAD range_src.txt range_dst.txt RANGE_START 99 STATUS RANGE_STATUS LOG RANGE_LOG)\n"
+        "file(READ range_dst.txt RANGE_OUT)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("RANGE_STATUS")),
+                          nob_sv_from_cstr("36;Couldn't resume download")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("RANGE_OUT")).count == 0);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_file_configure_accepts_empty_content) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(CONFIGURE OUTPUT empty_configure.txt CONTENT \"\")\n"
+        "file(READ empty_configure.txt EMPTY_CONFIGURE_OUT)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+    ASSERT(nob_file_exists("empty_configure.txt"));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("EMPTY_CONFIGURE_OUT")).count == 0);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_file_read_invalid_limit_preserves_cmake_tolerant_surface) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(WRITE read_limit_src.txt \"abc\")\n"
+        "file(READ read_limit_src.txt READ_LIMIT_OUT LIMIT nope)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("READ_LIMIT_OUT")),
+                     nob_sv_from_cstr("abc")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_file_parsers_reject_unknown_arguments) {
+    const char *scripts[] = {
+        "file(WRITE reject_rename_src.txt \"x\")\n"
+        "file(RENAME reject_rename_src.txt reject_rename_dst.txt JUNK)\n",
+        "file(WRITE reject_link_src.txt \"x\")\n"
+        "file(CREATE_LINK reject_link_src.txt reject_link_dst.txt JUNK)\n",
+        "file(REAL_PATH . REAL_OUT JUNK)\n",
+        "file(WRITE reject_copy_src.txt \"x\")\n"
+        "file(COPY reject_copy_src.txt DESTINATION reject_copy_dst JUNK)\n",
+        "file(WRITE reject_read_src.txt \"x\")\n"
+        "file(READ reject_read_src.txt REJECT_READ_OUT JUNK)\n",
+    };
+
+    for (size_t case_i = 0; case_i < NOB_ARRAY_LEN(scripts); case_i++) {
+        Arena *temp_arena = arena_create(2 * 1024 * 1024);
+        Arena *event_arena = arena_create(2 * 1024 * 1024);
+        ASSERT(temp_arena && event_arena);
+
+        Cmake_Event_Stream *stream = event_stream_create(event_arena);
+        ASSERT(stream != NULL);
+
+        Eval_Test_Init init = {0};
+        init.arena = temp_arena;
+        init.event_arena = event_arena;
+        init.stream = stream;
+        init.source_dir = nob_sv_from_cstr(".");
+        init.binary_dir = nob_sv_from_cstr(".");
+        init.current_file = "CMakeLists.txt";
+
+        Eval_Test_Runtime *ctx = eval_test_create(&init);
+        ASSERT(ctx != NULL);
+
+        Ast_Root root = parse_cmake(temp_arena, scripts[case_i]);
+        ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+        const Eval_Run_Report *report = eval_test_report(ctx);
+        ASSERT(report != NULL);
+        ASSERT(report->error_count == 1);
+
+        bool saw_unexpected = false;
+        for (size_t i = 0; i < stream->count; i++) {
+            const Cmake_Event *ev = &stream->items[i];
+            if (ev->h.kind != EV_DIAGNOSTIC) continue;
+            if (ev->as.diag.severity != EV_DIAG_ERROR) continue;
+            if (!nob_sv_eq(ev->as.diag.command, nob_sv_from_cstr("file"))) continue;
+            if (!nob_sv_eq(ev->as.diag.code, nob_sv_from_cstr("EVAL_DIAG_UNEXPECTED_ARGUMENT"))) continue;
+            saw_unexpected = true;
+        }
+        ASSERT(saw_unexpected);
+
+        eval_test_destroy(ctx);
+        arena_destroy(temp_arena);
+        arena_destroy(event_arena);
+    }
+
+    TEST_PASS();
+}
+
+TEST(evaluator_file_events_are_emitted_from_parsed_semantics_not_dispatcher_positions) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "file(WRITE semantic_download_src.txt \"abc\")\n"
+        "file(DOWNLOAD semantic_download_src.txt STATUS SEM_DL_STATUS LOG SEM_DL_LOG)\n"
+        "file(MAKE_DIRECTORY semantic_archive_src)\n"
+        "file(WRITE semantic_archive_src/item.txt \"archive\")\n"
+        "file(ARCHIVE_CREATE OUTPUT semantic_archive.tar FORMAT PAXR PATHS semantic_archive_src)\n"
+        "file(ARCHIVE_EXTRACT INPUT semantic_archive.tar DESTINATION semantic_archive_out)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(report->warning_count == 0);
+
+    bool saw_archive_create_path = false;
+    bool saw_archive_extract_input = false;
+    bool saw_archive_extract_dest = false;
+    bool saw_keyword_payload = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind == EVENT_FS_TRANSFER_DOWNLOAD &&
+            nob_sv_eq(ev->as.fs_transfer_download.destination, nob_sv_from_cstr("STATUS"))) {
+            saw_keyword_payload = true;
+        } else if (ev->h.kind == EVENT_FS_ARCHIVE_CREATE) {
+            if (nob_sv_eq(ev->as.fs_archive_create.path, nob_sv_from_cstr("OUTPUT")) ||
+                nob_sv_eq(ev->as.fs_archive_create.path, nob_sv_from_cstr("INPUT"))) {
+                saw_keyword_payload = true;
+            }
+            if (sv_contains_sv(ev->as.fs_archive_create.path, nob_sv_from_cstr("semantic_archive.tar"))) {
+                saw_archive_create_path = true;
+            }
+        } else if (ev->h.kind == EVENT_FS_ARCHIVE_EXTRACT) {
+            if (nob_sv_eq(ev->as.fs_archive_extract.path, nob_sv_from_cstr("INPUT")) ||
+                nob_sv_eq(ev->as.fs_archive_extract.destination, nob_sv_from_cstr("DESTINATION"))) {
+                saw_keyword_payload = true;
+            }
+            if (sv_contains_sv(ev->as.fs_archive_extract.path, nob_sv_from_cstr("semantic_archive.tar"))) {
+                saw_archive_extract_input = true;
+            }
+            if (sv_contains_sv(ev->as.fs_archive_extract.destination, nob_sv_from_cstr("semantic_archive_out"))) {
+                saw_archive_extract_dest = true;
+            }
+        }
+    }
+
+    ASSERT(!saw_keyword_payload);
+    ASSERT(saw_archive_create_path);
+    ASSERT(saw_archive_extract_input);
+    ASSERT(saw_archive_extract_dest);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_try_compile_no_cache_and_cmake_flags_do_not_leak) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3394,6 +3644,11 @@ void run_evaluator_v2_batch5(int *passed, int *failed, int *skipped) {
     test_evaluator_file_generate_is_deferred_until_end_of_run(passed, failed, skipped);
     test_evaluator_file_lock_directory_and_duplicate_lock_result(passed, failed, skipped);
     test_evaluator_file_download_probe_mode_without_destination(passed, failed, skipped);
+    test_evaluator_file_download_range_start_beyond_source_matches_cmake_failure_surface(passed, failed, skipped);
+    test_evaluator_file_configure_accepts_empty_content(passed, failed, skipped);
+    test_evaluator_file_read_invalid_limit_preserves_cmake_tolerant_surface(passed, failed, skipped);
+    test_evaluator_file_parsers_reject_unknown_arguments(passed, failed, skipped);
+    test_evaluator_file_events_are_emitted_from_parsed_semantics_not_dispatcher_positions(passed, failed, skipped);
     test_evaluator_try_compile_no_cache_and_cmake_flags_do_not_leak(passed, failed, skipped);
     test_evaluator_try_compile_failure_populates_output_variable(passed, failed, skipped);
     test_evaluator_try_compile_empty_capture_file_is_silent(passed, failed, skipped);

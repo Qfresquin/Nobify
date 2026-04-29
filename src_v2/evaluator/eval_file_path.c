@@ -137,17 +137,11 @@ bool eval_file_resolve_path(EvalExecContext *ctx,
     ci = true;
 #endif
 
-    if (mode == EVAL_FILE_PATH_MODE_PROJECT_SCOPED) {
-        if (!scope_path_has_prefix(path, ctx->binary_dir, ci) &&
-            !scope_path_has_prefix(path, ctx->source_dir, ci)) {
-            EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("eval_file"), node->as.cmd.name, origin, nob_sv_from_cstr("Security Violation: Absolute path outside project scope"), path);
-            return false;
-        }
-    }
-
     String_View resolved_probe = nob_sv_from_cstr("");
+    bool resolved_probe_found = false;
     if (mode == EVAL_FILE_PATH_MODE_PROJECT_SCOPED &&
         scope_canonicalize_existing_or_parent_temp(ctx, path, &resolved_probe)) {
+        resolved_probe_found = true;
         String_View source_scope = ctx->source_dir;
         String_View binary_scope = ctx->binary_dir;
 
@@ -164,6 +158,14 @@ bool eval_file_resolve_path(EvalExecContext *ctx,
         if (!scope_path_has_prefix(resolved_probe, binary_scope, ci) &&
             !scope_path_has_prefix(resolved_probe, source_scope, ci)) {
             EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("eval_file"), node->as.cmd.name, origin, nob_sv_from_cstr("Security Violation: Absolute path outside project scope"), input_path);
+            return false;
+        }
+    }
+
+    if (mode == EVAL_FILE_PATH_MODE_PROJECT_SCOPED && !resolved_probe_found) {
+        if (!scope_path_has_prefix(path, ctx->binary_dir, ci) &&
+            !scope_path_has_prefix(path, ctx->source_dir, ci)) {
+            EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("eval_file"), node->as.cmd.name, origin, nob_sv_from_cstr("Security Violation: Absolute path outside project scope"), path);
             return false;
         }
     }

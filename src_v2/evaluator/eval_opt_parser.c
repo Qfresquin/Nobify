@@ -101,6 +101,9 @@ bool eval_opt_parse_walk(EvalExecContext *ctx,
             } else if (cfg.warn_unknown) {
                 EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_UNEXPECTED_ARGUMENT, cfg.component, cfg.command, cfg.origin, nob_sv_from_cstr("Unknown option token"), tok);
                 if (eval_should_stop(ctx)) return false;
+            } else {
+                EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, cfg.component, cfg.command, cfg.origin, nob_sv_from_cstr("Unknown option token"), tok);
+                return false;
             }
             i++;
             continue;

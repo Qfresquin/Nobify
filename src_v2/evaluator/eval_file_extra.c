@@ -569,6 +569,7 @@ static bool handle_file_configure(EvalExecContext *ctx, const Node *node, SV_Lis
     String_View output = nob_sv_from_cstr("");
     String_View content = nob_sv_from_cstr("");
     String_View newline_style = nob_sv_from_cstr("");
+    bool saw_content = false;
     bool at_only = false;
     bool escape_quotes = false;
 
@@ -577,6 +578,7 @@ static bool handle_file_configure(EvalExecContext *ctx, const Node *node, SV_Lis
             output = args[++i];
         } else if (eval_sv_eq_ci_lit(args[i], "CONTENT") && i + 1 < arena_arr_len(args)) {
             content = args[++i];
+            saw_content = true;
         } else if (eval_sv_eq_ci_lit(args[i], "NEWLINE_STYLE") && i + 1 < arena_arr_len(args)) {
             newline_style = args[++i];
         } else if (eval_sv_eq_ci_lit(args[i], "@ONLY")) {
@@ -589,7 +591,7 @@ static bool handle_file_configure(EvalExecContext *ctx, const Node *node, SV_Lis
         }
     }
 
-    if (output.count == 0 || content.count == 0) {
+    if (output.count == 0 || !saw_content) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(CONFIGURE) requires OUTPUT and CONTENT"), nob_sv_from_cstr("Usage: file(CONFIGURE OUTPUT <out> CONTENT <text> [@ONLY] [ESCAPE_QUOTES] [NEWLINE_STYLE <style>])"));
         return true;
     }

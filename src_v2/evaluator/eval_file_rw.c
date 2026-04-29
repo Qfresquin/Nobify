@@ -392,7 +392,10 @@ void eval_file_handle_read(EvalExecContext *ctx, const Node *node, SV_List args)
         }
         if (eval_sv_eq_ci_lit(args[i], "HEX")) {
             hex = true;
+            continue;
         }
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "eval_file", nob_sv_from_cstr("file(READ) received unexpected argument"), args[i]);
+        return;
     }
 
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_current_source_dir(ctx), &path)) return;

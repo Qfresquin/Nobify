@@ -24,6 +24,24 @@ else()
 endif()
 #@@ENDCASE
 
+#@@CASE file_host_effect_download_range_start_beyond_source_surface
+#@@OUTCOME SUCCESS
+#@@QUERY FILE_TEXT build/range_out.txt
+#@@QUERY VAR RANGE_STATUS_LEN
+#@@QUERY VAR RANGE_STATUS_CODE
+#@@QUERY VAR RANGE_STATUS_MSG
+file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/range_src.txt" "abc")
+file(DOWNLOAD
+  "file://${CMAKE_CURRENT_SOURCE_DIR}/range_src.txt"
+  "${CMAKE_CURRENT_BINARY_DIR}/range_out.txt"
+  RANGE_START 99
+  STATUS RANGE_STATUS
+  LOG RANGE_LOG)
+list(LENGTH RANGE_STATUS RANGE_STATUS_LEN)
+list(GET RANGE_STATUS 0 RANGE_STATUS_CODE)
+list(GET RANGE_STATUS 1 RANGE_STATUS_MSG)
+#@@ENDCASE
+
 #@@CASE file_host_effect_archive_surface
 #@@OUTCOME SUCCESS
 #@@QUERY FILE_EXISTS build/sample.tar

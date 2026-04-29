@@ -523,7 +523,7 @@ void eval_file_handle_copy(EvalExecContext *ctx, const Node *node, SV_List args)
     Eval_Opt_Parse_Config cfg = {
         .component = nob_sv_from_cstr("eval_file"),
         .command = node->as.cmd.name,
-        .unknown_as_positional = true,
+        .unknown_as_positional = false,
         .warn_unknown = false,
     };
     cfg.origin = o;

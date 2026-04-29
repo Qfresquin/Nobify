@@ -24,28 +24,11 @@ Eval_Result eval_handle_file(EvalExecContext *ctx, const Node *node) {
     } else if (eval_sv_eq_ci_lit(subcmd, "MAKE_DIRECTORY")) {
         eval_file_handle_make_directory(ctx, node, args);
     } else if (eval_file_handle_fsops(ctx, node, args)) {
-        Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-        if (!eval_should_stop(ctx) && arena_arr_len(args) >= 2) {
-            if (eval_sv_eq_ci_lit(subcmd, "APPEND")) (void)eval_emit_fs_append_file(ctx, o, args[1]);
-            else if (eval_sv_eq_ci_lit(subcmd, "RENAME") && arena_arr_len(args) >= 3) (void)eval_emit_fs_rename(ctx, o, args[1], args[2]);
-            else if (eval_sv_eq_ci_lit(subcmd, "REMOVE")) (void)eval_emit_fs_remove(ctx, o, args[1], false);
-            else if (eval_sv_eq_ci_lit(subcmd, "REMOVE_RECURSE")) (void)eval_emit_fs_remove(ctx, o, args[1], true);
-            else if (eval_sv_eq_ci_lit(subcmd, "CREATE_LINK") && arena_arr_len(args) >= 3) (void)eval_emit_fs_create_link(ctx, o, args[1], args[2], true);
-            else if (eval_sv_eq_ci_lit(subcmd, "CHMOD")) (void)eval_emit_fs_chmod(ctx, o, args[1], false);
-            else if (eval_sv_eq_ci_lit(subcmd, "CHMOD_RECURSE")) (void)eval_emit_fs_chmod(ctx, o, args[1], true);
-        }
+        // handled in eval_file_fsops.c
     } else if (eval_file_handle_transfer(ctx, node, args)) {
-        Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-        if (!eval_should_stop(ctx) && arena_arr_len(args) >= 3) {
-            if (eval_sv_eq_ci_lit(subcmd, "DOWNLOAD")) (void)eval_emit_fs_transfer_download(ctx, o, args[1], args[2]);
-            else if (eval_sv_eq_ci_lit(subcmd, "UPLOAD")) (void)eval_emit_fs_transfer_upload(ctx, o, args[1], args[2]);
-        }
+        // handled in eval_file_transfer.c
     } else if (eval_file_handle_generate_lock_archive(ctx, node, args)) {
-        Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
-        if (!eval_should_stop(ctx) && arena_arr_len(args) >= 2) {
-            if (eval_sv_eq_ci_lit(subcmd, "ARCHIVE_CREATE")) (void)eval_emit_fs_archive_create(ctx, o, args[1]);
-            else if (eval_sv_eq_ci_lit(subcmd, "ARCHIVE_EXTRACT")) (void)eval_emit_fs_archive_extract(ctx, o, args[1], nob_sv_from_cstr(""));
-        }
+        // handled in eval_file_generate_lock_archive.c
     } else if (eval_file_handle_extra(ctx, node, args)) {
         // handled in eval_file_extra.c
     } else {

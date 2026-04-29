@@ -490,6 +490,7 @@ static bool handle_file_download(EvalExecContext *ctx, const Node *node, SV_List
         }
 
         file_transfer_set_success(ctx, &opt, log_trim.count > 0 ? log_trim : nob_sv_from_cstr("remote download completed"));
+        (void)eval_emit_fs_transfer_download(ctx, o, args[1], has_dst ? dst : nob_sv_from_cstr(""));
         (void)file_transfer_emit_replay_marker(ctx,
                                                o,
                                                has_dst ? EVENT_REPLAY_ACTION_HOST_EFFECT
@@ -541,6 +542,20 @@ static bool handle_file_download(EvalExecContext *ctx, const Node *node, SV_List
         return true;
     }
 
+    if (opt.has_range_start && opt.range_start >= src_contents.count) {
+        (void)eval_service_write_file(ctx, dst, nob_sv_from_cstr(""), false);
+        file_transfer_fail(ctx,
+                           node,
+                           o,
+                           &opt,
+                           36,
+                           nob_sv_from_cstr("Couldn't resume download"),
+                           nob_sv_from_cstr("failed to resume file:// transfer"),
+                           nob_sv_from_cstr("file(DOWNLOAD) range start is outside source"),
+                           src);
+        return true;
+    }
+
     const char *range_data = src_contents.data ? src_contents.data + begin : "";
     bool ok = eval_service_write_file(ctx,
                                       dst,
@@ -574,6 +589,7 @@ static bool handle_file_download(EvalExecContext *ctx, const Node *node, SV_List
     }
 
     file_transfer_set_success(ctx, &opt, nob_sv_from_cstr("local download completed"));
+    (void)eval_emit_fs_transfer_download(ctx, o, src, dst);
     {
         bool supported = !opt.has_range_start &&
                          !opt.has_range_end &&
@@ -665,6 +681,7 @@ static bool handle_file_upload(EvalExecContext *ctx, const Node *node, SV_List a
         }
 
         file_transfer_set_success(ctx, &opt, log_trim.count > 0 ? log_trim : nob_sv_from_cstr("remote upload completed"));
+        (void)eval_emit_fs_transfer_upload(ctx, o, src, args[2]);
         return true;
     }
 
@@ -699,6 +716,7 @@ static bool handle_file_upload(EvalExecContext *ctx, const Node *node, SV_List a
     }
 
     file_transfer_set_success(ctx, &opt, nob_sv_from_cstr("local upload completed"));
+    (void)eval_emit_fs_transfer_upload(ctx, o, src, dst);
     return true;
 }
 
