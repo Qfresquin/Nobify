@@ -190,7 +190,7 @@ typedef struct {
     size_t affected_project_count;
 } EGD_Corpus_Finding_Inventory;
 
-#define EGD_EXPECTED_FULL_COMMANDS 124u
+#define EGD_EXPECTED_REGISTRY_COMMANDS 124u
 #define EGD_COMMAND_INVENTORY_VERSION "2026-04-10-c5"
 #define EGD_SUPPORTED_SUBSET_DOC "docs/codegen/generated_backend_supported_subset.md"
 
@@ -701,28 +701,6 @@ static bool egd_case_metadata_is_valid(const EGD_Case_Def *case_def,
     }
 
     return true;
-}
-
-static size_t egd_count_full_native_rows(String_View matrix) {
-    size_t count = 0;
-    size_t pos = 0;
-    while (pos < matrix.count) {
-        size_t line_start = pos;
-        size_t line_end = pos;
-        while (line_end < matrix.count && matrix.data[line_end] != '\n') line_end++;
-        pos = line_end < matrix.count ? line_end + 1 : line_end;
-
-        String_View line = test_case_pack_trim_cr(
-            nob_sv_from_parts(matrix.data + line_start, line_end - line_start));
-        if (line.count >= 3 &&
-            line.data[0] == '|' &&
-            line.data[1] == ' ' &&
-            line.data[2] == '`' &&
-            egd_body_contains(line, "| native | FULL | FULL |")) {
-            count++;
-        }
-    }
-    return count;
 }
 
 static void egd_log_curated_subcommand_family_counts(void) {
@@ -1768,16 +1746,7 @@ TEST(evaluator_codegen_diff_inventory_covers_full_commands_and_curated_subcomman
     Eval_Test_Init init = {0};
     Eval_Test_Runtime *ctx = NULL;
     EGD_Inventory_State_Counts command_counts = {0};
-    String_View matrix = {0};
-    const char *repo_root = getenv(CMK2NOB_TEST_REPO_ROOT_ENV);
-    char matrix_path[_TINYDIR_PATH_MAX] = {0};
     ASSERT(arena && event_arena);
-    ASSERT(repo_root && repo_root[0] != '\0');
-    ASSERT(snprintf(matrix_path,
-                    sizeof(matrix_path),
-                    "%s/docs/evaluator/evaluator_coverage_matrix.md",
-                    repo_root) < (int)sizeof(matrix_path));
-    ASSERT(test_snapshot_load_text_file_to_arena(arena, matrix_path, &matrix));
 
     init.arena = arena;
     init.event_arena = event_arena;
@@ -1788,15 +1757,13 @@ TEST(evaluator_codegen_diff_inventory_covers_full_commands_and_curated_subcomman
     ASSERT(init.stream != NULL);
     ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
-    ASSERT(NOB_ARRAY_LEN(s_egd_command_names) == EGD_EXPECTED_FULL_COMMANDS);
-    ASSERT(NOB_ARRAY_LEN(s_egd_command_inventory) == EGD_EXPECTED_FULL_COMMANDS);
-    ASSERT(egd_count_full_native_rows(matrix) == EGD_EXPECTED_FULL_COMMANDS);
+    ASSERT(NOB_ARRAY_LEN(s_egd_command_names) == EGD_EXPECTED_REGISTRY_COMMANDS);
+    ASSERT(NOB_ARRAY_LEN(s_egd_command_inventory) == EGD_EXPECTED_REGISTRY_COMMANDS);
 
     for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_command_names); ++i) {
         Command_Capability cap = {0};
         const char *command = s_egd_command_names[i];
         const EGD_Command_Inventory *item = egd_lookup_command_inventory(command);
-        char expected_row[192] = {0};
         ASSERT(eval_test_get_command_capability(ctx, nob_sv_from_cstr(command), &cap));
         ASSERT(cap.implemented_level == EVAL_CMD_IMPL_FULL);
         ASSERT(item != NULL);
@@ -1812,11 +1779,6 @@ TEST(evaluator_codegen_diff_inventory_covers_full_commands_and_curated_subcomman
             ASSERT(item->tracking_key[0] != '\0');
         }
         egd_inventory_state_counts_add(&command_counts, item->classification);
-        ASSERT(snprintf(expected_row,
-                        sizeof(expected_row),
-                        "| `%s` | native | FULL | FULL |",
-                        command) < (int)sizeof(expected_row));
-        ASSERT(codegen_sv_contains(matrix, expected_row));
     }
 
     for (size_t i = 0; i < NOB_ARRAY_LEN(s_egd_command_inventory); ++i) {

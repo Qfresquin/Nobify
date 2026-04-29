@@ -2984,6 +2984,15 @@ static inline bool eval_emit_list_transform(EvalExecContext *ctx,
     ev.as.list_transform.list_var = sv_copy_to_event_arena(ctx, list_var);
     return emit_event(ctx, ev);
 }
+static inline bool eval_emit_list_reverse(EvalExecContext *ctx,
+                                          Event_Origin origin,
+                                          String_View list_var) {
+    Event ev = {0};
+    ev.h.kind = EVENT_LIST_REVERSE;
+    ev.h.origin = origin;
+    ev.as.list_reverse.list_var = sv_copy_to_event_arena(ctx, list_var);
+    return emit_event(ctx, ev);
+}
 static inline bool eval_emit_list_sort(EvalExecContext *ctx,
                                        Event_Origin origin,
                                        String_View list_var) {
@@ -3083,6 +3092,20 @@ bool eval_service_write_file(EvalExecContext *ctx,
 bool eval_service_mkdir(EvalExecContext *ctx, String_View path);
 bool eval_service_file_exists(EvalExecContext *ctx, String_View path, bool *out_exists);
 bool eval_service_copy_file(EvalExecContext *ctx, String_View src, String_View dst);
+bool eval_service_copy_directory(EvalExecContext *ctx, String_View src, String_View dst);
+bool eval_service_stat(EvalExecContext *ctx,
+                       String_View path,
+                       bool follow_symlinks,
+                       Eval_Fs_Stat *out_stat);
+bool eval_service_rename(EvalExecContext *ctx, String_View old_path, String_View new_path);
+bool eval_service_remove(EvalExecContext *ctx, String_View path, bool recursive);
+bool eval_service_chmod(EvalExecContext *ctx, String_View path, uint32_t mode, bool recursive);
+bool eval_service_touch(EvalExecContext *ctx, String_View path, bool create);
+bool eval_service_link(EvalExecContext *ctx,
+                       String_View src,
+                       String_View dst,
+                       Eval_Fs_Link_Kind kind);
+bool eval_service_readlink(EvalExecContext *ctx, String_View path, String_View *out_target);
 bool eval_service_host_read_file(EvalExecContext *ctx,
                                  String_View path,
                                  String_View *out_contents,

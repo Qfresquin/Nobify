@@ -446,6 +446,9 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
         case EVENT_LIST_TRANSFORM:
             if (!event_copy_sv_inplace(arena, &ev->as.list_transform.list_var)) return false;
             break;
+        case EVENT_LIST_REVERSE:
+            if (!event_copy_sv_inplace(arena, &ev->as.list_reverse.list_var)) return false;
+            break;
         case EVENT_LIST_SORT:
             if (!event_copy_sv_inplace(arena, &ev->as.list_sort.list_var)) return false;
             break;

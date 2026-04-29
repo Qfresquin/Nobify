@@ -8,6 +8,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "nob.h"          // String_View
 #include "arena.h"        // Arena
@@ -24,6 +25,8 @@ typedef struct EvalRegistry EvalRegistry;
 typedef struct EvalServices EvalServices;
 typedef struct EvalExecContext EvalExecContext;
 
+// Native command implementation depth for registry/introspection. This is not a
+// CMake parity claim; parity is audited separately by evaluator diff evidence.
 typedef enum {
     EVAL_RESULT_OK = 0,
     EVAL_RESULT_SOFT_ERROR,
@@ -159,6 +162,29 @@ typedef struct {
     String_View error_message;
 } Eval_Windows_Registry_Query_Result;
 
+typedef enum {
+    EVAL_FS_NODE_MISSING = 0,
+    EVAL_FS_NODE_FILE,
+    EVAL_FS_NODE_DIRECTORY,
+    EVAL_FS_NODE_SYMLINK,
+    EVAL_FS_NODE_OTHER,
+} Eval_Fs_Node_Type;
+
+typedef struct {
+    bool exists;
+    Eval_Fs_Node_Type type;
+    uint64_t size;
+    int64_t mtime_sec;
+    uint32_t mode;
+    bool have_mtime;
+    bool have_mode;
+} Eval_Fs_Stat;
+
+typedef enum {
+    EVAL_FS_LINK_HARD = 0,
+    EVAL_FS_LINK_SYMBOLIC,
+} Eval_Fs_Link_Kind;
+
 typedef bool (*Eval_Service_Read_File_Fn)(void *user_data,
                                           Arena *scratch_arena,
                                           String_View path,
@@ -175,6 +201,34 @@ typedef bool (*Eval_Service_File_Exists_Fn)(void *user_data,
 typedef bool (*Eval_Service_Copy_File_Fn)(void *user_data,
                                           String_View src,
                                           String_View dst);
+typedef bool (*Eval_Service_Copy_Directory_Fn)(void *user_data,
+                                               String_View src,
+                                               String_View dst);
+typedef bool (*Eval_Service_Stat_Fn)(void *user_data,
+                                     String_View path,
+                                     bool follow_symlinks,
+                                     Eval_Fs_Stat *out_stat);
+typedef bool (*Eval_Service_Rename_Fn)(void *user_data,
+                                       String_View old_path,
+                                       String_View new_path);
+typedef bool (*Eval_Service_Remove_Fn)(void *user_data,
+                                       String_View path,
+                                       bool recursive);
+typedef bool (*Eval_Service_Chmod_Fn)(void *user_data,
+                                      String_View path,
+                                      uint32_t mode,
+                                      bool recursive);
+typedef bool (*Eval_Service_Touch_Fn)(void *user_data,
+                                      String_View path,
+                                      bool create);
+typedef bool (*Eval_Service_Link_Fn)(void *user_data,
+                                     String_View src,
+                                     String_View dst,
+                                     Eval_Fs_Link_Kind kind);
+typedef bool (*Eval_Service_Readlink_Fn)(void *user_data,
+                                         Arena *scratch_arena,
+                                         String_View path,
+                                         String_View *out_target);
 typedef const char *(*Eval_Service_Get_Env_Fn)(void *user_data,
                                                Arena *scratch_arena,
                                                const char *name);
@@ -203,6 +257,14 @@ struct EvalServices {
     Eval_Service_Mkdir_Fn fs_mkdir;
     Eval_Service_File_Exists_Fn fs_file_exists;
     Eval_Service_Copy_File_Fn fs_copy_file;
+    Eval_Service_Copy_Directory_Fn fs_copy_directory;
+    Eval_Service_Stat_Fn fs_stat;
+    Eval_Service_Rename_Fn fs_rename;
+    Eval_Service_Remove_Fn fs_remove;
+    Eval_Service_Chmod_Fn fs_chmod;
+    Eval_Service_Touch_Fn fs_touch;
+    Eval_Service_Link_Fn fs_link;
+    Eval_Service_Readlink_Fn fs_readlink;
     Eval_Service_Get_Env_Fn env_get;
     Eval_Service_Get_Cwd_Fn process_get_cwd;
     Eval_Service_Process_Run_Fn process_run_capture;

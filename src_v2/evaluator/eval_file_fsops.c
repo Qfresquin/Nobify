@@ -206,17 +206,6 @@ static bool file_parse_permission_token(mode_t *mode, String_View token) {
     return false;
 }
 
-static bool file_leaf_exists(const char *path) {
-    if (!path || path[0] == '\0') return false;
-#if defined(_WIN32)
-    DWORD attrs = GetFileAttributesA(path);
-    return attrs != INVALID_FILE_ATTRIBUTES;
-#else
-    struct stat st = {0};
-    return lstat(path, &st) == 0;
-#endif
-}
-
 static String_View file_path_join_temp_checked(EvalExecContext *ctx, String_View a, String_View b) {
     if (!ctx) return nob_sv_from_cstr("");
     if (a.count == 0) return sv_copy_to_temp_arena(ctx, b);
@@ -372,73 +361,6 @@ bool eval_real_path_resolve_temp(EvalExecContext *ctx,
     return file_real_path_resolve_temp(ctx, path, cmp0152_new, out_path);
 }
 
-static bool file_remove_leaf(const char *path, bool is_dir) {
-    if (!path) return false;
-#if defined(_WIN32)
-    if (is_dir) return RemoveDirectoryA(path) != 0;
-    return DeleteFileA(path) != 0;
-#else
-    if (is_dir) return rmdir(path) == 0;
-    return unlink(path) == 0;
-#endif
-}
-
-typedef struct {
-    bool ok;
-} File_Remove_Walk_State;
-
-static bool file_remove_tree_walk(Nob_Walk_Entry entry) {
-    File_Remove_Walk_State *state = (File_Remove_Walk_State*)entry.data;
-    bool ok = file_remove_leaf(entry.path, entry.type == NOB_FILE_DIRECTORY);
-    if (state) state->ok = state->ok && ok;
-    return ok;
-}
-
-static bool file_remove_tree_recursive(const char *path) {
-    File_Remove_Walk_State state = { .ok = true };
-    if (!path || path[0] == '\0') return false;
-    if (!file_leaf_exists(path)) return true;
-
-    if (nob_get_file_type(path) != NOB_FILE_DIRECTORY) return file_remove_leaf(path, false);
-    if (!nob_walk_dir(path, file_remove_tree_walk, .data = &state, .post_order = true)) {
-        return false;
-    }
-    return state.ok;
-}
-
-static bool file_apply_mode_one(const char *path, mode_t mode) {
-    if (!path) return false;
-#if defined(_WIN32)
-    (void)mode;
-    return _chmod(path, _S_IREAD | _S_IWRITE) == 0;
-#else
-    return chmod(path, mode) == 0;
-#endif
-}
-
-typedef struct {
-    mode_t mode;
-    bool ok;
-} File_Chmod_Walk_State;
-
-static bool file_chmod_recursive_walk(Nob_Walk_Entry entry) {
-    File_Chmod_Walk_State *state = (File_Chmod_Walk_State*)entry.data;
-    bool ok = state && file_apply_mode_one(entry.path, state->mode);
-    if (state) state->ok = state->ok && ok;
-    return ok;
-}
-
-static bool file_chmod_recursive_c(const char *path, mode_t mode) {
-    File_Chmod_Walk_State state = {
-        .mode = mode,
-        .ok = true,
-    };
-    if (!path || path[0] == '\0') return false;
-    if (!file_leaf_exists(path)) return false;
-    if (!nob_walk_dir(path, file_chmod_recursive_walk, .data = &state)) return false;
-    return state.ok;
-}
-
 static bool file_prepare_parent_dir(EvalExecContext *ctx, String_View path) {
     if (!ctx || path.count == 0) return false;
     char *dir_c = eval_sv_to_cstr_temp(ctx, path);
@@ -505,18 +427,13 @@ static bool handle_file_append(EvalExecContext *ctx, const Node *node, SV_List a
         return true;
     }
 
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, true);
-    FILE *f = fopen(path_c, "ab");
-    if (!f) {
+    String_View contents = file_fsops_join_args_temp(ctx, args, 2);
+    if (eval_should_stop(ctx)) return true;
+    if (!eval_service_write_file(ctx, path, contents, true)) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(APPEND) failed to open file"), path);
         return true;
     }
-    for (size_t i = 2; i < arena_arr_len(args); i++) {
-        fwrite(args[i].data, 1, args[i].count, f);
-    }
-    fclose(f);
-    (void)file_fsops_emit_append_replay(ctx, o, path, file_fsops_join_args_temp(ctx, args, 2));
+    (void)file_fsops_emit_append_replay(ctx, o, path, contents);
     return true;
 }
 
@@ -529,15 +446,13 @@ static bool handle_file_size(EvalExecContext *ctx, const Node *node, SV_List arg
 
     String_View path = nob_sv_from_cstr("");
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_file_current_src_dir(ctx), &path)) return true;
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, true);
 
-    struct stat st = {0};
-    if (stat(path_c, &st) != 0) {
+    Eval_Fs_Stat st = {0};
+    if (!eval_service_stat(ctx, path, true, &st) || !st.exists) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(SIZE) failed to stat file"), path);
         return true;
     }
-    (void)eval_var_set_current(ctx, args[2], nob_sv_from_cstr(nob_temp_sprintf("%lld", (long long)st.st_size)));
+    (void)eval_var_set_current(ctx, args[2], nob_sv_from_cstr(nob_temp_sprintf("%llu", (unsigned long long)st.size)));
     return true;
 }
 
@@ -563,23 +478,19 @@ static bool handle_file_rename(EvalExecContext *ctx, const Node *node, SV_List a
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_file_current_bin_dir(ctx), &old_path)) return true;
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[2], eval_file_current_bin_dir(ctx), &new_path)) return true;
 
-    char *old_c = eval_sv_to_cstr_temp(ctx, old_path);
-    char *new_c = eval_sv_to_cstr_temp(ctx, new_path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, old_c, true);
-    EVAL_OOM_RETURN_IF_NULL(ctx, new_c, true);
-
     if (!file_prepare_parent_dir(ctx, new_path)) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(RENAME) failed to create destination directory"), new_path);
         return true;
     }
 
-    if (no_replace && file_leaf_exists(new_c)) {
+    Eval_Fs_Stat new_st = {0};
+    if (no_replace && eval_service_stat(ctx, new_path, false, &new_st) && new_st.exists) {
         (void)file_fsops_emit_rename_replay(ctx, o, old_path, new_path, no_replace, result_var.count > 0);
         if (result_var.count > 0) (void)file_emit_result_code(ctx, result_var, 1, "NO_REPLACE");
         return true;
     }
 
-    if (!nob_rename(old_c, new_c)) {
+    if (!eval_service_rename(ctx, old_path, new_path)) {
         if (result_var.count > 0) {
             (void)file_emit_result_code(ctx, result_var, 1, "rename failed");
             return true;
@@ -606,12 +517,8 @@ static bool handle_file_remove(EvalExecContext *ctx, const Node *node, SV_List a
     for (size_t i = 1; i < arena_arr_len(args); i++) {
         String_View path = nob_sv_from_cstr("");
         if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[i], eval_file_current_bin_dir(ctx), &path)) return true;
-        char *path_c = eval_sv_to_cstr_temp(ctx, path);
-        EVAL_OOM_RETURN_IF_NULL(ctx, path_c, true);
 
-        bool ok = recurse ? file_remove_tree_recursive(path_c) : file_remove_leaf(path_c, false);
-        if (!ok && !file_leaf_exists(path_c)) ok = true;
-        if (!ok) {
+        if (!eval_service_remove(ctx, path, recurse)) {
             EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", recurse ? nob_sv_from_cstr("file(REMOVE_RECURSE) failed to remove path")
                                    : nob_sv_from_cstr("file(REMOVE) failed to remove path"), path);
             return true;
@@ -631,23 +538,14 @@ static bool handle_file_read_symlink(EvalExecContext *ctx, const Node *node, SV_
 
     String_View path = nob_sv_from_cstr("");
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_file_current_src_dir(ctx), &path)) return true;
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, true);
 
-#if defined(_WIN32)
-    EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNSUPPORTED_OPERATION, "eval_file", nob_sv_from_cstr("file(READ_SYMLINK) is not supported on Windows backend"), path);
-    return true;
-#else
-    char tmp[PATH_MAX];
-    ssize_t n = readlink(path_c, tmp, sizeof(tmp) - 1);
-    if (n < 0) {
+    String_View target = nob_sv_from_cstr("");
+    if (!eval_service_readlink(ctx, path, &target)) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(READ_SYMLINK) failed"), path);
         return true;
     }
-    tmp[n] = '\0';
-    (void)eval_var_set_current(ctx, args[2], nob_sv_from_cstr(tmp));
+    (void)eval_var_set_current(ctx, args[2], target);
     return true;
-#endif
 }
 
 static bool handle_file_create_link(EvalExecContext *ctx, const Node *node, SV_List args) {
@@ -672,25 +570,9 @@ static bool handle_file_create_link(EvalExecContext *ctx, const Node *node, SV_L
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[2], eval_file_current_bin_dir(ctx), &dst)) return true;
     if (!file_prepare_parent_dir(ctx, dst)) return true;
 
-    char *src_c = eval_sv_to_cstr_temp(ctx, src);
-    char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
-    EVAL_OOM_RETURN_IF_NULL(ctx, src_c, true);
-    EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, true);
+    bool ok = eval_service_link(ctx, src, dst, symbolic ? EVAL_FS_LINK_SYMBOLIC : EVAL_FS_LINK_HARD);
 
-    bool ok = false;
-#if defined(_WIN32)
-    if (symbolic) {
-        DWORD flags = 0;
-        if (CreateSymbolicLinkA(dst_c, src_c, flags) != 0) ok = true;
-    } else {
-        if (CreateHardLinkA(dst_c, src_c, NULL) != 0) ok = true;
-    }
-#else
-    if (symbolic) ok = symlink(src_c, dst_c) == 0;
-    else ok = link(src_c, dst_c) == 0;
-#endif
-
-    if (!ok && copy_on_error) ok = nob_copy_file(src_c, dst_c);
+    if (!ok && copy_on_error) ok = eval_service_copy_file(ctx, src, dst);
 
     if (!ok) {
         if (result_var.count > 0) {
@@ -765,10 +647,7 @@ static bool handle_file_chmod(EvalExecContext *ctx, const Node *node, SV_List ar
     for (size_t i = 1; i < perm_idx; i++) {
         String_View path = nob_sv_from_cstr("");
         if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[i], eval_file_current_bin_dir(ctx), &path)) return true;
-        char *path_c = eval_sv_to_cstr_temp(ctx, path);
-        EVAL_OOM_RETURN_IF_NULL(ctx, path_c, true);
-        bool ok = recurse ? file_chmod_recursive_c(path_c, mode) : file_apply_mode_one(path_c, mode);
-        if (!ok) {
+        if (!eval_service_chmod(ctx, path, (uint32_t)mode, recurse)) {
             EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", recurse ? nob_sv_from_cstr("file(CHMOD_RECURSE) failed")
                                    : nob_sv_from_cstr("file(CHMOD) failed"), path);
             return true;
@@ -858,23 +737,22 @@ static bool handle_file_timestamp(EvalExecContext *ctx, const Node *node, SV_Lis
 
     String_View path = nob_sv_from_cstr("");
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_file_current_src_dir(ctx), &path)) return true;
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
     char *fmt_c = eval_sv_to_cstr_temp(ctx, fmt);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, true);
     EVAL_OOM_RETURN_IF_NULL(ctx, fmt_c, true);
 
-    struct stat st = {0};
-    if (stat(path_c, &st) != 0) {
+    Eval_Fs_Stat st = {0};
+    if (!eval_service_stat(ctx, path, true, &st) || !st.exists || !st.have_mtime) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(TIMESTAMP) failed to stat file"), path);
         return true;
     }
 
     struct tm tmv = {0};
+    time_t mtime = (time_t)st.mtime_sec;
 #if defined(_WIN32)
-    errno_t rc = utc ? gmtime_s(&tmv, &st.st_mtime) : localtime_s(&tmv, &st.st_mtime);
+    errno_t rc = utc ? gmtime_s(&tmv, &mtime) : localtime_s(&tmv, &mtime);
     if (rc != 0) return true;
 #else
-    if (!(utc ? gmtime_r(&st.st_mtime, &tmv) : localtime_r(&st.st_mtime, &tmv))) return true;
+    if (!(utc ? gmtime_r(&mtime, &tmv) : localtime_r(&mtime, &tmv))) return true;
 #endif
     char *out = (char*)arena_alloc(eval_temp_arena(ctx), 256);
     EVAL_OOM_RETURN_IF_NULL(ctx, out, true);

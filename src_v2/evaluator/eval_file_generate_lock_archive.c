@@ -244,24 +244,23 @@ static bool file_generate_enqueue_job(EvalExecContext *ctx, const Eval_File_Gene
     return EVAL_ARR_PUSH(ctx, ctx->event_arena, ctx->file_state.file_generate_jobs, *job);
 }
 
-static bool file_read_content_temp(EvalExecContext *ctx, String_View path, String_View *out_content, struct stat *out_st, bool *out_have_st) {
+static bool file_read_content_temp(EvalExecContext *ctx, String_View path, String_View *out_content, Eval_Fs_Stat *out_st, bool *out_have_st) {
     if (!ctx || !out_content) return false;
     *out_content = nob_sv_from_cstr("");
     if (out_have_st) *out_have_st = false;
 
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-
-    Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(path_c, &sb)) return false;
-    char *dup = (char*)arena_alloc(eval_temp_arena(ctx), sb.count + 1);
+    String_View read_content = nob_sv_from_cstr("");
+    bool found = false;
+    if (!eval_service_read_file(ctx, path, &read_content, &found) || !found) return false;
+    char *dup = (char*)arena_alloc(eval_temp_arena(ctx), read_content.count + 1);
     EVAL_OOM_RETURN_IF_NULL(ctx, dup, false);
-    if (sb.count > 0) memcpy(dup, sb.items, sb.count);
-    dup[sb.count] = '\0';
-    *out_content = nob_sv_from_parts(dup, sb.count);
-    nob_sb_free(sb);
+    if (read_content.count > 0) memcpy(dup, read_content.data, read_content.count);
+    dup[read_content.count] = '\0';
+    *out_content = nob_sv_from_parts(dup, read_content.count);
 
-    if (out_have_st && out_st && stat(path_c, out_st) == 0) *out_have_st = true;
+    if (out_have_st && out_st && eval_service_stat(ctx, path, true, out_st) && out_st->exists) {
+        *out_have_st = true;
+    }
     return true;
 }
 
@@ -269,14 +268,11 @@ static bool file_path_content_same(EvalExecContext *ctx, String_View path, Strin
     if (!ctx || !out_same) return false;
     *out_same = false;
 
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-
-    Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(path_c, &sb)) return true;
-    String_View current = nob_sv_from_parts(sb.items, sb.count);
+    String_View current = nob_sv_from_cstr("");
+    bool found = false;
+    if (!eval_service_read_file(ctx, path, &current, &found)) return false;
+    if (!found) return true;
     *out_same = nob_sv_eq(current, content);
-    nob_sb_free(sb);
     return true;
 }
 
@@ -509,7 +505,7 @@ bool eval_file_generate_flush(EvalExecContext *ctx) {
         }
 
         String_View final_content = job->content;
-        struct stat in_st = {0};
+        Eval_Fs_Stat in_st = {0};
         bool have_input_st = false;
         if (job->has_input) {
             if (!file_read_content_temp(ctx, job->input_path, &final_content, &in_st, &have_input_st)) {
@@ -553,8 +549,8 @@ bool eval_file_generate_flush(EvalExecContext *ctx) {
 #if !defined(_WIN32)
         if (job->has_file_permissions && job->file_mode != 0) {
             mode_octal = eval_replay_mode_octal_temp(ctx, job->file_mode);
-        } else if (job->use_source_permissions && job->has_input && have_input_st) {
-            mode_octal = eval_replay_mode_octal_temp(ctx, (unsigned int)(in_st.st_mode & 0777));
+        } else if (job->use_source_permissions && job->has_input && have_input_st && in_st.have_mode) {
+            mode_octal = eval_replay_mode_octal_temp(ctx, (unsigned int)(in_st.mode & 0777));
         }
 #endif
         bool same = false;
@@ -564,18 +560,16 @@ bool eval_file_generate_flush(EvalExecContext *ctx) {
             continue;
         }
 
-        char *out_c = eval_sv_to_cstr_temp(ctx, job->output_path);
-        EVAL_OOM_RETURN_IF_NULL(ctx, out_c, false);
-        if (!nob_write_entire_file(out_c, final_content.data, final_content.count)) {
+        if (!eval_write_text_file(ctx, job->output_path, final_content, false)) {
             EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, nob_sv_from_cstr("eval_file"), job->command_name, job->origin, nob_sv_from_cstr("file(GENERATE) failed to write OUTPUT"), job->output_path);
             continue;
         }
 
 #if !defined(_WIN32)
         if (job->has_file_permissions && job->file_mode != 0) {
-            (void)chmod(out_c, (mode_t)job->file_mode);
-        } else if (job->use_source_permissions && job->has_input && have_input_st) {
-            (void)chmod(out_c, in_st.st_mode & 0777);
+            (void)eval_service_chmod(ctx, job->output_path, job->file_mode, false);
+        } else if (job->use_source_permissions && job->has_input && have_input_st && in_st.have_mode) {
+            (void)eval_service_chmod(ctx, job->output_path, in_st.mode & 0777, false);
         } else if (job->no_source_permissions) {
             // Explicitly keep default backend permissions.
         }

@@ -158,7 +158,8 @@ typedef enum {
     X(EVENT_REPLAY_ACTION_ADD_INPUT, EVENT_FAMILY_BUILD_GRAPH, "replay_action_add_input", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_REPLAY_ACTION_ADD_OUTPUT, EVENT_FAMILY_BUILD_GRAPH, "replay_action_add_output", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_REPLAY_ACTION_ADD_ARGV, EVENT_FAMILY_BUILD_GRAPH, "replay_action_add_argv", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC) \
-    X(EVENT_REPLAY_ACTION_ADD_ENV, EVENT_FAMILY_BUILD_GRAPH, "replay_action_add_env", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC)
+    X(EVENT_REPLAY_ACTION_ADD_ENV, EVENT_FAMILY_BUILD_GRAPH, "replay_action_add_env", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_LIST_REVERSE, EVENT_FAMILY_LIST, "list_reverse", EVENT_ROLE_RUNTIME_EFFECT)
 
 typedef enum {
 #define DECLARE_EVENT_KIND(kind, family, label, roles) kind,
@@ -677,6 +678,10 @@ typedef struct {
 
 typedef struct {
     String_View list_var;
+} Event_List_Reverse;
+
+typedef struct {
+    String_View list_var;
 } Event_List_Sort;
 
 typedef struct {
@@ -1153,6 +1158,7 @@ typedef struct {
         Event_List_Insert list_insert;
         Event_List_Remove list_remove;
         Event_List_Transform list_transform;
+        Event_List_Reverse list_reverse;
         Event_List_Sort list_sort;
         Event_Math_Expr math_expr;
         Event_Path_Normalize path_normalize;

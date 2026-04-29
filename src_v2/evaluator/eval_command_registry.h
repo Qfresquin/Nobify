@@ -3,6 +3,10 @@
 
 // Shared command registry:
 // name, handler, implementation level, fallback behavior
+//
+// The implementation level is native handler coverage for the evaluator
+// registry/introspection API. It is not a CMake parity status; executable
+// parity evidence is tracked in the evaluator parity manifest and diff packs.
 #define EVAL_COMMAND_REGISTRY(X) \
     X("add_compile_definitions", eval_handle_add_compile_definitions, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \
     X("add_dependencies", eval_handle_add_dependencies, EVAL_CMD_IMPL_FULL, EVAL_FALLBACK_NOOP_WARN) \

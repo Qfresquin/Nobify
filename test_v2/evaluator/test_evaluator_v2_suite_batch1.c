@@ -1,9 +1,504 @@
 #include "test_evaluator_v2_support.h"
+#include "eval_command_registry.h"
+#include "test_evaluator_parity_manifest.h"
 
 typedef struct {
     size_t call_count;
     bool saw_pipeline_input;
 } Execute_Process_Mock_Data;
+
+typedef struct {
+    size_t read_count;
+    size_t write_count;
+    size_t mkdir_count;
+    size_t copy_count;
+    size_t copy_directory_count;
+    size_t stat_count;
+    size_t rename_count;
+    size_t remove_count;
+    size_t chmod_count;
+    size_t touch_count;
+    size_t link_count;
+    size_t readlink_count;
+    String_View last_read_path;
+    String_View last_write_path;
+    String_View last_write_contents;
+    String_View last_mkdir_path;
+    String_View last_copy_src;
+    String_View last_copy_dst;
+    bool last_write_append;
+    bool saw_read_svc_in;
+    bool saw_write_svc_out;
+    bool saw_copy_svc_in;
+    bool saw_copy_svc_out;
+    bool saw_copy_directory_svc_dir;
+    bool saw_stat_svc_file;
+    bool saw_stat_svc_dir;
+    bool saw_rename;
+    bool saw_remove;
+    bool saw_remove_recursive;
+    bool saw_chmod;
+    bool saw_chmod_recursive;
+    bool saw_touch_create;
+    bool saw_touch_nocreate;
+    bool saw_link_symbolic;
+    bool saw_readlink;
+    bool saw_append_two;
+} File_Service_Mock_Data;
+
+typedef struct {
+    const char *family_label;
+    const char *case_pack_path;
+} Evaluator_Parity_Diff_Pack_Row;
+
+static const Evaluator_Parity_Diff_Pack_Row s_evaluator_parity_diff_packs[] = {
+#define DIFF_CASE_PACK(family_label, case_pack_path, oracle_kind) {family_label, case_pack_path},
+#include "../evaluator_diff/test_evaluator_diff_case_packs.inc"
+#undef DIFF_CASE_PACK
+};
+
+static const char *evaluator_parity_manifest_registry_tag_for_level(Eval_Command_Impl_Level level) {
+    switch (level) {
+        case EVAL_CMD_IMPL_FULL: return "FULL";
+        case EVAL_CMD_IMPL_PARTIAL: return "PARTIAL";
+        case EVAL_CMD_IMPL_MISSING: return "MISSING";
+        default: return "UNKNOWN";
+    }
+}
+
+static const char *evaluator_parity_manifest_audit_tag(Evaluator_Parity_Audit_Status status) {
+    switch (status) {
+        case EPM_AUDIT_FULL: return "FULL";
+        case EPM_AUDIT_PARTIAL: return "PARTIAL";
+        case EPM_AUDIT_MISSING: return "MISSING";
+        default: return "UNKNOWN";
+    }
+}
+
+static const char *evaluator_parity_manifest_kind_tag(Evaluator_Parity_Manifest_Kind kind) {
+    switch (kind) {
+        case EPM_KIND_NATIVE: return "native";
+        case EPM_KIND_STRUCTURAL: return "structural";
+        default: return "unknown";
+    }
+}
+
+static const Evaluator_Parity_Manifest_Row *evaluator_parity_manifest_find(const char *name) {
+    if (!name) return NULL;
+    for (size_t i = 0; i < s_evaluator_parity_manifest_count; i++) {
+        if (s_evaluator_parity_manifest[i].name &&
+            strcmp(s_evaluator_parity_manifest[i].name, name) == 0) {
+            return &s_evaluator_parity_manifest[i];
+        }
+    }
+    return NULL;
+}
+
+static const Evaluator_Parity_Diff_Pack_Row *evaluator_parity_diff_pack_find(const char *family_label) {
+    if (!family_label) return NULL;
+    for (size_t i = 0; i < NOB_ARRAY_LEN(s_evaluator_parity_diff_packs); i++) {
+        if (s_evaluator_parity_diff_packs[i].family_label &&
+            strcmp(s_evaluator_parity_diff_packs[i].family_label, family_label) == 0) {
+            return &s_evaluator_parity_diff_packs[i];
+        }
+    }
+    return NULL;
+}
+
+static bool evaluator_parity_diff_pack_load(Arena *arena,
+                                            const Evaluator_Parity_Diff_Pack_Row *pack,
+                                            String_View *out_content) {
+    const char *repo_root = getenv(CMK2NOB_TEST_REPO_ROOT_ENV);
+    char pack_path[_TINYDIR_PATH_MAX] = {0};
+    int n = 0;
+
+    if (out_content) *out_content = (String_View){0};
+    if (!arena || !pack || !pack->case_pack_path || !out_content) return false;
+    if (!repo_root || repo_root[0] == '\0') return false;
+    n = snprintf(pack_path, sizeof(pack_path), "%s/%s", repo_root, pack->case_pack_path);
+    if (n <= 0 || n >= (int)sizeof(pack_path)) return false;
+    return evaluator_load_text_file_to_arena(arena, pack_path, out_content);
+}
+
+static bool evaluator_parity_diff_pack_has_case(Arena *arena,
+                                                const Evaluator_Parity_Diff_Pack_Row *pack) {
+    String_View content = {0};
+    if (!evaluator_parity_diff_pack_load(arena, pack, &content)) return false;
+    return sv_contains_sv(content, nob_sv_from_cstr("#@@CASE "));
+}
+
+static bool evaluator_file_service_mock_read(void *user_data,
+                                             Arena *scratch_arena,
+                                             String_View path,
+                                             String_View *out_contents,
+                                             bool *out_found) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    (void)scratch_arena;
+    if (!data) return false;
+    data->read_count++;
+    data->last_read_path = path;
+    if (sv_contains_sv(path, nob_sv_from_cstr("svc_in.txt"))) {
+        data->saw_read_svc_in = true;
+    }
+    if (out_contents) *out_contents = nob_sv_from_cstr("svc-input");
+    if (out_found) *out_found = true;
+    return true;
+}
+
+static bool evaluator_file_service_mock_write(void *user_data,
+                                              String_View path,
+                                              String_View contents,
+                                              bool append) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    if (!data) return false;
+    data->write_count++;
+    data->last_write_path = path;
+    data->last_write_contents = contents;
+    data->last_write_append = append;
+    if (sv_contains_sv(path, nob_sv_from_cstr("svc_out.txt"))) {
+        data->saw_write_svc_out = true;
+    }
+    if (append && nob_sv_eq(contents, nob_sv_from_cstr("two"))) {
+        data->saw_append_two = true;
+    }
+    return true;
+}
+
+static bool evaluator_file_service_mock_mkdir(void *user_data, String_View path) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    if (!data) return false;
+    data->mkdir_count++;
+    data->last_mkdir_path = path;
+    return true;
+}
+
+static bool evaluator_file_service_mock_copy(void *user_data, String_View src, String_View dst) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    if (!data) return false;
+    data->copy_count++;
+    data->last_copy_src = src;
+    data->last_copy_dst = dst;
+    if (sv_contains_sv(src, nob_sv_from_cstr("svc_in.txt"))) {
+        data->saw_copy_svc_in = true;
+    }
+    if (sv_contains_sv(dst, nob_sv_from_cstr("svc_copy.txt"))) {
+        data->saw_copy_svc_out = true;
+    }
+    return true;
+}
+
+static bool evaluator_file_service_mock_copy_directory(void *user_data, String_View src, String_View dst) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    if (!data) return false;
+    data->copy_directory_count++;
+    if (sv_contains_sv(src, nob_sv_from_cstr("svc_dir")) &&
+        sv_contains_sv(dst, nob_sv_from_cstr("svc_copy_root"))) {
+        data->saw_copy_directory_svc_dir = true;
+    }
+    return true;
+}
+
+static bool evaluator_file_service_mock_stat(void *user_data,
+                                             String_View path,
+                                             bool follow_symlinks,
+                                             Eval_Fs_Stat *out_stat) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    (void)follow_symlinks;
+    if (!data || !out_stat) return false;
+    data->stat_count++;
+    *out_stat = (Eval_Fs_Stat){0};
+    if (sv_contains_sv(path, nob_sv_from_cstr("svc_stat.txt"))) {
+        data->saw_stat_svc_file = true;
+        out_stat->exists = true;
+        out_stat->type = EVAL_FS_NODE_FILE;
+        out_stat->size = 123;
+        out_stat->mtime_sec = 0;
+        out_stat->mode = 0644;
+        out_stat->have_mtime = true;
+        out_stat->have_mode = true;
+    } else if (sv_contains_sv(path, nob_sv_from_cstr("svc_dir")) ||
+               sv_contains_sv(path, nob_sv_from_cstr("svc_chmod_dir"))) {
+        data->saw_stat_svc_dir = true;
+        out_stat->exists = true;
+        out_stat->type = EVAL_FS_NODE_DIRECTORY;
+        out_stat->mode = 0755;
+        out_stat->have_mode = true;
+    } else if (sv_contains_sv(path, nob_sv_from_cstr("svc_chmod.txt")) ||
+               sv_contains_sv(path, nob_sv_from_cstr("svc_remove.txt")) ||
+               sv_contains_sv(path, nob_sv_from_cstr("svc_remove_dir"))) {
+        out_stat->exists = true;
+        out_stat->type = EVAL_FS_NODE_FILE;
+        out_stat->mode = 0644;
+        out_stat->have_mode = true;
+    }
+    return true;
+}
+
+static bool evaluator_file_service_mock_rename(void *user_data,
+                                               String_View old_path,
+                                               String_View new_path) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    if (!data) return false;
+    data->rename_count++;
+    if (sv_contains_sv(old_path, nob_sv_from_cstr("svc_rename_old.txt")) &&
+        sv_contains_sv(new_path, nob_sv_from_cstr("svc_rename_new.txt"))) {
+        data->saw_rename = true;
+    }
+    return true;
+}
+
+static bool evaluator_file_service_mock_remove(void *user_data, String_View path, bool recursive) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    if (!data) return false;
+    data->remove_count++;
+    if (!recursive && sv_contains_sv(path, nob_sv_from_cstr("svc_remove.txt"))) {
+        data->saw_remove = true;
+    }
+    if (recursive && sv_contains_sv(path, nob_sv_from_cstr("svc_remove_dir"))) {
+        data->saw_remove_recursive = true;
+    }
+    return true;
+}
+
+static bool evaluator_file_service_mock_chmod(void *user_data,
+                                              String_View path,
+                                              uint32_t mode,
+                                              bool recursive) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    (void)mode;
+    if (!data) return false;
+    data->chmod_count++;
+    if (!recursive && sv_contains_sv(path, nob_sv_from_cstr("svc_chmod.txt"))) {
+        data->saw_chmod = true;
+    }
+    if (recursive && sv_contains_sv(path, nob_sv_from_cstr("svc_chmod_dir"))) {
+        data->saw_chmod_recursive = true;
+    }
+    return true;
+}
+
+static bool evaluator_file_service_mock_touch(void *user_data, String_View path, bool create) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    if (!data) return false;
+    data->touch_count++;
+    if (create && sv_contains_sv(path, nob_sv_from_cstr("svc_touch.txt"))) {
+        data->saw_touch_create = true;
+    }
+    if (!create && sv_contains_sv(path, nob_sv_from_cstr("svc_touch_missing.txt"))) {
+        data->saw_touch_nocreate = true;
+    }
+    return true;
+}
+
+static bool evaluator_file_service_mock_link(void *user_data,
+                                             String_View src,
+                                             String_View dst,
+                                             Eval_Fs_Link_Kind kind) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    if (!data) return false;
+    data->link_count++;
+    if (kind == EVAL_FS_LINK_SYMBOLIC &&
+        sv_contains_sv(src, nob_sv_from_cstr("svc_link_src.txt")) &&
+        sv_contains_sv(dst, nob_sv_from_cstr("svc_link_dst.txt"))) {
+        data->saw_link_symbolic = true;
+    }
+    return true;
+}
+
+static bool evaluator_file_service_mock_readlink(void *user_data,
+                                                 Arena *scratch_arena,
+                                                 String_View path,
+                                                 String_View *out_target) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    (void)scratch_arena;
+    if (!data || !out_target) return false;
+    data->readlink_count++;
+    if (sv_contains_sv(path, nob_sv_from_cstr("svc_link_dst.txt"))) {
+        data->saw_readlink = true;
+    }
+    *out_target = nob_sv_from_cstr("svc_link_src.txt");
+    return true;
+}
+
+static bool evaluator_parity_known_divergence_pack_has_key(Arena *arena, const char *key) {
+    const Evaluator_Parity_Diff_Pack_Row *pack = evaluator_parity_diff_pack_find("known_divergence");
+    String_View content = {0};
+    String_View marker = {0};
+
+    if (!arena || !key || key[0] == '\0' || !pack) return false;
+    if (!evaluator_parity_diff_pack_load(arena, pack, &content)) return false;
+    marker = nob_sv_from_cstr(nob_temp_sprintf("#@@DIVERGENCE_KEY %s", key));
+    return sv_contains_sv(content, marker);
+}
+
+static bool evaluator_parity_load_coverage_matrix(Arena *arena, String_View *out_content) {
+    const char *repo_root = getenv(CMK2NOB_TEST_REPO_ROOT_ENV);
+    char matrix_path[_TINYDIR_PATH_MAX] = {0};
+    int n = 0;
+
+    if (out_content) *out_content = (String_View){0};
+    if (!arena || !out_content || !repo_root || repo_root[0] == '\0') return false;
+    n = snprintf(matrix_path,
+                 sizeof(matrix_path),
+                 "%s/%s",
+                 repo_root,
+                 "docs/evaluator/evaluator_coverage_matrix.md");
+    if (n <= 0 || n >= (int)sizeof(matrix_path)) return false;
+    return evaluator_load_text_file_to_arena(arena, matrix_path, out_content);
+}
+
+static bool evaluator_parity_sv_starts_with_lit(String_View sv, const char *lit) {
+    size_t len = strlen(lit);
+    return sv.count >= len && memcmp(sv.data, lit, len) == 0;
+}
+
+static size_t evaluator_parity_count_matrix_command_rows(String_View matrix_text) {
+    size_t count = 0;
+    bool in_audit_matrix = false;
+
+    for (size_t pos = 0; pos < matrix_text.count;) {
+        size_t start = pos;
+        while (pos < matrix_text.count && matrix_text.data[pos] != '\n') pos++;
+        String_View line = nob_sv_from_parts(matrix_text.data + start, pos - start);
+
+        if (evaluator_parity_sv_starts_with_lit(line, "## Audit Matrix")) {
+            in_audit_matrix = true;
+        } else if (evaluator_parity_sv_starts_with_lit(line, "## Ownership Notes")) {
+            break;
+        } else if (in_audit_matrix && evaluator_parity_sv_starts_with_lit(line, "| `")) {
+            count++;
+        }
+
+        if (pos < matrix_text.count) pos++;
+    }
+
+    return count;
+}
+
+static bool evaluator_parity_known_divergence_key_is_granular(const char *key) {
+    if (!key || key[0] == '\0') return false;
+    if (strncmp(key, "partial.audit.", strlen("partial.audit.")) == 0) return false;
+    return strchr(key, '.') != NULL;
+}
+
+TEST(evaluator_parity_manifest_guards_registry_and_audit_claims) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    size_t full_count = 0;
+    size_t partial_count = 0;
+    size_t native_count = 0;
+    size_t native_divergence_count = 0;
+    String_View coverage_matrix = {0};
+
+    ASSERT(evaluator_parity_load_coverage_matrix(temp_arena, &coverage_matrix));
+    ASSERT(evaluator_parity_count_matrix_command_rows(coverage_matrix) ==
+           s_evaluator_parity_manifest_count);
+
+    for (size_t i = 0; i < NOB_ARRAY_LEN(s_evaluator_parity_diff_packs); i++) {
+        const Evaluator_Parity_Diff_Pack_Row *pack = &s_evaluator_parity_diff_packs[i];
+        ASSERT(pack->family_label != NULL && pack->family_label[0] != '\0');
+        ASSERT(pack->case_pack_path != NULL && pack->case_pack_path[0] != '\0');
+        for (size_t j = i + 1; j < NOB_ARRAY_LEN(s_evaluator_parity_diff_packs); j++) {
+            ASSERT(strcmp(pack->family_label, s_evaluator_parity_diff_packs[j].family_label) != 0);
+        }
+        ASSERT(evaluator_parity_diff_pack_has_case(temp_arena, pack));
+    }
+
+    for (size_t i = 0; i < s_evaluator_parity_manifest_count; i++) {
+        const Evaluator_Parity_Manifest_Row *row = &s_evaluator_parity_manifest[i];
+        const Evaluator_Parity_Diff_Pack_Row *evidence_pack = NULL;
+        ASSERT(row->name != NULL && row->name[0] != '\0');
+        ASSERT(row->registry_tag != NULL && row->registry_tag[0] != '\0');
+        ASSERT(row->diff_owner != NULL && row->diff_owner[0] != '\0');
+        ASSERT(row->evidence_pack != NULL && row->evidence_pack[0] != '\0');
+        evidence_pack = evaluator_parity_diff_pack_find(row->evidence_pack);
+        ASSERT(evidence_pack != NULL);
+        ASSERT(sv_contains_sv(coverage_matrix,
+                              nob_sv_from_cstr(nob_temp_sprintf("| `%s` | %s | %s | %s |",
+                                                                row->name,
+                                                                evaluator_parity_manifest_kind_tag(row->kind),
+                                                                row->registry_tag,
+                                                                evaluator_parity_manifest_audit_tag(row->audit_status)))));
+
+        for (size_t j = i + 1; j < s_evaluator_parity_manifest_count; j++) {
+            ASSERT(strcmp(row->name, s_evaluator_parity_manifest[j].name) != 0);
+        }
+
+        if (row->audit_status == EPM_AUDIT_FULL) {
+            full_count++;
+            ASSERT(row->known_divergence_key == NULL);
+            ASSERT(row->evidence_level == EPM_EVIDENCE_POSITIVE_DIFF ||
+                   row->evidence_level == EPM_EVIDENCE_HOST_OR_SPECIAL_DIFF);
+            ASSERT(evaluator_parity_diff_pack_has_case(temp_arena, evidence_pack));
+        } else if (row->audit_status == EPM_AUDIT_PARTIAL) {
+            partial_count++;
+            ASSERT(row->known_divergence_key != NULL && row->known_divergence_key[0] != '\0');
+            ASSERT(evaluator_parity_known_divergence_key_is_granular(row->known_divergence_key));
+            ASSERT(row->evidence_level == EPM_EVIDENCE_KNOWN_DIVERGENCE ||
+                   row->evidence_level == EPM_EVIDENCE_INTERNAL_ONLY);
+            if (row->evidence_level == EPM_EVIDENCE_KNOWN_DIVERGENCE) {
+                ASSERT(evaluator_parity_known_divergence_pack_has_key(temp_arena,
+                                                                      row->known_divergence_key));
+            }
+        } else {
+            ASSERT(row->audit_status == EPM_AUDIT_MISSING);
+            ASSERT(row->evidence_level == EPM_EVIDENCE_NONE);
+        }
+
+        if (row->kind == EPM_KIND_NATIVE) {
+            Command_Capability cap = {0};
+            native_count++;
+            if (strcmp(row->registry_tag, evaluator_parity_manifest_audit_tag(row->audit_status)) != 0) {
+                native_divergence_count++;
+            }
+            ASSERT(eval_test_get_command_capability(ctx, nob_sv_from_cstr(row->name), &cap));
+            ASSERT(strcmp(row->registry_tag,
+                          evaluator_parity_manifest_registry_tag_for_level(cap.implemented_level)) == 0);
+        } else {
+            ASSERT(row->kind == EPM_KIND_STRUCTURAL);
+            ASSERT(strcmp(row->registry_tag, "n/a") == 0);
+        }
+    }
+
+    size_t registry_count = 0;
+#define ASSERT_REGISTRY_ROW_IN_PARITY_MANIFEST(name, handler, level, fallback) \
+    do { \
+        (void)(level); \
+        (void)(fallback); \
+        const Evaluator_Parity_Manifest_Row *row = evaluator_parity_manifest_find(name); \
+        ASSERT(row != NULL); \
+        ASSERT(row->kind == EPM_KIND_NATIVE); \
+        registry_count++; \
+    } while (0);
+    EVAL_COMMAND_REGISTRY(ASSERT_REGISTRY_ROW_IN_PARITY_MANIFEST)
+#undef ASSERT_REGISTRY_ROW_IN_PARITY_MANIFEST
+
+    ASSERT(native_count == registry_count);
+    ASSERT(full_count == EVALUATOR_PARITY_MANIFEST_EXPECTED_FULL);
+    ASSERT(partial_count == EVALUATOR_PARITY_MANIFEST_EXPECTED_PARTIAL);
+    ASSERT(native_divergence_count == EVALUATOR_PARITY_MANIFEST_EXPECTED_NATIVE_DIVERGENCES);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
 
 static bool evaluator_execute_process_mock_run(void *user_data,
                                                Arena *scratch_arena,
@@ -137,78 +632,6 @@ TEST(evaluator_public_api_profile_and_report_snapshot) {
     Command_Capability missing = {0};
     ASSERT(!eval_test_get_command_capability(ctx, nob_sv_from_cstr("unknown_public_api_command"), &missing));
     ASSERT(missing.implemented_level == EVAL_CMD_IMPL_MISSING);
-
-    eval_test_destroy(ctx);
-    arena_destroy(temp_arena);
-    arena_destroy(event_arena);
-    TEST_PASS();
-}
-
-TEST(evaluator_ctest_capabilities_align_with_coverage_matrix) {
-    static const char *ctest_commands[] = {
-        "ctest_build",
-        "ctest_coverage",
-        "ctest_empty_binary_directory",
-        "ctest_memcheck",
-        "ctest_read_custom_files",
-        "ctest_run_script",
-        "ctest_sleep",
-        "ctest_start",
-        "ctest_submit",
-        "ctest_test",
-        "ctest_update",
-        "ctest_upload",
-    };
-    static const char *matrix_rel_path = "docs/evaluator/evaluator_coverage_matrix.md";
-    static const char *divergence_summary =
-        "| Native rows where `Audit Status != Registry Tag` | 0 |";
-
-    Arena *temp_arena = arena_create(2 * 1024 * 1024);
-    Arena *event_arena = arena_create(2 * 1024 * 1024);
-    ASSERT(temp_arena && event_arena);
-
-    Cmake_Event_Stream *stream = event_stream_create(event_arena);
-    ASSERT(stream != NULL);
-
-    Eval_Test_Init init = {0};
-    init.arena = temp_arena;
-    init.event_arena = event_arena;
-    init.stream = stream;
-    init.source_dir = nob_sv_from_cstr(".");
-    init.binary_dir = nob_sv_from_cstr(".");
-    init.current_file = "CMakeLists.txt";
-
-    Eval_Test_Runtime *ctx = eval_test_create(&init);
-    ASSERT(ctx != NULL);
-
-    for (size_t i = 0; i < NOB_ARRAY_LEN(ctest_commands); i++) {
-        String_View command_name = nob_sv_from_cstr(ctest_commands[i]);
-        Command_Capability cap = {0};
-        ASSERT(eval_test_get_command_capability(ctx, command_name, &cap));
-        ASSERT(cap.implemented_level == EVAL_CMD_IMPL_FULL);
-        ASSERT(eval_session_command_exists(ctx->session, command_name));
-    }
-
-    const char *repo_root = getenv(CMK2NOB_TEST_REPO_ROOT_ENV);
-    ASSERT(repo_root && repo_root[0] != '\0');
-
-    char matrix_path[_TINYDIR_PATH_MAX] = {0};
-    int n = snprintf(matrix_path, sizeof(matrix_path), "%s/%s", repo_root, matrix_rel_path);
-    ASSERT(n > 0 && n < (int)sizeof(matrix_path));
-
-    String_View matrix_text = {0};
-    ASSERT(evaluator_load_text_file_to_arena(temp_arena, matrix_path, &matrix_text));
-    ASSERT(sv_contains_sv(matrix_text, nob_sv_from_cstr(divergence_summary)));
-
-    for (size_t i = 0; i < NOB_ARRAY_LEN(ctest_commands); i++) {
-        char expected_row[128] = {0};
-        n = snprintf(expected_row,
-                     sizeof(expected_row),
-                     "| `%s` | native | FULL | FULL |",
-                     ctest_commands[i]);
-        ASSERT(n > 0 && n < (int)sizeof(expected_row));
-        ASSERT(sv_contains_sv(matrix_text, nob_sv_from_cstr(expected_row)));
-    }
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -358,6 +781,130 @@ TEST(evaluator_session_services_env_lookup_is_injected) {
     eval_session_destroy(session);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_file_commands_route_supported_fs_effects_through_services) {
+    File_Service_Mock_Data fs_data = {0};
+    EvalServices services = {
+        .user_data = &fs_data,
+        .fs_read_file = evaluator_file_service_mock_read,
+        .fs_write_file = evaluator_file_service_mock_write,
+        .fs_mkdir = evaluator_file_service_mock_mkdir,
+        .fs_copy_file = evaluator_file_service_mock_copy,
+    };
+    Eval_Test_Init init = {
+        .services = &services,
+    };
+    Eval_Test_Fixture *fixture = eval_test_fixture_create(2 * 1024 * 1024,
+                                                          2 * 1024 * 1024,
+                                                          &init);
+    ASSERT(fixture != NULL);
+    ASSERT(fixture->ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        fixture->temp_arena,
+        "file(MAKE_DIRECTORY svc_dir/sub)\n"
+        "file(WRITE svc_out.txt \"one\")\n"
+        "file(APPEND svc_out.txt \"two\")\n"
+        "file(READ svc_in.txt SVC_READ)\n"
+        "file(COPY_FILE svc_in.txt svc_copy.txt RESULT SVC_COPY_RESULT)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(fixture->ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(fixture->ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(fs_data.mkdir_count >= 1);
+    ASSERT(fs_data.write_count == 2);
+    ASSERT(fs_data.read_count == 1);
+    ASSERT(fs_data.copy_count == 1);
+    ASSERT(fs_data.last_write_append);
+    ASSERT(fs_data.saw_append_two);
+    ASSERT(fs_data.saw_write_svc_out);
+    ASSERT(fs_data.saw_read_svc_in);
+    ASSERT(fs_data.saw_copy_svc_in);
+    ASSERT(fs_data.saw_copy_svc_out);
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_READ")),
+                     nob_sv_from_cstr("svc-input")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_COPY_RESULT")),
+                     nob_sv_from_cstr("0")));
+
+    TEST_PASS();
+}
+
+TEST(evaluator_file_commands_route_structural_fs_ops_through_services) {
+    File_Service_Mock_Data fs_data = {0};
+    EvalServices services = {
+        .user_data = &fs_data,
+        .fs_mkdir = evaluator_file_service_mock_mkdir,
+        .fs_copy_directory = evaluator_file_service_mock_copy_directory,
+        .fs_stat = evaluator_file_service_mock_stat,
+        .fs_rename = evaluator_file_service_mock_rename,
+        .fs_remove = evaluator_file_service_mock_remove,
+        .fs_chmod = evaluator_file_service_mock_chmod,
+        .fs_touch = evaluator_file_service_mock_touch,
+        .fs_link = evaluator_file_service_mock_link,
+        .fs_readlink = evaluator_file_service_mock_readlink,
+    };
+    Eval_Test_Init init = {
+        .services = &services,
+    };
+    Eval_Test_Fixture *fixture = eval_test_fixture_create(2 * 1024 * 1024,
+                                                          2 * 1024 * 1024,
+                                                          &init);
+    ASSERT(fixture != NULL);
+    ASSERT(fixture->ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        fixture->temp_arena,
+        "file(SIZE svc_stat.txt SVC_SIZE)\n"
+        "file(TIMESTAMP svc_stat.txt SVC_YEAR \"%Y\" UTC)\n"
+        "file(RENAME svc_rename_old.txt svc_rename_new.txt RESULT SVC_RENAME_RESULT)\n"
+        "file(REMOVE svc_remove.txt)\n"
+        "file(REMOVE_RECURSE svc_remove_dir)\n"
+        "file(CHMOD svc_chmod.txt PERMISSIONS OWNER_READ OWNER_WRITE)\n"
+        "file(CHMOD_RECURSE svc_chmod_dir PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)\n"
+        "file(TOUCH svc_touch.txt)\n"
+        "file(TOUCH_NOCREATE svc_touch_missing.txt)\n"
+        "file(CREATE_LINK svc_link_src.txt svc_link_dst.txt SYMBOLIC RESULT SVC_LINK_RESULT)\n"
+        "file(READ_SYMLINK svc_link_dst.txt SVC_LINK_TARGET)\n"
+        "file(COPY svc_dir DESTINATION svc_copy_root)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(fixture->ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(fixture->ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(fs_data.stat_count >= 3);
+    ASSERT(fs_data.rename_count == 1);
+    ASSERT(fs_data.remove_count == 2);
+    ASSERT(fs_data.chmod_count == 2);
+    ASSERT(fs_data.touch_count == 2);
+    ASSERT(fs_data.link_count == 1);
+    ASSERT(fs_data.readlink_count == 1);
+    ASSERT(fs_data.copy_directory_count == 1);
+    ASSERT(fs_data.saw_stat_svc_file);
+    ASSERT(fs_data.saw_stat_svc_dir);
+    ASSERT(fs_data.saw_rename);
+    ASSERT(fs_data.saw_remove);
+    ASSERT(fs_data.saw_remove_recursive);
+    ASSERT(fs_data.saw_chmod);
+    ASSERT(fs_data.saw_chmod_recursive);
+    ASSERT(fs_data.saw_touch_create);
+    ASSERT(fs_data.saw_touch_nocreate);
+    ASSERT(fs_data.saw_link_symbolic);
+    ASSERT(fs_data.saw_readlink);
+    ASSERT(fs_data.saw_copy_directory_svc_dir);
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_SIZE")),
+                     nob_sv_from_cstr("123")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_YEAR")),
+                     nob_sv_from_cstr("1970")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_RENAME_RESULT")),
+                     nob_sv_from_cstr("0;OK")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_LINK_RESULT")),
+                     nob_sv_from_cstr("0;OK")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_LINK_TARGET")),
+                     nob_sv_from_cstr("svc_link_src.txt")));
+
     TEST_PASS();
 }
 
@@ -2478,9 +3025,9 @@ TEST(evaluator_directory_option_commands_expand_shell_and_linker_tokens_once) {
 }
 
 void run_evaluator_v2_batch1(int *passed, int *failed, int *skipped) {
+    test_evaluator_parity_manifest_guards_registry_and_audit_claims(passed, failed, skipped);
     test_evaluator_golden_all_cases(passed, failed, skipped);
     test_evaluator_public_api_profile_and_report_snapshot(passed, failed, skipped);
-    test_evaluator_ctest_capabilities_align_with_coverage_matrix(passed, failed, skipped);
     test_evaluator_session_api_runs_with_explicit_request_and_stream(passed, failed, skipped);
     test_evaluator_registry_api_supports_custom_commands_and_null_stream_runs(passed, failed, skipped);
     test_evaluator_session_services_env_lookup_is_injected(passed, failed, skipped);
@@ -2489,6 +3036,8 @@ void run_evaluator_v2_batch1(int *passed, int *failed, int *skipped) {
     test_evaluator_native_command_registry_runtime_extension(passed, failed, skipped);
     test_evaluator_command_capability_remains_native_only_introspection(passed, failed, skipped);
     test_evaluator_native_command_registry_case_insensitive_index_lookup(passed, failed, skipped);
+    test_evaluator_file_commands_route_supported_fs_effects_through_services(passed, failed, skipped);
+    test_evaluator_file_commands_route_structural_fs_ops_through_services(passed, failed, skipped);
     test_evaluator_compat_refresh_snapshot_applies_next_command_cycle(passed, failed, skipped);
     test_evaluator_global_diag_strict_controls_event_report_and_runtime_gating(passed, failed, skipped);
     test_evaluator_unsupported_policy_snapshot_applies_next_command_cycle(passed, failed, skipped);

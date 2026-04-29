@@ -433,11 +433,11 @@ bool eval_file_mkdir_p(EvalExecContext *ctx, String_View path) {
     for (size_t i = start; i < len; i++) {
         if (tmp[i] != '/') continue;
         tmp[i] = '\0';
-        if (!nob_mkdir_if_not_exists(tmp)) {
+        if (!eval_service_mkdir(ctx, nob_sv_from_cstr(tmp))) {
             return false;
         }
         tmp[i] = '/';
     }
 
-    return nob_mkdir_if_not_exists(tmp);
+    return eval_service_mkdir(ctx, nob_sv_from_cstr(tmp));
 }

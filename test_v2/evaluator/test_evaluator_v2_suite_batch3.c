@@ -207,7 +207,7 @@ TEST(evaluator_target_usage_semantics_accepts_bool_constant_genex) {
     TEST_PASS();
 }
 
-TEST(evaluator_if_matches_populates_cmake_match_variables) {
+TEST(evaluator_if_matches_operator_populates_cmake_match_variables) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -317,7 +317,7 @@ TEST(evaluator_list_transform_output_variable_requires_single_output_var) {
     TEST_PASS();
 }
 
-TEST(evaluator_list_sort_and_transform_selector_surface_matches_documented_combinations) {
+TEST(evaluator_list_sort_and_transform_selector_internal_contract_covers_documented_combinations) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
     ASSERT(temp_arena && event_arena);
@@ -367,6 +367,71 @@ TEST(evaluator_list_sort_and_transform_selector_surface_matches_documented_combi
                      nob_sv_from_cstr("  one  ;TWO;THREE;four")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("L_REPLACE_REGEX")),
                      nob_sv_from_cstr("  one  ;twO;three;four")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_list_reverse_and_transform_output_variable_emit_precise_events) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(R a b c)\n"
+        "list(REVERSE R)\n"
+        "set(T one two)\n"
+        "list(TRANSFORM T TOUPPER OUTPUT_VARIABLE T_OUT)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    bool saw_reverse_r = false;
+    bool saw_sort_r = false;
+    bool saw_transform_t = false;
+    bool saw_transform_t_out = false;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind == EVENT_LIST_REVERSE &&
+            nob_sv_eq(ev->as.list_reverse.list_var, nob_sv_from_cstr("R"))) {
+            saw_reverse_r = true;
+        } else if (ev->h.kind == EVENT_LIST_SORT &&
+                   nob_sv_eq(ev->as.list_sort.list_var, nob_sv_from_cstr("R"))) {
+            saw_sort_r = true;
+        } else if (ev->h.kind == EVENT_LIST_TRANSFORM &&
+                   nob_sv_eq(ev->as.list_transform.list_var, nob_sv_from_cstr("T"))) {
+            saw_transform_t = true;
+        } else if (ev->h.kind == EVENT_LIST_TRANSFORM &&
+                   nob_sv_eq(ev->as.list_transform.list_var, nob_sv_from_cstr("T_OUT"))) {
+            saw_transform_t_out = true;
+        }
+    }
+
+    ASSERT(saw_reverse_r);
+    ASSERT(!saw_sort_r);
+    ASSERT(!saw_transform_t);
+    ASSERT(saw_transform_t_out);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("R")), nob_sv_from_cstr("c;b;a")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("T_OUT")), nob_sv_from_cstr("ONE;TWO")));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -2226,7 +2291,7 @@ TEST(evaluator_remove_definitions_updates_directory_definition_and_option_state)
     TEST_PASS();
 }
 
-TEST(evaluator_remove_definitions_cmp0005_old_and_new_match_legacy_escaped_values) {
+TEST(evaluator_remove_definitions_cmp0005_old_and_new_cover_legacy_escaped_values) {
     {
         Arena *temp_arena = arena_create(2 * 1024 * 1024);
         Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3687,9 +3752,10 @@ void run_evaluator_v2_batch3(int *passed, int *failed, int *skipped) {
     test_evaluator_list_transform_genex_strip_and_output_variable(passed, failed, skipped);
     test_evaluator_target_usage_semantics_rejects_unsupported_genex_forms_early(passed, failed, skipped);
     test_evaluator_target_usage_semantics_accepts_bool_constant_genex(passed, failed, skipped);
-    test_evaluator_if_matches_populates_cmake_match_variables(passed, failed, skipped);
+    test_evaluator_if_matches_operator_populates_cmake_match_variables(passed, failed, skipped);
     test_evaluator_list_transform_output_variable_requires_single_output_var(passed, failed, skipped);
-    test_evaluator_list_sort_and_transform_selector_surface_matches_documented_combinations(passed, failed, skipped);
+    test_evaluator_list_sort_and_transform_selector_internal_contract_covers_documented_combinations(passed, failed, skipped);
+    test_evaluator_list_reverse_and_transform_output_variable_emit_precise_events(passed, failed, skipped);
     test_evaluator_math_rejects_empty_and_incomplete_invocations(passed, failed, skipped);
     test_evaluator_set_target_properties_rejects_alias_target(passed, failed, skipped);
     test_evaluator_add_executable_imported_and_alias_signatures(passed, failed, skipped);
@@ -3716,7 +3782,7 @@ void run_evaluator_v2_batch3(int *passed, int *failed, int *skipped) {
     test_evaluator_separate_arguments_covers_program_mode_and_legacy_form(passed, failed, skipped);
     test_evaluator_separate_arguments_rejects_invalid_option_shapes(passed, failed, skipped);
     test_evaluator_remove_definitions_updates_directory_definition_and_option_state(passed, failed, skipped);
-    test_evaluator_remove_definitions_cmp0005_old_and_new_match_legacy_escaped_values(passed, failed, skipped);
+    test_evaluator_remove_definitions_cmp0005_old_and_new_cover_legacy_escaped_values(passed, failed, skipped);
     test_evaluator_load_cache_rejects_missing_path_empty_legacy_clauses_and_incomplete_read_with_prefix(passed, failed, skipped);
     test_evaluator_host_system_information_rejects_incomplete_and_unknown_queries(passed, failed, skipped);
     test_evaluator_build_name_and_build_command_follow_policy_gates(passed, failed, skipped);

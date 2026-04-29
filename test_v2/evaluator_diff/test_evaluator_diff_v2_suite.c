@@ -59,48 +59,9 @@ typedef enum {
 #define DIFF_ENV_STATUS_OUT "NOB_DIFF_STATUS_OUT"
 
 static const Diff_Case_Pack s_diff_case_packs[] = {
-    {"target_usage", "test_v2/evaluator_diff/cases/target_usage_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"list", "test_v2/evaluator_diff/cases/list_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"var_commands", "test_v2/evaluator_diff/cases/var_commands_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"property_query", "test_v2/evaluator_diff/cases/property_query_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"directory_usage", "test_v2/evaluator_diff/cases/directory_usage_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"property_setters", "test_v2/evaluator_diff/cases/property_setters_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"testing_meta", "test_v2/evaluator_diff/cases/testing_meta_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"argument_parsing", "test_v2/evaluator_diff/cases/argument_parsing_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"find_pathlike", "test_v2/evaluator_diff/cases/find_pathlike_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"host_identity", "test_v2/evaluator_diff/cases/host_identity_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"cache_loading", "test_v2/evaluator_diff/cases/cache_loading_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"legacy_generation", "test_v2/evaluator_diff/cases/legacy_generation_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"cmake_path", "test_v2/evaluator_diff/cases/cmake_path_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"get_filename_component", "test_v2/evaluator_diff/cases/get_filename_component_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"math", "test_v2/evaluator_diff/cases/math_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"add_targets", "test_v2/evaluator_diff/cases/add_targets_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"add_subdirectory", "test_v2/evaluator_diff/cases/add_subdirectory_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"string", "test_v2/evaluator_diff/cases/string_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"top_level_project", "test_v2/evaluator_diff/cases/top_level_project_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"message", "test_v2/evaluator_diff/cases/message_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"configure_file", "test_v2/evaluator_diff/cases/configure_file_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"property_wrappers", "test_v2/evaluator_diff/cases/property_wrappers_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"include_script", "test_v2/evaluator_diff/cases/include_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"execute_process_script", "test_v2/evaluator_diff/cases/execute_process_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"cmake_language_script", "test_v2/evaluator_diff/cases/cmake_language_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"dependency_provider", "test_v2/evaluator_diff/cases/dependency_provider_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"file_script", "test_v2/evaluator_diff/cases/file_script_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"cmake_policy_script", "test_v2/evaluator_diff/cases/cmake_policy_script_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"configure_file_script", "test_v2/evaluator_diff/cases/configure_file_script_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"install_host_effect", "test_v2/evaluator_diff/cases/install_host_effect_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"export_host_effect", "test_v2/evaluator_diff/cases/export_host_effect_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"file_host_effect", "test_v2/evaluator_diff/cases/file_host_effect_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"fetchcontent_host_effect", "test_v2/evaluator_diff/cases/fetchcontent_host_effect_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"find_package_special", "test_v2/evaluator_diff/cases/find_package_special_seed_cases.cmake", DIFF_ORACLE_FIND_PACKAGE},
-    {"try_compile_special", "test_v2/evaluator_diff/cases/try_compile_special_seed_cases.cmake", DIFF_ORACLE_TRY_API},
-    {"try_run_special", "test_v2/evaluator_diff/cases/try_run_special_seed_cases.cmake", DIFF_ORACLE_TRY_API},
-    {"ctest_special", "test_v2/evaluator_diff/cases/ctest_special_seed_cases.cmake", DIFF_ORACLE_CTEST},
-    {"file_api_meta_special", "test_v2/evaluator_diff/cases/file_api_meta_special_seed_cases.cmake", DIFF_ORACLE_META_GRAPH},
-    {"legacy_meta_special", "test_v2/evaluator_diff/cases/legacy_meta_special_seed_cases.cmake", DIFF_ORACLE_META_GRAPH},
-    {"flow_control_structural", "test_v2/evaluator_diff/cases/flow_control_structural_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"callable_scope_structural", "test_v2/evaluator_diff/cases/callable_scope_structural_seed_cases.cmake", DIFF_ORACLE_GENERIC},
-    {"structural_policy_compat", "test_v2/evaluator_diff/cases/structural_policy_compat_seed_cases.cmake", DIFF_ORACLE_GENERIC},
+#define DIFF_CASE_PACK(family_label, case_pack_path, oracle_kind) {family_label, case_pack_path, oracle_kind},
+#include "test_evaluator_diff_case_packs.inc"
+#undef DIFF_CASE_PACK
 };
 
 typedef Test_Case_Dsl_Expected_Outcome Diff_Expected_Outcome;
@@ -1968,7 +1929,7 @@ static bool diff_case_pack_skip_reason(const Diff_Cmake_Config *config,
             if (!config->c_toolchain_available) {
                 snprintf(reason,
                          256,
-                         "requires functional C toolchain: %s",
+                         "requires functional C toolchain: %.200s",
                          config->c_toolchain_reason[0] ? config->c_toolchain_reason : "probe failed");
                 return true;
             }
@@ -1981,7 +1942,7 @@ static bool diff_case_pack_skip_reason(const Diff_Cmake_Config *config,
             if (!config->c_toolchain_available) {
                 snprintf(reason,
                          256,
-                         "requires functional C toolchain for ctest lane: %s",
+                         "requires functional C toolchain for ctest lane: %.190s",
                          config->c_toolchain_reason[0] ? config->c_toolchain_reason : "probe failed");
                 return true;
             }
@@ -2433,6 +2394,12 @@ static bool diff_case_matches(const Diff_Case_Pack *case_pack,
     return nob_sv_eq(eval_run->combined_snapshot, cmake_run->combined_snapshot);
 }
 
+static bool diff_case_pack_expects_known_divergence(const Diff_Case_Pack *case_pack) {
+    return case_pack &&
+           case_pack->family_label &&
+           strcmp(case_pack->family_label, "known_divergence") == 0;
+}
+
 static void diff_extract_first_line(String_View text,
                                     char out[256],
                                     const char *fallback) {
@@ -2813,14 +2780,24 @@ static void run_diff_case(const Diff_Cmake_Config *config,
     diff_release_env_guards(&cmake_builtin_guards);
 
     ok = diff_case_matches(case_pack, diff_case, &eval_run, &cmake_run);
+    bool expects_known_divergence = diff_case_pack_expects_known_divergence(case_pack);
+    if (expects_known_divergence) {
+        ok = !ok;
+    }
     if (!ok) {
         (void)nob_set_current_dir(case_cwd);
-        nob_log(NOB_ERROR,
-                "differential mismatch in case %s (expected=%s evaluator=%s cmake=%s)",
-                qualified_case_name,
-                diff_case->expected_outcome == DIFF_EXPECT_SUCCESS ? "SUCCESS" : "ERROR",
-                eval_run.outcome == DIFF_EXPECT_SUCCESS ? "SUCCESS" : "ERROR",
-                cmake_run.outcome == DIFF_EXPECT_SUCCESS ? "SUCCESS" : "ERROR");
+        if (expects_known_divergence) {
+            nob_log(NOB_ERROR,
+                    "known divergence unexpectedly matched CMake in case %s; move it to a positive diff pack and promote the manifest status",
+                    qualified_case_name);
+        } else {
+            nob_log(NOB_ERROR,
+                    "differential mismatch in case %s (expected=%s evaluator=%s cmake=%s)",
+                    qualified_case_name,
+                    diff_case->expected_outcome == DIFF_EXPECT_SUCCESS ? "SUCCESS" : "ERROR",
+                    eval_run.outcome == DIFF_EXPECT_SUCCESS ? "SUCCESS" : "ERROR",
+                    cmake_run.outcome == DIFF_EXPECT_SUCCESS ? "SUCCESS" : "ERROR");
+        }
         if (diff_case->expected_outcome == DIFF_EXPECT_SUCCESS) {
             nob_log(NOB_ERROR,
                     "snapshot mismatch in case %s\n--- evaluator ---\n%.*s--- cmake ---\n%.*s",

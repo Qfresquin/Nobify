@@ -496,7 +496,7 @@ Eval_Result eval_handle_list(EvalExecContext *ctx, const Node *node) {
             items[arena_arr_len(items) - 1 - i] = tmp;
         }
         (void)list_set_var_from_items(ctx, var, items, arena_arr_len(items));
-        if (!eval_emit_list_sort(ctx, o, var)) return eval_result_fatal();
+        if (!eval_emit_list_reverse(ctx, o, var)) return eval_result_fatal();
         return eval_result_from_ctx(ctx);
     }
 
@@ -802,7 +802,7 @@ Eval_Result eval_handle_list(EvalExecContext *ctx, const Node *node) {
         if (replace_ready) regfree(&replace_re);
         if (has_output_var) {
             (void)list_set_var_from_items(ctx, out_var, items, arena_arr_len(items));
-            if (!eval_emit_list_transform(ctx, o, var)) return eval_result_fatal();
+            if (!eval_emit_list_transform(ctx, o, out_var)) return eval_result_fatal();
             return eval_result_from_ctx(ctx);
         }
         if (arena_arr_len(items) == 0 && !var_defined) return eval_result_from_ctx(ctx);

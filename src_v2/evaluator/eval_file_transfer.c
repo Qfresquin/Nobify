@@ -10,7 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <sys/stat.h>
 
 #if !defined(_WIN32)
 #include <sys/wait.h>
@@ -316,10 +315,8 @@ static bool file_transfer_parse_expected_hash(String_View in, String_View *out_a
 
 static bool file_transfer_path_exists(EvalExecContext *ctx, String_View path) {
     if (!ctx || path.count == 0) return false;
-    char *p = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, p, false);
-    struct stat st = {0};
-    return stat(p, &st) == 0;
+    Eval_Fs_Stat st = {0};
+    return eval_service_stat(ctx, path, true, &st) && st.exists;
 }
 
 static bool file_transfer_verify_download_hash(EvalExecContext *ctx,
@@ -343,17 +340,14 @@ static bool file_transfer_verify_download_hash(EvalExecContext *ctx,
         return true;
     }
 
-    char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
-    EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, false);
-    Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(dst_c, &sb)) {
+    String_View payload = nob_sv_from_cstr("");
+    bool found = false;
+    if (!eval_service_read_file(ctx, dst, &payload, &found) || !found) {
         *out_status = nob_sv_from_cstr("failed to read downloaded file for hash verification");
         return false;
     }
-    String_View payload = nob_sv_from_parts(sb.items, sb.count);
     String_View actual = nob_sv_from_cstr("");
     bool ok = eval_hash_compute_hex_temp(ctx, algo, payload, &actual);
-    nob_sb_free(sb);
     if (!ok) {
         *out_status = nob_sv_from_cstr("unsupported EXPECTED_HASH algorithm");
         return false;
@@ -773,13 +767,9 @@ static bool handle_file_download(EvalExecContext *ctx, const Node *node, SV_List
     String_View src = nob_sv_from_cstr("");
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, src_input, eval_file_current_src_dir(ctx), &src)) return true;
 
-    char *src_c = eval_sv_to_cstr_temp(ctx, src);
-    char *dst_c = has_dst ? eval_sv_to_cstr_temp(ctx, dst) : NULL;
-    EVAL_OOM_RETURN_IF_NULL(ctx, src_c, true);
-    if (has_dst) EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, true);
-
-    Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(src_c, &sb)) {
+    String_View src_contents = nob_sv_from_cstr("");
+    bool found = false;
+    if (!eval_service_read_file(ctx, src, &src_contents, &found) || !found) {
         file_transfer_fail(ctx,
                            node,
                            o,
@@ -793,20 +783,18 @@ static bool handle_file_download(EvalExecContext *ctx, const Node *node, SV_List
     }
 
     size_t begin = 0;
-    size_t end = sb.count;
-    if (opt.has_range_start && opt.range_start < sb.count) begin = opt.range_start;
+    size_t end = src_contents.count;
+    if (opt.has_range_start && opt.range_start < src_contents.count) begin = opt.range_start;
     if (opt.has_range_end && opt.range_end + 1 < end) end = opt.range_end + 1;
     if (begin > end) begin = end;
 
     if (!has_dst) {
-        nob_sb_free(sb);
         file_transfer_set_success(ctx, &opt, nob_sv_from_cstr("local download probe completed"));
         (void)file_transfer_emit_replay_marker(ctx, o, EVENT_REPLAY_ACTION_PROBE);
         return true;
     }
 
     if (!eval_file_mkdir_p(ctx, svu_dirname(dst))) {
-        nob_sb_free(sb);
         file_transfer_fail(ctx,
                            node,
                            o,
@@ -819,8 +807,11 @@ static bool handle_file_download(EvalExecContext *ctx, const Node *node, SV_List
         return true;
     }
 
-    bool ok = nob_write_entire_file(dst_c, sb.items + begin, end - begin);
-    nob_sb_free(sb);
+    const char *range_data = src_contents.data ? src_contents.data + begin : "";
+    bool ok = eval_service_write_file(ctx,
+                                      dst,
+                                      nob_sv_from_parts(range_data, end - begin),
+                                      false);
     if (!ok) {
         file_transfer_fail(ctx,
                            node,
@@ -956,12 +947,7 @@ static bool handle_file_upload(EvalExecContext *ctx, const Node *node, SV_List a
         return true;
     }
 
-    char *src_c = eval_sv_to_cstr_temp(ctx, src);
-    char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
-    EVAL_OOM_RETURN_IF_NULL(ctx, src_c, true);
-    EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, true);
-
-    if (!nob_copy_file(src_c, dst_c)) {
+    if (!eval_service_copy_file(ctx, src, dst)) {
         file_transfer_fail(ctx,
                            node,
                            o,

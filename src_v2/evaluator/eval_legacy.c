@@ -268,9 +268,7 @@ static bool legacy_execute_make_directory_request(EvalExecContext *ctx,
         String_View path = legacy_resolve_binary_path(ctx, req->directories[i]);
         if (eval_should_stop(ctx)) return false;
         if (!eval_mkdirs_for_parent(ctx, path)) return false;
-        char *path_c = eval_sv_to_cstr_temp(ctx, path);
-        EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-        if (!nob_mkdir_if_not_exists(path_c)) {
+        if (!eval_service_mkdir(ctx, path)) {
             (void)legacy_emit_diag(ctx,
                                    node,
                                    EV_DIAG_ERROR,

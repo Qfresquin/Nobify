@@ -3,6 +3,7 @@
 #include "sv_utils.h"
 #include "stb_ds.h"
 #include <ctype.h>
+#include <errno.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -11,8 +12,12 @@
 #include <time.h>
 #if defined(_WIN32)
 #include <direct.h>
+#include <sys/utime.h>
 #include <windows.h>
 #else
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <utime.h>
 #include <unistd.h>
 #if defined(__linux__)
 #include <sys/sysinfo.h>
@@ -25,9 +30,11 @@
 String_View sv_copy_to_arena(Arena *arena, String_View sv) {
     if (!arena) return nob_sv_from_cstr("");
     if (sv.count == 0 || sv.data == NULL) return nob_sv_from_cstr("");
-    char *dup = arena_strndup(arena, sv.data, sv.count);
+    char *dup = (char*)arena_alloc(arena, sv.count + 1);
     if (!dup) return nob_sv_from_cstr("");
-    return nob_sv_from_cstr(dup);
+    memcpy(dup, sv.data, sv.count);
+    dup[sv.count] = '\0';
+    return nob_sv_from_parts(dup, sv.count);
 }
 
 char *eval_sv_to_cstr_temp(EvalExecContext *ctx, String_View sv) {
@@ -668,6 +675,9 @@ bool eval_service_read_file(EvalExecContext *ctx,
 
     char *path_c = eval_sv_to_cstr_temp(ctx, path);
     EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+    if (!nob_file_exists(path_c)) {
+        return true;
+    }
     Nob_String_Builder sb = {0};
     if (!nob_read_entire_file(path_c, &sb)) return false;
 
@@ -740,6 +750,290 @@ bool eval_service_copy_file(EvalExecContext *ctx, String_View src, String_View d
     EVAL_OOM_RETURN_IF_NULL(ctx, src_c, false);
     EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, false);
     return nob_copy_file(src_c, dst_c);
+}
+
+bool eval_service_copy_directory(EvalExecContext *ctx, String_View src, String_View dst) {
+    if (!ctx || src.count == 0 || dst.count == 0) return false;
+    if (ctx->services && ctx->services->fs_copy_directory) {
+        return ctx->services->fs_copy_directory(ctx->services->user_data, src, dst);
+    }
+
+    char *src_c = eval_sv_to_cstr_temp(ctx, src);
+    char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
+    EVAL_OOM_RETURN_IF_NULL(ctx, src_c, false);
+    EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, false);
+    return nob_copy_directory_recursively(src_c, dst_c);
+}
+
+static Eval_Fs_Node_Type eval_host_stat_type_from_mode(unsigned long mode) {
+#if defined(S_ISLNK)
+    if (S_ISLNK(mode)) return EVAL_FS_NODE_SYMLINK;
+#endif
+#if defined(S_ISDIR)
+    if (S_ISDIR(mode)) return EVAL_FS_NODE_DIRECTORY;
+#endif
+#if defined(S_ISREG)
+    if (S_ISREG(mode)) return EVAL_FS_NODE_FILE;
+#endif
+    return EVAL_FS_NODE_OTHER;
+}
+
+bool eval_service_stat(EvalExecContext *ctx,
+                       String_View path,
+                       bool follow_symlinks,
+                       Eval_Fs_Stat *out_stat) {
+    if (out_stat) *out_stat = (Eval_Fs_Stat){0};
+    if (!ctx || path.count == 0 || !out_stat) return false;
+    if (ctx->services && ctx->services->fs_stat) {
+        return ctx->services->fs_stat(ctx->services->user_data, path, follow_symlinks, out_stat);
+    }
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+
+#if defined(_WIN32)
+    (void)follow_symlinks;
+    WIN32_FILE_ATTRIBUTE_DATA data = {0};
+    if (!GetFileAttributesExA(path_c, GetFileExInfoStandard, &data)) {
+        DWORD err = GetLastError();
+        if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) return true;
+        return false;
+    }
+    out_stat->exists = true;
+    out_stat->type = (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+                         ? EVAL_FS_NODE_SYMLINK
+                         : ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                                ? EVAL_FS_NODE_DIRECTORY
+                                : EVAL_FS_NODE_FILE);
+    out_stat->size = (((uint64_t)data.nFileSizeHigh) << 32) | (uint64_t)data.nFileSizeLow;
+    uint64_t ft = (((uint64_t)data.ftLastWriteTime.dwHighDateTime) << 32) |
+                  (uint64_t)data.ftLastWriteTime.dwLowDateTime;
+    if (ft >= 116444736000000000ULL) {
+        out_stat->mtime_sec = (int64_t)((ft - 116444736000000000ULL) / 10000000ULL);
+        out_stat->have_mtime = true;
+    }
+    out_stat->mode = (data.dwFileAttributes & FILE_ATTRIBUTE_READONLY) ? 0444u : 0666u;
+    if (out_stat->type == EVAL_FS_NODE_DIRECTORY) out_stat->mode |= 0111u;
+    out_stat->have_mode = true;
+    return true;
+#else
+    struct stat st = {0};
+    int rc = follow_symlinks ? stat(path_c, &st) : lstat(path_c, &st);
+    if (rc != 0) {
+        if (errno == ENOENT || errno == ENOTDIR) return true;
+        return false;
+    }
+    out_stat->exists = true;
+    out_stat->type = eval_host_stat_type_from_mode((unsigned long)st.st_mode);
+    out_stat->size = st.st_size >= 0 ? (uint64_t)st.st_size : 0;
+    out_stat->mtime_sec = (int64_t)st.st_mtime;
+    out_stat->mode = (uint32_t)(st.st_mode & 07777);
+    out_stat->have_mtime = true;
+    out_stat->have_mode = true;
+    return true;
+#endif
+}
+
+bool eval_service_rename(EvalExecContext *ctx, String_View old_path, String_View new_path) {
+    if (!ctx || old_path.count == 0 || new_path.count == 0) return false;
+    if (ctx->services && ctx->services->fs_rename) {
+        return ctx->services->fs_rename(ctx->services->user_data, old_path, new_path);
+    }
+
+    char *old_c = eval_sv_to_cstr_temp(ctx, old_path);
+    char *new_c = eval_sv_to_cstr_temp(ctx, new_path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, old_c, false);
+    EVAL_OOM_RETURN_IF_NULL(ctx, new_c, false);
+    return nob_rename(old_c, new_c);
+}
+
+static bool eval_host_remove_leaf_c(const char *path, bool is_dir) {
+    if (!path) return false;
+#if defined(_WIN32)
+    if (is_dir) return RemoveDirectoryA(path) != 0;
+    return DeleteFileA(path) != 0;
+#else
+    if (is_dir) return rmdir(path) == 0;
+    return unlink(path) == 0;
+#endif
+}
+
+typedef struct {
+    bool ok;
+} Eval_Host_Remove_Walk_State;
+
+static bool eval_host_remove_tree_walk(Nob_Walk_Entry entry) {
+    Eval_Host_Remove_Walk_State *state = (Eval_Host_Remove_Walk_State*)entry.data;
+    bool ok = eval_host_remove_leaf_c(entry.path, entry.type == NOB_FILE_DIRECTORY);
+    if (state) state->ok = state->ok && ok;
+    return ok;
+}
+
+bool eval_service_remove(EvalExecContext *ctx, String_View path, bool recursive) {
+    if (!ctx || path.count == 0) return false;
+    if (ctx->services && ctx->services->fs_remove) {
+        return ctx->services->fs_remove(ctx->services->user_data, path, recursive);
+    }
+
+    Eval_Fs_Stat st = {0};
+    if (!eval_service_stat(ctx, path, false, &st)) return false;
+    if (!st.exists) return true;
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+    if (!recursive || st.type != EVAL_FS_NODE_DIRECTORY) {
+        return eval_host_remove_leaf_c(path_c, st.type == EVAL_FS_NODE_DIRECTORY);
+    }
+
+    Eval_Host_Remove_Walk_State state = { .ok = true };
+    if (!nob_walk_dir(path_c, eval_host_remove_tree_walk, .data = &state, .post_order = true)) {
+        return false;
+    }
+    return state.ok;
+}
+
+static bool eval_host_chmod_one_c(const char *path, uint32_t mode) {
+    if (!path) return false;
+#if defined(_WIN32)
+    (void)mode;
+    return _chmod(path, _S_IREAD | _S_IWRITE) == 0;
+#else
+    return chmod(path, (mode_t)mode) == 0;
+#endif
+}
+
+typedef struct {
+    uint32_t mode;
+    bool ok;
+} Eval_Host_Chmod_Walk_State;
+
+static bool eval_host_chmod_walk(Nob_Walk_Entry entry) {
+    Eval_Host_Chmod_Walk_State *state = (Eval_Host_Chmod_Walk_State*)entry.data;
+    bool ok = state && eval_host_chmod_one_c(entry.path, state->mode);
+    if (state) state->ok = state->ok && ok;
+    return ok;
+}
+
+bool eval_service_chmod(EvalExecContext *ctx, String_View path, uint32_t mode, bool recursive) {
+    if (!ctx || path.count == 0) return false;
+    if (ctx->services && ctx->services->fs_chmod) {
+        return ctx->services->fs_chmod(ctx->services->user_data, path, mode, recursive);
+    }
+
+    Eval_Fs_Stat st = {0};
+    if (!eval_service_stat(ctx, path, false, &st) || !st.exists) return false;
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+    if (!recursive || st.type != EVAL_FS_NODE_DIRECTORY) {
+        return eval_host_chmod_one_c(path_c, mode);
+    }
+
+    Eval_Host_Chmod_Walk_State state = {
+        .mode = mode,
+        .ok = true,
+    };
+    if (!nob_walk_dir(path_c, eval_host_chmod_walk, .data = &state)) return false;
+    return state.ok;
+}
+
+bool eval_service_touch(EvalExecContext *ctx, String_View path, bool create) {
+    if (!ctx || path.count == 0) return false;
+    if (ctx->services && ctx->services->fs_touch) {
+        return ctx->services->fs_touch(ctx->services->user_data, path, create);
+    }
+
+    Eval_Fs_Stat st = {0};
+    if (!eval_service_stat(ctx, path, true, &st)) return false;
+    if (!st.exists) {
+        if (!create) return true;
+        if (!eval_service_write_file(ctx, path, nob_sv_from_cstr(""), false)) return false;
+    }
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+#if defined(_WIN32)
+    struct _utimbuf tb = {0};
+    tb.actime = time(NULL);
+    tb.modtime = time(NULL);
+    return _utime(path_c, &tb) == 0;
+#else
+    struct utimbuf tb = {0};
+    tb.actime = time(NULL);
+    tb.modtime = time(NULL);
+    return utime(path_c, &tb) == 0;
+#endif
+}
+
+bool eval_service_link(EvalExecContext *ctx,
+                       String_View src,
+                       String_View dst,
+                       Eval_Fs_Link_Kind kind) {
+    if (!ctx || src.count == 0 || dst.count == 0) return false;
+    if (ctx->services && ctx->services->fs_link) {
+        return ctx->services->fs_link(ctx->services->user_data, src, dst, kind);
+    }
+
+    char *src_c = eval_sv_to_cstr_temp(ctx, src);
+    char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
+    EVAL_OOM_RETURN_IF_NULL(ctx, src_c, false);
+    EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, false);
+#if defined(_WIN32)
+    if (kind == EVAL_FS_LINK_SYMBOLIC) return CreateSymbolicLinkA(dst_c, src_c, 0) != 0;
+    return CreateHardLinkA(dst_c, src_c, NULL) != 0;
+#else
+    if (kind == EVAL_FS_LINK_SYMBOLIC) return symlink(src_c, dst_c) == 0;
+    return link(src_c, dst_c) == 0;
+#endif
+}
+
+bool eval_service_readlink(EvalExecContext *ctx, String_View path, String_View *out_target) {
+    if (out_target) *out_target = nob_sv_from_cstr("");
+    if (!ctx || path.count == 0 || !out_target) return false;
+    if (ctx->services && ctx->services->fs_readlink) {
+        return ctx->services->fs_readlink(ctx->services->user_data,
+                                          eval_temp_arena(ctx),
+                                          path,
+                                          out_target);
+    }
+
+    char *path_c = eval_sv_to_cstr_temp(ctx, path);
+    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
+#if defined(_WIN32)
+    HANDLE h = CreateFileA(path_c,
+                           FILE_READ_ATTRIBUTES,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL,
+                           OPEN_EXISTING,
+                           FILE_FLAG_BACKUP_SEMANTICS,
+                           NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+
+    DWORD need = GetFinalPathNameByHandleA(h, NULL, 0, FILE_NAME_NORMALIZED);
+    if (need == 0) {
+        CloseHandle(h);
+        return false;
+    }
+
+    DWORD cap = need + 1;
+    char *raw = (char*)arena_alloc(eval_temp_arena(ctx), (size_t)cap);
+    EVAL_OOM_RETURN_IF_NULL(ctx, raw, false);
+    DWORD wrote = GetFinalPathNameByHandleA(h, raw, cap, FILE_NAME_NORMALIZED);
+    CloseHandle(h);
+    if (wrote == 0 || wrote >= cap) return false;
+
+    for (DWORD i = 0; i < wrote; i++) {
+        if (raw[i] == '\\') raw[i] = '/';
+    }
+    *out_target = nob_sv_from_parts(raw, (size_t)wrote);
+    return true;
+#else
+    char buf[4096];
+    ssize_t n = readlink(path_c, buf, sizeof(buf) - 1);
+    if (n < 0) return false;
+    buf[n] = '\0';
+    *out_target = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(buf, (size_t)n));
+    return !eval_should_stop(ctx);
+#endif
 }
 
 bool eval_service_host_read_file(EvalExecContext *ctx,

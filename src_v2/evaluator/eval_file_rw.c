@@ -5,7 +5,6 @@
 #include <pcre2posix.h>
 
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 
 typedef enum {
@@ -308,27 +307,23 @@ void eval_file_handle_write(EvalExecContext *ctx, const Node *node, SV_List args
         }
     }
 
-    FILE *f = fopen(path_c, "wb");
-    if (!f) {
+    String_View contents = file_replay_join_args_temp(ctx, args, 2);
+    if (eval_should_stop(ctx)) return;
+    if (!eval_service_write_file(ctx, path, contents, false)) {
         eval_file_diag_error(ctx,
                              node,
                              EVAL_DIAG_IO_FAILURE,
                              o,
-                             nob_sv_from_cstr("file(WRITE) failed to open/create file"),
+                             nob_sv_from_cstr("file(WRITE) failed to write file"),
                              path);
         return;
     }
-
-    for (size_t i = 2; i < arena_arr_len(args); i++) {
-        fwrite(args[i].data, 1, args[i].count, f);
-    }
-    fclose(f);
     (void)eval_emit_fs_write_file(ctx, o, path);
     (void)file_emit_replay_text_action(ctx,
                                        o,
                                        EVENT_REPLAY_OPCODE_FS_WRITE_TEXT,
                                        replay_path.count > 0 ? replay_path : path,
-                                       file_replay_join_args_temp(ctx, args, 2),
+                                       contents,
                                        nob_sv_from_cstr(""));
 }
 
@@ -402,11 +397,10 @@ void eval_file_handle_read(EvalExecContext *ctx, const Node *node, SV_List args)
 
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_current_source_dir(ctx), &path)) return;
 
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_VOID_IF_NULL(ctx, path_c);
-
     Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(path_c, &sb)) {
+    String_View file_contents = nob_sv_from_cstr("");
+    bool found = false;
+    if (!eval_service_read_file(ctx, path, &file_contents, &found) || !found) {
         eval_file_diag_error(ctx,
                              node,
                              EVAL_DIAG_IO_FAILURE,
@@ -415,6 +409,7 @@ void eval_file_handle_read(EvalExecContext *ctx, const Node *node, SV_List args)
                              path);
         return;
     }
+    if (file_contents.count > 0) nob_sb_append_buf(&sb, file_contents.data, file_contents.count);
 
     size_t begin = offset < sb.count ? offset : sb.count;
     size_t end = sb.count;
@@ -582,14 +577,15 @@ void eval_file_handle_strings(EvalExecContext *ctx, const Node *node, SV_List ar
     }
 
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_current_source_dir(ctx), &path)) return;
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_VOID_IF_NULL(ctx, path_c);
 
     Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(path_c, &sb)) {
+    String_View file_contents = nob_sv_from_cstr("");
+    bool found = false;
+    if (!eval_service_read_file(ctx, path, &file_contents, &found) || !found) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(STRINGS) failed to read file"), path);
         return;
     }
+    if (file_contents.count > 0) nob_sb_append_buf(&sb, file_contents.data, file_contents.count);
 
     size_t input_n = sb.count;
     if (opt.has_limit_input && opt.limit_input < input_n) input_n = opt.limit_input;

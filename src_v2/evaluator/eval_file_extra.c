@@ -5,11 +5,9 @@
 #include "arena_dyn.h"
 
 #include <errno.h>
-#include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
-#include <utime.h>
 #include <ctype.h>
 #if !defined(_WIN32)
 #include <regex.h>
@@ -24,31 +22,28 @@ static String_View file_apply_newline_style(EvalExecContext *ctx, String_View in
 
 static bool file_read_bytes(EvalExecContext *ctx, String_View path, Nob_String_Builder *out) {
     if (!ctx || !out) return false;
-    char *p = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, p, false);
-    return nob_read_entire_file(p, out);
+    String_View contents = nob_sv_from_cstr("");
+    bool found = false;
+    if (!eval_service_read_file(ctx, path, &contents, &found)) return false;
+    if (!found) return false;
+    if (contents.count > 0) nob_sb_append_buf(out, contents.data, contents.count);
+    return true;
 }
 
 static bool file_write_bytes(EvalExecContext *ctx, String_View path, const char *data, size_t len) {
     if (!ctx) return false;
-    if (!eval_file_mkdir_p(ctx, svu_dirname(path))) return false;
-    char *p = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, p, false);
-    return nob_write_entire_file(p, data, len);
+    return eval_write_text_file(ctx, path, nob_sv_from_parts(data ? data : "", len), false);
 }
 
 static bool file_same_content(EvalExecContext *ctx, String_View path, String_View content, bool *out_same) {
     if (!ctx || !out_same) return false;
     *out_same = false;
 
-    char *p = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, p, false);
-
-    Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(p, &sb)) return true;
-    String_View cur = nob_sv_from_parts(sb.items, sb.count);
+    String_View cur = nob_sv_from_cstr("");
+    bool found = false;
+    if (!eval_service_read_file(ctx, path, &cur, &found)) return false;
+    if (!found) return true;
     *out_same = nob_sv_eq(cur, content);
-    nob_sb_free(sb);
     return true;
 }
 
@@ -251,9 +246,8 @@ static String_View configure_file_basename(String_View path) {
     return nob_sv_from_parts(path.data + base, path.count - base);
 }
 
-static bool configure_file_apply_permissions(String_View path, mode_t mode) {
-    const char *path_c = nob_temp_sv_to_cstr(path);
-    return path_c && chmod(path_c, mode) == 0;
+static bool configure_file_apply_permissions(EvalExecContext *ctx, String_View path, mode_t mode) {
+    return eval_service_chmod(ctx, path, (uint32_t)mode, false);
 }
 
 static String_View configure_file_process_line(EvalExecContext *ctx,
@@ -492,19 +486,18 @@ Eval_Result eval_handle_configure_file(EvalExecContext *ctx, const Node *node) {
         return eval_result_from_ctx(ctx);
     }
 
-    char *in_c = eval_sv_to_cstr_temp(ctx, in_path);
-    char *out_c = eval_sv_to_cstr_temp(ctx, out_path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, in_c, eval_result_fatal());
-    EVAL_OOM_RETURN_IF_NULL(ctx, out_c, eval_result_fatal());
-
-    struct stat src_st = {0};
-    if (stat(in_c, &src_st) != 0 || !S_ISREG(src_st.st_mode)) {
+    Eval_Fs_Stat src_st = {0};
+    if (!eval_service_stat(ctx, in_path, true, &src_st) ||
+        !src_st.exists ||
+        src_st.type != EVAL_FS_NODE_FILE) {
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_STATE, "configure_file", nob_sv_from_cstr("configure_file() input must name an existing regular file"), in_path);
         return eval_result_from_ctx(ctx);
     }
 
-    struct stat out_st = {0};
-    if (stat(out_c, &out_st) == 0 && S_ISDIR(out_st.st_mode)) {
+    Eval_Fs_Stat out_st = {0};
+    if (eval_service_stat(ctx, out_path, true, &out_st) &&
+        out_st.exists &&
+        out_st.type == EVAL_FS_NODE_DIRECTORY) {
         out_path = eval_sv_path_join(eval_temp_arena(ctx), out_path, configure_file_basename(in_path));
         if (eval_should_stop(ctx)) return eval_result_from_ctx(ctx);
     }
@@ -538,9 +531,9 @@ Eval_Result eval_handle_configure_file(EvalExecContext *ctx, const Node *node) {
     } else if (saw_no_source_permissions) {
         mode = 0644;
     } else {
-        mode = src_st.st_mode & 0777;
+        mode = src_st.have_mode ? (mode_t)(src_st.mode & 0777) : 0644;
     }
-    (void)configure_file_apply_permissions(out_path, mode);
+    (void)configure_file_apply_permissions(ctx, out_path, mode);
     (void)configure_file_emit_replay(ctx, o, in_path, out_path, copyonly, out_text, mode);
     return eval_result_from_ctx(ctx);
 }
@@ -627,27 +620,21 @@ static bool handle_file_configure(EvalExecContext *ctx, const Node *node, SV_Lis
 
 static bool file_copy_file_do(EvalExecContext *ctx, String_View src, String_View dst, bool only_if_different) {
     if (!ctx) return false;
-    char *src_c = eval_sv_to_cstr_temp(ctx, src);
-    char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
-    EVAL_OOM_RETURN_IF_NULL(ctx, src_c, false);
-    EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, false);
 
     if (only_if_different) {
-        Nob_String_Builder a = {0};
-        Nob_String_Builder b = {0};
-        bool ra = nob_read_entire_file(src_c, &a);
-        bool rb = nob_read_entire_file(dst_c, &b);
-        if (ra && rb && a.count == b.count && (a.count == 0 || memcmp(a.items, b.items, a.count) == 0)) {
-            nob_sb_free(a);
-            nob_sb_free(b);
+        String_View a = nob_sv_from_cstr("");
+        String_View b = nob_sv_from_cstr("");
+        bool found_a = false;
+        bool found_b = false;
+        bool ra = eval_service_read_file(ctx, src, &a, &found_a) && found_a;
+        bool rb = eval_service_read_file(ctx, dst, &b, &found_b) && found_b;
+        if (ra && rb && nob_sv_eq(a, b)) {
             return true;
         }
-        nob_sb_free(a);
-        nob_sb_free(b);
     }
 
     if (!eval_file_mkdir_p(ctx, svu_dirname(dst))) return false;
-    return nob_copy_file(src_c, dst_c);
+    return eval_service_copy_file(ctx, src, dst);
 }
 
 static bool handle_file_copy_file(EvalExecContext *ctx, const Node *node, SV_List args) {
@@ -663,7 +650,7 @@ static bool handle_file_copy_file(EvalExecContext *ctx, const Node *node, SV_Lis
         if (eval_sv_eq_ci_lit(args[i], "ONLY_IF_DIFFERENT")) {
             only_if_different = true;
         } else if (eval_sv_eq_ci_lit(args[i], "INPUT_MAY_BE_RECENT")) {
-            // Accepted for parity; no extra behavior needed in evaluator backend.
+            // Accepted by the supported evaluator subset; no local backend action is needed.
         } else if (eval_sv_eq_ci_lit(args[i], "RESULT") && i + 1 < arena_arr_len(args)) {
             result_var = args[++i];
         } else {
@@ -706,21 +693,7 @@ static bool handle_file_copy_file(EvalExecContext *ctx, const Node *node, SV_Lis
 }
 
 static bool file_touch_one(EvalExecContext *ctx, String_View path, bool create) {
-    if (!ctx) return false;
-    char *p = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, p, false);
-
-    struct stat st = {0};
-    if (stat(p, &st) != 0) {
-        if (!create) return true;
-        if (!file_write_bytes(ctx, path, "", 0)) return false;
-        if (stat(p, &st) != 0) return false;
-    }
-
-    struct utimbuf tb = {0};
-    tb.actime = st.st_atime;
-    tb.modtime = time(NULL);
-    return utime(p, &tb) == 0;
+    return eval_service_touch(ctx, path, create);
 }
 
 static bool handle_file_touch(EvalExecContext *ctx, const Node *node, SV_List args, bool nocreate) {

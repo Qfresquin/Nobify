@@ -8,6 +8,12 @@ binary.
 - Default command: `./build/nob test evaluator-diff`
 - Optional override: set `CMK2NOB_TEST_CMAKE_BIN=/abs/path/to/cmake`
 - Optional report: set `NOB_DIFF_STATUS_OUT=/abs/path/report.md`
+- Known divergences live in `cases/known_divergence_seed_cases.cmake`.
+  That pack is inverted: a mismatch is a pass, and an unexpected match fails so
+  the case must be moved to a positive diff pack and the manifest promoted.
+  Manifest rows use this pack only for `EPM_EVIDENCE_KNOWN_DIVERGENCE`;
+  `EPM_EVIDENCE_INTERNAL_ONLY` rows remain partial but are not treated as
+  executable CMake mismatches.
 - Resolution order:
   - `CMK2NOB_TEST_CMAKE_BIN`
   - `cmake` from `PATH`
@@ -91,14 +97,12 @@ classification. This README only summarizes the current lane families:
   - `find_pathlike`, `install_host_effect`, `export_host_effect`,
     `file_host_effect`, `fetchcontent_host_effect`, `legacy_generation`
 - `normalized failure differential`
-  - documentary owners only in the matrix today:
-    `legacy_cpack_failure`, `legacy_loader_failure`,
+  - `legacy_cpack_failure`, `legacy_loader_failure`,
     `legacy_compat_failure`
 - `special oracle lane`
   - `find_package_special`, `try_compile_special`, `try_run_special`,
-    `ctest_special`, `file_api_meta_special`, `legacy_meta_special`
-  - `enable_language_special` is currently a documentary owner in the matrix,
-    not a separate pack yet
+    `ctest_special`, `file_api_meta_special`, `legacy_meta_special`,
+    `enable_language_special`
 
 ## CI Reporting
 
@@ -159,6 +163,11 @@ Current case packs:
 - `flow_control_structural_seed_cases.cmake`
 - `callable_scope_structural_seed_cases.cmake`
 - `structural_policy_compat_seed_cases.cmake`
+- `legacy_cpack_failure_seed_cases.cmake`
+- `enable_language_special_seed_cases.cmake`
+- `legacy_loader_failure_seed_cases.cmake`
+- `legacy_compat_failure_seed_cases.cmake`
+- `known_divergence_seed_cases.cmake`
 
 Supported directives:
 

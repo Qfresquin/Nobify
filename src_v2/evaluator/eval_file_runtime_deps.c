@@ -5,7 +5,6 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #if !defined(_WIN32)
 #include <regex.h>
 #include <sys/types.h>
@@ -261,10 +260,10 @@ static bool runtime_try_resolve_in_dirs(EvalExecContext *ctx, String_View name, 
     if (name.count == 0) return true;
     for (size_t i = 0; i < arena_arr_len(dirs); i++) {
         String_View candidate = eval_sv_path_join(eval_temp_arena(ctx), dirs[i], name);
-        char *cand_c = eval_sv_to_cstr_temp(ctx, candidate);
-        EVAL_OOM_RETURN_IF_NULL(ctx, cand_c, false);
-        struct stat st = {0};
-        if (stat(cand_c, &st) == 0 && S_ISREG(st.st_mode)) {
+        Eval_Fs_Stat st = {0};
+        if (eval_service_stat(ctx, candidate, true, &st) &&
+            st.exists &&
+            st.type == EVAL_FS_NODE_FILE) {
             *out_path = candidate;
             return true;
         }
