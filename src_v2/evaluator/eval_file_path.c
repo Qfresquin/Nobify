@@ -26,15 +26,6 @@ bool eval_file_parse_size_sv(String_View sv, size_t *out) {
     return true;
 }
 
-static bool is_path_safe(String_View path) {
-    if (eval_sv_eq_ci_lit(path, "..")) return false;
-    for (size_t i = 0; i + 2 < path.count; i++) {
-        if (path.data[i] == '.' && path.data[i + 1] == '.' && svu_is_path_sep(path.data[i + 2])) return false;
-        if (svu_is_path_sep(path.data[i]) && path.data[i + 1] == '.' && path.data[i + 2] == '.') return false;
-    }
-    return true;
-}
-
 static String_View eval_file_trim_current_dir_prefixes(String_View path) {
     while (path.count >= 2 &&
            path.data[0] == '.' &&
@@ -119,13 +110,6 @@ bool eval_file_resolve_path(EvalExecContext *ctx,
                             String_View *out_path) {
     if (!ctx || !node || !out_path) return false;
 
-    if (mode == EVAL_FILE_PATH_MODE_PROJECT_SCOPED) {
-        if (!is_path_safe(input_path)) {
-            EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("eval_file"), node->as.cmd.name, origin, nob_sv_from_cstr("Security Violation: Path traversal (..) is not allowed"), input_path);
-            return false;
-        }
-    }
-
     String_View path = eval_file_cmk_path_normalize_temp(ctx, input_path);
     String_View base = eval_file_cmk_path_normalize_temp(ctx, relative_base);
     if (!eval_sv_is_abs_path(path)) {
@@ -195,7 +179,7 @@ bool eval_file_resolve_project_scoped_path(EvalExecContext *ctx,
                                            String_View relative_base,
                                            String_View *out_path) {
     return eval_file_resolve_path(
-        ctx, node, origin, input_path, relative_base, EVAL_FILE_PATH_MODE_CMAKE, out_path);
+        ctx, node, origin, input_path, relative_base, EVAL_FILE_PATH_MODE_PROJECT_SCOPED, out_path);
 }
 
 String_View eval_file_cmk_path_normalize_temp(EvalExecContext *ctx, String_View input) {

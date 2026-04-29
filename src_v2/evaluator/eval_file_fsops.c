@@ -703,8 +703,8 @@ static bool handle_file_relative_path(EvalExecContext *ctx, const Node *node, SV
 
     String_View dir = nob_sv_from_cstr("");
     String_View file = nob_sv_from_cstr("");
-    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[2], eval_file_current_src_dir(ctx), &dir)) return true;
-    if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[3], eval_file_current_src_dir(ctx), &file)) return true;
+    if (!eval_file_resolve_path(ctx, node, o, args[2], eval_file_current_src_dir(ctx), EVAL_FILE_PATH_MODE_CMAKE, &dir)) return true;
+    if (!eval_file_resolve_path(ctx, node, o, args[3], eval_file_current_src_dir(ctx), EVAL_FILE_PATH_MODE_CMAKE, &file)) return true;
     (void)eval_var_set_current(ctx, args[1], file_relativize_temp(ctx, file, dir));
     return true;
 }

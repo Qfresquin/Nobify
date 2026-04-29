@@ -122,7 +122,7 @@ divergence.
 | `cmake_host_system_information` | native | FULL | FULL | snapshot differential | `host_identity` | external_corpus | Expose the documented host `QUERY` keys needed by CMake 3.28 scripts. | Parses `RESULT`/`QUERY` clauses into typed requests, resolves the supported host, memory, CPU, processor, registry, and distro keys through the canonical host query path, and honors both `QUERY WINDOWS_REGISTRY ...` and fallback-script-backed `DISTRIB_*` lookups validated by focused evaluator tests. | `src_v2/evaluator/eval_host.c` | [`cmake_host_system_information`](https://cmake.org/cmake/help/v3.28/command/cmake_host_system_information.html) |
 | `cmake_path` | native | FULL | PARTIAL | snapshot differential | `cmake_path` | both | Cover the documented `cmake_path()` subcommand family used to compute script-visible path values. | Covers the `SET`/`GET`/append/transform/query subcommands exercised by the current corpus, including the `GET` component surface and the `CONVERT`/`COMPARE`/`HAS_*`/`IS_*` branches, but the dispatcher still has an explicit `cmake_path() subcommand is not implemented` fallback for unhandled modes. | `src_v2/evaluator/eval_cmake_path.c` | [`cmake_path`](https://cmake.org/cmake/help/v3.28/command/cmake_path.html) |
 | `export` | native | FULL | FULL | host-effect differential | `export_host_effect` | external_corpus | Cover the documented `export()` signatures that publish build/export metadata. | The evaluator now covers the documented `TARGETS`, `EXPORT`, and `PACKAGE` forms needed for the audited CMake 3.28 corpus, including evaluator-side `CXX_MODULES_DIRECTORY` sidecars, the implicit `FILE` for `export(EXPORT ...)`, and local package-registry publication consumed by `find_package()` under the documented gate variables and policies. | `src_v2/evaluator/eval_meta.c` | [`export`](https://cmake.org/cmake/help/v3.28/command/export.html) |
-| `file` | native | FULL | PARTIAL | host-effect differential | `file_host_effect` | both | Cover the documented `file()` subcommands that mutate evaluator-visible state or runtime effects. | Covers the exercised `file()` surface, including read/write/string/glob/transfer/hash/configure/fsops/generate/lock/archive paths. Text read/write/append, mkdir, file and directory copy, metadata stat, rename/remove, chmod, touch, hard/symbolic link creation, readlink, configure/generate writes, local transfer copy, path canonicalization, lock acquire/release, archive create/extract, and remote transfer now route through explicit `EvalServices` hooks with host fallbacks centralized behind evaluator service wrappers. This row remains `PARTIAL` because command-level CMake parity is still limited to the audited supported subset; backend injectability is no longer the blocking reason for these lanes. | `src_v2/evaluator/eval_file.c` + file submodules | [`file`](https://cmake.org/cmake/help/v3.28/command/file.html) |
+| `file` | native | FULL | PARTIAL | host-effect differential | `file_host_effect` | both | Cover the documented `file()` subcommands that mutate evaluator-visible state or runtime effects. | Covers the exercised `file()` surface, including read/write/string/glob/transfer/hash/configure/fsops/generate/lock/archive paths. Text read/write/append, mkdir, file and directory copy, metadata stat, rename/remove, chmod, touch, hard/symbolic link creation, readlink, configure/generate writes, local transfer copy, path canonicalization, lock acquire/release, archive create/extract, and remote transfer now route through explicit `EvalServices` hooks with host fallbacks centralized behind evaluator service wrappers. This row remains `PARTIAL` because command-level CMake parity is limited to the audited supported subset and several implementation bugs remain: dispatcher-level Event IR emission uses raw positional arguments for keyword subcommands, local ranged downloads mishandle out-of-range `RANGE_START`, empty `file(CONFIGURE CONTENT "")` is rejected, invalid numeric `file(READ)` options are silently ignored, several parsers accept unknown arguments, `file(GLOB)` still walks the host filesystem directly, `COPY_FILE RESULT` failure text is suspect, and `STRINGS NEWLINE_CONSUME` needs differential proof. | `src_v2/evaluator/eval_file.c` + file submodules | [`file`](https://cmake.org/cmake/help/v3.28/command/file.html) |
 | `get_cmake_property` | native | FULL | FULL | snapshot differential | `property_wrappers` | external_corpus | Expose property/query results with the same observable semantics CMake scripts depend on. | Uses the shared property-query/provider path to cover the historical `VARIABLES`/`MACROS` forms, synthetic `CACHE_VARIABLES`/`COMMANDS`/`COMPONENTS`, synthesized globals such as `CMAKE_ROLE`, `IN_TRY_COMPILE`, `GENERATOR_IS_MULTI_CONFIG`, `PACKAGES_FOUND`, and `PACKAGES_NOT_FOUND`, plus the command-specific literal `NOTFOUND` fallback. | `src_v2/evaluator/eval_target_property_query.c` | [`get_cmake_property`](https://cmake.org/cmake/help/v3.28/command/get_cmake_property.html) |
 | `get_directory_property` | native | FULL | FULL | snapshot differential | `property_wrappers` | external_corpus | Expose property/query results with the same observable semantics CMake scripts depend on. | Uses typed request parsing and the shared property/provider path to cover selected-directory `DEFINITION` snapshots, graph-derived directory properties such as `SOURCE_DIR`, `BINARY_DIR`, `PARENT_DIRECTORY`, `SUBDIRECTORIES`, `BUILDSYSTEM_TARGETS`, `IMPORTED_TARGETS`, `TESTS`, `VARIABLES`, `MACROS`, and `LISTFILE_STACK`, while preserving the documented known-directory checks and empty-string materialization for unset directory properties. | `src_v2/evaluator/eval_target_property_query.c` | [`get_directory_property`](https://cmake.org/cmake/help/v3.28/command/get_directory_property.html) |
 | `get_filename_component` | native | FULL | FULL | snapshot differential | `get_filename_component` | external_corpus | Support the documented component/query modes exposed by `get_filename_component()`. | Parses the mode-specific option surface into a typed request, then executes the canonical directory/path/program resolution flow while preserving the observable `PROGRAM`/`CACHE` quirks around raw `PROGRAM_ARGS`, cached-result short-circuiting, and path-with-spaces program resolution. | `src_v2/evaluator/eval_directory.c` | [`get_filename_component`](https://cmake.org/cmake/help/v3.28/command/get_filename_component.html) |
@@ -257,7 +257,32 @@ divergence.
 ## Ownership Notes
 
 - `file` is owned primarily by `file_host_effect`; the script-mode snapshot
-  subset remains covered by `file_script`.
+  subset remains covered by `file_script`. Current blockers found in the
+  handler family:
+  - `eval_file()` emits post-handler Event IR using raw positional arguments.
+    Keyword signatures such as `ARCHIVE_CREATE OUTPUT <path>`,
+    `ARCHIVE_EXTRACT INPUT <path> DESTINATION <dir>`, and
+    `DOWNLOAD <url> STATUS <var>` can publish events for tokens like `OUTPUT`,
+    `INPUT`, or `STATUS` instead of the parsed semantic path.
+  - Local `file(DOWNLOAD)` range handling leaves `begin` at zero when
+    `RANGE_START` is greater than or equal to the source size, so an
+    out-of-range request can copy the whole file instead of the CMake 3.28
+    outcome.
+  - `file(CONFIGURE OUTPUT <path> CONTENT "")` is rejected because the handler
+    treats empty content as missing `CONTENT`; this needs an explicit
+    `saw_content` flag.
+  - `file(READ)` silently ignores invalid `OFFSET` and `LIMIT` values instead
+    of diagnosing malformed numeric options.
+  - Multiple subcommand parsers still ignore unknown arguments after matching
+    the happy path, including `RENAME`, `CREATE_LINK`, `REAL_PATH`, and parts
+    of `COPY`; those cases need differential tests before any parity claim.
+  - `file(GLOB)` and recursive globbing still enumerate the host filesystem
+    directly through `glob()` / directory helpers instead of an evaluator
+    service, so filesystem injection is incomplete for this lane.
+  - `file(COPY_FILE RESULT <var>)` appears to report failure as `1` instead of
+    CMake-style textual error content; confirm with a focused diff case.
+  - `file(STRINGS NEWLINE_CONSUME)` appears to consume until NUL rather than
+    line boundaries; confirm with a focused diff case.
 - `FetchContent_*` is owned primarily by `fetchcontent_host_effect`; provider
   bridge coverage also exists through `dependency_provider` and
   `find_package_special`.
