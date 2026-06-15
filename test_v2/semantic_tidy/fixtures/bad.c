@@ -58,6 +58,7 @@ static int nob_walk_dir(const char *path, void *callback);
 static const char *bm_query_target_name(const Build_Model *model, BM_Target_Id id);
 static int bm_builder_current_directory_id(BM_Builder *builder);
 static Build_Model_Draft *bm_builder_finalize(BM_Builder *builder);
+static char *getenv(const char *name);
 static EvalRunResult eval_session_run(EvalSession *session,
                                       const EvalExec_Request *request,
                                       Ast_Root ast);
@@ -173,11 +174,20 @@ static int helper_bad_evaluator_host_service_boundary_find_item_type(const char 
     return nob_get_file_type(path) == NOB_FILE_DIRECTORY;
 }
 
+static int helper_bad_evaluator_host_service_boundary_program_lookup(const char *path) {
+    if (!nob_file_exists(path)) return 0;
+    return nob_get_file_type(path) == NOB_FILE_REGULAR;
+}
+
 static int helper_bad_evaluator_host_service_boundary_ctest_cleanup(const char *path) {
     return nob_mkdir_if_not_exists(path);
 }
 
 static int helper_bad_evaluator_host_service_boundary_meta_dir(const char *path, Nob_File_Paths *out) {
+    return nob_read_entire_dir(path, out);
+}
+
+static int helper_bad_evaluator_host_service_boundary_builtin_root(const char *path, Nob_File_Paths *out) {
     return nob_read_entire_dir(path, out);
 }
 
@@ -198,6 +208,14 @@ static int helper_bad_pipeline_orchestration_boundary(EvalSession *session,
 
 static int helper_bad_codegen_render_host_effect(const char *path) {
     return nob_write_entire_file(path, "", 0);
+}
+
+static int helper_bad_codegen_path_resolution_host_effect(const char *path) {
+    return nob_file_exists(path);
+}
+
+static int helper_bad_pure_layer_ambient_env(const char *name) {
+    return getenv(name) != 0;
 }
 
 static int helper_bad_codegen_public_host_effect(const char *path) {

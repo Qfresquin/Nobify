@@ -142,6 +142,15 @@ static const char *helper_codegen_render_host_effect_good(const Build_Model *mod
     return bm_query_target_name(model, id);
 }
 
+static const char *helper_codegen_path_resolution_host_effect_good(const Build_Model *model,
+                                                                   BM_Target_Id id) {
+    return bm_query_target_name(model, id);
+}
+
+static int helper_pure_layer_ambient_env_good(const void *explicit_options) {
+    return explicit_options != 0;
+}
+
 static const char *helper_codegen_public_host_effect_good(const Build_Model *model,
                                                           BM_Target_Id id) {
     return bm_query_target_name(model, id);

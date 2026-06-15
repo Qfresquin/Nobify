@@ -9,7 +9,6 @@
 #include "lexer.h"
 #include "parser.h"
 
-#include <stdlib.h>
 #include <string.h>
 
 typedef Test_Case_Pack_Entry Parser_Case;
@@ -20,7 +19,9 @@ static bool token_list_append(Arena *arena, Token_List *list, Token token) {
     return arena_arr_push(arena, *list, token);
 }
 
-static Ast_Root parse_script_local(Arena *arena, const char *script) {
+static Ast_Root parse_script_local_with_options(Arena *arena,
+                                                const char *script,
+                                                Parser_Options options) {
     Lexer lx = lexer_init(nob_sv_from_cstr(script));
     Token_List toks = NULL;
     for (;;) {
@@ -28,7 +29,7 @@ static Ast_Root parse_script_local(Arena *arena, const char *script) {
         if (t.kind == TOKEN_END) break;
         if (!token_list_append(arena, &toks, t)) return NULL;
     }
-    return parse_tokens(arena, toks);
+    return parse_tokens_with_options(arena, toks, options);
 }
 
 static void snapshot_append_indent(Nob_String_Builder *sb, int indent) {
@@ -149,48 +150,29 @@ static void snapshot_append_node_list(Nob_String_Builder *sb, const Node_List *l
     }
 }
 
-static void set_env_or_unset(const char *name, const char *value) {
-#if defined(_WIN32)
-    if (value) _putenv_s(name, value);
-    else _putenv_s(name, "");
-#else
-    if (value) setenv(name, value, 1);
-    else unsetenv(name);
-#endif
-}
-
-static bool apply_parser_case_env(String_View name) {
+static Parser_Options parser_case_options(String_View name) {
+    Parser_Options options = parser_default_options();
     if (nob_sv_eq(name, nob_sv_from_cstr("parser_reports_block_depth_limit_exceeded"))) {
-        set_env_or_unset("CMK2NOB_PARSER_MAX_BLOCK_DEPTH", "1");
-        return true;
+        options.max_block_depth = 1;
+        return options;
     }
     if (nob_sv_eq(name, nob_sv_from_cstr("parser_fail_fast_on_append_oom_budget"))) {
-        set_env_or_unset("CMK2NOB_PARSER_FAIL_APPEND_AFTER", "0");
-        return true;
+        options.fail_after_appends = 0;
+        return options;
     }
-    return false;
-}
-
-static void clear_parser_case_env(String_View name) {
-    if (nob_sv_eq(name, nob_sv_from_cstr("parser_reports_block_depth_limit_exceeded"))) {
-        set_env_or_unset("CMK2NOB_PARSER_MAX_BLOCK_DEPTH", NULL);
-    }
-    if (nob_sv_eq(name, nob_sv_from_cstr("parser_fail_fast_on_append_oom_budget"))) {
-        set_env_or_unset("CMK2NOB_PARSER_FAIL_APPEND_AFTER", NULL);
-    }
+    return options;
 }
 
 static bool render_parser_case_snapshot_to_sb(Arena *arena, Parser_Case parser_case, Nob_String_Builder *sb) {
-    bool has_case_env = apply_parser_case_env(parser_case.name);
-
     diag_reset();
-    Ast_Root ast = parse_script_local(arena, parser_case.script.data);
+    Ast_Root ast = parse_script_local_with_options(arena,
+                                                   parser_case.script.data,
+                                                   parser_case_options(parser_case.name));
 
     nob_sb_append_cstr(sb, nob_temp_sprintf("DIAG errors=%zu warnings=%zu\n", diag_error_count(), diag_warning_count()));
     nob_sb_append_cstr(sb, nob_temp_sprintf("ROOT count=%zu\n", arena_arr_len(ast)));
     snapshot_append_node_list(sb, &ast, 0);
 
-    if (has_case_env) clear_parser_case_env(parser_case.name);
     return true;
 }
 

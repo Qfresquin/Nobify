@@ -43,16 +43,7 @@ static bool cg_build_tree_resolve_owner_path_abs(CG_Context *ctx,
         return false;
     }
 
-    if (nob_file_exists(nob_temp_sv_to_cstr(source_abs))) {
-        *out = source_abs;
-        return true;
-    }
-    if (nob_file_exists(nob_temp_sv_to_cstr(binary_abs))) {
-        *out = binary_abs;
-        return true;
-    }
-
-    *out = source_abs;
+    *out = source_abs.count > 0 ? source_abs : binary_abs;
     return true;
 }
 

@@ -5,7 +5,6 @@
 #include "arena_dyn.h"
 #include "diagnostics.h"
 #include <ctype.h>
-#include <stdlib.h>
 #include <limits.h>
 
 // ============================================================================
@@ -39,29 +38,6 @@ static inline bool parser_has_oom(const Parser_Context *ctx) {
 
 #define PARSER_OOM_RETURN(ctx, ret_value) \
     do { if (parser_has_oom((ctx))) return (ret_value); } while (0)
-
-static size_t parser_fail_after_from_env(void) {
-    // Test-only fault injection hook used to exercise arena/append failure paths.
-    const char *env = getenv("CMK2NOB_PARSER_FAIL_APPEND_AFTER");
-    if (!env || env[0] == '\0') return SIZE_MAX;
-    char *end = NULL;
-    unsigned long long raw = strtoull(env, &end, 10);
-    if (end == env || (end && *end != '\0')) return SIZE_MAX;
-    if (raw > (unsigned long long)SIZE_MAX) return SIZE_MAX;
-    return (size_t)raw;
-}
-
-static size_t parser_limit_from_env(const char *name, size_t fallback, size_t min_value) {
-    // Clamp env-driven limits so misconfiguration cannot disable safety checks.
-    const char *env = getenv(name);
-    if (!env || env[0] == '\0') return fallback;
-    char *end = NULL;
-    unsigned long long raw = strtoull(env, &end, 10);
-    if (end == env || (end && *end != '\0')) return fallback;
-    if (raw > (unsigned long long)SIZE_MAX) return fallback;
-    if ((size_t)raw < min_value) return min_value;
-    return (size_t)raw;
-}
 
 static bool parser_report_oom(Parser_Context *ctx) {
     if (!ctx) return false;
@@ -734,7 +710,21 @@ static Node parse_statement(Parser_Context *ctx, Token_List *tokens, size_t *cur
 
 // --- Public Interface ---
 
-Ast_Root parse_tokens(Arena *arena, Token_List tokens) {
+Parser_Options parser_default_options(void) {
+    return (Parser_Options){
+        .fail_after_appends = SIZE_MAX,
+        .max_block_depth = PARSER_DEFAULT_MAX_BLOCK_DEPTH,
+        .max_paren_depth = PARSER_DEFAULT_MAX_PAREN_DEPTH,
+    };
+}
+
+static Parser_Options parser_normalize_options(Parser_Options options) {
+    if (options.max_block_depth == 0) options.max_block_depth = PARSER_DEFAULT_MAX_BLOCK_DEPTH;
+    if (options.max_paren_depth == 0) options.max_paren_depth = PARSER_DEFAULT_MAX_PAREN_DEPTH;
+    return options;
+}
+
+Ast_Root parse_tokens_with_options(Arena *arena, Token_List tokens, Parser_Options options) {
     if (!arena) {
         diag_log(DIAG_SEV_ERROR, "parser", "<input>", 0, 0, "parse_tokens",
             "arena obrigatoria ausente",
@@ -742,19 +732,24 @@ Ast_Root parse_tokens(Arena *arena, Token_List tokens) {
         Ast_Root empty = NULL;
         return empty;
     }
+    options = parser_normalize_options(options);
     size_t cursor = 0;
     Parser_Context ctx = {0};
     ctx.arena = arena;
     ctx.oom = false;
-    ctx.fail_after_appends = parser_fail_after_from_env();
+    ctx.fail_after_appends = options.fail_after_appends;
     ctx.block_depth = 0;
-    ctx.max_block_depth = parser_limit_from_env("CMK2NOB_PARSER_MAX_BLOCK_DEPTH", PARSER_DEFAULT_MAX_BLOCK_DEPTH, 1);
-    ctx.max_paren_depth = parser_limit_from_env("CMK2NOB_PARSER_MAX_PAREN_DEPTH", PARSER_DEFAULT_MAX_PAREN_DEPTH, 1);
+    ctx.max_block_depth = options.max_block_depth;
+    ctx.max_paren_depth = options.max_paren_depth;
 
     // Parse the entire file as a single implicit top-level block.
     Ast_Root root = parse_block(&ctx, &tokens, &cursor, NULL, 0, NULL);
     if (ctx.oom) return NULL;
     return root;
+}
+
+Ast_Root parse_tokens(Arena *arena, Token_List tokens) {
+    return parse_tokens_with_options(arena, tokens, parser_default_options());
 }
 
 void ast_free(Ast_Root root) {

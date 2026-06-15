@@ -4,6 +4,7 @@
 
 #include "lexer.h"
 #include "arena.h" 
+#include <stddef.h>
 
 // --- Argument Structures ---
 
@@ -83,10 +84,19 @@ struct Node {
 // Parsing result: the root block of statements.
 typedef Node_List Ast_Root;
 
+typedef struct {
+    // SIZE_MAX disables append-budget fault injection.
+    size_t fail_after_appends;
+    size_t max_block_depth;
+    size_t max_paren_depth;
+} Parser_Options;
+
+Parser_Options parser_default_options(void);
+
 // Main parser entry point.
 // Recovery: emits diagnostics for invalid syntax and tries to continue.
-// Limits (via env): CMK2NOB_PARSER_MAX_BLOCK_DEPTH and CMK2NOB_PARSER_MAX_PAREN_DEPTH.
 Ast_Root parse_tokens(Arena *arena, Token_List tokens);
+Ast_Root parse_tokens_with_options(Arena *arena, Token_List tokens, Parser_Options options);
 
 // With arena allocation, ast_free() is a no-op; destroy the arena instead.
 void ast_free(Ast_Root root);

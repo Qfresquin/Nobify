@@ -86,7 +86,17 @@ static bool isEvaluatorHostServiceConsumerPath(llvm::StringRef Path) {
            contains(Path, "src_v2/evaluator/eval_vars.c") ||
            contains(Path, "src_v2/evaluator/eval_package_find_item.c") ||
            contains(Path, "src_v2/evaluator/eval_ctest.c") ||
-           contains(Path, "src_v2/evaluator/eval_meta.c");
+           contains(Path, "src_v2/evaluator/eval_meta.c") ||
+           contains(Path, "src_v2/evaluator/eval_utils_path.c") ||
+           contains(Path, "src_v2/evaluator/evaluator.c");
+}
+
+static bool isPureSemanticLayerPath(llvm::StringRef Path) {
+    return contains(Path, "src_v2/parser/") ||
+           contains(Path, "src_v2/lexer/") ||
+           contains(Path, "src_v2/transpiler/") ||
+           contains(Path, "src_v2/build_model/") ||
+           contains(Path, "src_v2/codegen/");
 }
 
 static bool typeNamesEvalResult(QualType Type) {
@@ -1252,7 +1262,7 @@ public:
 
     void registerMatchers(MatchFinder *Finder) override {
         Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
-                                    "^(nob_write_entire_file|nob_read_entire_file|nob_cmd_run|system|popen|fopen|open|remove|rename|unlink|rmdir)$"))),
+                                    "^(nob_file_exists|nob_get_file_type|nob_read_entire_dir|nob_write_entire_file|nob_read_entire_file|nob_cmd_run|system|popen|stat|lstat|access|realpath|fopen|open|remove|rename|unlink|rmdir)$"))),
                                     hasAncestor(functionDecl().bind("function")))
                                .bind("call"),
                            this);
@@ -1273,11 +1283,11 @@ public:
 private:
     bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
         if (contains(Path, "src_v2/codegen/")) {
-            llvm::StringRef Name = FD->getName();
-            return Name.contains("render") || Name.contains("emit");
+            return true;
         }
         if (!isFixturePath(Path) || !FD) return false;
-        return FD->getName().contains("codegen_render_host_effect");
+        return FD->getName().contains("codegen_render_host_effect") ||
+               FD->getName().contains("codegen_path_resolution_host_effect");
     }
 };
 
@@ -1316,6 +1326,39 @@ private:
     }
 };
 
+class PureLayerAmbientEnvCheck : public ClangTidyCheck {
+public:
+    PureLayerAmbientEnvCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
+                                    "^(getenv|secure_getenv|setenv|unsetenv|putenv|_putenv|_putenv_s)$"))),
+                                    hasAncestor(functionDecl().bind("function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+        if (!Call || !FD) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
+        if (!applies(Path, FD)) return;
+
+        diag(Call->getExprLoc(),
+             "pure semantic layers must not read or mutate ambient environment; pass explicit options or use the owning runtime boundary");
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (isPureSemanticLayerPath(Path)) return true;
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("pure_layer_ambient_env");
+    }
+};
+
 class EvaluatorHostServiceBoundaryCheck : public ClangTidyCheck {
 public:
     EvaluatorHostServiceBoundaryCheck(StringRef Name, ClangTidyContext *Context)
@@ -1323,7 +1366,7 @@ public:
 
     void registerMatchers(MatchFinder *Finder) override {
         Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
-                                    "^(nob_file_exists|nob_get_file_type|nob_mkdir_if_not_exists|nob_walk_dir|nob_read_entire_dir|nob_read_entire_file|nob_write_entire_file|nob_copy_file|nob_cmd_run|stat|lstat|access|fopen|open|remove|rename|unlink|rmdir)$"))),
+                                    "^(nob_file_exists|nob_get_file_type|nob_mkdir_if_not_exists|nob_walk_dir|nob_read_entire_dir|nob_read_entire_file|nob_write_entire_file|nob_copy_file|nob_cmd_run|stat|lstat|access|realpath|fopen|open|remove|rename|unlink|rmdir)$"))),
                                     hasAncestor(functionDecl().bind("function")))
                                .bind("call"),
                            this);
@@ -1870,6 +1913,8 @@ public:
             "nobify-codegen-render-host-effect");
         Factories.registerCheck<CodegenPublicHostEffectCheck>(
             "nobify-codegen-public-host-effect");
+        Factories.registerCheck<PureLayerAmbientEnvCheck>(
+            "nobify-pure-layer-ambient-env");
         Factories.registerCheck<EvaluatorHostServiceBoundaryCheck>(
             "nobify-evaluator-host-service-boundary");
         Factories.registerCheck<BuildModelQueryReadonlyCheck>(

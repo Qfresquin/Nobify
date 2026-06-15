@@ -109,16 +109,7 @@ static bool cg_resolve_install_item_from_owner_dirs(CG_Context *ctx,
         return cg_rebase_path_from_cwd(ctx, item, out);
     }
     if (!cg_rebase_from_base(ctx, item, source_dir, &source_candidate)) return false;
-    if (nob_file_exists(nob_temp_sv_to_cstr(source_candidate))) {
-        *out = source_candidate;
-        return true;
-    }
-
     if (!cg_rebase_from_base(ctx, item, binary_dir, &binary_candidate)) return false;
-    if (nob_file_exists(nob_temp_sv_to_cstr(binary_candidate))) {
-        *out = binary_candidate;
-        return true;
-    }
 
     *out = source_candidate.count > 0 ? source_candidate : binary_candidate;
     return true;

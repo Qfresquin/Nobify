@@ -284,11 +284,9 @@ static bool eval_program_token_contains_path_sep(String_View value) {
 
 static bool eval_program_candidate_is_file(EvalExecContext *ctx, String_View candidate) {
     if (!ctx || candidate.count == 0) return false;
-    char *path_c = eval_sv_to_cstr_temp(ctx, candidate);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-    if (!nob_file_exists(path_c)) return false;
-    Nob_File_Type kind = nob_get_file_type(path_c);
-    return kind == NOB_FILE_REGULAR || kind == NOB_FILE_SYMLINK;
+    Eval_Fs_Stat st = {0};
+    if (!eval_service_stat(ctx, candidate, false, &st) || !st.exists) return false;
+    return st.type == EVAL_FS_NODE_FILE || st.type == EVAL_FS_NODE_SYMLINK;
 }
 
 static String_View eval_trim_whitespace_view(String_View input) {
