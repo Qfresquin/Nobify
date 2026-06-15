@@ -882,13 +882,9 @@ Eval_Result try_compile_execute_and_publish(EvalExecContext *ctx,
             String_View dst = try_compile_resolve_in_dir(ctx, req->copy_file_path, req->current_bin_dir);
             String_View parent = svu_dirname(dst);
             char *parent_c = eval_sv_to_cstr_temp(ctx, parent);
-            char *src_c = eval_sv_to_cstr_temp(ctx, exec_res.artifact_path);
-            char *dst_c = eval_sv_to_cstr_temp(ctx, dst);
             EVAL_OOM_RETURN_IF_NULL(ctx, parent_c, eval_result_fatal());
-            EVAL_OOM_RETURN_IF_NULL(ctx, src_c, eval_result_fatal());
-            EVAL_OOM_RETURN_IF_NULL(ctx, dst_c, eval_result_fatal());
             (void)try_compile_mkdir_p_local(ctx, parent_c);
-            bool copied = nob_copy_file(src_c, dst_c);
+            bool copied = eval_service_copy_file(ctx, exec_res.artifact_path, dst);
             if (req->copy_file_error_var.count > 0) {
                 (void)eval_var_set_current(ctx,
                                            req->copy_file_error_var,

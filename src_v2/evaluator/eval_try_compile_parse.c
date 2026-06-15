@@ -188,9 +188,7 @@ static bool try_compile_write_generated_source(EvalExecContext *ctx,
     }
 
     String_View src_path = eval_sv_path_join(eval_temp_arena(ctx), req->binary_dir, name);
-    char *src_c = eval_sv_to_cstr_temp(ctx, src_path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, src_c, false);
-    if (!nob_write_entire_file(src_c, content.data ? content.data : "", content.count)) {
+    if (!eval_service_write_file(ctx, src_path, content, false)) {
         return false;
     }
     return try_compile_add_source_item(ctx, req, src_path, forced_lang);
@@ -277,19 +275,14 @@ static bool try_compile_parse_source_option(EvalExecContext *ctx,
             if (arena_arr_len(values) < 2) return true;
 
             String_View src_file = try_compile_resolve_in_dir(ctx, values[1], state->req->current_src_dir);
-            char *src_c = eval_sv_to_cstr_temp(ctx, src_file);
-            EVAL_OOM_RETURN_IF_NULL(ctx, src_c, false);
-
-            Nob_String_Builder sb = {0};
-            if (!nob_read_entire_file(src_c, &sb)) return true;
-            String_View content = nob_sv_from_parts(sb.items ? sb.items : "", sb.count);
-            bool ok = try_compile_write_generated_source(ctx,
-                                                         state->req,
-                                                         values[0],
-                                                         content,
-                                                         state->current_type);
-            nob_sb_free(sb);
-            return ok;
+            String_View content = {0};
+            bool found = false;
+            if (!eval_service_read_file(ctx, src_file, &content, &found) || !found) return true;
+            return try_compile_write_generated_source(ctx,
+                                                      state->req,
+                                                      values[0],
+                                                      content,
+                                                      state->current_type);
         }
         case TRY_COMPILE_SRC_OPT_C_STANDARD:
             state->req->c_lang.has_value = true;

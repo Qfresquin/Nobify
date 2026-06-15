@@ -30,15 +30,28 @@ typedef enum {
 } Event_Kind;
 
 typedef struct Event_Stream Event_Stream;
+typedef struct EvalSession EvalSession;
+typedef struct EvalRunResult {
+    int ok;
+} EvalRunResult;
+typedef struct Ast_Root {
+    int node_count;
+} Ast_Root;
+typedef struct EvalExec_Request EvalExec_Request;
 
 typedef struct Nob_Codegen_Options Nob_Codegen_Options;
 typedef struct Nob_File_Paths Nob_File_Paths;
 typedef unsigned int BM_Target_Id;
 static int nob_codegen_render(const Build_Model *model, const Nob_Codegen_Options *options);
 static int nob_read_entire_dir(const char *path, Nob_File_Paths *out);
+static int nob_write_entire_file(const char *path, const char *data, unsigned long len);
+static int nob_file_exists(const char *path);
 static const char *bm_query_target_name(const Build_Model *model, BM_Target_Id id);
 static int bm_builder_current_directory_id(BM_Builder *builder);
 static Build_Model_Draft *bm_builder_finalize(BM_Builder *builder);
+static EvalRunResult eval_session_run(EvalSession *session,
+                                      const EvalExec_Request *request,
+                                      Ast_Root ast);
 
 static int eval_should_stop(EvalExecContext *ctx);
 static Eval_Result eval_result_fatal(void);
@@ -131,6 +144,30 @@ static const char *helper_bad_evaluator_build_model_dependency(const Build_Model
 
 static int helper_bad_codegen_evaluator_dependency(EvalExecContext *ctx) {
     return eval_should_stop(ctx);
+}
+
+static int helper_bad_evaluator_host_service_boundary(const char *path) {
+    if (!nob_file_exists(path)) return nob_write_entire_file(path, "", 0);
+    return 1;
+}
+
+static int helper_bad_pipeline_orchestration_boundary(EvalSession *session,
+                                                      const EvalExec_Request *request,
+                                                      Ast_Root ast,
+                                                      BM_Builder *builder,
+                                                      const Build_Model *model,
+                                                      const Nob_Codegen_Options *options) {
+    eval_session_run(session, request, ast);
+    bm_builder_finalize(builder);
+    return nob_codegen_render(model, options);
+}
+
+static int helper_bad_codegen_render_host_effect(const char *path) {
+    return nob_write_entire_file(path, "", 0);
+}
+
+static int helper_bad_codegen_public_host_effect(const char *path) {
+    return nob_write_entire_file(path, "", 0);
 }
 
 static Build_Model_Draft *helper_bad_codegen_build_model_lifecycle(BM_Builder *builder) {

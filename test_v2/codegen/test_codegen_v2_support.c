@@ -10,6 +10,7 @@
 static char s_codegen_repo_root[_TINYDIR_PATH_MAX] = {0};
 
 bool codegen_write_text_file(const char *path, const char *text);
+static bool codegen_write_buffer_file(const char *path, const char *data, size_t len);
 
 static bool codegen_copy_string(const char *src,
                                 char out[_TINYDIR_PATH_MAX]) {
@@ -304,9 +305,18 @@ static bool codegen_render_or_write_script(const char *script,
             test_semantic_pipeline_fixture_destroy(&fixture);
             return false;
         }
-        ok = write_file
-            ? nob_codegen_write_file(fixture.build.model, codegen_arena, &opts)
-            : nob_codegen_render(fixture.build.model, codegen_arena, &opts, out);
+        if (write_file) {
+            Nob_String_Builder generated = {0};
+            ok = nob_codegen_render(fixture.build.model, codegen_arena, &opts, &generated);
+            if (ok) {
+                ok = codegen_write_buffer_file(effective_output_path,
+                                               generated.items ? generated.items : "",
+                                               generated.count);
+            }
+            nob_sb_free(generated);
+        } else {
+            ok = nob_codegen_render(fixture.build.model, codegen_arena, &opts, out);
+        }
         if (!ok) {
             nob_log(NOB_ERROR,
                     "codegen test support: %s failed for input=%s output=%s source_dir=%s binary_dir=%s",
@@ -454,14 +464,18 @@ bool codegen_compile_generated_nob_strict(const char *generated_path, const char
 }
 
 bool codegen_write_text_file(const char *path, const char *text) {
+    return path && text && codegen_write_buffer_file(path, text, strlen(text));
+}
+
+static bool codegen_write_buffer_file(const char *path, const char *data, size_t len) {
     const char *dir = NULL;
-    if (!path || !text) return false;
+    if (!path || !data) return false;
     dir = nob_temp_dir_name(path);
     if (dir && strcmp(dir, ".") != 0 && !codegen_mkdirs(dir)) {
         nob_log(NOB_ERROR, "codegen test support: failed to create input directory %s", dir);
         return false;
     }
-    if (!nob_write_entire_file(path, text, strlen(text))) {
+    if (!nob_write_entire_file(path, data, len)) {
         nob_log(NOB_ERROR, "codegen test support: failed to write input script %s", path);
         return false;
     }

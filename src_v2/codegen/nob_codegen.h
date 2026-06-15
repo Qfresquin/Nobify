@@ -33,8 +33,5 @@ bool nob_codegen_render(const Build_Model *model,
                         Arena *scratch,
                         const Nob_Codegen_Options *opts,
                         Nob_String_Builder *out);
-bool nob_codegen_write_file(const Build_Model *model,
-                            Arena *scratch,
-                            const Nob_Codegen_Options *opts);
 
 #endif

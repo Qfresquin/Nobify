@@ -70,6 +70,14 @@ static bool isBuildModelValidatePath(llvm::StringRef Path) {
     return contains(Path, "src_v2/build_model/build_model_validate");
 }
 
+static bool isPipelineOrchestrationPath(llvm::StringRef Path) {
+    return contains(Path, "src_v2/app/") ||
+           contains(Path, "test_v2/test_semantic_pipeline") ||
+           contains(Path, "test_v2/codegen/") ||
+           contains(Path, "test_v2/evaluator_codegen_diff/") ||
+           contains(Path, "test_v2/artifact_parity/");
+}
+
 static bool typeNamesEvalResult(QualType Type) {
     if (Type.isNull()) return false;
     std::string Name = Type.getAsString();
@@ -857,6 +865,67 @@ public:
     }
 };
 
+class PipelinePhaseVisitor : public RecursiveASTVisitor<PipelinePhaseVisitor> {
+public:
+    bool HasEvaluator = false;
+    bool HasBuildModelLifecycle = false;
+    bool HasCodegen = false;
+
+    bool VisitCallExpr(CallExpr *Call) {
+        const FunctionDecl *FD = Call ? Call->getDirectCallee() : nullptr;
+        if (!FD) return true;
+        llvm::StringRef Name = FD->getName();
+        if (Name.starts_with("eval_session_")) {
+            HasEvaluator = true;
+        } else if (Name.starts_with("bm_builder_") || Name == "bm_validate_draft" ||
+                   Name == "bm_freeze_draft") {
+            HasBuildModelLifecycle = true;
+        } else if (Name == "nob_codegen_render") {
+            HasCodegen = true;
+        }
+        return true;
+    }
+
+    unsigned phaseCount() const {
+        return (HasEvaluator ? 1u : 0u) + (HasBuildModelLifecycle ? 1u : 0u) +
+               (HasCodegen ? 1u : 0u);
+    }
+};
+
+class PipelineOrchestrationBoundaryCheck : public ClangTidyCheck {
+public:
+    PipelineOrchestrationBoundaryCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(functionDecl(isDefinition()).bind("function"), this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+        if (!FD || !FD->hasBody()) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, FD->getLocation());
+        if (!applies(Path, FD)) return;
+
+        PipelinePhaseVisitor Visitor;
+        Visitor.TraverseStmt(const_cast<Stmt *>(FD->getBody()));
+        if (Visitor.phaseCount() < 2) return;
+
+        diag(FD->getLocation(),
+             "only app or test orchestration code may chain evaluator, build_model lifecycle, and codegen phases");
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (isPipelineOrchestrationPath(Path)) return false;
+        if (isFixturePath(Path)) {
+            return FD && FD->getName().contains("pipeline_orchestration_boundary");
+        }
+        return contains(Path, "src_v2/");
+    }
+};
+
 class BuildModelConstructionQueryLayerCheck : public ClangTidyCheck {
 public:
     BuildModelConstructionQueryLayerCheck(StringRef Name, ClangTidyContext *Context)
@@ -1162,6 +1231,110 @@ private:
         if (contains(Path, "src_v2/codegen/")) return true;
         if (!isFixturePath(Path) || !FD) return false;
         return FD->getName().contains("codegen_build_model_lifecycle");
+    }
+};
+
+class CodegenRenderHostEffectCheck : public ClangTidyCheck {
+public:
+    CodegenRenderHostEffectCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
+                                    "^(nob_write_entire_file|nob_read_entire_file|nob_cmd_run|system|popen|fopen|open|remove|rename|unlink|rmdir)$"))),
+                                    hasAncestor(functionDecl().bind("function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+        if (!Call || !FD) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
+        if (!applies(Path, FD)) return;
+
+        diag(Call->getExprLoc(),
+             "codegen render functions must not perform host effects; emit generated backend code or use an outer write wrapper");
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (contains(Path, "src_v2/codegen/")) {
+            llvm::StringRef Name = FD->getName();
+            return Name.contains("render") || Name.contains("emit");
+        }
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("codegen_render_host_effect");
+    }
+};
+
+class CodegenPublicHostEffectCheck : public ClangTidyCheck {
+public:
+    CodegenPublicHostEffectCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
+                                    "^(cg_host_ensure_dir|nob_mkdir_if_not_exists|nob_write_entire_file|nob_read_entire_file|nob_cmd_run|system|popen|fopen|open|remove|rename|unlink|rmdir)$"))),
+                                    hasAncestor(functionDecl().bind("function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+        if (!Call || !FD) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
+        if (!applies(Path, FD)) return;
+
+        diag(Call->getExprLoc(),
+             "public codegen APIs must not perform host effects; render into a buffer and let the app or test harness write files");
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (contains(Path, "src_v2/codegen/")) {
+            return FD->getName().starts_with("nob_codegen_");
+        }
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("codegen_public_host_effect");
+    }
+};
+
+class EvaluatorHostServiceBoundaryCheck : public ClangTidyCheck {
+public:
+    EvaluatorHostServiceBoundaryCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
+                                    "^(nob_file_exists|nob_mkdir_if_not_exists|nob_read_entire_file|nob_write_entire_file|nob_copy_file|nob_cmd_run|stat|lstat|fopen|open|remove|rename|unlink|rmdir)$"))),
+                                    hasAncestor(functionDecl().bind("function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+        if (!Call || !FD) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
+        if (!applies(Path, FD)) return;
+
+        diag(Call->getExprLoc(),
+             "evaluator command helpers must use eval_service_* or eval_process_* for host effects");
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (contains(Path, "src_v2/evaluator/eval_try_compile")) return true;
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("evaluator_host_service_boundary");
     }
 };
 
@@ -1670,6 +1843,8 @@ public:
             "nobify-build-model-codegen-dependency");
         Factories.registerCheck<EvaluatorFileHostEnumerationCheck>(
             "nobify-evaluator-file-host-enumeration");
+        Factories.registerCheck<PipelineOrchestrationBoundaryCheck>(
+            "nobify-pipeline-orchestration-boundary");
         Factories.registerCheck<BuildModelConstructionQueryLayerCheck>(
             "nobify-build-model-construction-query-layer");
         Factories.registerCheck<EvaluatorBuildModelDependencyCheck>(
@@ -1680,6 +1855,12 @@ public:
             "nobify-evaluator-build-model-lifecycle");
         Factories.registerCheck<CodegenBuildModelLifecycleCheck>(
             "nobify-codegen-build-model-lifecycle");
+        Factories.registerCheck<CodegenRenderHostEffectCheck>(
+            "nobify-codegen-render-host-effect");
+        Factories.registerCheck<CodegenPublicHostEffectCheck>(
+            "nobify-codegen-public-host-effect");
+        Factories.registerCheck<EvaluatorHostServiceBoundaryCheck>(
+            "nobify-evaluator-host-service-boundary");
         Factories.registerCheck<BuildModelQueryReadonlyCheck>(
             "nobify-build-model-query-readonly");
         Factories.registerCheck<BuildModelQueryFrozenBoundaryCheck>(

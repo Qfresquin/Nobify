@@ -1,11 +1,8 @@
 #include "eval_try_compile_internal.h"
 
-#include <sys/stat.h>
-
 bool try_compile_file_exists_sv(EvalExecContext *ctx, String_View path) {
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-    return nob_file_exists(path_c) != 0;
+    bool exists = false;
+    return eval_service_file_exists(ctx, path, &exists) && exists;
 }
 
 bool try_compile_mkdir_p_local(EvalExecContext *ctx, const char *path) {
@@ -29,11 +26,11 @@ bool try_compile_mkdir_p_local(EvalExecContext *ctx, const char *path) {
         if (*p == '/') {
             if ((p == tmp + 2) && isalpha((unsigned char)tmp[0]) && tmp[1] == ':') continue;
             *p = '\0';
-            (void)nob_mkdir_if_not_exists(tmp);
+            if (tmp[0] != '\0' && !eval_service_mkdir(ctx, nob_sv_from_cstr(tmp))) return false;
             *p = '/';
         }
     }
-    return nob_mkdir_if_not_exists(tmp);
+    return eval_service_mkdir(ctx, nob_sv_from_cstr(tmp));
 }
 
 String_View try_compile_current_src_dir(EvalExecContext *ctx) {
@@ -177,18 +174,18 @@ bool try_compile_append_file_to_log(EvalExecContext *ctx,
                                     const char *path,
                                     Nob_String_Builder *log) {
     if (!ctx || !path || !log) return false;
-    if (nob_file_exists(path) == 0) return true;
+    String_View path_sv = nob_sv_from_cstr(path);
+    Eval_Fs_Stat st = {0};
+    if (!eval_service_stat(ctx, path_sv, true, &st)) return true;
+    if (!st.exists || (st.type == EVAL_FS_NODE_FILE && st.size == 0)) return true;
 
-    struct stat st = {0};
-    if (stat(path, &st) == 0 && st.st_size == 0) return true;
-
-    Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(path, &sb)) return true;
-    if (sb.count > 0) {
-        nob_sb_append_buf(log, sb.items, sb.count);
+    String_View contents = {0};
+    bool found = false;
+    if (!eval_service_read_file(ctx, path_sv, &contents, &found) || !found) return true;
+    if (contents.count > 0) {
+        nob_sb_append_buf(log, contents.data, contents.count);
         if (log->count > 0 && log->items[log->count - 1] != '\n') nob_sb_append(log, '\n');
     }
-    nob_sb_free(sb);
     return true;
 }
 

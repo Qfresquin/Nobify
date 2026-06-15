@@ -141,24 +141,6 @@ static char *cg_arena_sprintf(Arena *scratch, const char *fmt, ...) {
     return out;
 }
 
-static bool cg_host_ensure_dir(const char *path) {
-    char buf[4096] = {0};
-    size_t len = 0;
-    size_t start = 1;
-    if (!path || path[0] == '\0' || strcmp(path, ".") == 0) return true;
-    len = strlen(path);
-    if (len >= sizeof(buf)) return false;
-    memcpy(buf, path, len + 1);
-    if (len >= 3 && buf[1] == ':' && (buf[2] == '/' || buf[2] == '\\')) start = 3;
-    for (size_t i = start; i < len; ++i) {
-        if (buf[i] != '/' && buf[i] != '\\') continue;
-        buf[i] = '\0';
-        if (buf[0] != '\0' && !nob_mkdir_if_not_exists(buf)) return false;
-        buf[i] = '/';
-    }
-    return nob_mkdir_if_not_exists(buf);
-}
-
 bool cg_sb_append_c_string(Nob_String_Builder *sb, String_View sv) {
     if (!sb) return false;
     nob_sb_append(sb, '"');
@@ -2510,28 +2492,4 @@ bool nob_codegen_render(const Build_Model *model,
     }
 
     return true;
-}
-
-bool nob_codegen_write_file(const Build_Model *model,
-                            Arena *scratch,
-                            const Nob_Codegen_Options *opts) {
-    Nob_String_Builder sb = {0};
-    const char *out_path = NULL;
-    const char *out_dir = NULL;
-    if (!opts) return false;
-    out_path = nob_temp_sv_to_cstr(opts->output_path);
-    if (!out_path) return false;
-    out_dir = nob_temp_dir_name(out_path);
-    if (out_dir && strcmp(out_dir, ".") != 0 && !cg_host_ensure_dir(out_dir)) {
-        nob_log(NOB_ERROR, "codegen: failed to create output directory %s", out_dir);
-        return false;
-    }
-    if (!nob_codegen_render(model, scratch, opts, &sb)) {
-        nob_sb_free(sb);
-        return false;
-    }
-    bool ok = nob_write_entire_file(out_path, sb.items ? sb.items : "", sb.count);
-    if (!ok) nob_log(NOB_ERROR, "codegen: failed to write generated file %s", out_path);
-    nob_sb_free(sb);
-    return ok;
 }

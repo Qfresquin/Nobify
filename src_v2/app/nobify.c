@@ -44,6 +44,24 @@ static bool nobify_path_is_executable(const char *path) {
 #endif
 }
 
+static bool nobify_mkdirs(const char *path) {
+    char buf[4096] = {0};
+    size_t len = 0;
+    size_t start = 1;
+    if (!path || path[0] == '\0' || strcmp(path, ".") == 0) return true;
+    len = strlen(path);
+    if (len >= sizeof(buf)) return false;
+    memcpy(buf, path, len + 1);
+    if (len >= 3 && buf[1] == ':' && (buf[2] == '/' || buf[2] == '\\')) start = 3;
+    for (size_t i = start; i < len; ++i) {
+        if (buf[i] != '/' && buf[i] != '\\') continue;
+        buf[i] = '\0';
+        if (buf[0] != '\0' && !nob_mkdir_if_not_exists(buf)) return false;
+        buf[i] = '/';
+    }
+    return nob_mkdir_if_not_exists(buf);
+}
+
 static bool nobify_find_executable_in_path(const char *name,
                                            char out_path[_TINYDIR_PATH_MAX]) {
     if (!name || !out_path) return false;
@@ -744,8 +762,10 @@ int main(int argc, char **argv) {
         .target_platform = resolved_platform,
         .backend = resolved_backend,
     };
-    if (!nob_codegen_write_file(model, codegen_arena, &codegen_opts)) {
-        nob_log(NOB_ERROR, "Codegen failed while writing %s", output_path);
+    Nob_String_Builder generated = {0};
+    const char *output_dir = nob_temp_dir_name(output_path);
+    if (output_dir && strcmp(output_dir, ".") != 0 && !nobify_mkdirs(output_dir)) {
+        nob_log(NOB_ERROR, "Failed to create output directory %s", output_dir);
         arena_destroy(codegen_arena);
         arena_destroy(build_model_freeze_arena);
         arena_destroy(build_model_validate_arena);
@@ -755,6 +775,31 @@ int main(int argc, char **argv) {
         arena_destroy(arena);
         return 1;
     }
+    if (!nob_codegen_render(model, codegen_arena, &codegen_opts, &generated)) {
+        nob_log(NOB_ERROR, "Codegen failed while rendering %s", output_path);
+        nob_sb_free(generated);
+        arena_destroy(codegen_arena);
+        arena_destroy(build_model_freeze_arena);
+        arena_destroy(build_model_validate_arena);
+        arena_destroy(build_model_arena);
+        arena_destroy(event_arena);
+        arena_destroy(eval_arena);
+        arena_destroy(arena);
+        return 1;
+    }
+    if (!nob_write_entire_file(output_path, generated.items ? generated.items : "", generated.count)) {
+        nob_log(NOB_ERROR, "Failed to write generated file %s", output_path);
+        nob_sb_free(generated);
+        arena_destroy(codegen_arena);
+        arena_destroy(build_model_freeze_arena);
+        arena_destroy(build_model_validate_arena);
+        arena_destroy(build_model_arena);
+        arena_destroy(event_arena);
+        arena_destroy(eval_arena);
+        arena_destroy(arena);
+        return 1;
+    }
+    nob_sb_free(generated);
     nob_log(NOB_INFO, "Generated Nob build file: %s", output_path);
 
     arena_destroy(codegen_arena);
