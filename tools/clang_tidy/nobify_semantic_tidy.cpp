@@ -45,6 +45,10 @@ static bool isProductionBuildModelConsumerPath(llvm::StringRef Path) {
             !contains(Path, "test_v2/"));
 }
 
+static bool isCodegenBoundaryPath(llvm::StringRef Path) {
+    return contains(Path, "src_v2/codegen/") || isFixturePath(Path);
+}
+
 static bool isEvaluatorOwnerFile(llvm::StringRef Path) {
     return Path.ends_with("src_v2/evaluator/evaluator.c");
 }
@@ -54,6 +58,17 @@ static bool typeNamesEvalResult(QualType Type) {
     std::string Name = Type.getAsString();
     return Name == "Eval_Result" || Name == "struct Eval_Result" ||
            llvm::StringRef(Name).ends_with(" Eval_Result");
+}
+
+static bool typeNamesEventIr(QualType Type) {
+    if (Type.isNull()) return false;
+    std::string Name = Type.getAsString();
+    llvm::StringRef Ref(Name);
+    if (Ref.starts_with("Event_") || Ref.starts_with("struct Event_") ||
+        Ref.starts_with("enum Event_")) {
+        return true;
+    }
+    return Ref.contains(" Event_");
 }
 
 static bool functionReturnsEvalResult(const FunctionDecl *FD) {
@@ -630,6 +645,61 @@ public:
     }
 };
 
+class CodegenEventIrBoundaryCheck : public ClangTidyCheck {
+public:
+    CodegenEventIrBoundaryCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(varDecl().bind("var"), this);
+        Finder->addMatcher(parmVarDecl().bind("param"), this);
+        Finder->addMatcher(functionDecl(isDefinition()).bind("function"), this);
+        Finder->addMatcher(declRefExpr(to(enumConstantDecl(matchesName("^EVENT_")))).bind("event-constant"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const SourceManager &SM = *Result.SourceManager;
+
+        if (const auto *VD = Result.Nodes.getNodeAs<VarDecl>("var")) {
+            llvm::StringRef Path = fileName(SM, VD->getLocation());
+            if (!isCodegenBoundaryPath(Path) || isa<ParmVarDecl>(VD)) return;
+            if (typeNamesEventIr(VD->getType())) {
+                diag(VD->getLocation(),
+                     "codegen must consume the frozen build model, not Event IR values");
+            }
+            return;
+        }
+
+        if (const auto *PD = Result.Nodes.getNodeAs<ParmVarDecl>("param")) {
+            llvm::StringRef Path = fileName(SM, PD->getLocation());
+            if (!isCodegenBoundaryPath(Path)) return;
+            if (typeNamesEventIr(PD->getType())) {
+                diag(PD->getLocation(),
+                     "codegen APIs must not accept Event IR; route semantics through build_model and bm_query_*");
+            }
+            return;
+        }
+
+        if (const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function")) {
+            llvm::StringRef Path = fileName(SM, FD->getLocation());
+            if (!isCodegenBoundaryPath(Path)) return;
+            if (typeNamesEventIr(FD->getReturnType())) {
+                diag(FD->getLocation(),
+                     "codegen APIs must not return Event IR; expose frozen build-model query results instead");
+            }
+            return;
+        }
+
+        if (const auto *Ref = Result.Nodes.getNodeAs<DeclRefExpr>("event-constant")) {
+            llvm::StringRef Path = fileName(SM, Ref->getExprLoc());
+            if (!isCodegenBoundaryPath(Path)) return;
+            diag(Ref->getExprLoc(),
+                 "codegen must not branch on EVENT_*; preserve this semantic distinction upstream");
+        }
+    }
+};
+
 class ArenaLifetimeVisitor : public RecursiveASTVisitor<ArenaLifetimeVisitor> {
 public:
     ArenaLifetimeVisitor(ASTContext &Context, ClangTidyCheck &Check)
@@ -735,6 +805,8 @@ public:
             "nobify-evaluator-state-ownership");
         Factories.registerCheck<BuildModelQueryBoundaryCheck>(
             "nobify-build-model-query-boundary");
+        Factories.registerCheck<CodegenEventIrBoundaryCheck>(
+            "nobify-codegen-event-ir-boundary");
         Factories.registerCheck<ArenaLifetimeCheck>("nobify-arena-lifetime");
     }
 };

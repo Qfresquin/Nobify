@@ -54,3 +54,7 @@ static void helper_lifetime_good(EvalExecContext *ctx) {
 static const char *helper_build_model_good(const Build_Model *model, BM_Target_Id id) {
     return bm_query_target_name(model, id);
 }
+
+static const char *helper_codegen_boundary_good(const Build_Model *model, BM_Target_Id id) {
+    return bm_query_target_name(model, id);
+}

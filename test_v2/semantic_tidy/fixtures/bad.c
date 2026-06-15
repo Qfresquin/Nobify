@@ -19,6 +19,12 @@ typedef struct Build_Model {
     int target_count;
 } Build_Model;
 
+typedef enum {
+    EVENT_TARGET_DECLARE = 1,
+} Event_Kind;
+
+typedef struct Event_Stream Event_Stream;
+
 static int eval_should_stop(EvalExecContext *ctx);
 static Eval_Result eval_result_fatal(void);
 static Eval_Result eval_result_from_ctx(EvalExecContext *ctx);
@@ -83,4 +89,9 @@ static int helper_bad_build_model_field(const Build_Model *model) {
 static void helper_bad_lifetime(EvalExecContext *ctx) {
     char *tmp = nob_temp_sprintf("%s", "value");
     ctx->semantic_state.value = tmp;
+}
+
+static int helper_bad_codegen_event_ir_boundary(const Event_Stream *stream, Event_Kind kind) {
+    (void)stream;
+    return kind == EVENT_TARGET_DECLARE;
 }

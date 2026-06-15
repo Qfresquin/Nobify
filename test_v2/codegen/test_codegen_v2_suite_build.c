@@ -1703,7 +1703,6 @@ TEST(codegen_ctest_coverage_and_memcheck_local_replay_stage_reports) {
     String_View memcheck_args = {0};
     size_t tag_len = 0;
     char tag_dir[_TINYDIR_PATH_MAX] = {0};
-    const char *cwd = nob_get_current_dir_temp();
     const char *test_argv[] = {
         "-c",
         "./ctest_c5_nob_gen test; status=$?; [ \"$status\" -eq 1 ]",
@@ -1717,7 +1716,6 @@ TEST(codegen_ctest_coverage_and_memcheck_local_replay_stage_reports) {
     };
 
     ASSERT(arena != NULL);
-    ASSERT(cwd != NULL);
     ASSERT(codegen_write_text_file(
         "ctest_c5_src/src/main.c",
         "int main(void) { return 0; }\n"));
@@ -1762,38 +1760,26 @@ TEST(codegen_ctest_coverage_and_memcheck_local_replay_stage_reports) {
     ASSERT(codegen_test_make_executable("ctest_c5_src/tools/coverage.sh"));
     ASSERT(codegen_test_make_executable("ctest_c5_src/tools/test_runner.sh"));
     ASSERT(codegen_test_make_executable("ctest_c5_src/tools/memcheck.sh"));
-    script = nob_temp_sprintf(
+    script =
         "project(C5Local NONE)\n"
         "enable_testing()\n"
-        "set(CTEST_SOURCE_DIRECTORY \"%s/ctest_c5_src\")\n"
-        "set(CTEST_BINARY_DIRECTORY \"%s/ctest_c5_build_root/ctest_c5_build\")\n"
+        "set(CTEST_SOURCE_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}\")\n"
+        "set(CTEST_BINARY_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}/ctest_c5_build\")\n"
         "file(MAKE_DIRECTORY \"${CTEST_BINARY_DIRECTORY}\")\n"
-        "set(COVERAGE_COMMAND \"/bin/sh;%s/ctest_c5_src/tools/coverage.sh\")\n"
+        "set(COVERAGE_COMMAND \"/bin/sh;${CTEST_SOURCE_DIRECTORY}/tools/coverage.sh\")\n"
         "set(CTEST_MEMORYCHECK_COMMAND \"/bin/sh\")\n"
         "set(CTEST_MEMORYCHECK_TYPE Generic)\n"
-        "set(CTEST_MEMORYCHECK_COMMAND_OPTIONS \"%s/ctest_c5_src/tools/memcheck.sh\")\n"
-        "set(CTEST_MEMORYCHECK_SUPPRESSIONS_FILE \"%s/ctest_c5_src/suppressions.supp\")\n"
-        "set(CTEST_RESOURCE_SPEC_FILE \"%s/ctest_c5_src/resource.json\")\n"
-        "add_test(NAME pass COMMAND /bin/sh \"%s/ctest_c5_src/tools/test_runner.sh\" pass WORKING_DIRECTORY \"%s/ctest_c5_src/memcheck_work\")\n"
-        "add_test(NAME defect COMMAND /bin/sh \"%s/ctest_c5_src/tools/test_runner.sh\" defect WORKING_DIRECTORY \"%s/ctest_c5_src/memcheck_work\")\n"
-        "set_source_files_properties(\"%s/ctest_c5_src/src/main.c\" PROPERTIES LABELS \"core;ui\")\n"
-        "set_source_files_properties(\"%s/ctest_c5_src/src/net.c\" PROPERTIES LABELS infra)\n"
-        "ctest_start(Experimental \"%s/ctest_c5_src\" \"${CTEST_BINARY_DIRECTORY}\" QUIET)\n"
+        "set(CTEST_MEMORYCHECK_COMMAND_OPTIONS \"${CTEST_SOURCE_DIRECTORY}/tools/memcheck.sh\")\n"
+        "set(CTEST_MEMORYCHECK_SUPPRESSIONS_FILE \"${CTEST_SOURCE_DIRECTORY}/suppressions.supp\")\n"
+        "set(CTEST_RESOURCE_SPEC_FILE \"${CTEST_SOURCE_DIRECTORY}/resource.json\")\n"
+        "add_test(NAME pass COMMAND /bin/sh \"../tools/test_runner.sh\" pass)\n"
+        "add_test(NAME defect COMMAND /bin/sh \"../tools/test_runner.sh\" defect)\n"
+        "set_tests_properties(pass defect PROPERTIES WORKING_DIRECTORY \"${CTEST_SOURCE_DIRECTORY}/memcheck_work\")\n"
+        "set_source_files_properties(\"${CTEST_SOURCE_DIRECTORY}/src/main.c\" PROPERTIES LABELS \"core;ui\")\n"
+        "set_source_files_properties(\"${CTEST_SOURCE_DIRECTORY}/src/net.c\" PROPERTIES LABELS infra)\n"
+        "ctest_start(Experimental \"${CTEST_SOURCE_DIRECTORY}\" \"${CTEST_BINARY_DIRECTORY}\" QUIET)\n"
         "ctest_coverage(LABELS core ui APPEND QUIET)\n"
-        "ctest_memcheck(START 1 END 2 STRIDE 1 SCHEDULE_RANDOM OFF OUTPUT_JUNIT reports/memcheck.junit.xml APPEND QUIET)\n",
-        cwd,
-        cwd,
-        cwd,
-        cwd,
-        cwd,
-        cwd,
-        cwd,
-        cwd,
-        cwd,
-        cwd,
-        cwd,
-        cwd,
-        cwd);
+        "ctest_memcheck(START 1 END 2 STRIDE 1 SCHEDULE_RANDOM OFF OUTPUT_JUNIT reports/memcheck.junit.xml APPEND QUIET)\n";
     ASSERT(script != NULL);
     ASSERT(codegen_write_script_with_config(script, &config));
     ASSERT(codegen_compile_generated_nob("ctest_c5_nob.c", "ctest_c5_nob_gen"));
