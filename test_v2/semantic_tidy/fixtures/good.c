@@ -38,6 +38,7 @@ static int eval_service_read_file(EvalExecContext *ctx, const char *path, const 
 static int eval_service_stat(EvalExecContext *ctx, const char *path, int follow_symlinks, Eval_Fs_Stat *out);
 static int eval_service_mkdir(EvalExecContext *ctx, const char *path);
 static int eval_service_remove(EvalExecContext *ctx, const char *path, int recursive);
+static int eval_service_glob(EvalExecContext *ctx, const void *req, void *out);
 static char *nob_temp_sprintf(const char *fmt, ...);
 static char *copy_to_persistent(const char *value);
 static const char *bm_query_target_name(const Build_Model *model, BM_Target_Id id);
@@ -118,6 +119,12 @@ static int helper_evaluator_host_service_boundary_find_item_type_good(EvalExecCo
 static int helper_evaluator_host_service_boundary_ctest_cleanup_good(EvalExecContext *ctx,
                                                                      const char *path) {
     return eval_service_remove(ctx, path, 1) && eval_service_mkdir(ctx, path);
+}
+
+static int helper_evaluator_host_service_boundary_meta_dir_good(EvalExecContext *ctx,
+                                                                const void *req,
+                                                                void *out) {
+    return eval_service_glob(ctx, req, out);
 }
 
 static const char *helper_codegen_evaluator_boundary_good(const Build_Model *model,

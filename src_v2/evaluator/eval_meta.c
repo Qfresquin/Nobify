@@ -23,6 +23,14 @@ static String_View meta_current_bin_dir(EvalExecContext *ctx) {
     return eval_current_binary_dir(ctx);
 }
 
+static String_View meta_path_basename(String_View path) {
+    size_t start = 0;
+    for (size_t i = 0; i < path.count; i++) {
+        if (path.data[i] == '/' || path.data[i] == '\\') start = i + 1;
+    }
+    return nob_sv_from_parts(path.data + start, path.count - start);
+}
+
 static String_View meta_concat3_temp(EvalExecContext *ctx,
                                      const char *prefix,
                                      String_View middle,
@@ -1821,47 +1829,46 @@ static bool meta_file_api_collect_disk_queries(EvalExecContext *ctx,
 
     String_View query_dir = meta_file_api_query_dir(ctx);
     if (eval_should_stop(ctx)) return false;
-    char *query_dir_c = eval_sv_to_cstr_temp(ctx, query_dir);
-    EVAL_OOM_RETURN_IF_NULL(ctx, query_dir_c, false);
-    if (!nob_file_exists(query_dir_c) || nob_get_file_type(query_dir_c) != NOB_FILE_DIRECTORY) return true;
 
-    Nob_File_Paths entries = {0};
-    if (!nob_read_entire_dir(query_dir_c, &entries)) return true;
-    for (size_t i = 0; i < entries.count; i++) {
-        const char *entry_name = entries.items[i];
-        if (!entry_name || strcmp(entry_name, ".") == 0 || strcmp(entry_name, "..") == 0) continue;
+    Eval_Fs_Stat query_dir_st = {0};
+    if (!eval_service_stat(ctx, query_dir, false, &query_dir_st)) return true;
+    if (!query_dir_st.exists || query_dir_st.type != EVAL_FS_NODE_DIRECTORY) return true;
 
-        String_View entry = nob_sv_from_cstr(entry_name);
-        String_View full_path = eval_sv_path_join(eval_temp_arena(ctx), query_dir, entry);
-        if (eval_should_stop(ctx)) {
-            nob_da_free(entries);
-            return false;
-        }
-        char *full_path_c = eval_sv_to_cstr_temp(ctx, full_path);
-        EVAL_OOM_RETURN_IF_NULL(ctx, full_path_c, false);
-        Nob_File_Type type = nob_get_file_type(full_path_c);
+    String_View pattern = eval_sv_path_join(eval_temp_arena(ctx), query_dir, nob_sv_from_cstr("*"));
+    if (eval_should_stop(ctx)) return false;
+    Eval_Glob_Request glob_req = {
+        .patterns = &pattern,
+        .pattern_count = 1,
+        .recursive = false,
+        .list_directories = true,
+        .case_insensitive = false,
+        .strict_failures = false,
+    };
+    Eval_Glob_Result glob_result = {0};
+    if (!eval_service_glob(ctx, &glob_req, &glob_result)) return true;
 
-        if (type == NOB_FILE_DIRECTORY && entry.count > 7 && memcmp(entry.data, "client-", 7) == 0) {
+    for (size_t i = 0; i < glob_result.match_count; i++) {
+        String_View full_path = glob_result.matches[i];
+        String_View entry = meta_path_basename(full_path);
+        if (entry.count == 0 || nob_sv_eq(entry, nob_sv_from_cstr(".")) || nob_sv_eq(entry, nob_sv_from_cstr(".."))) continue;
+
+        Eval_Fs_Stat entry_st = {0};
+        if (!eval_service_stat(ctx, full_path, false, &entry_st) || !entry_st.exists) continue;
+
+        if (entry_st.type == EVAL_FS_NODE_DIRECTORY && entry.count > 7 && memcmp(entry.data, "client-", 7) == 0) {
             String_View query_file = eval_sv_path_join(eval_temp_arena(ctx), full_path, nob_sv_from_cstr("query.json"));
-            if (eval_should_stop(ctx)) {
-                nob_da_free(entries);
-                return false;
-            }
+            if (eval_should_stop(ctx)) return false;
             String_View contents = nob_sv_from_cstr("");
             bool found = false;
-            if (!eval_service_read_file(ctx, query_file, &contents, &found)) {
-                nob_da_free(entries);
-                return false;
-            }
+            if (!eval_service_read_file(ctx, query_file, &contents, &found)) return false;
             if (found &&
                 !meta_file_api_parse_client_query_file(ctx, entry, query_file, contents, out_records)) {
-                nob_da_free(entries);
                 return false;
             }
             continue;
         }
 
-        if (type != NOB_FILE_REGULAR) continue;
+        if (entry_st.type != EVAL_FS_NODE_FILE) continue;
         String_View kind_json = nob_sv_from_cstr("");
         String_View kind_upper = nob_sv_from_cstr("");
         if (entry.count >= 12 && memcmp(entry.data, "codemodel-v", 11) == 0) {
@@ -1899,11 +1906,9 @@ static bool meta_file_api_collect_disk_queries(EvalExecContext *ctx,
                                                kind_json,
                                                version,
                                                true)) {
-            nob_da_free(entries);
             return false;
         }
     }
-    nob_da_free(entries);
     return true;
 }
 

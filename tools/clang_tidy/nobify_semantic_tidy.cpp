@@ -85,7 +85,8 @@ static bool isEvaluatorHostServiceConsumerPath(llvm::StringRef Path) {
            contains(Path, "src_v2/evaluator/eval_expr.c") ||
            contains(Path, "src_v2/evaluator/eval_vars.c") ||
            contains(Path, "src_v2/evaluator/eval_package_find_item.c") ||
-           contains(Path, "src_v2/evaluator/eval_ctest.c");
+           contains(Path, "src_v2/evaluator/eval_ctest.c") ||
+           contains(Path, "src_v2/evaluator/eval_meta.c");
 }
 
 static bool typeNamesEvalResult(QualType Type) {
@@ -1322,7 +1323,7 @@ public:
 
     void registerMatchers(MatchFinder *Finder) override {
         Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
-                                    "^(nob_file_exists|nob_get_file_type|nob_mkdir_if_not_exists|nob_walk_dir|nob_read_entire_file|nob_write_entire_file|nob_copy_file|nob_cmd_run|stat|lstat|access|fopen|open|remove|rename|unlink|rmdir)$"))),
+                                    "^(nob_file_exists|nob_get_file_type|nob_mkdir_if_not_exists|nob_walk_dir|nob_read_entire_dir|nob_read_entire_file|nob_write_entire_file|nob_copy_file|nob_cmd_run|stat|lstat|access|fopen|open|remove|rename|unlink|rmdir)$"))),
                                     hasAncestor(functionDecl().bind("function")))
                                .bind("call"),
                            this);

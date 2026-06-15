@@ -387,62 +387,60 @@ static bool try_compile_basename_matches_named_artifact(const char *base, const 
     return false;
 }
 
-typedef struct {
-    EvalExecContext *ctx;
-    const char *target_name;
-    String_View best_path;
-    size_t best_len;
-} Try_Compile_Project_Artifact_Search;
+static bool try_compile_project_glob_recursive(EvalExecContext *ctx,
+                                               String_View root,
+                                               Eval_Glob_Result *out) {
+    if (out) *out = (Eval_Glob_Result){0};
+    if (!ctx || !out || root.count == 0) return false;
 
-typedef struct {
-    EvalExecContext *ctx;
-    const char *binary_dir_c;
-    Try_Compile_Source_List *sources;
-} Try_Compile_Project_Source_Search;
-
-static bool try_compile_project_artifact_visit(Nob_Walk_Entry entry) {
-    Try_Compile_Project_Artifact_Search *search = (Try_Compile_Project_Artifact_Search *)entry.data;
-    if (!search || !search->ctx || !entry.path) return false;
-    if (entry.type != NOB_FILE_REGULAR) return true;
-    if (try_compile_path_contains_internal_build_dir(entry.path)) return true;
-
-    const char *base = strrchr(entry.path, '/');
-    const char *alt = strrchr(entry.path, '\\');
-    if (!base || (alt && alt > base)) base = alt;
-    base = base ? base + 1 : entry.path;
-
-    if (!try_compile_basename_matches_named_artifact(base, search->target_name)) return true;
-
-    size_t path_len = strlen(entry.path);
-    if (!search->best_path.data || path_len < search->best_len) {
-        String_View stable_path = sv_copy_to_arena(eval_temp_arena(search->ctx), nob_sv_from_cstr(entry.path));
-        if (path_len > 0 && stable_path.count == 0) return false;
-        search->best_path = stable_path;
-        search->best_len = stable_path.count;
-    }
-    return true;
+    String_View pattern = eval_sv_path_join(eval_temp_arena(ctx), root, nob_sv_from_cstr("*"));
+    if (eval_should_stop(ctx)) return false;
+    Eval_Glob_Request req = {
+        .patterns = &pattern,
+        .pattern_count = 1,
+        .recursive = true,
+        .list_directories = true,
+        .case_insensitive = false,
+        .strict_failures = false,
+    };
+    return eval_service_glob(ctx, &req, out);
 }
 
 static String_View try_compile_project_find_named_artifact(EvalExecContext *ctx,
                                                            String_View binary_dir,
                                                            String_View target_name) {
     if (!ctx || binary_dir.count == 0 || target_name.count == 0) return nob_sv_from_cstr("");
-    char *binary_dir_c = eval_sv_to_cstr_temp(ctx, binary_dir);
     char *target_name_c = eval_sv_to_cstr_temp(ctx, target_name);
-    EVAL_OOM_RETURN_IF_NULL(ctx, binary_dir_c, nob_sv_from_cstr(""));
     EVAL_OOM_RETURN_IF_NULL(ctx, target_name_c, nob_sv_from_cstr(""));
 
-    Try_Compile_Project_Artifact_Search search = {
-        .ctx = ctx,
-        .target_name = target_name_c,
-        .best_path = {0},
-        .best_len = 0,
-    };
-    if (!nob_walk_dir(binary_dir_c, try_compile_project_artifact_visit, .data = &search)) {
-        return nob_sv_from_cstr("");
+    Eval_Glob_Result glob_result = {0};
+    if (!try_compile_project_glob_recursive(ctx, binary_dir, &glob_result)) return nob_sv_from_cstr("");
+
+    String_View best_path = {0};
+    size_t best_len = 0;
+    for (size_t i = 0; i < glob_result.match_count; i++) {
+        String_View path = glob_result.matches[i];
+        char *path_c = eval_sv_to_cstr_temp(ctx, path);
+        EVAL_OOM_RETURN_IF_NULL(ctx, path_c, nob_sv_from_cstr(""));
+        if (try_compile_path_contains_internal_build_dir(path_c)) continue;
+
+        Eval_Fs_Stat st = {0};
+        if (!eval_service_stat(ctx, path, false, &st) || !st.exists || st.type != EVAL_FS_NODE_FILE) continue;
+
+        const char *base = strrchr(path_c, '/');
+        const char *alt = strrchr(path_c, '\\');
+        if (!base || (alt && alt > base)) base = alt;
+        base = base ? base + 1 : path_c;
+        if (!try_compile_basename_matches_named_artifact(base, target_name_c)) continue;
+
+        if (!best_path.data || path.count < best_len) {
+            best_path = sv_copy_to_arena(eval_temp_arena(ctx), path);
+            if (path.count > 0 && best_path.count == 0) return nob_sv_from_cstr("");
+            best_len = best_path.count;
+        }
     }
-    if (!search.best_path.data || search.best_path.count == 0) return nob_sv_from_cstr("");
-    return search.best_path;
+    if (!best_path.data || best_path.count == 0) return nob_sv_from_cstr("");
+    return best_path;
 }
 
 static bool try_compile_path_has_dir_prefix(const char *path, const char *prefix) {
@@ -453,51 +451,41 @@ static bool try_compile_path_has_dir_prefix(const char *path, const char *prefix
     return path[prefix_len] == '\0' || path[prefix_len] == '/' || path[prefix_len] == '\\';
 }
 
-static bool try_compile_project_source_visit(Nob_Walk_Entry entry) {
-    Try_Compile_Project_Source_Search *search = (Try_Compile_Project_Source_Search *)entry.data;
-    if (!search || !search->ctx || !search->sources || !entry.path) return false;
-
-    if (search->binary_dir_c && try_compile_path_has_dir_prefix(entry.path, search->binary_dir_c)) {
-        *entry.action = NOB_WALK_SKIP;
-        return true;
-    }
-    if (try_compile_path_contains_internal_build_dir(entry.path)) {
-        *entry.action = NOB_WALK_SKIP;
-        return true;
-    }
-    if (entry.type != NOB_FILE_REGULAR) return true;
-
-    String_View path = sv_copy_to_arena(eval_temp_arena(search->ctx), nob_sv_from_cstr(entry.path));
-    if (eval_should_stop(search->ctx)) return false;
-
-    Try_Compile_Language lang = try_compile_detect_language(path);
-    if (lang == TRY_COMPILE_LANG_AUTO || lang == TRY_COMPILE_LANG_HEADERS) return true;
-    return try_compile_source_push(search->ctx,
-                                   search->sources,
-                                   (Try_Compile_Source_Item){
-                                       .path = path,
-                                       .language = lang,
-                                   });
-}
-
 static bool try_compile_execute_project_request_fallback(EvalExecContext *ctx,
                                                          const Try_Compile_Request *req,
                                                          Try_Compile_Execution_Result *out_res) {
     if (!ctx || !req || !out_res) return false;
 
     Try_Compile_Source_List sources = {0};
-    char *source_dir_c = eval_sv_to_cstr_temp(ctx, req->source_dir);
     char *binary_dir_c = eval_sv_to_cstr_temp(ctx, req->binary_dir);
-    EVAL_OOM_RETURN_IF_NULL(ctx, source_dir_c, false);
     EVAL_OOM_RETURN_IF_NULL(ctx, binary_dir_c, false);
 
-    Try_Compile_Project_Source_Search search = {
-        .ctx = ctx,
-        .binary_dir_c = binary_dir_c,
-        .sources = &sources,
-    };
-    if (!nob_walk_dir(source_dir_c, try_compile_project_source_visit, .data = &search)) {
-        return false;
+    Eval_Glob_Result glob_result = {0};
+    if (!try_compile_project_glob_recursive(ctx, req->source_dir, &glob_result)) return false;
+    for (size_t i = 0; i < glob_result.match_count; i++) {
+        String_View match = glob_result.matches[i];
+        char *match_c = eval_sv_to_cstr_temp(ctx, match);
+        EVAL_OOM_RETURN_IF_NULL(ctx, match_c, false);
+
+        if (try_compile_path_has_dir_prefix(match_c, binary_dir_c)) continue;
+        if (try_compile_path_contains_internal_build_dir(match_c)) continue;
+
+        Eval_Fs_Stat st = {0};
+        if (!eval_service_stat(ctx, match, false, &st) || !st.exists || st.type != EVAL_FS_NODE_FILE) continue;
+
+        String_View path = sv_copy_to_arena(eval_temp_arena(ctx), match);
+        if (eval_should_stop(ctx)) return false;
+
+        Try_Compile_Language lang = try_compile_detect_language(path);
+        if (lang == TRY_COMPILE_LANG_AUTO || lang == TRY_COMPILE_LANG_HEADERS) continue;
+        if (!try_compile_source_push(ctx,
+                                     &sources,
+                                     (Try_Compile_Source_Item){
+                                         .path = path,
+                                         .language = lang,
+                                     })) {
+            return false;
+        }
     }
 
     if (sources.count == 0) {

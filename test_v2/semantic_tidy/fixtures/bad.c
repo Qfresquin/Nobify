@@ -54,6 +54,7 @@ static int nob_write_entire_file(const char *path, const char *data, unsigned lo
 static int nob_file_exists(const char *path);
 static Nob_File_Type nob_get_file_type(const char *path);
 static int nob_mkdir_if_not_exists(const char *path);
+static int nob_walk_dir(const char *path, void *callback);
 static const char *bm_query_target_name(const Build_Model *model, BM_Target_Id id);
 static int bm_builder_current_directory_id(BM_Builder *builder);
 static Build_Model_Draft *bm_builder_finalize(BM_Builder *builder);
@@ -174,6 +175,14 @@ static int helper_bad_evaluator_host_service_boundary_find_item_type(const char 
 
 static int helper_bad_evaluator_host_service_boundary_ctest_cleanup(const char *path) {
     return nob_mkdir_if_not_exists(path);
+}
+
+static int helper_bad_evaluator_host_service_boundary_meta_dir(const char *path, Nob_File_Paths *out) {
+    return nob_read_entire_dir(path, out);
+}
+
+static int helper_bad_evaluator_host_service_boundary_walk(const char *path) {
+    return nob_walk_dir(path, 0);
 }
 
 static int helper_bad_pipeline_orchestration_boundary(EvalSession *session,
