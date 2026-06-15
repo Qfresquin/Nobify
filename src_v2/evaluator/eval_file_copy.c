@@ -43,7 +43,6 @@ enum {
     COPY_KEY_REGEX,
     COPY_KEY_EXCLUDE,
     COPY_KEY_FOLLOW_SYMLINK_CHAIN,
-    COPY_KEY_PERMISSIONS,
     COPY_KEY_FILE_PERMISSIONS,
     COPY_KEY_DIRECTORY_PERMISSIONS,
     COPY_KEY_USE_SOURCE_PERMISSIONS,
@@ -374,7 +373,6 @@ typedef struct {
     bool files_matching;
     bool follow_symlink_chain;
     bool saw_follow_symlink_option;
-    bool saw_unknown_permission_token;
     Copy_Filter filters[64];
     size_t filter_count;
     Copy_Permissions perms;
@@ -397,6 +395,10 @@ static bool copy_parse_on_option(EvalExecContext *ctx,
         return true;
     }
     if (id == COPY_KEY_PATTERN || id == COPY_KEY_REGEX) {
+        // TODO(file-parity): Add oracle cases for PATTERN/REGEX binding order,
+        // missing pattern values, EXCLUDE attachment, and directory-vs-file
+        // matching. The current diff proves common filters, not the weird
+        // parser edges that decide whether CMake errors or continues.
         if (arena_arr_len(values) == 0) {
             EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, nob_sv_from_cstr("eval_file"), st->command_name, st->origin, nob_sv_from_cstr("file(COPY) missing argument after PATTERN/REGEX"), token);
             return false;
@@ -431,8 +433,7 @@ static bool copy_parse_on_option(EvalExecContext *ctx,
         st->perms.saw_no_source_permissions = true;
         return true;
     }
-    if (id == COPY_KEY_PERMISSIONS ||
-        id == COPY_KEY_FILE_PERMISSIONS ||
+    if (id == COPY_KEY_FILE_PERMISSIONS ||
         id == COPY_KEY_DIRECTORY_PERMISSIONS) {
         mode_t parsed_mode = 0;
         bool has_any = false;
@@ -440,15 +441,13 @@ static bool copy_parse_on_option(EvalExecContext *ctx,
             if (copy_permission_add_token(&parsed_mode, values[i])) {
                 has_any = true;
             } else {
-                st->saw_unknown_permission_token = true;
-                EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_UNEXPECTED_ARGUMENT, nob_sv_from_cstr("eval_file"), st->command_name, st->origin, nob_sv_from_cstr("file(COPY) unknown permission token"), values[i]);
+                EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, nob_sv_from_cstr("eval_file"), st->command_name, st->origin, nob_sv_from_cstr("file(COPY) invalid permission token"), values[i]);
+                return false;
             }
         }
         if (!has_any) {
-            EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_WARNING, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("eval_file"), st->command_name, st->origin, nob_sv_from_cstr("file(COPY) permission list has no valid tokens"), token);
-        } else if (id == COPY_KEY_PERMISSIONS) {
-            st->perms.has_permissions = true;
-            st->perms.permissions_mode = parsed_mode;
+            EVAL_DIAG_EMIT_SEV(ctx, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, nob_sv_from_cstr("eval_file"), st->command_name, st->origin, nob_sv_from_cstr("file(COPY) permission list has no valid tokens"), token);
+            return false;
         } else if (id == COPY_KEY_FILE_PERMISSIONS) {
             st->perms.has_file_permissions = true;
             st->perms.file_permissions_mode = parsed_mode;
@@ -497,13 +496,15 @@ void eval_file_handle_copy(EvalExecContext *ctx, const Node *node, SV_List args)
         dest = eval_sv_path_join(eval_temp_arena(ctx), eval_current_binary_dir(ctx), dest);
     }
 
+    // TODO(file-parity): Add CMake 3.28 oracle cases for FOLLOW_SYMLINK_CHAIN
+    // and replay semantics. Permission keywords and invalid permission
+    // diagnostics are covered by file_script differential cases.
     static const Eval_Opt_Spec k_copy_specs[] = {
         EVAL_OPT_SPEC(COPY_KEY_FILES_MATCHING, "FILES_MATCHING", EVAL_OPT_FLAG),
         EVAL_OPT_SPEC(COPY_KEY_PATTERN, "PATTERN", EVAL_OPT_OPTIONAL_SINGLE),
         EVAL_OPT_SPEC(COPY_KEY_REGEX, "REGEX", EVAL_OPT_OPTIONAL_SINGLE),
         EVAL_OPT_SPEC(COPY_KEY_EXCLUDE, "EXCLUDE", EVAL_OPT_FLAG),
         EVAL_OPT_SPEC(COPY_KEY_FOLLOW_SYMLINK_CHAIN, "FOLLOW_SYMLINK_CHAIN", EVAL_OPT_FLAG),
-        EVAL_OPT_SPEC(COPY_KEY_PERMISSIONS, "PERMISSIONS", EVAL_OPT_MULTI),
         EVAL_OPT_SPEC(COPY_KEY_FILE_PERMISSIONS, "FILE_PERMISSIONS", EVAL_OPT_MULTI),
         EVAL_OPT_SPEC(COPY_KEY_DIRECTORY_PERMISSIONS, "DIRECTORY_PERMISSIONS", EVAL_OPT_MULTI),
         EVAL_OPT_SPEC(COPY_KEY_USE_SOURCE_PERMISSIONS, "USE_SOURCE_PERMISSIONS", EVAL_OPT_FLAG),
@@ -516,7 +517,6 @@ void eval_file_handle_copy(EvalExecContext *ctx, const Node *node, SV_List args)
         .files_matching = false,
         .follow_symlink_chain = false,
         .saw_follow_symlink_option = false,
-        .saw_unknown_permission_token = false,
         .filter_count = 0,
         .perms = {0},
     };
@@ -540,7 +540,6 @@ void eval_file_handle_copy(EvalExecContext *ctx, const Node *node, SV_List args)
     }
     bool files_matching = parsed.files_matching;
     bool follow_symlink_chain = parsed.follow_symlink_chain;
-    bool saw_unknown_permission_token = parsed.saw_unknown_permission_token;
     Copy_Filter *filters = parsed.filters;
     size_t filter_count = parsed.filter_count;
     Copy_Permissions perms = parsed.perms;
@@ -645,8 +644,11 @@ void eval_file_handle_copy(EvalExecContext *ctx, const Node *node, SV_List args)
     }
 
     if ((perms.has_permissions || perms.has_file_permissions || perms.has_directory_permissions) &&
-        !applied_any_permissions &&
-        !saw_unknown_permission_token) {
+        !applied_any_permissions) {
+        // TODO(file-parity): Prove CMake's behavior when permission application
+        // itself fails after a successful copy, especially on read-only
+        // destinations and platforms without chmod semantics. This warning is
+        // local policy until a host-effect oracle pins it.
         EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(COPY) permissions were requested but not applied"), nob_sv_from_cstr("Check destination type and platform permission support"));
     }
     for (size_t i = 0; i < filter_count; i++) {

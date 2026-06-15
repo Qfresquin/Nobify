@@ -23,6 +23,8 @@
 #include <sys/types.h>
 #include <utime.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <glob.h>
 #if defined(__linux__)
 #include <sys/sysinfo.h>
 #endif
@@ -30,6 +32,96 @@
 #include <sys/utsname.h>
 #endif
 #endif
+
+bool eval_file_glob_match_sv(String_View pat, String_View str, bool ci) {
+    size_t pi = 0, si = 0;
+    size_t star_pi = (size_t)-1, star_si = (size_t)-1;
+
+    while (si < str.count) {
+        if (pi < pat.count) {
+            char pc = pat.data[pi];
+            char sc = str.data[si];
+
+            if (pc == '*') {
+                star_pi = pi++;
+                star_si = si;
+                continue;
+            }
+
+            if (pc == '?') {
+                if (!svu_is_path_sep(sc)) {
+                    pi++;
+                    si++;
+                    continue;
+                }
+            }
+
+            if (pc == '[') {
+                if (!svu_is_path_sep(sc)) {
+                    size_t j = pi + 1;
+                    while (j < pat.count && pat.data[j] != ']') j++;
+
+                    if (j < pat.count) {
+                        bool neg = false;
+                        size_t k = pi + 1;
+                        if (k < j && (pat.data[k] == '!' || pat.data[k] == '^')) {
+                            neg = true;
+                            k++;
+                        }
+
+                        bool matched = false;
+                        char sc_cmp = ci ? (char)tolower((unsigned char)sc) : sc;
+
+                        while (k < j) {
+                            char a = pat.data[k];
+                            char a_cmp = ci ? (char)tolower((unsigned char)a) : a;
+
+                            if (k + 2 < j && pat.data[k + 1] == '-') {
+                                char b = pat.data[k + 2];
+                                char b_cmp = ci ? (char)tolower((unsigned char)b) : b;
+                                char lo = a_cmp < b_cmp ? a_cmp : b_cmp;
+                                char hi = a_cmp < b_cmp ? b_cmp : a_cmp;
+                                if (sc_cmp >= lo && sc_cmp <= hi) matched = true;
+                                k += 3;
+                            } else {
+                                if (sc_cmp == a_cmp) matched = true;
+                                k++;
+                            }
+                        }
+
+                        if (neg) matched = !matched;
+                        if (matched) {
+                            pi = j + 1;
+                            si++;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            char a = ci ? (char)tolower((unsigned char)pc) : pc;
+            char b = ci ? (char)tolower((unsigned char)sc) : sc;
+            if (a == b) {
+                pi++;
+                si++;
+                continue;
+            }
+        }
+
+        if (star_pi != (size_t)-1) {
+            if (star_si < str.count && svu_is_path_sep(str.data[star_si])) {
+                return false;
+            } else {
+                pi = star_pi + 1;
+                si = ++star_si;
+                continue;
+            }
+        }
+    }
+
+    while (pi < pat.count && pat.data[pi] == '*') pi++;
+    return pi == pat.count;
+}
 
 String_View sv_copy_to_arena(Arena *arena, String_View sv) {
     if (!arena) return nob_sv_from_cstr("");
@@ -1038,6 +1130,156 @@ bool eval_service_readlink(EvalExecContext *ctx, String_View path, String_View *
     *out_target = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(buf, (size_t)n));
     return !eval_should_stop(ctx);
 #endif
+}
+
+static String_View eval_service_glob_base_dir(String_View pattern_abs) {
+    size_t first_meta = pattern_abs.count;
+    for (size_t i = 0; i < pattern_abs.count; i++) {
+        char c = pattern_abs.data[i];
+        if (c == '*' || c == '?' || c == '[') {
+            first_meta = i;
+            break;
+        }
+    }
+    if (first_meta == pattern_abs.count) return svu_dirname(pattern_abs);
+    if (first_meta == 0) return nob_sv_from_cstr(".");
+    return svu_dirname(nob_sv_from_parts(pattern_abs.data, first_meta));
+}
+
+#if !defined(_WIN32)
+static bool eval_service_posix_glob_collect(EvalExecContext *ctx,
+                                            String_View pat,
+                                            bool list_dirs,
+                                            SV_List *io_matches) {
+    char *pat_c = eval_sv_to_cstr_temp(ctx, pat);
+    EVAL_OOM_RETURN_IF_NULL(ctx, pat_c, false);
+
+    glob_t g = {0};
+    int rc = glob(pat_c, 0, NULL, &g);
+    if (rc == GLOB_NOMATCH) {
+        globfree(&g);
+        return true;
+    }
+    if (rc != 0) {
+        globfree(&g);
+        return false;
+    }
+
+    for (size_t i = 0; i < g.gl_pathc; i++) {
+        const char *entry = g.gl_pathv[i];
+        if (!entry) continue;
+        Nob_File_Type t = nob_get_file_type(entry);
+        if (!list_dirs && t == NOB_FILE_DIRECTORY) continue;
+
+        String_View sv = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(entry));
+        if (eval_should_stop(ctx)) {
+            globfree(&g);
+            return false;
+        }
+        if (!svu_list_push_temp(ctx, io_matches, sv)) {
+            globfree(&g);
+            return false;
+        }
+    }
+
+    globfree(&g);
+    return true;
+}
+#endif
+
+static void eval_service_glob_walk(EvalExecContext *ctx,
+                                   String_View dir_full,
+                                   String_View pat,
+                                   bool recurse,
+                                   bool list_dirs,
+                                   bool ci,
+                                   size_t *io_open_failures,
+                                   SV_List *io_matches) {
+    if (ctx->oom || dir_full.count == 0) return;
+
+    char *dir_c = (char*)arena_alloc(eval_temp_arena(ctx), dir_full.count + 1);
+    EVAL_OOM_RETURN_VOID_IF_NULL(ctx, dir_c);
+    memcpy(dir_c, dir_full.data, dir_full.count);
+    dir_c[dir_full.count] = 0;
+
+    Nob_Dir_Entry dir = {0};
+    if (!nob_dir_entry_open(dir_c, &dir)) {
+        if (io_open_failures) (*io_open_failures)++;
+        return;
+    }
+
+    while (nob_dir_entry_next(&dir)) {
+        if (strcmp(dir.name, ".") == 0 || strcmp(dir.name, "..") == 0) continue;
+
+        String_View name = nob_sv_from_cstr(dir.name);
+        String_View full = eval_sv_path_join(eval_temp_arena(ctx), dir_full, name);
+        char *full_c = eval_sv_to_cstr_temp(ctx, full);
+        if (!full_c) {
+            nob_dir_entry_close(dir);
+            return;
+        }
+
+        Nob_File_Type kind = nob_get_file_type(full_c);
+        if ((int)kind < 0) continue;
+        bool is_dir = kind == NOB_FILE_DIRECTORY;
+
+        if (eval_file_glob_match_sv(pat, full, ci) && (list_dirs || !is_dir)) {
+            if (!svu_list_push_temp(ctx, io_matches, full)) break;
+        }
+
+        if (recurse && is_dir) {
+            eval_service_glob_walk(ctx, full, pat, recurse, list_dirs, ci, io_open_failures, io_matches);
+            if (ctx->oom) break;
+        }
+    }
+
+    if (dir.error && io_open_failures) (*io_open_failures)++;
+    nob_dir_entry_close(dir);
+}
+
+bool eval_service_glob(EvalExecContext *ctx,
+                       const Eval_Glob_Request *req,
+                       Eval_Glob_Result *out) {
+    if (out) *out = (Eval_Glob_Result){0};
+    if (!ctx || !req || !out) return false;
+
+    if (ctx->services && ctx->services->fs_glob) {
+        return ctx->services->fs_glob(ctx->services->user_data,
+                                      eval_temp_arena(ctx),
+                                      req,
+                                      out);
+    }
+
+    SV_List matches = NULL;
+    size_t open_failures = 0;
+    for (size_t i = 0; i < req->pattern_count; i++) {
+        String_View pat = req->patterns[i];
+
+#if !defined(_WIN32)
+        if (!req->recursive) {
+            if (eval_service_posix_glob_collect(ctx, pat, req->list_directories, &matches)) {
+                if (eval_should_stop(ctx)) return false;
+                continue;
+            }
+        }
+#endif
+
+        String_View base_dir = eval_service_glob_base_dir(pat);
+        eval_service_glob_walk(ctx,
+                               base_dir,
+                               pat,
+                               req->recursive,
+                               req->list_directories,
+                               req->case_insensitive,
+                               &open_failures,
+                               &matches);
+        if (eval_should_stop(ctx)) return false;
+    }
+
+    out->matches = matches;
+    out->match_count = arena_arr_len(matches);
+    out->open_failure_count = open_failures;
+    return true;
 }
 
 static void eval_service_normalize_slashes_in_place(char *s) {

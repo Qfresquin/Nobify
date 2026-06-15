@@ -114,9 +114,13 @@ static bool file_transfer_is_remote_url(String_View in) {
     return false;
 }
 
+static bool file_transfer_is_file_url(String_View in) {
+    return in.count >= 7 && (memcmp(in.data, "file://", 7) == 0 || memcmp(in.data, "FILE://", 7) == 0);
+}
+
 static String_View file_transfer_local_path_temp(EvalExecContext *ctx, String_View in) {
     if (!ctx) return nob_sv_from_cstr("");
-    if (in.count >= 7 && (memcmp(in.data, "file://", 7) == 0 || memcmp(in.data, "FILE://", 7) == 0)) {
+    if (file_transfer_is_file_url(in)) {
         return nob_sv_from_parts(in.data + 7, in.count - 7);
     }
     return in;
@@ -183,6 +187,10 @@ static bool file_transfer_parse_options(EvalExecContext *ctx,
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     memset(out, 0, sizeof(*out));
 
+    // TODO(file-parity): Add CMake 3.28 oracle cases for missing/invalid
+    // STATUS, LOG, TIMEOUT, INACTIVITY_TIMEOUT, TLS_*, HTTPHEADER, NETRC, and
+    // NETRC_FILE values. This parser is intentionally strict, but FULL needs
+    // proof of which malformed options CMake errors on vs tolerates.
     for (size_t i = start; i < arena_arr_len(args); i++) {
         if (eval_sv_eq_ci_lit(args[i], "STATUS")) {
             if (i + 1 >= arena_arr_len(args)) {
@@ -425,6 +433,10 @@ static bool handle_file_download(EvalExecContext *ctx, const Node *node, SV_List
     }
 
     if (file_transfer_is_remote_url(args[1])) {
+        // TODO(file-parity): Add loopback HTTP oracle cases for 404, redirects,
+        // headers, TLS toggles, timeout/inactivity, probe-only downloads, and
+        // exact STATUS/LOG text. Current diff covers file:// and local range/hash
+        // behavior, not remote CMake transfer semantics.
         if (has_dst && !eval_file_mkdir_p(ctx, svu_dirname(dst))) {
             file_transfer_fail(ctx,
                                node,
@@ -505,13 +517,14 @@ static bool handle_file_download(EvalExecContext *ctx, const Node *node, SV_List
     String_View src_contents = nob_sv_from_cstr("");
     bool found = false;
     if (!eval_service_read_file(ctx, src, &src_contents, &found) || !found) {
+        bool file_url = file_transfer_is_file_url(args[1]);
         file_transfer_fail(ctx,
                            node,
                            o,
                            &opt,
-                           1,
-                           nob_sv_from_cstr("read source failed"),
-                           nob_sv_from_cstr("read source failed"),
+                           file_url ? 37 : 1,
+                           file_url ? nob_sv_from_cstr("Couldn't read a file:// file") : nob_sv_from_cstr("read source failed"),
+                           file_url ? nob_sv_from_cstr("Couldn't read a file:// file") : nob_sv_from_cstr("read source failed"),
                            nob_sv_from_cstr("file(DOWNLOAD) failed to read source"),
                            src);
         return true;
@@ -624,6 +637,9 @@ static bool handle_file_upload(EvalExecContext *ctx, const Node *node, SV_List a
         return true;
     }
 
+    // TODO(file-parity): Add CMake 3.28 oracle cases for remote upload
+    // STATUS/LOG, missing source, file:// parent handling, and the exact
+    // diagnostics around unsupported EXPECTED_HASH/EXPECTED_MD5.
     File_Transfer_Options opt = {0};
     if (!file_transfer_parse_options(ctx, node, args, 3, &opt)) return true;
 
@@ -689,7 +705,22 @@ static bool handle_file_upload(EvalExecContext *ctx, const Node *node, SV_List a
     String_View dst = nob_sv_from_cstr("");
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, dst_input, eval_file_current_bin_dir(ctx), &dst)) return true;
 
-    if (!eval_file_mkdir_p(ctx, svu_dirname(dst))) {
+    if (file_transfer_is_file_url(args[2])) {
+        Eval_Fs_Stat parent_st = {0};
+        String_View parent = svu_dirname(dst);
+        if (!eval_service_stat(ctx, parent, true, &parent_st) || !parent_st.exists) {
+            file_transfer_fail(ctx,
+                               node,
+                               o,
+                               &opt,
+                               23,
+                               nob_sv_from_cstr("Failed writing received data to disk/application"),
+                               nob_sv_from_cstr("Failed writing received data to disk/application"),
+                               nob_sv_from_cstr("file(UPLOAD) failed to copy source to destination"),
+                               dst);
+            return true;
+        }
+    } else if (!eval_file_mkdir_p(ctx, svu_dirname(dst))) {
         file_transfer_fail(ctx,
                            node,
                            o,

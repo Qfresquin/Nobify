@@ -3,7 +3,7 @@
     {"cmake_host_system_information", EPM_KIND_NATIVE, "FULL", EPM_AUDIT_FULL, "host_identity", "host_identity", EPM_EVIDENCE_POSITIVE_DIFF, NULL},
     {"cmake_path", EPM_KIND_NATIVE, "FULL", EPM_AUDIT_PARTIAL, "cmake_path", "cmake_path", EPM_EVIDENCE_INTERNAL_ONLY, "cmake_path.unimplemented_subcommand_fallback"},
     {"export", EPM_KIND_NATIVE, "FULL", EPM_AUDIT_FULL, "export_host_effect", "export_host_effect", EPM_EVIDENCE_HOST_OR_SPECIAL_DIFF, NULL},
-    {"file", EPM_KIND_NATIVE, "FULL", EPM_AUDIT_PARTIAL, "file_host_effect", "file_host_effect", EPM_EVIDENCE_KNOWN_DIVERGENCE, "file.direct_host_filesystem"},
+    {"file", EPM_KIND_NATIVE, "FULL", EPM_AUDIT_PARTIAL, "file_host_effect", "file_host_effect", EPM_EVIDENCE_KNOWN_DIVERGENCE, "file.create_link_result_surface"},
     {"get_cmake_property", EPM_KIND_NATIVE, "FULL", EPM_AUDIT_FULL, "property_wrappers", "property_wrappers", EPM_EVIDENCE_POSITIVE_DIFF, NULL},
     {"get_directory_property", EPM_KIND_NATIVE, "FULL", EPM_AUDIT_FULL, "property_wrappers", "property_wrappers", EPM_EVIDENCE_POSITIVE_DIFF, NULL},
     {"get_filename_component", EPM_KIND_NATIVE, "FULL", EPM_AUDIT_FULL, "get_filename_component", "get_filename_component", EPM_EVIDENCE_POSITIVE_DIFF, NULL},

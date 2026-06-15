@@ -3106,6 +3106,9 @@ bool eval_service_readlink(EvalExecContext *ctx, String_View path, String_View *
 bool eval_service_canonicalize_path(EvalExecContext *ctx,
                                     const Eval_Path_Canonicalize_Request *req,
                                     Eval_Path_Canonicalize_Result *out);
+bool eval_service_glob(EvalExecContext *ctx,
+                       const Eval_Glob_Request *req,
+                       Eval_Glob_Result *out);
 bool eval_service_lock_acquire(EvalExecContext *ctx,
                                const Eval_Host_Lock_Request *req,
                                Eval_Host_Lock_Result *out);

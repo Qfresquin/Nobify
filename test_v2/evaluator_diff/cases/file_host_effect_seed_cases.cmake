@@ -42,6 +42,45 @@ list(GET RANGE_STATUS 0 RANGE_STATUS_CODE)
 list(GET RANGE_STATUS 1 RANGE_STATUS_MSG)
 #@@ENDCASE
 
+#@@CASE file_host_effect_transfer_error_status_surface
+#@@OUTCOME SUCCESS
+#@@QUERY FILE_EXISTS build/missing_download_out.txt
+#@@QUERY FILE_EXISTS build/missing_upload_parent/uploaded.txt
+#@@QUERY VAR DL_MISS_STATUS_LEN
+#@@QUERY VAR DL_MISS_STATUS_CODE
+#@@QUERY VAR DL_MISS_LOG_NONEMPTY
+#@@QUERY VAR UP_FAIL_STATUS_LEN
+#@@QUERY VAR UP_FAIL_STATUS_CODE
+#@@QUERY VAR UP_FAIL_LOG_NONEMPTY
+file(DOWNLOAD
+  "file://${CMAKE_CURRENT_SOURCE_DIR}/missing_download_src.txt"
+  "${CMAKE_CURRENT_BINARY_DIR}/missing_download_out.txt"
+  STATUS DL_MISS_STATUS
+  LOG DL_MISS_LOG)
+list(LENGTH DL_MISS_STATUS DL_MISS_STATUS_LEN)
+list(GET DL_MISS_STATUS 0 DL_MISS_STATUS_CODE)
+string(LENGTH "${DL_MISS_LOG}" DL_MISS_LOG_LEN)
+if(DL_MISS_LOG_LEN GREATER 0)
+  set(DL_MISS_LOG_NONEMPTY 1)
+else()
+  set(DL_MISS_LOG_NONEMPTY 0)
+endif()
+file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/upload_src.txt" "upload")
+file(UPLOAD
+  "${CMAKE_CURRENT_SOURCE_DIR}/upload_src.txt"
+  "file://${CMAKE_CURRENT_BINARY_DIR}/missing_upload_parent/uploaded.txt"
+  STATUS UP_FAIL_STATUS
+  LOG UP_FAIL_LOG)
+list(LENGTH UP_FAIL_STATUS UP_FAIL_STATUS_LEN)
+list(GET UP_FAIL_STATUS 0 UP_FAIL_STATUS_CODE)
+string(LENGTH "${UP_FAIL_LOG}" UP_FAIL_LOG_LEN)
+if(UP_FAIL_LOG_LEN GREATER 0)
+  set(UP_FAIL_LOG_NONEMPTY 1)
+else()
+  set(UP_FAIL_LOG_NONEMPTY 0)
+endif()
+#@@ENDCASE
+
 #@@CASE file_host_effect_archive_surface
 #@@OUTCOME SUCCESS
 #@@QUERY FILE_EXISTS build/sample.tar
@@ -58,6 +97,23 @@ file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/archive_out")
 file(ARCHIVE_EXTRACT
   INPUT "${CMAKE_CURRENT_BINARY_DIR}/sample.tar"
   DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/archive_out")
+#@@ENDCASE
+
+#@@CASE file_host_effect_archive_zip_surface
+#@@OUTCOME SUCCESS
+#@@QUERY FILE_EXISTS build/sample.zip
+#@@QUERY TREE build/zip_out
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/zip_input/sub")
+file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/zip_input/a.txt" "ZA")
+file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/zip_input/sub/b.txt" "ZB")
+file(ARCHIVE_CREATE
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/sample.zip"
+  PATHS "${CMAKE_CURRENT_SOURCE_DIR}/zip_input"
+  FORMAT zip)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/zip_out")
+file(ARCHIVE_EXTRACT
+  INPUT "${CMAKE_CURRENT_BINARY_DIR}/sample.zip"
+  DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/zip_out")
 #@@ENDCASE
 
 #@@CASE file_host_effect_generate_lock_and_runtime_deps_surface

@@ -27,6 +27,7 @@ typedef struct {
     size_t archive_extract_count;
     size_t transfer_download_count;
     size_t transfer_upload_count;
+    size_t glob_count;
     String_View last_read_path;
     String_View last_write_path;
     String_View last_write_contents;
@@ -40,6 +41,7 @@ typedef struct {
     String_View last_archive_input;
     String_View last_transfer_download_url;
     String_View last_transfer_upload_url;
+    String_View last_glob_pattern;
     bool last_write_append;
     bool saw_read_svc_in;
     bool saw_write_svc_out;
@@ -64,6 +66,7 @@ typedef struct {
     bool saw_archive_extract;
     bool saw_transfer_download;
     bool saw_transfer_upload;
+    bool saw_glob;
     bool saw_append_two;
 } File_Service_Mock_Data;
 
@@ -444,6 +447,28 @@ static bool evaluator_file_service_mock_transfer_upload(void *user_data,
         .status_code = 0,
         .log = nob_sv_from_cstr("upload ok"),
     };
+    return true;
+}
+
+static bool evaluator_file_service_mock_glob(void *user_data,
+                                             Arena *scratch_arena,
+                                             const Eval_Glob_Request *request,
+                                             Eval_Glob_Result *out_result) {
+    File_Service_Mock_Data *data = (File_Service_Mock_Data *)user_data;
+    if (!data || !scratch_arena || !request || !out_result) return false;
+    data->glob_count++;
+    if (request->pattern_count > 0) data->last_glob_pattern = request->patterns[0];
+    data->saw_glob = request->pattern_count == 1 &&
+                     !request->recursive &&
+                     !request->list_directories &&
+                     sv_contains_sv(request->patterns[0], nob_sv_from_cstr("svc_glob"));
+
+    String_View *matches = (String_View*)arena_alloc(scratch_arena, 2 * sizeof(*matches));
+    if (!matches) return false;
+    matches[0] = nob_sv_from_cstr("svc_glob/b.txt");
+    matches[1] = nob_sv_from_cstr("svc_glob/a.txt");
+    out_result->matches = matches;
+    out_result->match_count = 2;
     return true;
 }
 
@@ -1048,6 +1073,7 @@ TEST(evaluator_file_host_backed_lanes_route_through_backend_services) {
         .archive_extract = evaluator_file_service_mock_archive_extract,
         .transfer_download = evaluator_file_service_mock_transfer_download,
         .transfer_upload = evaluator_file_service_mock_transfer_upload,
+        .fs_glob = evaluator_file_service_mock_glob,
     };
     Eval_Test_Init init = {
         .services = &services,
@@ -1065,6 +1091,7 @@ TEST(evaluator_file_host_backed_lanes_route_through_backend_services) {
         "file(LOCK svc_lock DIRECTORY RELEASE RESULT_VARIABLE SVC_UNLOCK)\n"
         "file(ARCHIVE_CREATE OUTPUT svc_archive.tar FORMAT PAXR MTIME 0 PATHS svc_dir)\n"
         "file(ARCHIVE_EXTRACT INPUT svc_archive.tar DESTINATION svc_extract)\n"
+        "file(GLOB SVC_GLOB RELATIVE . LIST_DIRECTORIES false svc_glob/*.txt)\n"
         "file(DOWNLOAD https://download.example/payload svc_download.out STATUS SVC_DL_STATUS LOG SVC_DL_LOG)\n"
         "file(UPLOAD svc_upload.txt https://upload.example/payload STATUS SVC_UL_STATUS LOG SVC_UL_LOG)\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(fixture->ctx, root)));
@@ -1079,6 +1106,7 @@ TEST(evaluator_file_host_backed_lanes_route_through_backend_services) {
     ASSERT(fs_data.archive_extract_count == 1);
     ASSERT(fs_data.transfer_download_count == 1);
     ASSERT(fs_data.transfer_upload_count == 1);
+    ASSERT(fs_data.glob_count == 1);
     ASSERT(fs_data.saw_canonicalize_existing);
     ASSERT(fs_data.saw_lock_acquire);
     ASSERT(fs_data.saw_lock_release);
@@ -1086,6 +1114,7 @@ TEST(evaluator_file_host_backed_lanes_route_through_backend_services) {
     ASSERT(fs_data.saw_archive_extract);
     ASSERT(fs_data.saw_transfer_download);
     ASSERT(fs_data.saw_transfer_upload);
+    ASSERT(fs_data.saw_glob);
     ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_LOCK")),
                      nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_UNLOCK")),
@@ -1098,6 +1127,8 @@ TEST(evaluator_file_host_backed_lanes_route_through_backend_services) {
                      nob_sv_from_cstr("download ok")));
     ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_UL_LOG")),
                      nob_sv_from_cstr("upload ok")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("SVC_GLOB")),
+                     nob_sv_from_cstr("svc_glob/a.txt;svc_glob/b.txt")));
 
     TEST_PASS();
 }
@@ -1130,6 +1161,11 @@ TEST(evaluator_file_handlers_keep_host_backends_behind_services) {
     ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_generate_lock_archive.c", "nob_cmd_run"));
     ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_transfer.c", "eval_file_backend_curl_"));
     ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_transfer.c", "\"curl\""));
+    ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_glob.c", "#include <glob.h>"));
+    ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_glob.c", "glob_t"));
+    ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_glob.c", "nob_dir_entry_open"));
+    ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_glob.c", "nob_dir_entry_next"));
+    ASSERT(evaluator_handler_source_lacks(arena, "src_v2/evaluator/eval_file_glob.c", "nob_get_file_type("));
 
     arena_destroy(arena);
     TEST_PASS();

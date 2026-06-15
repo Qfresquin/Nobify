@@ -625,9 +625,13 @@ static bool parse_mode_from_args(EvalExecContext *ctx, const Node *node, Cmake_E
             has_any = true;
             continue;
         }
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_UNEXPECTED_ARGUMENT, "eval_file", nob_sv_from_cstr("file(CHMOD) unknown permission token"), values[i]);
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "eval_file", nob_sv_from_cstr("file(CHMOD) invalid permission token"), values[i]);
+        return false;
     }
-    if (!has_any) return false;
+    if (!has_any) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "eval_file", nob_sv_from_cstr("file(CHMOD) has no valid permission token"), nob_sv_from_cstr(""));
+        return false;
+    }
     *out_mode = mode;
     return true;
 }
@@ -641,6 +645,10 @@ static bool handle_file_chmod(EvalExecContext *ctx, const Node *node, SV_List ar
         return true;
     }
 
+    // TODO(file-parity): The CMake 3.28 oracle still needs to pin CHMOD and
+    // CHMOD_RECURSE missing paths, symlink behavior, and exact executable-bit
+    // propagation. Invalid permission-token diagnostics are covered by
+    // file_script differential cases.
     size_t perm_idx = SIZE_MAX;
     for (size_t i = 1; i < arena_arr_len(args); i++) {
         if (eval_sv_eq_ci_lit(args[i], "PERMISSIONS")) {
@@ -661,7 +669,6 @@ static bool handle_file_chmod(EvalExecContext *ctx, const Node *node, SV_List ar
     }
     mode_t mode = 0;
     if (!parse_mode_from_args(ctx, node, o, perm_values, &mode)) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_IO_FAILURE, "eval_file", nob_sv_from_cstr("file(CHMOD) has no valid permission token"), nob_sv_from_cstr(""));
         return true;
     }
 
@@ -690,6 +697,9 @@ static bool handle_file_real_path(EvalExecContext *ctx, const Node *node, SV_Lis
         return true;
     }
 
+    // TODO(file-parity): Add oracle coverage for BASE_DIRECTORY, EXPAND_TILDE,
+    // CMP0152 OLD/NEW, non-existing path/existing-parent behavior, and Windows
+    // drive/UNC spelling. Basic REAL_PATH success is not enough for FULL.
     String_View base_dir = eval_file_current_src_dir(ctx);
     bool expand_tilde = false;
     for (size_t i = 3; i < arena_arr_len(args); i++) {
@@ -760,6 +770,8 @@ static bool handle_file_timestamp(EvalExecContext *ctx, const Node *node, SV_Lis
         return true;
     }
 
+    // TODO(file-parity): Add CMake 3.28 cases for missing files, invalid
+    // formats, local timezone vs UTC, and empty-output/failure semantics.
     bool utc = false;
     String_View fmt = nob_sv_from_cstr("%Y-%m-%dT%H:%M:%S");
     for (size_t i = 3; i < arena_arr_len(args); i++) {
@@ -801,6 +813,10 @@ static bool handle_file_install(EvalExecContext *ctx, const Node *node, SV_List 
         return true;
     }
 
+    // TODO(file-parity): The oracle must still cover INSTALL DIRECTORY/PROGRAMS
+    // forms, OPTIONAL missing sources, MESSAGE_NEVER, generated install-script
+    // diagnostics, and how filters interact with directory installs. TYPE FILE
+    // with PERMISSIONS has focused differential coverage.
     SV_List copy_args = NULL;
     if (!arena_arr_reserve(eval_temp_arena(ctx), copy_args, arena_arr_len(args) + 4)) {
         ctx_oom(ctx);
@@ -822,6 +838,8 @@ static bool handle_file_install(EvalExecContext *ctx, const Node *node, SV_List 
         return true;
     }
 
+    SV_List install_sources = NULL;
+    SV_List install_options = NULL;
     for (size_t i = 1; i < dest_idx; i++) {
         if (eval_sv_eq_ci_lit(args[i], "TYPE") && i + 1 < dest_idx) {
             i++;
@@ -832,30 +850,67 @@ static bool handle_file_install(EvalExecContext *ctx, const Node *node, SV_List 
             eval_sv_eq_ci_lit(args[i], "DIRECTORY")) {
             continue;
         }
-        if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), copy_args, args[i])) {
-            return true;
-        }
+        if (!svu_list_push_temp(ctx, &install_sources, args[i])) return true;
     }
 
-    if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), copy_args, nob_sv_from_cstr("DESTINATION")) ||
-        !EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), copy_args, args[dest_idx + 1])) {
-        return true;
-    }
-
+    bool collecting_sources = false;
     for (size_t i = dest_idx + 2; i < arena_arr_len(args); i++) {
         if (eval_sv_eq_ci_lit(args[i], "TYPE") && i + 1 < arena_arr_len(args)) {
             i++;
+            collecting_sources = false;
             continue;
         }
         if (eval_sv_eq_ci_lit(args[i], "OPTIONAL") ||
             eval_sv_eq_ci_lit(args[i], "MESSAGE_NEVER")) {
+            collecting_sources = false;
             continue;
         }
-        if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), copy_args, args[i])) {
-            return true;
+        if (eval_sv_eq_ci_lit(args[i], "FILES") ||
+            eval_sv_eq_ci_lit(args[i], "PROGRAMS") ||
+            eval_sv_eq_ci_lit(args[i], "DIRECTORY")) {
+            collecting_sources = true;
+            continue;
+        }
+        if (eval_sv_eq_ci_lit(args[i], "PERMISSIONS") ||
+            eval_sv_eq_ci_lit(args[i], "FILE_PERMISSIONS") ||
+            eval_sv_eq_ci_lit(args[i], "DIRECTORY_PERMISSIONS") ||
+            eval_sv_eq_ci_lit(args[i], "USE_SOURCE_PERMISSIONS") ||
+            eval_sv_eq_ci_lit(args[i], "NO_SOURCE_PERMISSIONS") ||
+            eval_sv_eq_ci_lit(args[i], "FILES_MATCHING") ||
+            eval_sv_eq_ci_lit(args[i], "PATTERN") ||
+            eval_sv_eq_ci_lit(args[i], "REGEX") ||
+            eval_sv_eq_ci_lit(args[i], "EXCLUDE") ||
+            eval_sv_eq_ci_lit(args[i], "FOLLOW_SYMLINK_CHAIN")) {
+            collecting_sources = false;
+        }
+        if (collecting_sources) {
+            if (!svu_list_push_temp(ctx, &install_sources, args[i])) return true;
+        } else {
+            if (!svu_list_push_temp(ctx, &install_options, args[i])) return true;
         }
     }
 
+    if (arena_arr_len(install_sources) == 0) {
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(INSTALL) missing source files"), nob_sv_from_cstr(""));
+        return true;
+    }
+    for (size_t i = 0; i < arena_arr_len(install_sources); i++) {
+        if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), copy_args, install_sources[i])) return true;
+    }
+    if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), copy_args, nob_sv_from_cstr("DESTINATION")) ||
+        !EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), copy_args, args[dest_idx + 1])) {
+        return true;
+    }
+    for (size_t i = 0; i < arena_arr_len(install_options); i++) {
+        if (eval_sv_eq_ci_lit(install_options[i], "PERMISSIONS")) {
+            // TODO(file-parity): This PERMISSIONS -> FILE_PERMISSIONS lowering
+            // is proven for TYPE FILE only. DIRECTORY and PROGRAMS forms need a
+            // typed INSTALL parser instead of continuing to piggyback on COPY.
+            if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), copy_args, nob_sv_from_cstr("FILE_PERMISSIONS"))) return true;
+        } else {
+            if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), copy_args, install_options[i])) return true;
+        }
+    }
     eval_file_handle_copy(ctx, node, copy_args);
     return true;
 }

@@ -833,7 +833,7 @@ file(STRINGS temp_strings_enc_utf8.txt OUT NEWLINE_CONSUME ENCODING UTF-8)
 
 #@@CASE file_security_copy_with_permissions_executes_without_legacy_no_effect_warning
 file(WRITE temp_copy_perm_src.txt "x")
-file(COPY temp_copy_perm_src.txt DESTINATION temp_copy_perm_dst PERMISSIONS OWNER_READ OWNER_WRITE)
+file(COPY temp_copy_perm_src.txt DESTINATION temp_copy_perm_dst FILE_PERMISSIONS OWNER_READ OWNER_WRITE)
 #@@ENDCASE
 
 #@@CASE file_append_preserves_existing_content
@@ -980,4 +980,3 @@ add_custom_command(OUTPUT generated.c generated.h
   MAIN_DEPENDENCY schema.idl
   DEPFILE gen.d)
 #@@ENDCASE
-

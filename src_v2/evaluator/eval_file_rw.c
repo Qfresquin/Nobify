@@ -265,6 +265,18 @@ static bool file_strings_decode_to_utf8_temp(EvalExecContext *ctx,
     return true;
 }
 
+static bool file_strings_is_option(String_View t) {
+    return eval_sv_eq_ci_lit(t, "LENGTH_MINIMUM") ||
+           eval_sv_eq_ci_lit(t, "LENGTH_MAXIMUM") ||
+           eval_sv_eq_ci_lit(t, "LIMIT_COUNT") ||
+           eval_sv_eq_ci_lit(t, "LIMIT_INPUT") ||
+           eval_sv_eq_ci_lit(t, "LIMIT_OUTPUT") ||
+           eval_sv_eq_ci_lit(t, "REGEX") ||
+           eval_sv_eq_ci_lit(t, "NEWLINE_CONSUME") ||
+           eval_sv_eq_ci_lit(t, "NO_HEX_CONVERSION") ||
+           eval_sv_eq_ci_lit(t, "ENCODING");
+}
+
 void eval_file_handle_write(EvalExecContext *ctx, const Node *node, SV_List args) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     String_View replay_path = nob_sv_from_cstr("");
@@ -456,6 +468,12 @@ void eval_file_handle_strings(EvalExecContext *ctx, const Node *node, SV_List ar
         return;
     }
 
+    // TODO(file-parity): Add CMake 3.28 oracle cases for NO_HEX_CONVERSION and
+    // real Intel HEX/Motorola S-record conversion, UTF-16/UTF-32 BOM handling,
+    // NUL-separated strings, CR stripping, LIMIT_INPUT/LIMIT_OUTPUT byte
+    // accounting, and regex dialect differences. Existing tests cover UTF-8,
+    // regex/length/count/output, missing values, unknown args, and
+    // NEWLINE_CONSUME only.
     typedef struct {
         bool has_len_min;
         bool has_len_max;
@@ -473,20 +491,18 @@ void eval_file_handle_strings(EvalExecContext *ctx, const Node *node, SV_List ar
         bool no_hex_conversion;
         bool has_encoding;
         File_Strings_Encoding encoding;
-        String_View unsupported;
     } File_Strings_Options;
 
     String_View path = nob_sv_from_cstr("");
     String_View out_var = args[2];
 
     File_Strings_Options opt = {0};
-    String_View unsupported_items[64] = {0};
-    size_t unsupported_count = 0;
 
     for (size_t i = 3; i < arena_arr_len(args); i++) {
         String_View t = args[i];
 
-        if (eval_sv_eq_ci_lit(t, "LENGTH_MINIMUM") && i + 1 < arena_arr_len(args)) {
+        if (eval_sv_eq_ci_lit(t, "LENGTH_MINIMUM")) {
+            if (i + 1 >= arena_arr_len(args) || file_strings_is_option(args[i + 1])) continue;
             size_t v = 0;
             if (!eval_file_parse_size_sv(args[++i], &v)) {
                 EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid LENGTH_MINIMUM value"), args[i]);
@@ -496,7 +512,8 @@ void eval_file_handle_strings(EvalExecContext *ctx, const Node *node, SV_List ar
             opt.len_min = v;
             continue;
         }
-        if (eval_sv_eq_ci_lit(t, "LENGTH_MAXIMUM") && i + 1 < arena_arr_len(args)) {
+        if (eval_sv_eq_ci_lit(t, "LENGTH_MAXIMUM")) {
+            if (i + 1 >= arena_arr_len(args) || file_strings_is_option(args[i + 1])) continue;
             size_t v = 0;
             if (!eval_file_parse_size_sv(args[++i], &v)) {
                 EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid LENGTH_MAXIMUM value"), args[i]);
@@ -506,7 +523,8 @@ void eval_file_handle_strings(EvalExecContext *ctx, const Node *node, SV_List ar
             opt.len_max = v;
             continue;
         }
-        if (eval_sv_eq_ci_lit(t, "LIMIT_COUNT") && i + 1 < arena_arr_len(args)) {
+        if (eval_sv_eq_ci_lit(t, "LIMIT_COUNT")) {
+            if (i + 1 >= arena_arr_len(args) || file_strings_is_option(args[i + 1])) continue;
             size_t v = 0;
             if (!eval_file_parse_size_sv(args[++i], &v)) {
                 EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid LIMIT_COUNT value"), args[i]);
@@ -516,7 +534,8 @@ void eval_file_handle_strings(EvalExecContext *ctx, const Node *node, SV_List ar
             opt.limit_count = v;
             continue;
         }
-        if (eval_sv_eq_ci_lit(t, "LIMIT_INPUT") && i + 1 < arena_arr_len(args)) {
+        if (eval_sv_eq_ci_lit(t, "LIMIT_INPUT")) {
+            if (i + 1 >= arena_arr_len(args) || file_strings_is_option(args[i + 1])) continue;
             size_t v = 0;
             if (!eval_file_parse_size_sv(args[++i], &v)) {
                 EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid LIMIT_INPUT value"), args[i]);
@@ -526,7 +545,8 @@ void eval_file_handle_strings(EvalExecContext *ctx, const Node *node, SV_List ar
             opt.limit_input = v;
             continue;
         }
-        if (eval_sv_eq_ci_lit(t, "LIMIT_OUTPUT") && i + 1 < arena_arr_len(args)) {
+        if (eval_sv_eq_ci_lit(t, "LIMIT_OUTPUT")) {
+            if (i + 1 >= arena_arr_len(args) || file_strings_is_option(args[i + 1])) continue;
             size_t v = 0;
             if (!eval_file_parse_size_sv(args[++i], &v)) {
                 EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_INVALID_VALUE, "eval_file", nob_sv_from_cstr("file(STRINGS) invalid LIMIT_OUTPUT value"), args[i]);
@@ -536,7 +556,8 @@ void eval_file_handle_strings(EvalExecContext *ctx, const Node *node, SV_List ar
             opt.limit_output = v;
             continue;
         }
-        if (eval_sv_eq_ci_lit(t, "REGEX") && i + 1 < arena_arr_len(args)) {
+        if (eval_sv_eq_ci_lit(t, "REGEX")) {
+            if (i + 1 >= arena_arr_len(args) || file_strings_is_option(args[i + 1])) continue;
             opt.has_regex = true;
             opt.regex = args[++i];
             continue;
@@ -550,10 +571,7 @@ void eval_file_handle_strings(EvalExecContext *ctx, const Node *node, SV_List ar
             continue;
         }
         if (eval_sv_eq_ci_lit(t, "ENCODING")) {
-            if (i + 1 >= arena_arr_len(args)) {
-                EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_MISSING_REQUIRED, "eval_file", nob_sv_from_cstr("file(STRINGS) ENCODING requires a value"), t);
-                return;
-            }
+            if (i + 1 >= arena_arr_len(args) || file_strings_is_option(args[i + 1])) continue;
             String_View encoding_sv = args[++i];
             File_Strings_Encoding enc = file_strings_parse_encoding_sv(encoding_sv);
             if (enc == FILE_STRINGS_ENCODING_INVALID) {
@@ -565,18 +583,8 @@ void eval_file_handle_strings(EvalExecContext *ctx, const Node *node, SV_List ar
             continue;
         }
 
-        if (unsupported_count < 64) unsupported_items[unsupported_count++] = t;
-    }
-
-    if (opt.has_len_min && opt.has_len_max && opt.len_min > opt.len_max) {
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_CONFLICTING_OPTIONS, "eval_file", nob_sv_from_cstr("file(STRINGS) LENGTH_MINIMUM cannot be greater than LENGTH_MAXIMUM"), nob_sv_from_cstr(""));
+        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_ERROR, EVAL_DIAG_UNEXPECTED_ARGUMENT, "eval_file", nob_sv_from_cstr("file(STRINGS) received unknown argument"), t);
         return;
-    }
-
-    if (unsupported_count > 0) {
-        opt.unsupported = eval_sv_join_semi_temp(ctx, unsupported_items, unsupported_count);
-        EVAL_NODE_ORIGIN_DIAG_EMIT_SEV(ctx, node, o, EV_DIAG_WARNING, EVAL_DIAG_UNSUPPORTED_OPERATION, "eval_file", nob_sv_from_cstr("file(STRINGS) has unsupported options"), opt.unsupported);
-        if (eval_should_stop(ctx)) return;
     }
 
     if (!eval_file_resolve_project_scoped_path(ctx, node, o, args[1], eval_current_source_dir(ctx), &path)) return;

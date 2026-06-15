@@ -196,6 +196,22 @@ typedef struct {
 } Eval_Path_Canonicalize_Result;
 
 typedef struct {
+    const String_View *patterns;
+    size_t pattern_count;
+    bool recursive;
+    bool list_directories;
+    bool case_insensitive;
+    bool strict_failures;
+} Eval_Glob_Request;
+
+typedef struct {
+    String_View *matches;
+    size_t match_count;
+    size_t open_failure_count;
+    String_View log;
+} Eval_Glob_Result;
+
+typedef struct {
     String_View path;
     bool has_timeout;
     size_t timeout_sec;
@@ -324,6 +340,10 @@ typedef bool (*Eval_Service_Canonicalize_Path_Fn)(
     Arena *scratch_arena,
     const Eval_Path_Canonicalize_Request *request,
     Eval_Path_Canonicalize_Result *out_result);
+typedef bool (*Eval_Service_Glob_Fn)(void *user_data,
+                                     Arena *scratch_arena,
+                                     const Eval_Glob_Request *request,
+                                     Eval_Glob_Result *out_result);
 typedef bool (*Eval_Service_Host_Lock_Acquire_Fn)(
     void *user_data,
     const Eval_Host_Lock_Request *request,
@@ -383,6 +403,7 @@ struct EvalServices {
     Eval_Service_Link_Fn fs_link;
     Eval_Service_Readlink_Fn fs_readlink;
     Eval_Service_Canonicalize_Path_Fn fs_canonicalize_path;
+    Eval_Service_Glob_Fn fs_glob;
     Eval_Service_Host_Lock_Acquire_Fn host_lock_acquire;
     Eval_Service_Host_Lock_Release_Fn host_lock_release;
     Eval_Service_Archive_Create_Fn archive_create;

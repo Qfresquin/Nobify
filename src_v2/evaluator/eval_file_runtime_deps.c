@@ -28,6 +28,12 @@ typedef struct {
     SV_List post_exclude_files;
 } Runtime_Deps_Args;
 
+// TODO(file-parity): GET_RUNTIME_DEPENDENCIES still needs CMake 3.28 oracle
+// coverage for include/exclude regex and file filters, DIRECTORIES,
+// CONFLICTING_DEPENDENCIES_PREFIX, unresolved dependencies, invalid regex
+// diagnostics, and platform loader behavior. The existing diff only checks a
+// narrow result-list shape for known local binaries.
+
 static bool runtime_push_temp(EvalExecContext *ctx, SV_List *list, String_View v) {
     return svu_list_push_temp(ctx, list, v);
 }

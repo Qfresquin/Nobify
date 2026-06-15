@@ -110,6 +110,11 @@ bool eval_file_resolve_path(EvalExecContext *ctx,
                             String_View *out_path) {
     if (!ctx || !node || !out_path) return false;
 
+    // TODO(file-parity): This resolver mixes CMake path spelling with Nobify
+    // project-scope policy. Any file() promotion must separately test CMake's
+    // observable path semantics and Nobify's security restrictions, especially
+    // symlink escapes, canonicalized existing parents, Windows drive/UNC paths,
+    // and relative paths already anchored at source/binary roots.
     String_View path = eval_file_cmk_path_normalize_temp(ctx, input_path);
     String_View base = eval_file_cmk_path_normalize_temp(ctx, relative_base);
     if (!eval_sv_is_abs_path(path)) {

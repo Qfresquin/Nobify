@@ -5,12 +5,8 @@
 #include "arena_dyn.h"
 
 #include <ctype.h>
-#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-#if !defined(_WIN32)
-#include <glob.h>
-#endif
 
 static bool eval_var_truthy_or_default(EvalExecContext *ctx, const char *key, bool default_value) {
     if (!ctx || !key) return default_value;
@@ -57,96 +53,6 @@ Eval_Result eval_handle_aux_source_directory(EvalExecContext *ctx, const Node *n
     return eval_result_from_ctx(ctx);
 }
 
-bool eval_file_glob_match_sv(String_View pat, String_View str, bool ci) {
-    size_t pi = 0, si = 0;
-    size_t star_pi = (size_t)-1, star_si = (size_t)-1;
-
-    while (si < str.count) {
-        if (pi < pat.count) {
-            char pc = pat.data[pi];
-            char sc = str.data[si];
-
-            if (pc == '*') {
-                star_pi = pi++;
-                star_si = si;
-                continue;
-            }
-
-            if (pc == '?') {
-                if (!svu_is_path_sep(sc)) {
-                    pi++;
-                    si++;
-                    continue;
-                }
-            }
-
-            if (pc == '[') {
-                if (!svu_is_path_sep(sc)) {
-                    size_t j = pi + 1;
-                    while (j < pat.count && pat.data[j] != ']') j++;
-
-                    if (j < pat.count) {
-                        bool neg = false;
-                        size_t k = pi + 1;
-                        if (k < j && (pat.data[k] == '!' || pat.data[k] == '^')) {
-                            neg = true;
-                            k++;
-                        }
-
-                        bool matched = false;
-                        char sc_cmp = ci ? (char)tolower((unsigned char)sc) : sc;
-
-                        while (k < j) {
-                            char a = pat.data[k];
-                            char a_cmp = ci ? (char)tolower((unsigned char)a) : a;
-
-                            if (k + 2 < j && pat.data[k + 1] == '-') {
-                                char b = pat.data[k + 2];
-                                char b_cmp = ci ? (char)tolower((unsigned char)b) : b;
-                                char lo = a_cmp < b_cmp ? a_cmp : b_cmp;
-                                char hi = a_cmp < b_cmp ? b_cmp : a_cmp;
-                                if (sc_cmp >= lo && sc_cmp <= hi) matched = true;
-                                k += 3;
-                            } else {
-                                if (sc_cmp == a_cmp) matched = true;
-                                k++;
-                            }
-                        }
-
-                        if (neg) matched = !matched;
-                        if (matched) {
-                            pi = j + 1;
-                            si++;
-                            continue;
-                        }
-                    }
-                }
-            }
-
-            char a = ci ? (char)tolower((unsigned char)pc) : pc;
-            char b = ci ? (char)tolower((unsigned char)sc) : sc;
-            if (a == b) {
-                pi++;
-                si++;
-                continue;
-            }
-        }
-
-        if (star_pi != (size_t)-1) {
-            if (star_si < str.count && svu_is_path_sep(str.data[star_si])) {
-                return false;
-            } else {
-                pi = star_pi + 1;
-                si = ++star_si;
-                continue;
-            }
-        }
-    }
-
-    while (pi < pat.count && pat.data[pi] == '*') pi++;
-    return pi == pat.count;
-}
-
 static int sv_lex_cmp_qsort(const void *a, const void *b) {
     const String_View *aa = (const String_View*)a;
     const String_View *bb = (const String_View*)b;
@@ -156,51 +62,6 @@ static int sv_lex_cmp_qsort(const void *a, const void *b) {
     if (c != 0) return c;
     return (aa->count < bb->count) ? -1 : (aa->count > bb->count ? 1 : 0);
 }
-
-#if !defined(_WIN32)
-static bool posix_glob_collect(EvalExecContext *ctx,
-                               String_View pat,
-                               bool list_dirs,
-                               String_View **io_items,
-                               size_t *io_count,
-                               size_t *io_cap) {
-    char *pat_c = eval_sv_to_cstr_temp(ctx, pat);
-    EVAL_OOM_RETURN_IF_NULL(ctx, pat_c, false);
-
-    glob_t g = {0};
-    int rc = glob(pat_c, 0, NULL, &g);
-    if (rc == GLOB_NOMATCH) {
-        globfree(&g);
-        return true;
-    }
-    if (rc != 0) {
-        globfree(&g);
-        return false;
-    }
-
-    for (size_t i = 0; i < g.gl_pathc; i++) {
-        const char *entry = g.gl_pathv[i];
-        if (!entry) continue;
-        Nob_File_Type t = nob_get_file_type(entry);
-        if (!list_dirs && t == NOB_FILE_DIRECTORY) continue;
-
-        String_View sv = sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(entry));
-        if (ctx->oom) {
-            globfree(&g);
-            return false;
-        }
-        if (!EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), *io_items, sv)) {
-            globfree(&g);
-            return false;
-        }
-        *io_count = arena_arr_len(*io_items);
-        *io_cap = arena_arr_cap(*io_items);
-    }
-
-    globfree(&g);
-    return true;
-}
-#endif
 
 static String_View glob_base_dir(String_View pattern_abs) {
     size_t first_meta = pattern_abs.count;
@@ -239,75 +100,6 @@ static String_View sv_make_relative(String_View path, String_View base, bool ci)
     return nob_sv_from_parts(path.data + off, path.count - off);
 }
 
-static void file_glob_walk(EvalExecContext *ctx,
-                           const Node *node,
-                           Cmake_Event_Origin origin,
-                           String_View dir_full,
-                           String_View pat,
-                           bool recurse,
-                           bool list_dirs,
-                           bool ci,
-                           bool strict_failures,
-                           size_t *io_open_failures,
-                           String_View **io_items,
-                           size_t *io_count,
-                           size_t *io_cap) {
-    if (ctx->oom) return;
-    if (dir_full.count == 0) return;
-
-    char *dir_c = (char*)arena_alloc(eval_temp_arena(ctx), dir_full.count + 1);
-    EVAL_OOM_RETURN_VOID_IF_NULL(ctx, dir_c);
-    memcpy(dir_c, dir_full.data, dir_full.count);
-    dir_c[dir_full.count] = 0;
-
-    Nob_Dir_Entry dir = {0};
-    if (!nob_dir_entry_open(dir_c, &dir)) {
-        String_View cause = nob_sv_from_cstr("file(GLOB) failed to open directory");
-        if (io_open_failures) (*io_open_failures)++;
-        EVAL_DIAG_EMIT_SEV(ctx, strict_failures ? EV_DIAG_ERROR : EV_DIAG_WARNING, EVAL_DIAG_IO_FAILURE, nob_sv_from_cstr("eval_file"), node ? node->as.cmd.name : nob_sv_from_cstr("file"), origin, cause, dir_full);
-        return;
-    }
-
-    while (nob_dir_entry_next(&dir)) {
-        bool is_dir = false;
-        String_View name = {0};
-        String_View full = {0};
-        char *full_c = NULL;
-        Nob_File_Type kind = NOB_FILE_OTHER;
-
-        if (strcmp(dir.name, ".") == 0 || strcmp(dir.name, "..") == 0) continue;
-        name = nob_sv_from_cstr(dir.name);
-        full = eval_sv_path_join(eval_temp_arena(ctx), dir_full, name);
-        full_c = eval_sv_to_cstr_temp(ctx, full);
-        if (!full_c) {
-            nob_dir_entry_close(dir);
-            return;
-        }
-        kind = nob_get_file_type(full_c);
-        if ((int)kind < 0) continue;
-        is_dir = kind == NOB_FILE_DIRECTORY;
-
-        if (eval_file_glob_match_sv(pat, full, ci)) {
-            if (list_dirs || !is_dir) {
-                if (EVAL_ARR_PUSH(ctx, eval_temp_arena(ctx), *io_items, full)) {
-                    *io_count = arena_arr_len(*io_items);
-                    *io_cap = arena_arr_cap(*io_items);
-                } else {
-                    break;
-                }
-            }
-        }
-
-        if (recurse && is_dir) {
-            file_glob_walk(ctx, node, origin, full, pat, recurse, list_dirs, ci, strict_failures, io_open_failures, io_items, io_count, io_cap);
-            if (ctx->oom) break;
-        }
-    }
-
-    if (dir.error && io_open_failures) (*io_open_failures)++;
-    nob_dir_entry_close(dir);
-}
-
 void eval_file_handle_glob(EvalExecContext *ctx, const Node *node, SV_List args, bool recurse) {
     Cmake_Event_Origin o = eval_origin_from_node(ctx, node);
     if (arena_arr_len(args) < 3) {
@@ -320,6 +112,11 @@ void eval_file_handle_glob(EvalExecContext *ctx, const Node *node, SV_List args,
         return;
     }
 
+    // TODO(file-parity): Add CMake 3.28 oracle cases for CONFIGURE_DEPENDS,
+    // LIST_DIRECTORIES, recursive symlink traversal/FOLLOW_SYMLINKS policy
+    // behavior, relative output spelling with multiple patterns, ordering, and
+    // inaccessible-directory diagnostics. Current coverage proves basic
+    // GLOB/GLOB_RECURSE/RELATIVE/REAL_PATH behavior only.
     String_View out_var = args[1];
     bool list_dirs = true;
     bool has_relative = false;
@@ -341,9 +138,7 @@ void eval_file_handle_glob(EvalExecContext *ctx, const Node *node, SV_List args,
         pat_idx++;
     }
 
-    String_View *matches = NULL;
-    size_t mcount = 0;
-    size_t mcap = 0;
+    SV_List patterns = NULL;
 
     bool ci = false;
 #if defined(_WIN32) || defined(__APPLE__)
@@ -362,21 +157,32 @@ void eval_file_handle_glob(EvalExecContext *ctx, const Node *node, SV_List args,
         if (!eval_sv_is_abs_path(pat)) {
             pat = eval_sv_path_join(eval_temp_arena(ctx), current_src, pat);
         }
-
-#if !defined(_WIN32)
-        if (!recurse) {
-            if (posix_glob_collect(ctx, pat, list_dirs, &matches, &mcount, &mcap)) {
-                if (ctx->oom) return;
-                continue;
-            }
-        }
-#endif
-
-        String_View base_dir = glob_base_dir(pat);
-        file_glob_walk(ctx, node, o, base_dir, pat, recurse, list_dirs, ci, glob_strict, &open_failures, &matches, &mcount, &mcap);
-        if (ctx->oom) return;
-        if (eval_should_stop(ctx)) return;
+        if (!svu_list_push_temp(ctx, &patterns, pat)) return;
     }
+
+    Eval_Glob_Request req = {
+        .patterns = patterns,
+        .pattern_count = arena_arr_len(patterns),
+        .recursive = recurse,
+        .list_directories = list_dirs,
+        .case_insensitive = ci,
+        .strict_failures = glob_strict,
+    };
+    Eval_Glob_Result glob_result = {0};
+    if (!eval_service_glob(ctx, &req, &glob_result)) {
+        eval_file_diag_error(ctx,
+                             node,
+                             EVAL_DIAG_IO_FAILURE,
+                             o,
+                             nob_sv_from_cstr("file(GLOB) failed to enumerate patterns"),
+                             nob_sv_from_cstr(""));
+        return;
+    }
+    if (eval_should_stop(ctx)) return;
+
+    String_View *matches = glob_result.matches;
+    size_t mcount = glob_result.match_count;
+    open_failures = glob_result.open_failure_count;
 
     if (open_failures > 0) {
         eval_file_diag(ctx,
@@ -419,6 +225,6 @@ void eval_file_handle_glob(EvalExecContext *ctx, const Node *node, SV_List args,
     }
 
     (void)eval_var_set_current(ctx, out_var, joined);
-    String_View base_dir = pat_idx < arena_arr_len(args) ? glob_base_dir(args[pat_idx]) : eval_current_source_dir(ctx);
+    String_View base_dir = arena_arr_len(patterns) > 0 ? glob_base_dir(patterns[0]) : eval_current_source_dir(ctx);
     (void)eval_emit_fs_glob(ctx, o, out_var, base_dir, recurse);
 }

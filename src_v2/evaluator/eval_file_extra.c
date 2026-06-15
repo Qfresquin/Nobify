@@ -573,6 +573,9 @@ static bool handle_file_configure(EvalExecContext *ctx, const Node *node, SV_Lis
     bool at_only = false;
     bool escape_quotes = false;
 
+    // TODO(file-parity): Add oracle cases for @ONLY, ESCAPE_QUOTES,
+    // NEWLINE_STYLE values, invalid/missing option values, and exact
+    // diagnostics. Current diff proves empty CONTENT handling only.
     for (size_t i = 1; i < arena_arr_len(args); i++) {
         if (eval_sv_eq_ci_lit(args[i], "OUTPUT") && i + 1 < arena_arr_len(args)) {
             output = args[++i];
@@ -635,8 +638,26 @@ static bool file_copy_file_do(EvalExecContext *ctx, String_View src, String_View
         }
     }
 
-    if (!eval_file_mkdir_p(ctx, svu_dirname(dst))) return false;
     return eval_service_copy_file(ctx, src, dst);
+}
+
+static String_View file_copy_file_failure_result(EvalExecContext *ctx, String_View src, String_View dst) {
+    Eval_Fs_Stat st = {0};
+    if (eval_service_stat(ctx, src, true, &st)) {
+        if (!st.exists) return nob_sv_from_cstr("No such file or directory (input)");
+        if (st.type == EVAL_FS_NODE_DIRECTORY) return nob_sv_from_cstr("cannot copy a directory");
+    }
+
+    if (eval_service_stat(ctx, dst, true, &st) && st.exists && st.type == EVAL_FS_NODE_DIRECTORY) {
+        return nob_sv_from_cstr("cannot copy to a directory");
+    }
+
+    String_View parent = svu_dirname(dst);
+    if (eval_service_stat(ctx, parent, true, &st) && !st.exists) {
+        return nob_sv_from_cstr("No such file or directory (output)");
+    }
+
+    return nob_sv_from_cstr("File copy failed");
 }
 
 static bool handle_file_copy_file(EvalExecContext *ctx, const Node *node, SV_List args) {
@@ -646,6 +667,10 @@ static bool handle_file_copy_file(EvalExecContext *ctx, const Node *node, SV_Lis
         return true;
     }
 
+    // TODO(file-parity): The oracle currently covers missing input and missing
+    // output-parent RESULT text. Still add cases for input directory, output
+    // directory, ONLY_IF_DIFFERENT, INPUT_MAY_BE_RECENT, existing destination
+    // permission errors, and fatal diagnostics when RESULT is absent.
     bool only_if_different = false;
     String_View result_var = nob_sv_from_cstr("");
     for (size_t i = 3; i < arena_arr_len(args); i++) {
@@ -684,7 +709,7 @@ static bool handle_file_copy_file(EvalExecContext *ctx, const Node *node, SV_Lis
 
     bool ok = file_copy_file_do(ctx, src, dst, only_if_different);
     if (result_var.count > 0) {
-        (void)eval_var_set_current(ctx, result_var, ok ? nob_sv_from_cstr("0") : nob_sv_from_cstr("1"));
+        (void)eval_var_set_current(ctx, result_var, ok ? nob_sv_from_cstr("0") : file_copy_file_failure_result(ctx, src, dst));
         return true;
     }
 

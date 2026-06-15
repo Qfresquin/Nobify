@@ -2360,6 +2360,71 @@ TEST(evaluator_file_extra_subcommands_and_download_expected_hash) {
     TEST_PASS();
 }
 
+TEST(evaluator_file_copy_file_result_failures_are_textual) {
+    Eval_Test_Fixture *fixture = eval_test_fixture_create(2 * 1024 * 1024,
+                                                          2 * 1024 * 1024,
+                                                          NULL);
+    ASSERT(fixture != NULL);
+    ASSERT(fixture->ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        fixture->temp_arena,
+        "file(REMOVE missing_copy_input.txt)\n"
+        "file(REMOVE_RECURSE missing_copy_parent)\n"
+        "file(COPY_FILE missing_copy_input.txt copy_from_missing.txt RESULT COPY_INPUT_RES)\n"
+        "file(WRITE copy_parent_src.txt \"x\")\n"
+        "file(COPY_FILE copy_parent_src.txt missing_copy_parent/out.txt RESULT COPY_OUTPUT_RES)\n"
+        "if(EXISTS missing_copy_parent/out.txt)\n"
+        "  set(COPY_OUTPUT_EXISTS 1)\n"
+        "else()\n"
+        "  set(COPY_OUTPUT_EXISTS 0)\n"
+        "endif()\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(fixture->ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(fixture->ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("COPY_INPUT_RES")),
+                     nob_sv_from_cstr("No such file or directory (input)")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("COPY_OUTPUT_RES")),
+                     nob_sv_from_cstr("No such file or directory (output)")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("COPY_OUTPUT_EXISTS")),
+                     nob_sv_from_cstr("0")));
+
+    TEST_PASS();
+}
+
+TEST(evaluator_file_strings_newline_consume_matches_cmake_basic_surface) {
+    Eval_Test_Fixture *fixture = eval_test_fixture_create(2 * 1024 * 1024,
+                                                          2 * 1024 * 1024,
+                                                          NULL);
+    ASSERT(fixture != NULL);
+    ASSERT(fixture->ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        fixture->temp_arena,
+        "file(WRITE strings_newline_consume.txt \"alpha\\nbeta\\n\")\n"
+        "file(STRINGS strings_newline_consume.txt STR_NC NEWLINE_CONSUME)\n"
+        "string(REPLACE \"\\n\" \"|\" STR_NC_VISIBLE \"${STR_NC}\")\n"
+        "list(LENGTH STR_NC STR_NC_LEN)\n"
+        "string(LENGTH \"${STR_NC}\" STR_NC_BYTES)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(fixture->ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(fixture->ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("STR_NC_VISIBLE")),
+                     nob_sv_from_cstr("alpha|beta|")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("STR_NC_LEN")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("STR_NC_BYTES")),
+                     nob_sv_from_cstr("11")));
+
+    TEST_PASS();
+}
+
 TEST(evaluator_file_runtime_dependencies_resolve_known_host_binary) {
     char host_binary[_TINYDIR_PATH_MAX] = {0};
 #if defined(_WIN32)
@@ -3636,6 +3701,8 @@ void run_evaluator_v2_batch5(int *passed, int *failed, int *skipped) {
     test_evaluator_string_regex_parse_error_keeps_diag_surface(passed, failed, skipped);
     test_evaluator_string_find_compare_configure_random_timestamp_and_uuid_cover_remaining_option_modes(passed, failed, skipped);
     test_evaluator_file_extra_subcommands_and_download_expected_hash(passed, failed, skipped);
+    test_evaluator_file_copy_file_result_failures_are_textual(passed, failed, skipped);
+    test_evaluator_file_strings_newline_consume_matches_cmake_basic_surface(passed, failed, skipped);
     test_evaluator_file_dispatcher_routes_glob_rw_and_copy_families(passed, failed, skipped);
     test_evaluator_file_deterministic_fsops_emit_replay_actions(passed, failed, skipped);
     test_evaluator_file_glob_and_strings_cover_curl_style_queries(passed, failed, skipped);

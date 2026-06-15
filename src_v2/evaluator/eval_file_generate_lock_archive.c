@@ -344,6 +344,10 @@ static bool handle_file_generate(EvalExecContext *ctx, const Node *node, SV_List
     job.origin = o;
     job.command_name = node->as.cmd.name;
 
+    // TODO(file-parity): Add CMake 3.28 oracle cases for INPUT vs CONTENT,
+    // CONDITION truthiness, TARGET generator-expression context, duplicate
+    // OUTPUT with equal/different content, NEWLINE_STYLE, permission options,
+    // and the fact that writes happen at end-of-config time.
     for (size_t i = 1; i < arena_arr_len(args); i++) {
         if (eval_sv_eq_ci_lit(args[i], "OUTPUT")) {
             if (i + 1 >= arena_arr_len(args)) {
@@ -412,6 +416,10 @@ static bool handle_file_generate(EvalExecContext *ctx, const Node *node, SV_List
         }
         if (eval_sv_eq_ci_lit(args[i], "FILE_PERMISSIONS")) {
             job.has_file_permissions = true;
+            // TODO(file-parity): Add CMake 3.28 oracle cases for invalid
+            // FILE_PERMISSIONS tokens and empty permission lists. COPY/CHMOD
+            // permission diagnostics are pinned, but GENERATE still has its
+            // own parser and currently keeps warning-shaped local behavior.
             while (i + 1 < arena_arr_len(args) && !file_generate_is_keyword(args[i + 1])) {
                 i++;
                 if (!file_parse_permission_token(&parsed_mode, args[i])) {
@@ -510,6 +518,9 @@ bool eval_file_generate_flush(EvalExecContext *ctx) {
         bool same = false;
         if (!file_path_content_same(ctx, job->output_path, final_content, &same)) continue;
         if (same) {
+            // TODO(file-parity): Confirm whether CMake 3.28 preserves mtime and
+            // permissions when file(GENERATE) output content is unchanged. The
+            // replay marker is emitted either way; host side effects may differ.
             (void)file_emit_replay_write_text(ctx, job->origin, job->output_path, final_content, mode_octal);
             continue;
         }
@@ -542,6 +553,10 @@ static bool handle_file_lock(EvalExecContext *ctx, const Node *node, SV_List arg
         return true;
     }
 
+    // TODO(file-parity): Add oracle coverage for GUARD PROCESS/FILE/FUNCTION
+    // lifetime, timeout/contended locks, duplicate acquisition, release without
+    // acquire, directory locks, and RESULT_VARIABLE text. Current coverage only
+    // proves basic service acquire/release plumbing.
     bool release = false;
     bool directory_lock = false;
     size_t timeout_sec = 0;
@@ -666,6 +681,10 @@ static bool handle_file_archive_create(EvalExecContext *ctx, const Node *node, S
     bool verbose = false;
     SV_List paths = {0};
 
+    // TODO(file-parity): Expand the CMake 3.28 oracle beyond paxr/zip smoke
+    // cases: all documented formats/compressions, COMPRESSION_LEVEL, MTIME,
+    // VERBOSE output, invalid format/compression diagnostics, and backend log
+    // text need executable evidence before this lane can promote.
     for (size_t i = 1; i < arena_arr_len(args); i++) {
         if (eval_sv_eq_ci_lit(args[i], "OUTPUT") && i + 1 < arena_arr_len(args)) {
             out = args[++i];
@@ -778,6 +797,9 @@ static bool handle_file_archive_extract(EvalExecContext *ctx, const Node *node, 
     bool list_only = false;
     bool verbose = false;
     bool touch = false;
+    // TODO(file-parity): Add CMake 3.28 oracle cases for PATTERNS, LIST_ONLY,
+    // TOUCH, VERBOSE, nonexistent members, ZIP/tar path spelling, and exact
+    // error/log behavior. Current coverage proves only basic extraction paths.
     for (size_t i = 1; i < arena_arr_len(args); i++) {
         if (eval_sv_eq_ci_lit(args[i], "INPUT") && i + 1 < arena_arr_len(args)) in = args[++i];
         else if (eval_sv_eq_ci_lit(args[i], "DESTINATION") && i + 1 < arena_arr_len(args)) dst = args[++i];

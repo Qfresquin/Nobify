@@ -71,7 +71,7 @@ set(CACHED_X value CACHE STRING "doc")
 set_property(CACHE CACHED_X PROPERTY FOO bar)
 #@@ENDCASE
 
-#@@DIVERGENCE_KEY file.direct_host_filesystem
+#@@DIVERGENCE_KEY file.create_link_result_surface
 #@@CASE file_create_link_result_surface_diverges
 #@@MODE SCRIPT
 #@@OUTCOME SUCCESS
