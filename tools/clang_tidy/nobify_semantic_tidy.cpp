@@ -53,6 +53,23 @@ static bool isEvaluatorOwnerFile(llvm::StringRef Path) {
     return Path.ends_with("src_v2/evaluator/evaluator.c");
 }
 
+static bool isEvaluatorFileHandlerPath(llvm::StringRef Path) {
+    return contains(Path, "src_v2/evaluator/eval_file") || isFixturePath(Path);
+}
+
+static bool isBuildModelConstructionPath(llvm::StringRef Path) {
+    return contains(Path, "src_v2/build_model/build_model_builder") ||
+           contains(Path, "src_v2/build_model/build_model_freeze.c");
+}
+
+static bool isBuildModelQueryPath(llvm::StringRef Path) {
+    return contains(Path, "src_v2/build_model/build_model_query");
+}
+
+static bool isBuildModelValidatePath(llvm::StringRef Path) {
+    return contains(Path, "src_v2/build_model/build_model_validate");
+}
+
 static bool typeNamesEvalResult(QualType Type) {
     if (Type.isNull()) return false;
     std::string Name = Type.getAsString();
@@ -69,6 +86,69 @@ static bool typeNamesEventIr(QualType Type) {
         return true;
     }
     return Ref.contains(" Event_");
+}
+
+static bool typeNamesCodegen(QualType Type) {
+    if (Type.isNull()) return false;
+    std::string Name = Type.getAsString();
+    llvm::StringRef Ref(Name);
+    return Ref.starts_with("Nob_Codegen_") || Ref.starts_with("struct Nob_Codegen_") ||
+           Ref.starts_with("CG_") || Ref.starts_with("struct CG_") ||
+           Ref.contains(" Nob_Codegen_") || Ref.contains(" CG_");
+}
+
+static bool typeNamesFrozenBuildModel(QualType Type) {
+    if (Type.isNull()) return false;
+    std::string Name = Type.getAsString();
+    llvm::StringRef Ref(Name);
+    if (Ref.contains("Build_Model_Draft")) return false;
+    return Ref == "Build_Model" || Ref == "struct Build_Model" ||
+           Ref.contains(" Build_Model");
+}
+
+static bool typeNamesBuildModelLifecycle(QualType Type) {
+    if (Type.isNull()) return false;
+    std::string Name = Type.getAsString();
+    llvm::StringRef Ref(Name);
+    return Ref == "BM_Builder" || Ref == "struct BM_Builder" ||
+           Ref == "Build_Model_Builder" || Ref == "struct Build_Model_Builder" ||
+           Ref == "Build_Model_Draft" || Ref == "struct Build_Model_Draft" ||
+           Ref.contains(" BM_Builder") || Ref.contains(" Build_Model_Builder") ||
+           Ref.contains(" Build_Model_Draft");
+}
+
+static bool typeNamesBuildModelBuilderState(QualType Type) {
+    if (Type.isNull()) return false;
+    std::string Name = Type.getAsString();
+    llvm::StringRef Ref(Name);
+    return Ref == "BM_Builder" || Ref == "struct BM_Builder" ||
+           Ref == "Build_Model_Builder" || Ref == "struct Build_Model_Builder" ||
+           Ref.contains(" BM_Builder") || Ref.contains(" Build_Model_Builder");
+}
+
+static bool typeNamesBuildModelFrozenRecord(QualType Type) {
+    if (Type.isNull()) return false;
+    std::string Name = Type.getAsString();
+    llvm::StringRef Ref(Name);
+    return typeNamesFrozenBuildModel(Type) || Ref.contains("_Record");
+}
+
+static bool typeNamesEvaluatorState(QualType Type) {
+    if (Type.isNull()) return false;
+    std::string Name = Type.getAsString();
+    llvm::StringRef Ref(Name);
+    return Ref == "EvalExecContext" || Ref == "struct EvalExecContext" ||
+           Ref == "Eval_Result" || Ref == "struct Eval_Result" ||
+           Ref.contains(" EvalExecContext") || Ref.contains(" Eval_Result");
+}
+
+static bool typeNamesParserState(QualType Type) {
+    if (Type.isNull()) return false;
+    std::string Name = Type.getAsString();
+    llvm::StringRef Ref(Name);
+    return Ref.starts_with("Parser") || Ref.starts_with("struct Parser") ||
+           Ref.starts_with("Ast_") || Ref.starts_with("struct Ast_") ||
+           Ref.contains(" Parser") || Ref.contains(" Ast_");
 }
 
 static bool functionReturnsEvalResult(const FunctionDecl *FD) {
@@ -700,6 +780,785 @@ public:
     }
 };
 
+class BuildModelCodegenDependencyCheck : public ClangTidyCheck {
+public:
+    BuildModelCodegenDependencyCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(varDecl().bind("var"), this);
+        Finder->addMatcher(parmVarDecl().bind("param"), this);
+        Finder->addMatcher(functionDecl(isDefinition()).bind("function"), this);
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName("^nob_codegen_")))).bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const SourceManager &SM = *Result.SourceManager;
+
+        if (const auto *VD = Result.Nodes.getNodeAs<VarDecl>("var")) {
+            llvm::StringRef Path = fileName(SM, VD->getLocation());
+            if ((!isBuildModelOwnerPath(Path) && !isFixturePath(Path)) || isa<ParmVarDecl>(VD)) return;
+            if (typeNamesCodegen(VD->getType())) {
+                diag(VD->getLocation(),
+                     "build_model must not store codegen types; expose frozen facts through bm_query_*");
+            }
+            return;
+        }
+
+        if (const auto *PD = Result.Nodes.getNodeAs<ParmVarDecl>("param")) {
+            llvm::StringRef Path = fileName(SM, PD->getLocation());
+            if (!isBuildModelOwnerPath(Path) && !isFixturePath(Path)) return;
+            if (typeNamesCodegen(PD->getType())) {
+                diag(PD->getLocation(),
+                     "build_model APIs must not accept codegen types; keep codegen downstream of bm_query_*");
+            }
+            return;
+        }
+
+        if (const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function")) {
+            llvm::StringRef Path = fileName(SM, FD->getLocation());
+            if (!isBuildModelOwnerPath(Path) && !isFixturePath(Path)) return;
+            if (typeNamesCodegen(FD->getReturnType())) {
+                diag(FD->getLocation(),
+                     "build_model APIs must not return codegen types; keep backend policy out of the frozen model");
+            }
+            return;
+        }
+
+        if (const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call")) {
+            llvm::StringRef Path = fileName(SM, Call->getExprLoc());
+            if (!isBuildModelOwnerPath(Path) && !isFixturePath(Path)) return;
+            diag(Call->getExprLoc(),
+                 "build_model must not call nob_codegen_*; codegen consumes build_model, not the reverse");
+        }
+    }
+};
+
+class EvaluatorFileHostEnumerationCheck : public ClangTidyCheck {
+public:
+    EvaluatorFileHostEnumerationCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
+                               "^(nob_read_entire_dir|opendir|readdir|closedir|tinydir_open|tinydir_readfile|tinydir_next|tinydir_close)$"))))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
+        if (!Call) return;
+        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
+        if (!isEvaluatorFileHandlerPath(Path)) return;
+        diag(Call->getExprLoc(),
+             "file() evaluator handlers must use centralized filesystem enumeration helpers instead of direct host directory walking");
+    }
+};
+
+class BuildModelConstructionQueryLayerCheck : public ClangTidyCheck {
+public:
+    BuildModelConstructionQueryLayerCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName("^bm_query_"))),
+                                    hasAncestor(functionDecl().bind("function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+        if (!Call) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
+        bool Applies = isBuildModelConstructionPath(Path);
+        if (!Applies && isFixturePath(Path) && FD) {
+            llvm::StringRef FunctionName = FD->getName();
+            Applies = FunctionName.contains("builder") || FunctionName.contains("freeze");
+        }
+        if (!Applies) return;
+
+        diag(Call->getExprLoc(),
+             "build_model construction and freeze code must not call bm_query_*; use owned records before exposing the query layer");
+    }
+};
+
+class EvaluatorBuildModelDependencyCheck : public ClangTidyCheck {
+public:
+    EvaluatorBuildModelDependencyCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(varDecl(hasAncestor(functionDecl().bind("function"))).bind("var"),
+                           this);
+        Finder->addMatcher(parmVarDecl(hasAncestor(functionDecl().bind("function"))).bind("param"),
+                           this);
+        Finder->addMatcher(functionDecl(isDefinition()).bind("return-function"), this);
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName("^bm_query_"))),
+                                    hasAncestor(functionDecl().bind("call-function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const SourceManager &SM = *Result.SourceManager;
+
+        if (const auto *VD = Result.Nodes.getNodeAs<VarDecl>("var")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, VD->getLocation());
+            if (!applies(Path, FD) || isa<ParmVarDecl>(VD)) return;
+            if (typeNamesFrozenBuildModel(VD->getType())) {
+                diag(VD->getLocation(),
+                     "evaluator must emit Event IR instead of consuming the frozen Build_Model");
+            }
+            return;
+        }
+
+        if (const auto *PD = Result.Nodes.getNodeAs<ParmVarDecl>("param")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, PD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesFrozenBuildModel(PD->getType())) {
+                diag(PD->getLocation(),
+                     "evaluator APIs must not accept Build_Model; keep build_model downstream of Event IR");
+            }
+            return;
+        }
+
+        if (const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("return-function")) {
+            llvm::StringRef Path = fileName(SM, FD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesFrozenBuildModel(FD->getReturnType())) {
+                diag(FD->getLocation(),
+                     "evaluator APIs must not return Build_Model; publish typed Event IR instead");
+            }
+            return;
+        }
+
+        if (const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("call-function");
+            llvm::StringRef Path = fileName(SM, Call->getExprLoc());
+            if (!applies(Path, FD)) return;
+            diag(Call->getExprLoc(),
+                 "evaluator must not call bm_query_*; query the frozen model only after build_model freeze");
+        }
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (contains(Path, "src_v2/evaluator/")) return true;
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("evaluator_build_model");
+    }
+};
+
+class CodegenEvaluatorDependencyCheck : public ClangTidyCheck {
+public:
+    CodegenEvaluatorDependencyCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(varDecl(hasAncestor(functionDecl().bind("function"))).bind("var"),
+                           this);
+        Finder->addMatcher(parmVarDecl(hasAncestor(functionDecl().bind("function"))).bind("param"),
+                           this);
+        Finder->addMatcher(functionDecl(isDefinition()).bind("return-function"), this);
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName("^eval_"))),
+                                    hasAncestor(functionDecl().bind("call-function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const SourceManager &SM = *Result.SourceManager;
+
+        if (const auto *VD = Result.Nodes.getNodeAs<VarDecl>("var")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, VD->getLocation());
+            if (!applies(Path, FD) || isa<ParmVarDecl>(VD)) return;
+            if (typeNamesEvaluatorState(VD->getType())) {
+                diag(VD->getLocation(),
+                     "codegen must not store evaluator execution state; consume frozen build-model queries instead");
+            }
+            return;
+        }
+
+        if (const auto *PD = Result.Nodes.getNodeAs<ParmVarDecl>("param")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, PD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesEvaluatorState(PD->getType())) {
+                diag(PD->getLocation(),
+                     "codegen APIs must not accept evaluator state; route semantics through Event IR and build_model");
+            }
+            return;
+        }
+
+        if (const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("return-function")) {
+            llvm::StringRef Path = fileName(SM, FD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesEvaluatorState(FD->getReturnType())) {
+                diag(FD->getLocation(),
+                     "codegen APIs must not return evaluator state; backend output comes from build-model facts");
+            }
+            return;
+        }
+
+        if (const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("call-function");
+            llvm::StringRef Path = fileName(SM, Call->getExprLoc());
+            if (!applies(Path, FD)) return;
+            diag(Call->getExprLoc(),
+                 "codegen must not call eval_* APIs; do not re-enter evaluator semantics during backend generation");
+        }
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (contains(Path, "src_v2/codegen/")) return true;
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("codegen_evaluator");
+    }
+};
+
+class EvaluatorBuildModelLifecycleCheck : public ClangTidyCheck {
+public:
+    EvaluatorBuildModelLifecycleCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(varDecl(hasAncestor(functionDecl().bind("function"))).bind("var"),
+                           this);
+        Finder->addMatcher(parmVarDecl(hasAncestor(functionDecl().bind("function"))).bind("param"),
+                           this);
+        Finder->addMatcher(functionDecl(isDefinition()).bind("return-function"), this);
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
+                                    "^(bm_builder_|builder_|bm_freeze|bm_validate)"))),
+                                    hasAncestor(functionDecl().bind("call-function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const SourceManager &SM = *Result.SourceManager;
+
+        if (const auto *VD = Result.Nodes.getNodeAs<VarDecl>("var")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, VD->getLocation());
+            if (!applies(Path, FD) || isa<ParmVarDecl>(VD)) return;
+            if (typeNamesBuildModelLifecycle(VD->getType())) {
+                diag(VD->getLocation(),
+                     "evaluator must not store build-model builder or draft state; emit Event IR instead");
+            }
+            return;
+        }
+
+        if (const auto *PD = Result.Nodes.getNodeAs<ParmVarDecl>("param")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, PD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesBuildModelLifecycle(PD->getType())) {
+                diag(PD->getLocation(),
+                     "evaluator APIs must not accept build-model builder or draft state; publish Event IR");
+            }
+            return;
+        }
+
+        if (const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("return-function")) {
+            llvm::StringRef Path = fileName(SM, FD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesBuildModelLifecycle(FD->getReturnType())) {
+                diag(FD->getLocation(),
+                     "evaluator APIs must not return build-model builder or draft state");
+            }
+            return;
+        }
+
+        if (const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("call-function");
+            llvm::StringRef Path = fileName(SM, Call->getExprLoc());
+            if (!applies(Path, FD)) return;
+            diag(Call->getExprLoc(),
+                 "evaluator must not drive build-model construction, validation, or freeze");
+        }
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (contains(Path, "src_v2/evaluator/")) return true;
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("evaluator_build_model_lifecycle");
+    }
+};
+
+class CodegenBuildModelLifecycleCheck : public ClangTidyCheck {
+public:
+    CodegenBuildModelLifecycleCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(varDecl(hasAncestor(functionDecl().bind("function"))).bind("var"),
+                           this);
+        Finder->addMatcher(parmVarDecl(hasAncestor(functionDecl().bind("function"))).bind("param"),
+                           this);
+        Finder->addMatcher(functionDecl(isDefinition()).bind("return-function"), this);
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
+                                    "^(bm_builder_|builder_|bm_freeze|bm_validate)"))),
+                                    hasAncestor(functionDecl().bind("call-function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const SourceManager &SM = *Result.SourceManager;
+
+        if (const auto *VD = Result.Nodes.getNodeAs<VarDecl>("var")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, VD->getLocation());
+            if (!applies(Path, FD) || isa<ParmVarDecl>(VD)) return;
+            if (typeNamesBuildModelLifecycle(VD->getType())) {
+                diag(VD->getLocation(),
+                     "codegen must not store build-model builder or draft state; consume frozen query APIs");
+            }
+            return;
+        }
+
+        if (const auto *PD = Result.Nodes.getNodeAs<ParmVarDecl>("param")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, PD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesBuildModelLifecycle(PD->getType())) {
+                diag(PD->getLocation(),
+                     "codegen APIs must not accept build-model builder or draft state; use frozen Build_Model queries");
+            }
+            return;
+        }
+
+        if (const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("return-function")) {
+            llvm::StringRef Path = fileName(SM, FD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesBuildModelLifecycle(FD->getReturnType())) {
+                diag(FD->getLocation(),
+                     "codegen APIs must not return build-model builder or draft state");
+            }
+            return;
+        }
+
+        if (const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("call-function");
+            llvm::StringRef Path = fileName(SM, Call->getExprLoc());
+            if (!applies(Path, FD)) return;
+            diag(Call->getExprLoc(),
+                 "codegen must not drive build-model construction, freeze, or validation");
+        }
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (contains(Path, "src_v2/codegen/")) return true;
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("codegen_build_model_lifecycle");
+    }
+};
+
+class BuildModelQueryReadonlyCheck : public ClangTidyCheck {
+public:
+    BuildModelQueryReadonlyCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        auto FrozenMember = memberExpr().bind("member");
+        Finder->addMatcher(binaryOperator(isAssignmentOperator(),
+                                          hasLHS(ignoringParenImpCasts(FrozenMember))),
+                           this);
+        Finder->addMatcher(unaryOperator(anyOf(hasOperatorName("++"), hasOperatorName("--")),
+                                         hasUnaryOperand(ignoringParenImpCasts(FrozenMember))),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Member = Result.Nodes.getNodeAs<MemberExpr>("member");
+        if (!Member) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Member->getExprLoc());
+        if (!applies(Path, Result.Context, Member)) return;
+
+        const FieldDecl *Field = dyn_cast<FieldDecl>(Member->getMemberDecl());
+        const RecordDecl *Record = Field ? Field->getParent() : nullptr;
+        if (!Record) return;
+        llvm::StringRef Name = Record->getName();
+        if (Name == "Build_Model" || Name.ends_with("_Record")) {
+            diag(Member->getExprLoc(),
+                 "build_model query code must not mutate frozen model records");
+        }
+    }
+
+private:
+    bool applies(llvm::StringRef Path, ASTContext *Context, const MemberExpr *Member) const {
+        if (isBuildModelQueryPath(Path)) return true;
+        if (!isFixturePath(Path) || !Context || !Member) return false;
+
+        DynTypedNodeList Parents = Context->getParents(*Member);
+        while (!Parents.empty()) {
+            if (const auto *FD = Parents[0].get<FunctionDecl>()) {
+                return FD->getName().contains("query_mutates");
+            }
+            if (const auto *StmtParent = Parents[0].get<Stmt>()) {
+                Parents = Context->getParents(*StmtParent);
+                continue;
+            }
+            if (const auto *DeclParent = Parents[0].get<Decl>()) {
+                Parents = Context->getParents(*DeclParent);
+                continue;
+            }
+            break;
+        }
+        return false;
+    }
+};
+
+class BuildModelQueryFrozenBoundaryCheck : public ClangTidyCheck {
+public:
+    BuildModelQueryFrozenBoundaryCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(varDecl(hasAncestor(functionDecl().bind("function"))).bind("var"),
+                           this);
+        Finder->addMatcher(parmVarDecl(hasAncestor(functionDecl().bind("function"))).bind("param"),
+                           this);
+        Finder->addMatcher(functionDecl(isDefinition()).bind("return-function"), this);
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
+                                    "^(bm_builder_|builder_|bm_freeze|bm_validate)"))),
+                                    hasAncestor(functionDecl().bind("call-function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const SourceManager &SM = *Result.SourceManager;
+
+        if (const auto *VD = Result.Nodes.getNodeAs<VarDecl>("var")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, VD->getLocation());
+            if (!applies(Path, FD) || isa<ParmVarDecl>(VD)) return;
+            if (typeNamesBuildModelLifecycle(VD->getType())) {
+                diag(VD->getLocation(),
+                     "build_model query code must not store builder or draft state; query frozen Build_Model records");
+            }
+            return;
+        }
+
+        if (const auto *PD = Result.Nodes.getNodeAs<ParmVarDecl>("param")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, PD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesBuildModelLifecycle(PD->getType())) {
+                diag(PD->getLocation(),
+                     "build_model query APIs must not accept builder or draft state; accept frozen Build_Model");
+            }
+            return;
+        }
+
+        if (const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("return-function")) {
+            llvm::StringRef Path = fileName(SM, FD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesBuildModelLifecycle(FD->getReturnType())) {
+                diag(FD->getLocation(),
+                     "build_model query APIs must not return builder or draft state");
+            }
+            return;
+        }
+
+        if (const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("call-function");
+            llvm::StringRef Path = fileName(SM, Call->getExprLoc());
+            if (!applies(Path, FD)) return;
+            diag(Call->getExprLoc(),
+                 "build_model query code must not drive builder, validation, or freeze lifecycle");
+        }
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (isBuildModelQueryPath(Path)) return true;
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("query_frozen_boundary");
+    }
+};
+
+class BuildModelValidateReadonlyCheck : public ClangTidyCheck {
+public:
+    BuildModelValidateReadonlyCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        auto DraftMember = memberExpr().bind("member");
+        Finder->addMatcher(binaryOperator(isAssignmentOperator(),
+                                          hasLHS(ignoringParenImpCasts(DraftMember))),
+                           this);
+        Finder->addMatcher(unaryOperator(anyOf(hasOperatorName("++"), hasOperatorName("--")),
+                                         hasUnaryOperand(ignoringParenImpCasts(DraftMember))),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Member = Result.Nodes.getNodeAs<MemberExpr>("member");
+        if (!Member) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Member->getExprLoc());
+        if (!applies(Path, Result.Context, Member)) return;
+
+        const FieldDecl *Field = dyn_cast<FieldDecl>(Member->getMemberDecl());
+        const RecordDecl *Record = Field ? Field->getParent() : nullptr;
+        if (!Record) return;
+        llvm::StringRef Name = Record->getName();
+        if (Name == "Build_Model_Draft" || Name == "Build_Model" || Name.ends_with("_Record")) {
+            diag(Member->getExprLoc(),
+                 "build_model validation must report invalid state without mutating draft or model records");
+        }
+    }
+
+private:
+    bool applies(llvm::StringRef Path, ASTContext *Context, const MemberExpr *Member) const {
+        if (isBuildModelValidatePath(Path)) return true;
+        if (!isFixturePath(Path) || !Context || !Member) return false;
+
+        DynTypedNodeList Parents = Context->getParents(*Member);
+        while (!Parents.empty()) {
+            if (const auto *FD = Parents[0].get<FunctionDecl>()) {
+                return FD->getName().contains("validate_mutates");
+            }
+            if (const auto *StmtParent = Parents[0].get<Stmt>()) {
+                Parents = Context->getParents(*StmtParent);
+                continue;
+            }
+            if (const auto *DeclParent = Parents[0].get<Decl>()) {
+                Parents = Context->getParents(*DeclParent);
+                continue;
+            }
+            break;
+        }
+        return false;
+    }
+};
+
+class BuildModelValidateDraftBoundaryCheck : public ClangTidyCheck {
+public:
+    BuildModelValidateDraftBoundaryCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(varDecl(hasAncestor(functionDecl().bind("function"))).bind("var"),
+                           this);
+        Finder->addMatcher(parmVarDecl(hasAncestor(functionDecl().bind("function"))).bind("param"),
+                           this);
+        Finder->addMatcher(functionDecl(isDefinition()).bind("return-function"), this);
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
+                                    "^(bm_query_|bm_builder_|builder_|bm_freeze)"))),
+                                    hasAncestor(functionDecl().bind("call-function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const SourceManager &SM = *Result.SourceManager;
+
+        if (const auto *VD = Result.Nodes.getNodeAs<VarDecl>("var")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, VD->getLocation());
+            if (!applies(Path, FD) || isa<ParmVarDecl>(VD)) return;
+            if (typeNamesFrozenBuildModel(VD->getType()) ||
+                typeNamesBuildModelBuilderState(VD->getType())) {
+                diag(VD->getLocation(),
+                     "build_model draft validation must not store frozen model or builder state");
+            }
+            return;
+        }
+
+        if (const auto *PD = Result.Nodes.getNodeAs<ParmVarDecl>("param")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, PD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesFrozenBuildModel(PD->getType()) ||
+                typeNamesBuildModelBuilderState(PD->getType())) {
+                diag(PD->getLocation(),
+                     "build_model draft validation APIs must not accept frozen model or builder state");
+            }
+            return;
+        }
+
+        if (const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("return-function")) {
+            llvm::StringRef Path = fileName(SM, FD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesFrozenBuildModel(FD->getReturnType()) ||
+                typeNamesBuildModelBuilderState(FD->getReturnType())) {
+                diag(FD->getLocation(),
+                     "build_model draft validation APIs must not return frozen model or builder state");
+            }
+            return;
+        }
+
+        if (const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("call-function");
+            llvm::StringRef Path = fileName(SM, Call->getExprLoc());
+            if (!applies(Path, FD)) return;
+            diag(Call->getExprLoc(),
+                 "build_model draft validation must not call query, builder, or freeze APIs");
+        }
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (Path.ends_with("src_v2/build_model/build_model_validate.c")) return true;
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("validate_draft_boundary");
+    }
+};
+
+class BuildModelFreezeBuilderBoundaryCheck : public ClangTidyCheck {
+public:
+    BuildModelFreezeBuilderBoundaryCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(varDecl(hasAncestor(functionDecl().bind("function"))).bind("var"),
+                           this);
+        Finder->addMatcher(parmVarDecl(hasAncestor(functionDecl().bind("function"))).bind("param"),
+                           this);
+        Finder->addMatcher(functionDecl(isDefinition()).bind("return-function"), this);
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName("^(bm_builder_|builder_)"))),
+                                    hasAncestor(functionDecl().bind("call-function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const SourceManager &SM = *Result.SourceManager;
+
+        if (const auto *VD = Result.Nodes.getNodeAs<VarDecl>("var")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, VD->getLocation());
+            if (!applies(Path, FD) || isa<ParmVarDecl>(VD)) return;
+            if (typeNamesBuildModelBuilderState(VD->getType())) {
+                diag(VD->getLocation(),
+                     "build_model freeze must not store builder state; freeze consumes the finalized draft");
+            }
+            return;
+        }
+
+        if (const auto *PD = Result.Nodes.getNodeAs<ParmVarDecl>("param")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, PD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesBuildModelBuilderState(PD->getType())) {
+                diag(PD->getLocation(),
+                     "build_model freeze APIs must not accept builder state; accept Build_Model_Draft instead");
+            }
+            return;
+        }
+
+        if (const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("return-function")) {
+            llvm::StringRef Path = fileName(SM, FD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesBuildModelBuilderState(FD->getReturnType())) {
+                diag(FD->getLocation(),
+                     "build_model freeze APIs must not return builder state");
+            }
+            return;
+        }
+
+        if (const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("call-function");
+            llvm::StringRef Path = fileName(SM, Call->getExprLoc());
+            if (!applies(Path, FD)) return;
+            diag(Call->getExprLoc(),
+                 "build_model freeze must not call builder APIs after the draft is finalized");
+        }
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (Path.ends_with("src_v2/build_model/build_model_freeze.c")) return true;
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("freeze_builder");
+    }
+};
+
+class BuildModelBuilderUpstreamBoundaryCheck : public ClangTidyCheck {
+public:
+    BuildModelBuilderUpstreamBoundaryCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(varDecl(hasAncestor(functionDecl().bind("function"))).bind("var"),
+                           this);
+        Finder->addMatcher(parmVarDecl(hasAncestor(functionDecl().bind("function"))).bind("param"),
+                           this);
+        Finder->addMatcher(functionDecl(isDefinition()).bind("return-function"), this);
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName("^(eval_|parse_)"))),
+                                    hasAncestor(functionDecl().bind("call-function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const SourceManager &SM = *Result.SourceManager;
+
+        if (const auto *VD = Result.Nodes.getNodeAs<VarDecl>("var")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, VD->getLocation());
+            if (!applies(Path, FD) || isa<ParmVarDecl>(VD)) return;
+            if (typeNamesEvaluatorState(VD->getType()) || typeNamesParserState(VD->getType())) {
+                diag(VD->getLocation(),
+                     "build_model builder must consume Event IR instead of evaluator or parser state");
+            }
+            return;
+        }
+
+        if (const auto *PD = Result.Nodes.getNodeAs<ParmVarDecl>("param")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+            llvm::StringRef Path = fileName(SM, PD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesEvaluatorState(PD->getType()) || typeNamesParserState(PD->getType())) {
+                diag(PD->getLocation(),
+                     "build_model builder APIs must not accept evaluator or parser state; use Event IR");
+            }
+            return;
+        }
+
+        if (const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("return-function")) {
+            llvm::StringRef Path = fileName(SM, FD->getLocation());
+            if (!applies(Path, FD)) return;
+            if (typeNamesEvaluatorState(FD->getReturnType()) ||
+                typeNamesParserState(FD->getReturnType())) {
+                diag(FD->getLocation(),
+                     "build_model builder APIs must not return evaluator or parser state");
+            }
+            return;
+        }
+
+        if (const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call")) {
+            const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("call-function");
+            llvm::StringRef Path = fileName(SM, Call->getExprLoc());
+            if (!applies(Path, FD)) return;
+            diag(Call->getExprLoc(),
+                 "build_model builder must not call evaluator or parser APIs; consume Event IR");
+        }
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (contains(Path, "src_v2/build_model/build_model_builder")) return true;
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("builder_upstream");
+    }
+};
+
 class ArenaLifetimeVisitor : public RecursiveASTVisitor<ArenaLifetimeVisitor> {
 public:
     ArenaLifetimeVisitor(ASTContext &Context, ClangTidyCheck &Check)
@@ -807,6 +1666,32 @@ public:
             "nobify-build-model-query-boundary");
         Factories.registerCheck<CodegenEventIrBoundaryCheck>(
             "nobify-codegen-event-ir-boundary");
+        Factories.registerCheck<BuildModelCodegenDependencyCheck>(
+            "nobify-build-model-codegen-dependency");
+        Factories.registerCheck<EvaluatorFileHostEnumerationCheck>(
+            "nobify-evaluator-file-host-enumeration");
+        Factories.registerCheck<BuildModelConstructionQueryLayerCheck>(
+            "nobify-build-model-construction-query-layer");
+        Factories.registerCheck<EvaluatorBuildModelDependencyCheck>(
+            "nobify-evaluator-build-model-dependency");
+        Factories.registerCheck<CodegenEvaluatorDependencyCheck>(
+            "nobify-codegen-evaluator-dependency");
+        Factories.registerCheck<EvaluatorBuildModelLifecycleCheck>(
+            "nobify-evaluator-build-model-lifecycle");
+        Factories.registerCheck<CodegenBuildModelLifecycleCheck>(
+            "nobify-codegen-build-model-lifecycle");
+        Factories.registerCheck<BuildModelQueryReadonlyCheck>(
+            "nobify-build-model-query-readonly");
+        Factories.registerCheck<BuildModelQueryFrozenBoundaryCheck>(
+            "nobify-build-model-query-frozen-boundary");
+        Factories.registerCheck<BuildModelValidateReadonlyCheck>(
+            "nobify-build-model-validate-readonly");
+        Factories.registerCheck<BuildModelValidateDraftBoundaryCheck>(
+            "nobify-build-model-validate-draft-boundary");
+        Factories.registerCheck<BuildModelFreezeBuilderBoundaryCheck>(
+            "nobify-build-model-freeze-builder-boundary");
+        Factories.registerCheck<BuildModelBuilderUpstreamBoundaryCheck>(
+            "nobify-build-model-builder-upstream-boundary");
         Factories.registerCheck<ArenaLifetimeCheck>("nobify-arena-lifetime");
     }
 };

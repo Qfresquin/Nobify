@@ -766,7 +766,12 @@ static bool bm_materialize_imported_target_metadata(Build_Model *model, Arena *a
 
     for (size_t i = 0; i < arena_arr_len(model->targets); ++i) {
         BM_Target_Record *target = &model->targets[i];
-        String_View source_dir = bm_query_directory_source_dir(model, target->owner_directory_id);
+        if (target->owner_directory_id == BM_DIRECTORY_ID_INVALID ||
+            (size_t)target->owner_directory_id >= arena_arr_len(model->directories)) {
+            return false;
+        }
+        const BM_Directory_Record *owner_directory = &model->directories[target->owner_directory_id];
+        String_View source_dir = owner_directory->source_dir;
         if (!target->imported) continue;
 
         for (size_t prop_index = 0; prop_index < arena_arr_len(target->raw_properties); ++prop_index) {

@@ -19,11 +19,26 @@ typedef struct Build_Model {
     int target_count;
 } Build_Model;
 
+typedef struct Build_Model_Draft {
+    int target_count;
+} Build_Model_Draft;
+
+typedef struct BM_Builder BM_Builder;
+
 typedef enum {
     EVENT_TARGET_DECLARE = 1,
 } Event_Kind;
 
 typedef struct Event_Stream Event_Stream;
+
+typedef struct Nob_Codegen_Options Nob_Codegen_Options;
+typedef struct Nob_File_Paths Nob_File_Paths;
+typedef unsigned int BM_Target_Id;
+static int nob_codegen_render(const Build_Model *model, const Nob_Codegen_Options *options);
+static int nob_read_entire_dir(const char *path, Nob_File_Paths *out);
+static const char *bm_query_target_name(const Build_Model *model, BM_Target_Id id);
+static int bm_builder_current_directory_id(BM_Builder *builder);
+static Build_Model_Draft *bm_builder_finalize(BM_Builder *builder);
 
 static int eval_should_stop(EvalExecContext *ctx);
 static Eval_Result eval_result_fatal(void);
@@ -94,4 +109,61 @@ static void helper_bad_lifetime(EvalExecContext *ctx) {
 static int helper_bad_codegen_event_ir_boundary(const Event_Stream *stream, Event_Kind kind) {
     (void)stream;
     return kind == EVENT_TARGET_DECLARE;
+}
+
+static int helper_bad_build_model_codegen_dependency(const Build_Model *model,
+                                                     const Nob_Codegen_Options *options) {
+    return nob_codegen_render(model, options);
+}
+
+static int helper_bad_file_handler_direct_enumeration(const char *path, Nob_File_Paths *out) {
+    return nob_read_entire_dir(path, out);
+}
+
+static const char *helper_bad_builder_query_shortcut(const Build_Model *model, BM_Target_Id id) {
+    return bm_query_target_name(model, id);
+}
+
+static const char *helper_bad_evaluator_build_model_dependency(const Build_Model *model,
+                                                               BM_Target_Id id) {
+    return bm_query_target_name(model, id);
+}
+
+static int helper_bad_codegen_evaluator_dependency(EvalExecContext *ctx) {
+    return eval_should_stop(ctx);
+}
+
+static Build_Model_Draft *helper_bad_codegen_build_model_lifecycle(BM_Builder *builder) {
+    return bm_builder_finalize(builder);
+}
+
+static Build_Model_Draft *helper_bad_evaluator_build_model_lifecycle(BM_Builder *builder) {
+    return bm_builder_finalize(builder);
+}
+
+static int helper_bad_query_mutates_frozen_model(Build_Model *model) {
+    model->target_count = 1;
+    return model->target_count;
+}
+
+static int helper_bad_query_frozen_boundary_uses_draft(Build_Model_Draft *draft) {
+    return draft->target_count;
+}
+
+static int helper_bad_validate_mutates_draft(Build_Model_Draft *draft) {
+    draft->target_count = 0;
+    return draft->target_count;
+}
+
+static const char *helper_bad_validate_draft_boundary_query(const Build_Model *model,
+                                                            BM_Target_Id id) {
+    return bm_query_target_name(model, id);
+}
+
+static int helper_bad_freeze_builder_state(BM_Builder *builder) {
+    return bm_builder_current_directory_id(builder);
+}
+
+static int helper_bad_builder_upstream_evaluator_shortcut(EvalExecContext *ctx) {
+    return eval_should_stop(ctx);
 }
