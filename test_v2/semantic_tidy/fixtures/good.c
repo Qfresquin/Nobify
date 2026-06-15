@@ -20,6 +20,10 @@ typedef struct Build_Model_Draft Build_Model_Draft;
 typedef struct BM_Builder BM_Builder;
 typedef unsigned int BM_Target_Id;
 typedef struct Nob_File_Paths Nob_File_Paths;
+typedef struct {
+    int exists;
+    int type;
+} Eval_Fs_Stat;
 
 static int eval_should_stop(EvalExecContext *ctx);
 static Eval_Result eval_result_fatal(void);
@@ -30,6 +34,10 @@ static int eval_service_write_file(EvalExecContext *ctx,
                                    const char *path,
                                    const char *data,
                                    int append);
+static int eval_service_read_file(EvalExecContext *ctx, const char *path, const char **out);
+static int eval_service_stat(EvalExecContext *ctx, const char *path, int follow_symlinks, Eval_Fs_Stat *out);
+static int eval_service_mkdir(EvalExecContext *ctx, const char *path);
+static int eval_service_remove(EvalExecContext *ctx, const char *path, int recursive);
 static char *nob_temp_sprintf(const char *fmt, ...);
 static char *copy_to_persistent(const char *value);
 static const char *bm_query_target_name(const Build_Model *model, BM_Target_Id id);
@@ -86,6 +94,30 @@ static int helper_evaluator_build_model_lifecycle_good(EvalExecContext *ctx) {
 static int helper_evaluator_host_service_boundary_good(EvalExecContext *ctx,
                                                        const char *path) {
     return eval_service_write_file(ctx, path, "", 0);
+}
+
+static int helper_evaluator_host_service_boundary_read_good(EvalExecContext *ctx,
+                                                            const char *path,
+                                                            const char **out) {
+    return eval_service_read_file(ctx, path, out);
+}
+
+static int helper_evaluator_host_service_boundary_cache_load_good(EvalExecContext *ctx,
+                                                                  const char *path,
+                                                                  const char **out) {
+    return eval_service_read_file(ctx, path, out);
+}
+
+static int helper_evaluator_host_service_boundary_find_item_type_good(EvalExecContext *ctx,
+                                                                      const char *path) {
+    Eval_Fs_Stat st = {0};
+    if (!eval_service_stat(ctx, path, 0, &st) || !st.exists) return 0;
+    return st.type;
+}
+
+static int helper_evaluator_host_service_boundary_ctest_cleanup_good(EvalExecContext *ctx,
+                                                                     const char *path) {
+    return eval_service_remove(ctx, path, 1) && eval_service_mkdir(ctx, path);
 }
 
 static const char *helper_codegen_evaluator_boundary_good(const Build_Model *model,

@@ -459,16 +459,10 @@ static bool flow_exec_read_file(EvalExecContext *ctx, String_View path, String_V
     *out_text = nob_sv_from_cstr("");
     if (path.count == 0) return true;
 
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-
-    Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(path_c, &sb)) {
-        nob_sb_free(sb);
+    bool found = false;
+    if (!eval_service_read_file(ctx, path, out_text, &found) || !found) {
         return false;
     }
-    *out_text = flow_sb_to_temp_sv(ctx, &sb);
-    nob_sb_free(sb);
     if (eval_should_stop(ctx)) return false;
     return true;
 }
@@ -477,10 +471,7 @@ static bool flow_exec_write_file(EvalExecContext *ctx, String_View path, String_
     if (!ctx) return false;
     if (path.count == 0) return true;
 
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-
-    return nob_write_entire_file(path_c, content.data ? content.data : "", content.count);
+    return eval_service_write_file(ctx, path, content, false);
 }
 
 static bool flow_exec_run_command(EvalExecContext *ctx,

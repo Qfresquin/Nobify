@@ -11,13 +11,6 @@
 #include <string.h>
 #include <time.h>
 
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <sys/stat.h>
-#include <unistd.h>
-#endif
-
 typedef struct {
     String_View key;
     String_View value;
@@ -1695,32 +1688,33 @@ static bool ctest_read_tag_file_details_temp(EvalExecContext *ctx,
     if (!ctx || !out_details) return false;
     memset(out_details, 0, sizeof(*out_details));
 
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-    if (!nob_file_exists(path_c) || nob_get_file_type(path_c) == NOB_FILE_DIRECTORY) return true;
+    Eval_Fs_Stat st = {0};
+    if (!eval_service_stat(ctx, path, false, &st)) return false;
+    if (!st.exists || st.type == EVAL_FS_NODE_DIRECTORY) return true;
 
-    Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(path_c, &sb)) return false;
+    String_View contents = nob_sv_from_cstr("");
+    bool found = false;
+    if (!eval_service_read_file(ctx, path, &contents, &found) || !found) return false;
 
     out_details->exists = true;
 
+    const char *data = contents.data ? contents.data : "";
     size_t line_start = 0;
     size_t line_index = 0;
-    while (line_start <= sb.count && line_index < 3) {
+    while (line_start <= contents.count && line_index < 3) {
         size_t line_end = line_start;
-        while (line_end < sb.count && sb.items[line_end] != '\n' && sb.items[line_end] != '\r') line_end++;
+        while (line_end < contents.count && data[line_end] != '\n' && data[line_end] != '\r') line_end++;
 
-        String_View line = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items + line_start, line_end - line_start));
+        String_View line = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(data + line_start, line_end - line_start));
         if (line_index == 0) out_details->tag = line;
         else if (line_index == 1) out_details->model = line;
         else out_details->group = line;
 
-        while (line_end < sb.count && (sb.items[line_end] == '\n' || sb.items[line_end] == '\r')) line_end++;
+        while (line_end < contents.count && (data[line_end] == '\n' || data[line_end] == '\r')) line_end++;
         line_start = line_end;
         line_index++;
     }
 
-    nob_sb_free(sb);
     if (out_details->group.count == 0) out_details->group = out_details->model;
     if (eval_should_stop(ctx)) return false;
     return true;
@@ -3636,13 +3630,8 @@ static bool ctest_submit_read_file_temp(EvalExecContext *ctx,
     if (!ctx || !out_contents) return false;
     *out_contents = nob_sv_from_cstr("");
 
-    char *path_c = eval_sv_to_cstr_temp(ctx, path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-
-    Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(path_c, &sb)) return false;
-    *out_contents = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count));
-    nob_sb_free(sb);
+    bool found = false;
+    if (!eval_service_read_file(ctx, path, out_contents, &found) || !found) return false;
     if (eval_should_stop(ctx)) return false;
     return true;
 }
@@ -4111,37 +4100,6 @@ static bool ctest_path_is_within(String_View path, String_View root) {
     if (path.count == root.count) return true;
     char next = path.data[root.count];
     return next == '/' || next == '\\';
-}
-
-static bool ctest_remove_leaf(const char *path, bool is_dir) {
-#if defined(_WIN32)
-    if (is_dir) return RemoveDirectoryA(path) != 0;
-    return DeleteFileA(path) != 0;
-#else
-    if (is_dir) return rmdir(path) == 0;
-    return unlink(path) == 0;
-#endif
-}
-
-typedef struct {
-    bool ok;
-} Ctest_Remove_Walk_State;
-
-static bool ctest_remove_tree_walk(Nob_Walk_Entry entry) {
-    Ctest_Remove_Walk_State *state = (Ctest_Remove_Walk_State*)entry.data;
-    bool ok = ctest_remove_leaf(entry.path, entry.type == NOB_FILE_DIRECTORY);
-    if (state) state->ok = state->ok && ok;
-    return ok;
-}
-
-static bool ctest_remove_tree(const char *path) {
-    Ctest_Remove_Walk_State state = { .ok = true };
-    if (!path || !path[0]) return false;
-    if (!nob_file_exists(path)) return true;
-    if (!nob_walk_dir(path, ctest_remove_tree_walk, .data = &state, .post_order = true)) {
-        return false;
-    }
-    return state.ok;
 }
 
 /* Shared internal runtime for operational ctest_* steps that already resolve
@@ -4858,11 +4816,18 @@ static bool ctest_execute_empty_binary_directory_request(EvalExecContext *ctx,
                                                          const Ctest_Empty_Binary_Directory_Request *req) {
     if (!ctx || !node || !req) return false;
 
-    char *target_c = eval_sv_to_cstr_temp(ctx, req->target);
-    EVAL_OOM_RETURN_IF_NULL(ctx, target_c, false);
+    Eval_Fs_Stat st = {0};
+    if (!eval_service_stat(ctx, req->target, false, &st)) {
+        (void)ctest_emit_diag(ctx,
+                              node,
+                              EV_DIAG_ERROR,
+                              nob_sv_from_cstr("ctest_empty_binary_directory() failed to inspect directory"),
+                              req->target);
+        return false;
+    }
 
-    if (nob_file_exists(target_c)) {
-        if (nob_get_file_type(target_c) != NOB_FILE_DIRECTORY) {
+    if (st.exists) {
+        if (st.type != EVAL_FS_NODE_DIRECTORY) {
             (void)ctest_emit_diag(ctx,
                                   node,
                                   EV_DIAG_ERROR,
@@ -4870,7 +4835,7 @@ static bool ctest_execute_empty_binary_directory_request(EvalExecContext *ctx,
                                   req->target);
             return false;
         }
-        if (!ctest_remove_tree(target_c)) {
+        if (!eval_service_remove(ctx, req->target, true)) {
             (void)ctest_emit_diag(ctx,
                                   node,
                                   EV_DIAG_ERROR,
@@ -4879,7 +4844,7 @@ static bool ctest_execute_empty_binary_directory_request(EvalExecContext *ctx,
             return false;
         }
     }
-    if (!nob_mkdir_if_not_exists(target_c)) {
+    if (!eval_service_mkdir(ctx, req->target)) {
         (void)ctest_emit_diag(ctx,
                               node,
                               EV_DIAG_ERROR,
@@ -4921,9 +4886,9 @@ static bool ctest_parse_read_custom_files_request(EvalExecContext *ctx,
             String_View custom = eval_sv_path_join(eval_temp_arena(ctx), dir, nob_sv_from_cstr(custom_names[name_i]));
             if (eval_should_stop(ctx)) return false;
 
-            char *custom_c = eval_sv_to_cstr_temp(ctx, custom);
-            EVAL_OOM_RETURN_IF_NULL(ctx, custom_c, false);
-            if (nob_file_exists(custom_c) && nob_get_file_type(custom_c) != NOB_FILE_DIRECTORY) {
+            Eval_Fs_Stat st = {0};
+            if (!eval_service_stat(ctx, custom, false, &st)) return false;
+            if (st.exists && st.type != EVAL_FS_NODE_DIRECTORY) {
                 if (!svu_list_push_temp(ctx, &out_req->loaded_files, custom)) return false;
             }
         }

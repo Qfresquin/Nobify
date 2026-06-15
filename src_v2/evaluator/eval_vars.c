@@ -125,11 +125,11 @@ static bool load_cache_process_contents(EvalExecContext *ctx,
                                         const SV_List *requested,
                                         const SV_List *excludes,
                                         const SV_List *include_internals,
-                                        const Nob_String_Builder *sb) {
-    if (!ctx || !node || !sb) return false;
+                                        String_View contents) {
+    if (!ctx || !node) return false;
 
-    const char *data = sb->items ? sb->items : "";
-    size_t len = sb->count;
+    const char *data = contents.data ? contents.data : "";
+    size_t len = contents.count;
     size_t start = 0;
     while (start <= len) {
         size_t end = start;
@@ -301,11 +301,10 @@ static bool load_cache_execute_request(EvalExecContext *ctx,
     for (size_t path_i = 0; path_i < arena_arr_len(req->cache_inputs); path_i++) {
         String_View cache_path = nob_sv_from_cstr("");
         if (!load_cache_resolve_path(ctx, req->cache_inputs[path_i], &cache_path)) return false;
-        char *cache_path_c = eval_sv_to_cstr_temp(ctx, cache_path);
-        EVAL_OOM_RETURN_IF_NULL(ctx, cache_path_c, false);
 
-        Nob_String_Builder sb = {0};
-        if (!nob_read_entire_file(cache_path_c, &sb)) {
+        String_View contents = nob_sv_from_cstr("");
+        bool found = false;
+        if (!eval_service_read_file(ctx, cache_path, &contents, &found) || !found) {
             (void)load_cache_emit_diag(ctx,
                                        node,
                                        EV_DIAG_ERROR,
@@ -321,8 +320,7 @@ static bool load_cache_execute_request(EvalExecContext *ctx,
                                               &req->requested,
                                               &req->excludes,
                                               &req->include_internals,
-                                              &sb);
-        nob_sb_free(sb);
+                                              contents);
         if (!ok) return false;
     }
 

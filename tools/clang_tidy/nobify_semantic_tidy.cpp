@@ -78,6 +78,16 @@ static bool isPipelineOrchestrationPath(llvm::StringRef Path) {
            contains(Path, "test_v2/artifact_parity/");
 }
 
+static bool isEvaluatorHostServiceConsumerPath(llvm::StringRef Path) {
+    return contains(Path, "src_v2/evaluator/eval_try_compile") ||
+           contains(Path, "src_v2/evaluator/eval_flow_process.c") ||
+           contains(Path, "src_v2/evaluator/eval_host.c") ||
+           contains(Path, "src_v2/evaluator/eval_expr.c") ||
+           contains(Path, "src_v2/evaluator/eval_vars.c") ||
+           contains(Path, "src_v2/evaluator/eval_package_find_item.c") ||
+           contains(Path, "src_v2/evaluator/eval_ctest.c");
+}
+
 static bool typeNamesEvalResult(QualType Type) {
     if (Type.isNull()) return false;
     std::string Name = Type.getAsString();
@@ -1312,7 +1322,7 @@ public:
 
     void registerMatchers(MatchFinder *Finder) override {
         Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
-                                    "^(nob_file_exists|nob_mkdir_if_not_exists|nob_read_entire_file|nob_write_entire_file|nob_copy_file|nob_cmd_run|stat|lstat|fopen|open|remove|rename|unlink|rmdir)$"))),
+                                    "^(nob_file_exists|nob_get_file_type|nob_mkdir_if_not_exists|nob_walk_dir|nob_read_entire_file|nob_write_entire_file|nob_copy_file|nob_cmd_run|stat|lstat|access|fopen|open|remove|rename|unlink|rmdir)$"))),
                                     hasAncestor(functionDecl().bind("function")))
                                .bind("call"),
                            this);
@@ -1332,7 +1342,7 @@ public:
 
 private:
     bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
-        if (contains(Path, "src_v2/evaluator/eval_try_compile")) return true;
+        if (isEvaluatorHostServiceConsumerPath(Path)) return true;
         if (!isFixturePath(Path) || !FD) return false;
         return FD->getName().contains("evaluator_host_service_boundary");
     }

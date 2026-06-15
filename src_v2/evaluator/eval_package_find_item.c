@@ -395,18 +395,16 @@ static bool find_item_candidate_exists(EvalExecContext *ctx,
     *out_value = nob_sv_from_cstr("");
     if (candidate.count == 0) return false;
 
-    char *path_c = eval_sv_to_cstr_temp(ctx, candidate);
-    EVAL_OOM_RETURN_IF_NULL(ctx, path_c, false);
-    if (!nob_file_exists(path_c)) return false;
+    Eval_Fs_Stat st = {0};
+    if (!eval_service_stat(ctx, candidate, false, &st) || !st.exists) return false;
 
-    Nob_File_Type type = nob_get_file_type(path_c);
     if (kind == FIND_ITEM_PROGRAM || kind == FIND_ITEM_FILE || kind == FIND_ITEM_LIBRARY) {
-        if (type != NOB_FILE_REGULAR && type != NOB_FILE_SYMLINK) return false;
+        if (st.type != EVAL_FS_NODE_FILE && st.type != EVAL_FS_NODE_SYMLINK) return false;
         *out_value = candidate;
         return true;
     }
     if (kind == FIND_ITEM_PATH) {
-        if (type != NOB_FILE_REGULAR && type != NOB_FILE_SYMLINK && type != NOB_FILE_DIRECTORY) return false;
+        if (st.type != EVAL_FS_NODE_FILE && st.type != EVAL_FS_NODE_SYMLINK && st.type != EVAL_FS_NODE_DIRECTORY) return false;
         *out_value = svu_dirname(candidate);
         return true;
     }

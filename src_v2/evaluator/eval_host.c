@@ -685,37 +685,26 @@ static bool host_capture_command_stdout(EvalExecContext *ctx, String_View comman
     *out_text = nob_sv_from_cstr("");
     if (command.count == 0) return true;
 
-    static size_t s_capture_counter = 0;
-    s_capture_counter++;
+    String_View argv_storage[1] = {command};
+    Eval_Process_Run_Request req = {
+        .argv = argv_storage,
+        .argc = 1,
+        .working_directory = nob_sv_from_cstr(""),
+        .stdin_data = nob_sv_from_cstr(""),
+        .has_timeout = false,
+        .timeout_seconds = 0.0,
+    };
+    Eval_Process_Run_Result result = {0};
+    if (!eval_process_run_capture(ctx, &req, &result)) return false;
+    if (!result.started || result.timed_out || result.exit_code != 0) return true;
 
-    String_View current_bin = eval_current_binary_dir(ctx);
-
-    String_View file_name = sv_copy_to_temp_arena(
-        ctx,
-        nob_sv_from_cstr(nob_temp_sprintf("site_name_capture_%zu.txt", s_capture_counter)));
-    if (eval_should_stop(ctx)) return false;
-
-    String_View out_path = eval_sv_path_join(eval_temp_arena(ctx), current_bin, file_name);
-    if (eval_should_stop(ctx)) return false;
-
-    char *command_c = eval_sv_to_cstr_temp(ctx, command);
-    char *out_c = eval_sv_to_cstr_temp(ctx, out_path);
-    EVAL_OOM_RETURN_IF_NULL(ctx, command_c, false);
-    EVAL_OOM_RETURN_IF_NULL(ctx, out_c, false);
-
-    Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, command_c);
-    bool ok = nob_cmd_run(&cmd, .stdout_path = out_c);
-    nob_cmd_free(cmd);
-    if (!ok) return true;
-
-    Nob_String_Builder sb = {0};
-    if (!nob_read_entire_file(out_c, &sb)) return true;
-
-    size_t len = sb.count;
-    while (len > 0 && (sb.items[len - 1] == '\n' || sb.items[len - 1] == '\r')) len--;
-    *out_text = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items, len));
-    nob_sb_free(sb);
+    size_t len = result.stdout_text.count;
+    while (len > 0 &&
+           (result.stdout_text.data[len - 1] == '\n' ||
+            result.stdout_text.data[len - 1] == '\r')) {
+        len--;
+    }
+    *out_text = sv_copy_to_temp_arena(ctx, nob_sv_from_parts(result.stdout_text.data, len));
     if (eval_should_stop(ctx)) return false;
     return true;
 }

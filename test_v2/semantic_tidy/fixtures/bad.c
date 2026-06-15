@@ -42,10 +42,18 @@ typedef struct EvalExec_Request EvalExec_Request;
 typedef struct Nob_Codegen_Options Nob_Codegen_Options;
 typedef struct Nob_File_Paths Nob_File_Paths;
 typedef unsigned int BM_Target_Id;
+typedef enum {
+    NOB_FILE_REGULAR = 0,
+    NOB_FILE_DIRECTORY,
+    NOB_FILE_SYMLINK,
+} Nob_File_Type;
 static int nob_codegen_render(const Build_Model *model, const Nob_Codegen_Options *options);
 static int nob_read_entire_dir(const char *path, Nob_File_Paths *out);
+static int nob_read_entire_file(const char *path, void *out);
 static int nob_write_entire_file(const char *path, const char *data, unsigned long len);
 static int nob_file_exists(const char *path);
+static Nob_File_Type nob_get_file_type(const char *path);
+static int nob_mkdir_if_not_exists(const char *path);
 static const char *bm_query_target_name(const Build_Model *model, BM_Target_Id id);
 static int bm_builder_current_directory_id(BM_Builder *builder);
 static Build_Model_Draft *bm_builder_finalize(BM_Builder *builder);
@@ -149,6 +157,23 @@ static int helper_bad_codegen_evaluator_dependency(EvalExecContext *ctx) {
 static int helper_bad_evaluator_host_service_boundary(const char *path) {
     if (!nob_file_exists(path)) return nob_write_entire_file(path, "", 0);
     return 1;
+}
+
+static int helper_bad_evaluator_host_service_boundary_read(const char *path, void *out) {
+    return nob_read_entire_file(path, out);
+}
+
+static int helper_bad_evaluator_host_service_boundary_cache_load(const char *path, void *out) {
+    return nob_read_entire_file(path, out);
+}
+
+static int helper_bad_evaluator_host_service_boundary_find_item_type(const char *path) {
+    if (!nob_file_exists(path)) return 0;
+    return nob_get_file_type(path) == NOB_FILE_DIRECTORY;
+}
+
+static int helper_bad_evaluator_host_service_boundary_ctest_cleanup(const char *path) {
+    return nob_mkdir_if_not_exists(path);
 }
 
 static int helper_bad_pipeline_orchestration_boundary(EvalSession *session,

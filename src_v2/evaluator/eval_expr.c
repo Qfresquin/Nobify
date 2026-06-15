@@ -7,46 +7,44 @@
 #include <string.h>
 #include <stdlib.h>
 #include <pcre2posix.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#if defined(_WIN32)
-#include <windows.h>
-#endif
 
 #define EVAL_EXPAND_MAX_RECURSION 100
 #define EVAL_EXPAND_MAX_RECURSION_HARD_CAP 10000
 #define EVAL_ESCAPED_DOLLAR_SENTINEL '\x1f'
 
-static bool path_exists_cstr(const char *path) {
-    if (!path || path[0] == '\0') return false;
-    struct stat st;
-    return stat(path, &st) == 0;
+static bool expr_path_stat(EvalExecContext *ctx,
+                           String_View path,
+                           bool follow_symlinks,
+                           Eval_Fs_Stat *out_st) {
+    if (!ctx || path.count == 0 || !out_st) return false;
+    return eval_service_stat(ctx, path, follow_symlinks, out_st);
 }
 
-static bool path_is_dir_cstr(const char *path) {
-    if (!path || path[0] == '\0') return false;
-    struct stat st;
-    if (stat(path, &st) != 0) return false;
-#if defined(S_IFDIR)
-    return (st.st_mode & S_IFMT) == S_IFDIR;
-#else
-    return S_ISDIR(st.st_mode);
-#endif
+static bool expr_path_exists(EvalExecContext *ctx, String_View path) {
+    Eval_Fs_Stat st = {0};
+    return expr_path_stat(ctx, path, true, &st) && st.exists;
 }
 
-static bool path_is_symlink_cstr(const char *path) {
-    if (!path || path[0] == '\0') return false;
-#if defined(_WIN32)
-    DWORD attrs = GetFileAttributesA(path);
-    if (attrs == INVALID_FILE_ATTRIBUTES) return false;
-    return (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-#elif defined(S_ISLNK)
-    struct stat st;
-    if (lstat(path, &st) != 0) return false;
-    return S_ISLNK(st.st_mode);
-#else
-    return false;
-#endif
+static bool expr_path_has_type(EvalExecContext *ctx, String_View path, Eval_Fs_Node_Type type) {
+    Eval_Fs_Stat st = {0};
+    return expr_path_stat(ctx, path, type != EVAL_FS_NODE_SYMLINK, &st) &&
+           st.exists && st.type == type;
+}
+
+static bool expr_path_has_mode(EvalExecContext *ctx, String_View path, uint32_t mask) {
+    Eval_Fs_Stat st = {0};
+    return expr_path_stat(ctx, path, true, &st) && st.exists && st.have_mode &&
+           (st.mode & mask) != 0;
+}
+
+static bool expr_path_is_newer_than(EvalExecContext *ctx, String_View lhs, String_View rhs) {
+    Eval_Fs_Stat left = {0};
+    Eval_Fs_Stat right = {0};
+    if (!expr_path_stat(ctx, lhs, true, &left) || !expr_path_stat(ctx, rhs, true, &right)) {
+        return false;
+    }
+    return left.exists && right.exists && left.have_mtime && right.have_mtime &&
+           left.mtime_sec > right.mtime_sec;
 }
 
 static bool sv_ends_with_ci_lit(String_View sv, const char *suffix) {
@@ -85,18 +83,6 @@ static bool sv_is_numeric_nonzero(String_View sv, bool *ok) {
     if (!end || *end != '\0') return false;
     if (ok) *ok = true;
     return v != 0.0;
-}
-
-static bool path_is_readable_cstr(const char *path) { return path && path[0] != '\0' && access(path, R_OK) == 0; }
-static bool path_is_writable_cstr(const char *path) { return path && path[0] != '\0' && access(path, W_OK) == 0; }
-static bool path_is_executable_cstr(const char *path) { return path && path[0] != '\0' && access(path, X_OK) == 0; }
-
-static bool path_is_newer_than_cstr(const char *lhs, const char *rhs) {
-    if (!lhs || !rhs || lhs[0] == '\0' || rhs[0] == '\0') return false;
-    struct stat ls = {0};
-    struct stat rs = {0};
-    if (stat(lhs, &ls) != 0 || stat(rhs, &rs) != 0) return false;
-    return ls.st_mtime > rs.st_mtime;
 }
 
 static int sv_lex_cmp(String_View a, String_View b) {
@@ -623,25 +609,19 @@ static bool parse_unary(Expr *e) {
     if (eval_sv_eq_ci_lit(tok, "EXISTS")) {
         expr_next(e);
         if (!expr_has(e)) return false;
-        char *path = eval_sv_to_cstr_temp(e->ctx, expr_next(e));
-        EVAL_OOM_RETURN_IF_NULL(e->ctx, path, false);
-        return path_exists_cstr(path);
+        return expr_path_exists(e->ctx, expr_next(e));
     }
 
     if (eval_sv_eq_ci_lit(tok, "IS_DIRECTORY")) {
         expr_next(e);
         if (!expr_has(e)) return false;
-        char *path = eval_sv_to_cstr_temp(e->ctx, expr_next(e));
-        EVAL_OOM_RETURN_IF_NULL(e->ctx, path, false);
-        return path_is_dir_cstr(path);
+        return expr_path_has_type(e->ctx, expr_next(e), EVAL_FS_NODE_DIRECTORY);
     }
 
     if (eval_sv_eq_ci_lit(tok, "IS_SYMLINK")) {
         expr_next(e);
         if (!expr_has(e)) return false;
-        char *path = eval_sv_to_cstr_temp(e->ctx, expr_next(e));
-        EVAL_OOM_RETURN_IF_NULL(e->ctx, path, false);
-        return path_is_symlink_cstr(path);
+        return expr_path_has_type(e->ctx, expr_next(e), EVAL_FS_NODE_SYMLINK);
     }
 
     if (eval_sv_eq_ci_lit(tok, "IS_ABSOLUTE")) {
@@ -653,25 +633,19 @@ static bool parse_unary(Expr *e) {
     if (eval_sv_eq_ci_lit(tok, "IS_READABLE")) {
         expr_next(e);
         if (!expr_has(e)) return false;
-        char *path = eval_sv_to_cstr_temp(e->ctx, expr_next(e));
-        EVAL_OOM_RETURN_IF_NULL(e->ctx, path, false);
-        return path_is_readable_cstr(path);
+        return expr_path_has_mode(e->ctx, expr_next(e), 0444u);
     }
 
     if (eval_sv_eq_ci_lit(tok, "IS_WRITABLE")) {
         expr_next(e);
         if (!expr_has(e)) return false;
-        char *path = eval_sv_to_cstr_temp(e->ctx, expr_next(e));
-        EVAL_OOM_RETURN_IF_NULL(e->ctx, path, false);
-        return path_is_writable_cstr(path);
+        return expr_path_has_mode(e->ctx, expr_next(e), 0222u);
     }
 
     if (eval_sv_eq_ci_lit(tok, "IS_EXECUTABLE")) {
         expr_next(e);
         if (!expr_has(e)) return false;
-        char *path = eval_sv_to_cstr_temp(e->ctx, expr_next(e));
-        EVAL_OOM_RETURN_IF_NULL(e->ctx, path, false);
-        return path_is_executable_cstr(path);
+        return expr_path_has_mode(e->ctx, expr_next(e), 0111u);
     }
 
     if (eval_sv_eq_ci_lit(tok, "TEST")) {
@@ -842,11 +816,9 @@ static bool parse_cmp(Expr *e) {
     if (eval_sv_eq_ci_lit(op, "IS_NEWER_THAN")) {
         expr_next(e);
         if (!expr_has(e)) return false;
-        char *lhs_path = eval_sv_to_cstr_temp(e->ctx, sv_lookup_if_var(e->ctx, lhs));
-        char *rhs_path = eval_sv_to_cstr_temp(e->ctx, sv_lookup_if_var(e->ctx, expr_next(e)));
-        EVAL_OOM_RETURN_IF_NULL(e->ctx, lhs_path, false);
-        EVAL_OOM_RETURN_IF_NULL(e->ctx, rhs_path, false);
-        return path_is_newer_than_cstr(lhs_path, rhs_path);
+        return expr_path_is_newer_than(e->ctx,
+                                       sv_lookup_if_var(e->ctx, lhs),
+                                       sv_lookup_if_var(e->ctx, expr_next(e)));
     }
 
     return eval_truthy(e->ctx, lhs);
