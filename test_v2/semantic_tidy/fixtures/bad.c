@@ -73,6 +73,7 @@ static BM_String_Span bm_query_target_raw_property_items(const Build_Model *mode
                                                          BM_Target_Id id,
                                                          String_View property_name);
 static char *getenv(const char *name);
+static long time(long *out);
 static int nob_sv_eq(String_View left, String_View right);
 static String_View nob_sv_from_cstr(const char *value);
 static EvalRunResult eval_session_run(EvalSession *session,
@@ -83,6 +84,8 @@ static int eval_should_stop(EvalExecContext *ctx);
 static Eval_Result eval_result_fatal(void);
 static Eval_Result eval_result_from_ctx(EvalExecContext *ctx);
 static char *nob_temp_sprintf(const char *fmt, ...);
+
+static int g_bad_semantic_cache;
 
 int eval_handle_bad_signature(EvalExecContext *ctx, const void *node) {
     (void)ctx;
@@ -172,6 +175,19 @@ static int helper_bad_codegen_evaluator_dependency(EvalExecContext *ctx) {
     return eval_should_stop(ctx);
 }
 
+static int helper_bad_codegen_parser_dependency(Ast_Root *ast) {
+    return ast->node_count;
+}
+
+static int helper_bad_parser_downstream_dependency(Event_Stream *stream) {
+    return stream != 0;
+}
+
+static const char *helper_bad_event_ir_downstream_dependency(const Build_Model *model,
+                                                            BM_Target_Id id) {
+    return bm_query_target_name(model, id);
+}
+
 static int helper_bad_evaluator_host_service_boundary(const char *path) {
     if (!nob_file_exists(path)) return nob_write_entire_file(path, "", 0);
     return 1;
@@ -232,6 +248,14 @@ static int helper_bad_codegen_path_resolution_host_effect(const char *path) {
 
 static int helper_bad_pure_layer_ambient_env(const char *name) {
     return getenv(name) != 0;
+}
+
+static int helper_bad_pure_layer_host_effect(const char *path) {
+    return nob_read_entire_file(path, 0);
+}
+
+static long helper_bad_pure_layer_ambient_nondeterminism(void) {
+    return time(0);
 }
 
 static int helper_bad_codegen_build_step_tool_heuristic(String_View first_arg) {

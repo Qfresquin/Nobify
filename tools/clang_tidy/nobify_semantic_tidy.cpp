@@ -12,6 +12,9 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <stdint.h>
+#include <string>
+
 using namespace clang;
 using namespace clang::ast_matchers;
 
@@ -24,6 +27,13 @@ static llvm::StringRef fileName(const SourceManager &SM, SourceLocation Loc) {
 
 static bool contains(llvm::StringRef Haystack, llvm::StringRef Needle) {
     return Haystack.find(Needle) != llvm::StringRef::npos;
+}
+
+static std::string semanticNameRegex(const char *Regex) {
+    if (!Regex) return {};
+    llvm::StringRef Ref(Regex);
+    if (Ref.starts_with("^")) return ("(^|::)" + Ref.drop_front()).str();
+    return Ref.str();
 }
 
 static bool isFixturePath(llvm::StringRef Path) {
@@ -47,6 +57,14 @@ static bool isProductionBuildModelConsumerPath(llvm::StringRef Path) {
 
 static bool isCodegenBoundaryPath(llvm::StringRef Path) {
     return contains(Path, "src_v2/codegen/") || isFixturePath(Path);
+}
+
+static bool isParserOrLexerPath(llvm::StringRef Path) {
+    return contains(Path, "src_v2/parser/") || contains(Path, "src_v2/lexer/");
+}
+
+static bool isEventIrOwnerPath(llvm::StringRef Path) {
+    return contains(Path, "src_v2/transpiler/");
 }
 
 static bool isEvaluatorOwnerFile(llvm::StringRef Path) {
@@ -184,8 +202,21 @@ static bool typeNamesFrozenModelOrBuilderState(QualType Type) {
     return typeNamesFrozenBuildModel(Type) || typeNamesBuildModelBuilderState(Type);
 }
 
+static bool typeNamesBuildModelAnyState(QualType Type) {
+    return typeNamesFrozenBuildModel(Type) || typeNamesBuildModelLifecycle(Type);
+}
+
 static bool typeNamesEvaluatorOrParserState(QualType Type) {
     return typeNamesEvaluatorState(Type) || typeNamesParserState(Type);
+}
+
+static bool typeNamesParserDownstreamState(QualType Type) {
+    return typeNamesEventIr(Type) || typeNamesEvaluatorState(Type) ||
+           typeNamesBuildModelAnyState(Type) || typeNamesCodegen(Type);
+}
+
+static bool typeNamesEventIrDownstreamState(QualType Type) {
+    return typeNamesBuildModelAnyState(Type) || typeNamesCodegen(Type);
 }
 
 typedef bool (*SemanticLayerAppliesFn)(llvm::StringRef Path, const FunctionDecl *FD);
@@ -209,7 +240,8 @@ static void registerLayerDependencyMatchers(MatchFinder *Finder,
                        Check);
     Finder->addMatcher(functionDecl(isDefinition()).bind("layer-return-function"), Check);
     if (ForbiddenCallRegex && ForbiddenCallRegex[0] != '\0') {
-        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(ForbiddenCallRegex))),
+        std::string CalleeRegex = semanticNameRegex(ForbiddenCallRegex);
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(CalleeRegex))),
                                     hasAncestor(functionDecl().bind("layer-call-function")))
                                .bind("layer-call"),
                            Check);
@@ -266,7 +298,8 @@ typedef struct {
 static void registerForbiddenCallMatcher(MatchFinder *Finder,
                                          ClangTidyCheck *Check,
                                          const char *ForbiddenCallRegex) {
-    Finder->addMatcher(callExpr(callee(functionDecl(matchesName(ForbiddenCallRegex))),
+    std::string CalleeRegex = semanticNameRegex(ForbiddenCallRegex);
+    Finder->addMatcher(callExpr(callee(functionDecl(matchesName(CalleeRegex))),
                                 hasAncestor(functionDecl().bind("forbidden-call-function")))
                            .bind("forbidden-call"),
                        Check);
@@ -283,6 +316,29 @@ static void checkForbiddenCall(const MatchFinder::MatchResult &Result,
     if (!Rule.applies(Path, FD)) return;
 
     Check.diag(Call->getExprLoc(), Rule.message);
+}
+
+typedef struct {
+    SemanticLayerAppliesFn applies;
+    const char *message;
+} Semantic_Global_State_Rule;
+
+static void registerGlobalStateMatcher(MatchFinder *Finder, ClangTidyCheck *Check) {
+    Finder->addMatcher(varDecl().bind("global-state"), Check);
+}
+
+static void checkGlobalState(const MatchFinder::MatchResult &Result,
+                             ClangTidyCheck &Check,
+                             const Semantic_Global_State_Rule &Rule) {
+    const auto *VD = Result.Nodes.getNodeAs<VarDecl>("global-state");
+    if (!VD) return;
+    if (!VD->isFileVarDecl() && !VD->isStaticLocal()) return;
+    if (VD->getType().isConstQualified()) return;
+
+    llvm::StringRef Path = fileName(*Result.SourceManager, VD->getLocation());
+    if (!Rule.applies(Path, nullptr)) return;
+
+    Check.diag(VD->getLocation(), Rule.message);
 }
 
 typedef bool (*SemanticMemberAppliesFn)(llvm::StringRef Path,
@@ -339,6 +395,18 @@ static void registerMemberMutationMatcher(MatchFinder *Finder, ClangTidyCheck *C
                        Check);
 }
 
+static void registerNamedFieldMutationMatcher(MatchFinder *Finder,
+                                              ClangTidyCheck *Check,
+                                              const char *FieldRegex) {
+    auto Member = memberExpr(member(fieldDecl(matchesName(FieldRegex)))).bind("member-mutation");
+    Finder->addMatcher(binaryOperator(isAssignmentOperator(),
+                                      hasLHS(ignoringParenImpCasts(Member))),
+                       Check);
+    Finder->addMatcher(unaryOperator(anyOf(hasOperatorName("++"), hasOperatorName("--")),
+                                     hasUnaryOperand(ignoringParenImpCasts(Member))),
+                       Check);
+}
+
 static void checkMemberAccess(const MatchFinder::MatchResult &Result,
                               ClangTidyCheck &Check,
                               const Semantic_Member_Access_Rule &Rule,
@@ -373,6 +441,10 @@ static bool recordIsDraftOrFrozenBuildModelRecord(const RecordDecl *Record) {
     return Name == "Build_Model_Draft" || Name == "Build_Model" || Name.ends_with("_Record");
 }
 
+static bool recordIsEvalExecContext(const RecordDecl *Record) {
+    return Record && Record->getName() == "EvalExecContext";
+}
+
 typedef bool (*SemanticStringLiteralMatcherFn)(llvm::StringRef Value);
 
 typedef struct {
@@ -404,6 +476,65 @@ static void checkCallLiteral(const MatchFinder::MatchResult &Result,
     if (!Rule.literal_matches(Literal->getString())) return;
 
     Check.diag(Call->getExprLoc(), Rule.message);
+}
+
+typedef bool (*SemanticCallPhaseMatcherFn)(const FunctionDecl *FD);
+
+typedef struct {
+    SemanticLayerAppliesFn applies;
+    const SemanticCallPhaseMatcherFn *phase_matchers;
+    size_t phase_count;
+    const char *message;
+} Semantic_Phase_Chain_Rule;
+
+class SemanticPhaseVisitor : public RecursiveASTVisitor<SemanticPhaseVisitor> {
+public:
+    explicit SemanticPhaseVisitor(const Semantic_Phase_Chain_Rule &Rule) : Rule(Rule) {}
+
+    bool VisitCallExpr(CallExpr *Call) {
+        const FunctionDecl *FD = Call ? Call->getDirectCallee() : nullptr;
+        if (!FD) return true;
+        for (size_t I = 0; I < Rule.phase_count && I < 64; ++I) {
+            if (Rule.phase_matchers[I] && Rule.phase_matchers[I](FD)) {
+                SeenMask |= (uint64_t{1} << I);
+            }
+        }
+        return true;
+    }
+
+    unsigned phaseCount() const {
+        uint64_t Mask = SeenMask;
+        unsigned Count = 0;
+        while (Mask) {
+            Count += (unsigned)(Mask & 1u);
+            Mask >>= 1u;
+        }
+        return Count;
+    }
+
+private:
+    const Semantic_Phase_Chain_Rule &Rule;
+    uint64_t SeenMask = 0;
+};
+
+static void registerPhaseChainMatcher(MatchFinder *Finder, ClangTidyCheck *Check) {
+    Finder->addMatcher(functionDecl(isDefinition()).bind("phase-chain-function"), Check);
+}
+
+static void checkPhaseChain(const MatchFinder::MatchResult &Result,
+                            ClangTidyCheck &Check,
+                            const Semantic_Phase_Chain_Rule &Rule) {
+    const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("phase-chain-function");
+    if (!FD || !FD->hasBody()) return;
+
+    llvm::StringRef Path = fileName(*Result.SourceManager, FD->getLocation());
+    if (!Rule.applies(Path, FD)) return;
+
+    SemanticPhaseVisitor Visitor(Rule);
+    Visitor.TraverseStmt(const_cast<Stmt *>(FD->getBody()));
+    if (Visitor.phaseCount() < 2) return;
+
+    Check.diag(FD->getLocation(), Rule.message);
 }
 
 static bool functionReturnsEvalResult(const FunctionDecl *FD) {
@@ -924,33 +1055,30 @@ private:
     }
 };
 
+static bool appliesEvaluatorStateOwnership(llvm::StringRef Path,
+                                           ASTContext *Context,
+                                           const MemberExpr *Member) {
+    (void)Context;
+    (void)Member;
+    return isEvaluatorPath(Path) && !isEvaluatorOwnerFile(Path);
+}
+
 class EvaluatorStateOwnershipCheck : public ClangTidyCheck {
 public:
     EvaluatorStateOwnershipCheck(StringRef Name, ClangTidyContext *Context)
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        auto StateMember = memberExpr(member(fieldDecl(anyOf(hasName("oom"),
-                                                              hasName("stop_requested")))))
-                               .bind("member");
-        Finder->addMatcher(binaryOperator(isAssignmentOperator(),
-                                          hasLHS(ignoringParenImpCasts(StateMember))),
-                           this);
-        Finder->addMatcher(unaryOperator(anyOf(hasOperatorName("++"), hasOperatorName("--")),
-                                         hasUnaryOperand(ignoringParenImpCasts(StateMember))),
-                           this);
+        registerNamedFieldMutationMatcher(Finder, this, "^(oom|stop_requested)$");
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const auto *Member = Result.Nodes.getNodeAs<MemberExpr>("member");
-        if (!Member) return;
-        const auto *Field = dyn_cast<FieldDecl>(Member->getMemberDecl());
-        const RecordDecl *Record = Field ? Field->getParent() : nullptr;
-        if (!Record || Record->getName() != "EvalExecContext") return;
-        llvm::StringRef Path = fileName(*Result.SourceManager, Member->getExprLoc());
-        if (!isEvaluatorPath(Path) || isEvaluatorOwnerFile(Path)) return;
-        diag(Member->getExprLoc(),
-             "ctx->oom and ctx->stop_requested may only be written by evaluator.c");
+        static const Semantic_Member_Access_Rule Rule = {
+            appliesEvaluatorStateOwnership,
+            recordIsEvalExecContext,
+            "ctx->oom and ctx->stop_requested may only be written by evaluator.c",
+        };
+        checkMemberAccess(Result, *this, Rule, "member-mutation");
     }
 };
 
@@ -993,7 +1121,8 @@ public:
 
     void registerMatchers(MatchFinder *Finder) override {
         registerLayerDependencyMatchers(Finder, this, "");
-        Finder->addMatcher(declRefExpr(to(enumConstantDecl(matchesName("^EVENT_")))).bind("event-constant"),
+        std::string EventRegex = semanticNameRegex("^EVENT_");
+        Finder->addMatcher(declRefExpr(to(enumConstantDecl(matchesName(EventRegex)))).bind("event-constant"),
                            this);
     }
 
@@ -1071,32 +1200,28 @@ public:
     }
 };
 
-class PipelinePhaseVisitor : public RecursiveASTVisitor<PipelinePhaseVisitor> {
-public:
-    bool HasEvaluator = false;
-    bool HasBuildModelLifecycle = false;
-    bool HasCodegen = false;
+static bool callIsEvaluatorPipelinePhase(const FunctionDecl *FD) {
+    return FD && FD->getName().starts_with("eval_session_");
+}
 
-    bool VisitCallExpr(CallExpr *Call) {
-        const FunctionDecl *FD = Call ? Call->getDirectCallee() : nullptr;
-        if (!FD) return true;
-        llvm::StringRef Name = FD->getName();
-        if (Name.starts_with("eval_session_")) {
-            HasEvaluator = true;
-        } else if (Name.starts_with("bm_builder_") || Name == "bm_validate_draft" ||
-                   Name == "bm_freeze_draft") {
-            HasBuildModelLifecycle = true;
-        } else if (Name == "nob_codegen_render") {
-            HasCodegen = true;
-        }
-        return true;
-    }
+static bool callIsBuildModelLifecyclePipelinePhase(const FunctionDecl *FD) {
+    if (!FD) return false;
+    llvm::StringRef Name = FD->getName();
+    return Name.starts_with("bm_builder_") || Name == "bm_validate_draft" ||
+           Name == "bm_freeze_draft";
+}
 
-    unsigned phaseCount() const {
-        return (HasEvaluator ? 1u : 0u) + (HasBuildModelLifecycle ? 1u : 0u) +
-               (HasCodegen ? 1u : 0u);
+static bool callIsCodegenPipelinePhase(const FunctionDecl *FD) {
+    return FD && FD->getName() == "nob_codegen_render";
+}
+
+static bool appliesPipelineOrchestrationBoundary(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (isPipelineOrchestrationPath(Path)) return false;
+    if (isFixturePath(Path)) {
+        return FD && FD->getName().contains("pipeline_orchestration_boundary");
     }
-};
+    return contains(Path, "src_v2/");
+}
 
 class PipelineOrchestrationBoundaryCheck : public ClangTidyCheck {
 public:
@@ -1104,31 +1229,22 @@ public:
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        Finder->addMatcher(functionDecl(isDefinition()).bind("function"), this);
+        registerPhaseChainMatcher(Finder, this);
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
-        if (!FD || !FD->hasBody()) return;
-
-        llvm::StringRef Path = fileName(*Result.SourceManager, FD->getLocation());
-        if (!applies(Path, FD)) return;
-
-        PipelinePhaseVisitor Visitor;
-        Visitor.TraverseStmt(const_cast<Stmt *>(FD->getBody()));
-        if (Visitor.phaseCount() < 2) return;
-
-        diag(FD->getLocation(),
-             "only app or test orchestration code may chain evaluator, build_model lifecycle, and codegen phases");
-    }
-
-private:
-    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
-        if (isPipelineOrchestrationPath(Path)) return false;
-        if (isFixturePath(Path)) {
-            return FD && FD->getName().contains("pipeline_orchestration_boundary");
-        }
-        return contains(Path, "src_v2/");
+        static const SemanticCallPhaseMatcherFn Phases[] = {
+            callIsEvaluatorPipelinePhase,
+            callIsBuildModelLifecyclePipelinePhase,
+            callIsCodegenPipelinePhase,
+        };
+        static const Semantic_Phase_Chain_Rule Rule = {
+            appliesPipelineOrchestrationBoundary,
+            Phases,
+            sizeof(Phases) / sizeof(Phases[0]),
+            "only app or test orchestration code may chain evaluator, build_model lifecycle, and codegen phases",
+        };
+        checkPhaseChain(Result, *this, Rule);
     }
 };
 
@@ -1208,6 +1324,90 @@ public:
             "codegen APIs must not accept evaluator state; route semantics through Event IR and build_model",
             "codegen APIs must not return evaluator state; backend output comes from build-model facts",
             "codegen must not call eval_* APIs; do not re-enter evaluator semantics during backend generation",
+        };
+        checkLayerDependency(Result, *this, Rule);
+    }
+};
+
+static bool appliesCodegenParserDependency(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_parser");
+}
+
+class CodegenParserDependencyCheck : public ClangTidyCheck {
+public:
+    CodegenParserDependencyCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerLayerDependencyMatchers(Finder, this, "^(parse_|parser_)");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Layer_Dependency_Rule Rule = {
+            appliesCodegenParserDependency,
+            typeNamesParserState,
+            "codegen must not store parser or AST state; consume frozen build-model queries instead",
+            "codegen APIs must not accept parser or AST state; route semantics through evaluator and build_model",
+            "codegen APIs must not return parser or AST state",
+            "codegen must not call parser APIs; backend generation starts from the frozen build model",
+        };
+        checkLayerDependency(Result, *this, Rule);
+    }
+};
+
+static bool appliesParserDownstreamDependency(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (isParserOrLexerPath(Path)) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("parser_downstream");
+}
+
+class ParserDownstreamDependencyCheck : public ClangTidyCheck {
+public:
+    ParserDownstreamDependencyCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerLayerDependencyMatchers(Finder, this, "^(event_|eval_|bm_|nob_codegen_)");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Layer_Dependency_Rule Rule = {
+            appliesParserDownstreamDependency,
+            typeNamesParserDownstreamState,
+            "parser and lexer must not store downstream semantic state; produce syntax only",
+            "parser and lexer APIs must not accept Event IR, evaluator, build_model, or codegen state",
+            "parser and lexer APIs must not return downstream semantic state",
+            "parser and lexer must not call evaluator, Event IR, build_model, or codegen APIs",
+        };
+        checkLayerDependency(Result, *this, Rule);
+    }
+};
+
+static bool appliesEventIrDownstreamDependency(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (isEventIrOwnerPath(Path)) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("event_ir_downstream");
+}
+
+class EventIrDownstreamDependencyCheck : public ClangTidyCheck {
+public:
+    EventIrDownstreamDependencyCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerLayerDependencyMatchers(Finder, this, "^(bm_|nob_codegen_)");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Layer_Dependency_Rule Rule = {
+            appliesEventIrDownstreamDependency,
+            typeNamesEventIrDownstreamState,
+            "Event IR must not store build_model or codegen state; it is the evaluator-to-builder boundary",
+            "Event IR APIs must not accept build_model or codegen state",
+            "Event IR APIs must not return build_model or codegen state",
+            "Event IR must not call build_model or codegen APIs",
         };
         checkLayerDependency(Result, *this, Rule);
     }
@@ -1350,6 +1550,84 @@ public:
             "pure semantic layers must not read or mutate ambient environment; pass explicit options or use the owning runtime boundary",
         };
         checkForbiddenCall(Result, *this, Rule);
+    }
+};
+
+static bool appliesPureLayerHostEffect(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (isPureSemanticLayerPath(Path)) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("pure_layer_host_effect");
+}
+
+class PureLayerHostEffectCheck : public ClangTidyCheck {
+public:
+    PureLayerHostEffectCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerForbiddenCallMatcher(
+            Finder,
+            this,
+            "^(nob_file_exists|nob_get_file_type|nob_mkdir_if_not_exists|nob_walk_dir|nob_read_entire_dir|nob_read_entire_file|nob_write_entire_file|nob_copy_file|nob_cmd_run|system|popen|fork|vfork|execv|execve|execvp|execl|execlp|wait|waitpid|stat|lstat|access|realpath|getcwd|chdir|fopen|open|remove|rename|unlink|mkdir|rmdir)$");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Forbidden_Call_Rule Rule = {
+            appliesPureLayerHostEffect,
+            "pure semantic layers must not perform host effects; pass observed facts through an explicit service or model boundary",
+        };
+        checkForbiddenCall(Result, *this, Rule);
+    }
+};
+
+static bool appliesPureLayerAmbientNondeterminism(llvm::StringRef Path,
+                                                  const FunctionDecl *FD) {
+    if (isPureSemanticLayerPath(Path)) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("pure_layer_ambient_nondeterminism");
+}
+
+class PureLayerAmbientNondeterminismCheck : public ClangTidyCheck {
+public:
+    PureLayerAmbientNondeterminismCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerForbiddenCallMatcher(
+            Finder,
+            this,
+            "^(time|clock|gettimeofday|clock_gettime|localtime|localtime_r|gmtime|gmtime_r|mktime|rand|srand|random|srandom|arc4random|uuid_generate)$");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Forbidden_Call_Rule Rule = {
+            appliesPureLayerAmbientNondeterminism,
+            "pure semantic layers must not read time, randomness, or other ambient nondeterminism",
+        };
+        checkForbiddenCall(Result, *this, Rule);
+    }
+};
+
+static bool appliesPureLayerMutableGlobalState(llvm::StringRef Path, const FunctionDecl *FD) {
+    (void)FD;
+    return isPureSemanticLayerPath(Path) || isFixturePath(Path);
+}
+
+class PureLayerMutableGlobalStateCheck : public ClangTidyCheck {
+public:
+    PureLayerMutableGlobalStateCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerGlobalStateMatcher(Finder, this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Global_State_Rule Rule = {
+            appliesPureLayerMutableGlobalState,
+            "pure semantic layers must not keep mutable global or static-local state",
+        };
+        checkGlobalState(Result, *this, Rule);
     }
 };
 
@@ -1497,6 +1775,32 @@ public:
             "codegen must not inspect raw PUBLIC_HEADER target properties; use build-model public header queries",
         };
         checkCallLiteral(Result, *this, Rule);
+    }
+};
+
+static bool appliesCodegenRawPropertyEscape(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_raw_property_escape") ||
+           FD->getName().contains("codegen_language_extensions_raw_property") ||
+           FD->getName().contains("codegen_public_header_raw_property");
+}
+
+class CodegenRawPropertyEscapeCheck : public ClangTidyCheck {
+public:
+    CodegenRawPropertyEscapeCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerForbiddenCallMatcher(Finder, this, "^bm_query_.*raw_property");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Forbidden_Call_Rule Rule = {
+            appliesCodegenRawPropertyEscape,
+            "codegen must not consume raw build-model properties directly; add a typed bm_query_* facade for the semantic fact",
+        };
+        checkForbiddenCall(Result, *this, Rule);
     }
 };
 
@@ -1812,6 +2116,12 @@ public:
             "nobify-evaluator-build-model-dependency");
         Factories.registerCheck<CodegenEvaluatorDependencyCheck>(
             "nobify-codegen-evaluator-dependency");
+        Factories.registerCheck<CodegenParserDependencyCheck>(
+            "nobify-codegen-parser-dependency");
+        Factories.registerCheck<ParserDownstreamDependencyCheck>(
+            "nobify-parser-downstream-dependency");
+        Factories.registerCheck<EventIrDownstreamDependencyCheck>(
+            "nobify-event-ir-downstream-dependency");
         Factories.registerCheck<EvaluatorBuildModelLifecycleCheck>(
             "nobify-evaluator-build-model-lifecycle");
         Factories.registerCheck<CodegenBuildModelLifecycleCheck>(
@@ -1822,6 +2132,12 @@ public:
             "nobify-codegen-public-host-effect");
         Factories.registerCheck<PureLayerAmbientEnvCheck>(
             "nobify-pure-layer-ambient-env");
+        Factories.registerCheck<PureLayerHostEffectCheck>(
+            "nobify-pure-layer-host-effect");
+        Factories.registerCheck<PureLayerAmbientNondeterminismCheck>(
+            "nobify-pure-layer-ambient-nondeterminism");
+        Factories.registerCheck<PureLayerMutableGlobalStateCheck>(
+            "nobify-pure-layer-mutable-global-state");
         Factories.registerCheck<CodegenBuildStepToolHeuristicCheck>(
             "nobify-codegen-build-step-tool-heuristic");
         Factories.registerCheck<CodegenCPackGroupingHeuristicCheck>(
@@ -1832,6 +2148,8 @@ public:
             "nobify-codegen-language-extensions-raw-property");
         Factories.registerCheck<CodegenPublicHeaderRawPropertyCheck>(
             "nobify-codegen-public-header-raw-property");
+        Factories.registerCheck<CodegenRawPropertyEscapeCheck>(
+            "nobify-codegen-raw-property-escape");
         Factories.registerCheck<EvaluatorHostServiceBoundaryCheck>(
             "nobify-evaluator-host-service-boundary");
         Factories.registerCheck<BuildModelQueryReadonlyCheck>(
