@@ -238,11 +238,19 @@ size_t bm_query_target_raw_property_count(const Build_Model *model, BM_Target_Id
 String_View bm_query_target_raw_property_name(const Build_Model *model, BM_Target_Id id, size_t property_index);
 BM_String_Span bm_query_target_raw_property_items(const Build_Model *model, BM_Target_Id id, String_View property_name);
 BM_String_Span bm_query_target_public_headers(const Build_Model *model, BM_Target_Id id);
+BM_String_Span bm_query_target_precompile_headers(const Build_Model *model, BM_Target_Id id);
+BM_String_Span bm_query_target_precompile_headers_reuse_from(const Build_Model *model, BM_Target_Id id);
+BM_String_Span bm_query_target_interface_precompile_headers(const Build_Model *model, BM_Target_Id id);
 bool bm_query_target_modeled_property_value(const Build_Model *model,
                                             BM_Target_Id id,
                                             String_View property_name,
                                             Arena *scratch,
                                             String_View *out);
+bool bm_query_target_property_value(const Build_Model *model,
+                                    BM_Target_Id id,
+                                    String_View property_name,
+                                    Arena *scratch,
+                                    String_View *out);
 bool bm_query_target_raw_property_value(const Build_Model *model,
                                         BM_Target_Id id,
                                         String_View property_name,

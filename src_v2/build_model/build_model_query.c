@@ -1131,6 +1131,16 @@ bool bm_query_target_raw_property_value(const Build_Model *model,
     return bm_query_append_joined_raw_record(scratch, out, record);
 }
 
+bool bm_query_target_property_value(const Build_Model *model,
+                                    BM_Target_Id id,
+                                    String_View property_name,
+                                    Arena *scratch,
+                                    String_View *out) {
+    if (!bm_query_target_modeled_property_value(model, id, property_name, scratch, out)) return false;
+    if (out && out->count > 0) return true;
+    return bm_query_target_raw_property_value(model, id, property_name, scratch, out);
+}
+
 typedef struct {
     const Build_Model *model;
     const BM_Query_Eval_Context *ctx;
@@ -1152,11 +1162,7 @@ static String_View bm_query_genex_target_property_cb(void *userdata,
     if (!data || !data->model || !data->ctx || !data->scratch) return nob_sv_from_cstr("");
     target_id = bm_query_target_by_name(data->model, target_name);
     if (!bm_target_id_is_valid(target_id)) return nob_sv_from_cstr("");
-    if (!bm_query_target_modeled_property_value(data->model, target_id, property_name, data->scratch, &out)) {
-        return nob_sv_from_cstr("");
-    }
-    if (out.count > 0) return out;
-    if (!bm_query_target_raw_property_value(data->model, target_id, property_name, data->scratch, &out)) {
+    if (!bm_query_target_property_value(data->model, target_id, property_name, data->scratch, &out)) {
         return nob_sv_from_cstr("");
     }
     return out;
@@ -1788,6 +1794,18 @@ BM_String_Span bm_query_target_public_headers(const Build_Model *model, BM_Targe
     return bm_query_target_raw_property_items(model, id, nob_sv_from_cstr("PUBLIC_HEADER"));
 }
 
+BM_String_Span bm_query_target_precompile_headers(const Build_Model *model, BM_Target_Id id) {
+    return bm_query_target_raw_property_items(model, id, nob_sv_from_cstr("PRECOMPILE_HEADERS"));
+}
+
+BM_String_Span bm_query_target_precompile_headers_reuse_from(const Build_Model *model, BM_Target_Id id) {
+    return bm_query_target_raw_property_items(model, id, nob_sv_from_cstr("PRECOMPILE_HEADERS_REUSE_FROM"));
+}
+
+BM_String_Span bm_query_target_interface_precompile_headers(const Build_Model *model, BM_Target_Id id) {
+    return bm_query_target_raw_property_items(model, id, nob_sv_from_cstr("INTERFACE_PRECOMPILE_HEADERS"));
+}
+
 static String_View bm_query_target_raw_property_first_string(const Build_Model *model,
                                                              BM_Target_Id id,
                                                              String_View property_name) {
@@ -2346,7 +2364,7 @@ static bool bm_query_collect_target_genex_dependencies(const Build_Model *model,
                                                        String_View raw,
                                                        BM_Target_Id exclude_target_id,
                                                        BM_Target_Id **target_deps) {
-    static const char *k_prefixes[] = {
+    static const char *const k_prefixes[] = {
         "$<TARGET_FILE:",
         "$<TARGET_FILE_DIR:",
         "$<TARGET_FILE_NAME:",

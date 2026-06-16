@@ -2022,15 +2022,12 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
 
     for (size_t test_index = 0; test_index < test_count; ++test_index) {
         BM_Test_Id id = (BM_Test_Id)test_index;
+        BM_Test_Effective_Command_View effective_command = {0};
         BM_String_Span configs = bm_query_test_configurations(ctx->model, id);
         BM_String_Span command_argv = bm_query_test_command_argv(ctx->model, id);
-        BM_Target_Id command_target = bm_query_test_resolved_command_target(ctx->model, id);
         BM_String_Span emulator_argv = {0};
-        if (bm_target_id_is_valid(command_target)) {
-            emulator_argv = bm_query_target_raw_property_items(ctx->model,
-                                                               command_target,
-                                                               nob_sv_from_cstr("CROSSCOMPILING_EMULATOR"));
-        }
+        if (!bm_query_test_effective_command(ctx->model, id, NULL, ctx->scratch, &effective_command)) return false;
+        emulator_argv = effective_command.emulator_argv;
         if (command_argv.count > 0) {
             char name[64] = {0};
             snprintf(name, sizeof(name), "g_test_command_argv_%zu", test_index);
@@ -2057,14 +2054,14 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
     }
     for (size_t test_index = 0; test_index < test_count; ++test_index) {
         BM_Test_Id id = (BM_Test_Id)test_index;
+        BM_Test_Effective_Command_View effective_command = {0};
         BM_Directory_Id owner = bm_query_test_owner_directory(ctx->model, id);
-        String_View working_dir = bm_query_test_working_directory(ctx->model, id);
+        String_View working_dir = {0};
         String_View effective_owner_binary_dir = {0};
         String_View emitted_command_base_dir = {0};
         String_View emitted_working_dir = {0};
         BM_String_Span configs = bm_query_test_configurations(ctx->model, id);
         BM_String_Span command_argv = bm_query_test_command_argv(ctx->model, id);
-        BM_Target_Id command_target = bm_query_test_resolved_command_target(ctx->model, id);
         BM_String_Span emulator_argv = {0};
         BM_String_Span property_span = {0};
         String_View required_files = {0};
@@ -2083,11 +2080,9 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         String_View skip_regex = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("SKIP_REGULAR_EXPRESSION"), ctx->scratch, NULL);
         String_View timeout = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("TIMEOUT"), ctx->scratch, NULL);
         String_View timeout_after_match = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("TIMEOUT_AFTER_MATCH"), ctx->scratch, NULL);
-        if (bm_target_id_is_valid(command_target)) {
-            emulator_argv = bm_query_target_raw_property_items(ctx->model,
-                                                               command_target,
-                                                               nob_sv_from_cstr("CROSSCOMPILING_EMULATOR"));
-        }
+        if (!bm_query_test_effective_command(ctx->model, id, NULL, ctx->scratch, &effective_command)) return false;
+        emulator_argv = effective_command.emulator_argv;
+        working_dir = effective_command.working_directory;
         (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("REQUIRED_FILES"), ctx->scratch, &property_span);
         if (!cg_join_string_span(ctx->scratch, property_span, &required_files)) return false;
         (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("ENVIRONMENT"), ctx->scratch, &property_span);

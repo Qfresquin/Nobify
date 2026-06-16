@@ -809,12 +809,7 @@ static bool cg_collect_unique_path(Arena *scratch, String_View **list, String_Vi
     return arena_arr_push(scratch, *list, value);
 }
 
-static bool cg_target_raw_property_nonempty(const Build_Model *model,
-                                            BM_Target_Id id,
-                                            const char *property_name) {
-    BM_String_Span span = {0};
-    if (!model || !property_name) return false;
-    span = bm_query_target_raw_property_items(model, id, nob_sv_from_cstr(property_name));
+static bool cg_string_span_has_nonempty_item(BM_String_Span span) {
     for (size_t i = 0; i < span.count; ++i) {
         if (nob_sv_trim(span.items[i]).count > 0) return true;
     }
@@ -841,7 +836,8 @@ static bool cg_target_link_closure_has_interface_pch(CG_Context *ctx,
             CG_Resolved_Target_Ref dep = {0};
             if (!cg_resolve_link_item_ref(ctx, &qctx, libs.items[i], &dep)) continue;
             if (!bm_target_id_is_valid(dep.target_id)) continue;
-            if (cg_target_raw_property_nonempty(ctx->model, dep.target_id, "INTERFACE_PRECOMPILE_HEADERS")) {
+            if (cg_string_span_has_nonempty_item(
+                    bm_query_target_interface_precompile_headers(ctx->model, dep.target_id))) {
                 if (out_offender) *out_offender = dep.target_id;
                 return true;
             }
@@ -859,8 +855,8 @@ static bool cg_reject_unsupported_precompile_headers(CG_Context *ctx, const CG_T
     if (info->alias || info->imported || info->kind == BM_TARGET_INTERFACE_LIBRARY || info->kind == BM_TARGET_UTILITY) {
         return true;
     }
-    if (cg_target_raw_property_nonempty(ctx->model, info->id, "PRECOMPILE_HEADERS") ||
-        cg_target_raw_property_nonempty(ctx->model, info->id, "PRECOMPILE_HEADERS_REUSE_FROM")) {
+    if (cg_string_span_has_nonempty_item(bm_query_target_precompile_headers(ctx->model, info->id)) ||
+        cg_string_span_has_nonempty_item(bm_query_target_precompile_headers_reuse_from(ctx->model, info->id))) {
         nob_log(NOB_ERROR,
                 "codegen: PRECOMPILE_HEADERS semantics are not supported yet for target '%.*s'",
                 (int)info->name.count,
@@ -916,15 +912,7 @@ static String_View cg_genex_target_property_cb(void *userdata, String_View targe
     if (!data || !data->ctx) return nob_sv_from_cstr("");
     id = bm_query_target_by_name(data->ctx->model, target_name);
     if (!bm_target_id_is_valid(id)) return nob_sv_from_cstr("");
-    if (!bm_query_target_modeled_property_value(data->ctx->model,
-                                                id,
-                                                property_name,
-                                                data->ctx->scratch,
-                                                &out)) {
-        return nob_sv_from_cstr("");
-    }
-    if (out.count > 0) return out;
-    if (!bm_query_target_raw_property_value(data->ctx->model, id, property_name, data->ctx->scratch, &out)) {
+    if (!bm_query_target_property_value(data->ctx->model, id, property_name, data->ctx->scratch, &out)) {
         return nob_sv_from_cstr("");
     }
     return out;
