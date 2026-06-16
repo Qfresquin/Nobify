@@ -790,7 +790,7 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
             }
 
             if (bm_query_install_rule_public_header_destination(ctx->model, id).count > 0) {
-                BM_String_Span headers = bm_query_target_raw_property_items(ctx->model, target_id, nob_sv_from_cstr("PUBLIC_HEADER"));
+                BM_String_Span headers = bm_query_target_public_headers(ctx->model, target_id);
                 BM_Directory_Id owner_dir = bm_query_target_owner_directory(ctx->model, target_id);
                 String_View header_component =
                     cg_install_effective_component(bm_query_install_rule_public_header_component(ctx->model, id),
@@ -842,12 +842,13 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
         if (kind == BM_INSTALL_RULE_FILE || kind == BM_INSTALL_RULE_PROGRAM) {
             BM_Directory_Id owner_dir = bm_query_install_rule_owner_directory(ctx->model, id);
             String_View item = bm_query_install_rule_item_raw(ctx->model, id);
+            BM_Install_Rule_Item_Kind item_kind = bm_query_install_rule_item_kind(ctx->model, id);
             String_View rename = bm_query_install_rule_rename(ctx->model, id);
             String_View trimmed_item = nob_sv_trim(item);
 
-            if (cg_sv_has_prefix(item, "SCRIPT::") ||
-                cg_sv_has_prefix(item, "CODE::") ||
-                cg_sv_has_prefix(item, "EXPORT_ANDROID_MK::")) {
+            if (item_kind == BM_INSTALL_RULE_ITEM_SCRIPT ||
+                item_kind == BM_INSTALL_RULE_ITEM_CODE ||
+                item_kind == BM_INSTALL_RULE_ITEM_EXPORT_ANDROID_MK) {
                 nob_log(NOB_ERROR,
                         "codegen: unsupported install(FILES) pseudo-item: %.*s",
                         (int)item.count,

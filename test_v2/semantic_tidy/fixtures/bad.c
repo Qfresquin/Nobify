@@ -41,7 +41,17 @@ typedef struct EvalExec_Request EvalExec_Request;
 
 typedef struct Nob_Codegen_Options Nob_Codegen_Options;
 typedef struct Nob_File_Paths Nob_File_Paths;
+typedef struct {
+    const char *data;
+    unsigned long count;
+} String_View;
+typedef struct {
+    const String_View *items;
+    unsigned long count;
+} BM_String_Span;
 typedef unsigned int BM_Target_Id;
+typedef unsigned int BM_Build_Step_Id;
+typedef unsigned int BM_CPack_Package_Id;
 typedef enum {
     NOB_FILE_REGULAR = 0,
     NOB_FILE_DIRECTORY,
@@ -58,7 +68,13 @@ static int nob_walk_dir(const char *path, void *callback);
 static const char *bm_query_target_name(const Build_Model *model, BM_Target_Id id);
 static int bm_builder_current_directory_id(BM_Builder *builder);
 static Build_Model_Draft *bm_builder_finalize(BM_Builder *builder);
+static int cg_sv_has_prefix(String_View sv, const char *prefix);
+static BM_String_Span bm_query_target_raw_property_items(const Build_Model *model,
+                                                         BM_Target_Id id,
+                                                         String_View property_name);
 static char *getenv(const char *name);
+static int nob_sv_eq(String_View left, String_View right);
+static String_View nob_sv_from_cstr(const char *value);
 static EvalRunResult eval_session_run(EvalSession *session,
                                       const EvalExec_Request *request,
                                       Ast_Root ast);
@@ -216,6 +232,34 @@ static int helper_bad_codegen_path_resolution_host_effect(const char *path) {
 
 static int helper_bad_pure_layer_ambient_env(const char *name) {
     return getenv(name) != 0;
+}
+
+static int helper_bad_codegen_build_step_tool_heuristic(String_View first_arg) {
+    return nob_sv_eq(first_arg, nob_sv_from_cstr("cmake")) ||
+           nob_sv_eq(first_arg, nob_sv_from_cstr("cpack"));
+}
+
+static int helper_bad_codegen_cpack_grouping_heuristic(String_View grouping) {
+    return nob_sv_eq(grouping, nob_sv_from_cstr("ONE_PER_GROUP")) ||
+           nob_sv_eq(grouping, nob_sv_from_cstr("IGNORE")) ||
+           nob_sv_eq(grouping, nob_sv_from_cstr("ALL_COMPONENTS_IN_ONE"));
+}
+
+static int helper_bad_codegen_install_pseudo_item_heuristic(String_View item) {
+    return cg_sv_has_prefix(item, "SCRIPT::") ||
+           cg_sv_has_prefix(item, "CODE::") ||
+           cg_sv_has_prefix(item, "EXPORT_ANDROID_MK::");
+}
+
+static int helper_bad_codegen_language_extensions_raw_property(const Build_Model *model,
+                                                               BM_Target_Id id) {
+    return bm_query_target_raw_property_items(model, id, nob_sv_from_cstr("CXX_EXTENSIONS")).count > 0 ||
+           bm_query_target_raw_property_items(model, id, nob_sv_from_cstr("C_EXTENSIONS")).count > 0;
+}
+
+static int helper_bad_codegen_public_header_raw_property(const Build_Model *model,
+                                                         BM_Target_Id id) {
+    return bm_query_target_raw_property_items(model, id, nob_sv_from_cstr("PUBLIC_HEADER")).count > 0;
 }
 
 static int helper_bad_codegen_public_host_effect(const char *path) {

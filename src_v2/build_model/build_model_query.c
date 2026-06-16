@@ -1387,6 +1387,14 @@ bool bm_test_id_is_valid(BM_Test_Id id) { return id != BM_TEST_ID_INVALID; }
 bool bm_export_id_is_valid(BM_Export_Id id) { return id != BM_EXPORT_ID_INVALID; }
 bool bm_package_id_is_valid(BM_Package_Id id) { return id != BM_PACKAGE_ID_INVALID; }
 
+BM_CPack_Components_Grouping bm_cpack_components_grouping_from_string(String_View value) {
+    if (value.count == 0) return BM_CPACK_COMPONENTS_GROUPING_ONE_PER_GROUP;
+    if (nob_sv_eq(value, nob_sv_from_cstr("ONE_PER_GROUP"))) return BM_CPACK_COMPONENTS_GROUPING_ONE_PER_GROUP;
+    if (nob_sv_eq(value, nob_sv_from_cstr("IGNORE"))) return BM_CPACK_COMPONENTS_GROUPING_IGNORE;
+    if (nob_sv_eq(value, nob_sv_from_cstr("ALL_COMPONENTS_IN_ONE"))) return BM_CPACK_COMPONENTS_GROUPING_ALL_COMPONENTS_IN_ONE;
+    return BM_CPACK_COMPONENTS_GROUPING_INVALID;
+}
+
 size_t bm_query_directory_count(const Build_Model *model) { return model ? arena_arr_len(model->directories) : 0; }
 size_t bm_query_target_count(const Build_Model *model) { return model ? arena_arr_len(model->targets) : 0; }
 size_t bm_query_build_step_count(const Build_Model *model) { return model ? arena_arr_len(model->build_steps) : 0; }
@@ -1776,6 +1784,10 @@ BM_String_Span bm_query_target_raw_property_items(const Build_Model *model, BM_T
     return record ? bm_string_span(record->items) : (BM_String_Span){0};
 }
 
+BM_String_Span bm_query_target_public_headers(const Build_Model *model, BM_Target_Id id) {
+    return bm_query_target_raw_property_items(model, id, nob_sv_from_cstr("PUBLIC_HEADER"));
+}
+
 static String_View bm_query_target_raw_property_first_string(const Build_Model *model,
                                                              BM_Target_Id id,
                                                              String_View property_name) {
@@ -1840,6 +1852,22 @@ bool bm_query_target_cxx_standard_required(const Build_Model *model, BM_Target_I
 
 bool bm_query_target_cxx_extensions(const Build_Model *model, BM_Target_Id id) {
     return bm_sv_truthy_query(bm_query_target_raw_property_first_string(model, id, nob_sv_from_cstr("CXX_EXTENSIONS")));
+}
+
+bool bm_query_target_language_extensions_override(const Build_Model *model,
+                                                  BM_Target_Id id,
+                                                  BM_Compile_Feature_Lang lang,
+                                                  bool *out_extensions) {
+    String_View property_name = bm_compile_feature_lang_extensions_prop(lang);
+    BM_String_Span values = {0};
+    if (out_extensions) *out_extensions = true;
+    if (property_name.count == 0) return false;
+    values = bm_query_target_raw_property_items(model, id, property_name);
+    if (values.count == 0) return false;
+    if (out_extensions) {
+        *out_extensions = bm_sv_truthy_query(bm_query_target_raw_property_first_string(model, id, property_name));
+    }
+    return true;
 }
 
 bool bm_query_target_win32_executable(const Build_Model *model, BM_Target_Id id) {
@@ -2622,6 +2650,27 @@ bool bm_query_build_step_effective_command_argv(const Build_Model *model,
     return true;
 }
 
+static BM_Build_Step_Command_Tool bm_query_build_step_command_tool_from_argv0(String_View argv0) {
+    if (nob_sv_eq(argv0, nob_sv_from_cstr("cmake"))) return BM_BUILD_STEP_COMMAND_TOOL_CMAKE;
+    if (nob_sv_eq(argv0, nob_sv_from_cstr("cpack"))) return BM_BUILD_STEP_COMMAND_TOOL_CPACK;
+    return BM_BUILD_STEP_COMMAND_TOOL_LITERAL;
+}
+
+bool bm_query_build_step_effective_command_tool(const Build_Model *model,
+                                                BM_Build_Step_Id id,
+                                                size_t command_index,
+                                                const BM_Query_Eval_Context *ctx,
+                                                Arena *scratch,
+                                                BM_Build_Step_Command_Tool *out) {
+    BM_String_Span argv = {0};
+    if (out) *out = BM_BUILD_STEP_COMMAND_TOOL_LITERAL;
+    if (!out) return false;
+    if (!bm_query_build_step_effective_command_argv(model, id, command_index, ctx, scratch, &argv)) return false;
+    if (argv.count == 0) return true;
+    *out = bm_query_build_step_command_tool_from_argv0(argv.items[0]);
+    return true;
+}
+
 BM_Replay_Action_Kind bm_query_replay_action_kind(const Build_Model *model, BM_Replay_Action_Id id) {
     const BM_Replay_Action_Record *action = bm_model_replay_action(model, id);
     return action ? action->kind : BM_REPLAY_ACTION_FILESYSTEM;
@@ -2958,6 +3007,29 @@ BM_Install_Rule_Kind bm_query_install_rule_kind(const Build_Model *model, BM_Ins
     return rule ? rule->kind : BM_INSTALL_RULE_FILE;
 }
 
+static bool bm_install_rule_item_has_tag_separator(String_View item) {
+    for (size_t i = 0; i + 1 < item.count; ++i) {
+        if (item.data[i] == ':' && item.data[i + 1] == ':') return true;
+    }
+    return false;
+}
+
+static BM_Install_Rule_Item_Kind bm_install_rule_item_kind_from_string(String_View item) {
+    if (nob_sv_starts_with(item, nob_sv_from_cstr("SCRIPT::"))) return BM_INSTALL_RULE_ITEM_SCRIPT;
+    if (nob_sv_starts_with(item, nob_sv_from_cstr("CODE::"))) return BM_INSTALL_RULE_ITEM_CODE;
+    if (nob_sv_starts_with(item, nob_sv_from_cstr("EXPORT_ANDROID_MK::"))) {
+        return BM_INSTALL_RULE_ITEM_EXPORT_ANDROID_MK;
+    }
+    if (nob_sv_starts_with(item, nob_sv_from_cstr("IMPORTED_RUNTIME_ARTIFACTS::"))) {
+        return BM_INSTALL_RULE_ITEM_IMPORTED_RUNTIME_ARTIFACTS;
+    }
+    if (nob_sv_starts_with(item, nob_sv_from_cstr("RUNTIME_DEPENDENCY_SET::"))) {
+        return BM_INSTALL_RULE_ITEM_RUNTIME_DEPENDENCY_SET;
+    }
+    return bm_install_rule_item_has_tag_separator(item) ? BM_INSTALL_RULE_ITEM_TAGGED_UNKNOWN
+                                                       : BM_INSTALL_RULE_ITEM_PATH;
+}
+
 BM_Directory_Id bm_query_install_rule_owner_directory(const Build_Model *model, BM_Install_Rule_Id id) {
     const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
     return rule ? rule->owner_directory_id : BM_DIRECTORY_ID_INVALID;
@@ -2966,6 +3038,11 @@ BM_Directory_Id bm_query_install_rule_owner_directory(const Build_Model *model, 
 String_View bm_query_install_rule_item_raw(const Build_Model *model, BM_Install_Rule_Id id) {
     const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
     return rule ? rule->item : (String_View){0};
+}
+
+BM_Install_Rule_Item_Kind bm_query_install_rule_item_kind(const Build_Model *model, BM_Install_Rule_Id id) {
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    return rule ? bm_install_rule_item_kind_from_string(rule->item) : BM_INSTALL_RULE_ITEM_PATH;
 }
 
 String_View bm_query_install_rule_destination(const Build_Model *model, BM_Install_Rule_Id id) {
@@ -3468,6 +3545,13 @@ String_View bm_query_cpack_package_archive_file_extension(const Build_Model *mod
 String_View bm_query_cpack_package_components_grouping(const Build_Model *model, BM_CPack_Package_Id id) {
     const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
     return record ? record->components_grouping : (String_View){0};
+}
+
+BM_CPack_Components_Grouping bm_query_cpack_package_components_grouping_kind(const Build_Model *model,
+                                                                             BM_CPack_Package_Id id) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    if (!record) return BM_CPACK_COMPONENTS_GROUPING_INVALID;
+    return bm_cpack_components_grouping_from_string(record->components_grouping);
 }
 
 String_View bm_query_cpack_package_project_config_file(const Build_Model *model, BM_CPack_Package_Id id) {

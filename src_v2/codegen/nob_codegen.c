@@ -1086,14 +1086,10 @@ static bool cg_collect_standard_arg(CG_Context *ctx,
     }
     if (required_standard <= 0) return true;
 
-    if (lang == CG_SOURCE_LANG_CXX) {
-        if (bm_query_target_raw_property_items(ctx->model, id, nob_sv_from_cstr("CXX_EXTENSIONS")).count > 0) {
-            extensions = bm_query_target_cxx_extensions(ctx->model, id);
-        }
-    } else {
-        if (bm_query_target_raw_property_items(ctx->model, id, nob_sv_from_cstr("C_EXTENSIONS")).count > 0) {
-            extensions = bm_query_target_c_extensions(ctx->model, id);
-        }
+    {
+        BM_Compile_Feature_Lang feature_lang =
+            lang == CG_SOURCE_LANG_CXX ? BM_COMPILE_FEATURE_LANG_CXX : BM_COMPILE_FEATURE_LANG_C;
+        (void)bm_query_target_language_extensions_override(ctx->model, id, feature_lang, &extensions);
     }
 
     {

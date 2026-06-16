@@ -214,13 +214,12 @@ static bool cg_package_build_archive_units(CG_Context *ctx,
                                            BM_CPack_Package_Id id,
                                            CG_Package_Archive_Unit **out_units) {
     CG_Package_Component *components = NULL;
-    String_View grouping = {0};
+    BM_CPack_Components_Grouping grouping = BM_CPACK_COMPONENTS_GROUPING_INVALID;
     if (!ctx || !out_units) return false;
     *out_units = NULL;
     if (!bm_query_cpack_package_archive_component_install(ctx->model, id)) return true;
     if (!cg_package_collect_components(ctx, id, &components)) return false;
-    grouping = bm_query_cpack_package_components_grouping(ctx->model, id);
-    if (grouping.count == 0) grouping = nob_sv_from_cstr("ONE_PER_GROUP");
+    grouping = bm_query_cpack_package_components_grouping_kind(ctx->model, id);
     if (arena_arr_len(components) == 0) {
         CG_Package_Archive_Unit unit = {
             .archive_key = nob_sv_from_cstr(""),
@@ -228,7 +227,7 @@ static bool cg_package_build_archive_units(CG_Context *ctx,
         };
         return arena_arr_push(ctx->scratch, *out_units, unit);
     }
-    if (nob_sv_eq(grouping, nob_sv_from_cstr("ALL_COMPONENTS_IN_ONE"))) {
+    if (grouping == BM_CPACK_COMPONENTS_GROUPING_ALL_COMPONENTS_IN_ONE) {
         CG_Package_Archive_Unit unit = {
             .archive_key = nob_sv_from_cstr(""),
             .archive_file_name = cg_package_archive_file_name_for_key(ctx, id, nob_sv_from_cstr("")),
@@ -239,7 +238,7 @@ static bool cg_package_build_archive_units(CG_Context *ctx,
         return arena_arr_push(ctx->scratch, *out_units, unit);
     }
     for (size_t i = 0; i < arena_arr_len(components); ++i) {
-        String_View key = nob_sv_eq(grouping, nob_sv_from_cstr("ONE_PER_GROUP")) && components[i].group_name.count > 0
+        String_View key = grouping == BM_CPACK_COMPONENTS_GROUPING_ONE_PER_GROUP && components[i].group_name.count > 0
             ? components[i].group_name
             : components[i].name;
         CG_Package_Archive_Unit *unit = cg_package_find_unit(*out_units, key);

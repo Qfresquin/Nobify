@@ -23,6 +23,29 @@ typedef enum {
     BM_TARGET_ARTIFACT_LINKER,
 } BM_Target_Artifact_Role;
 
+typedef enum {
+    BM_BUILD_STEP_COMMAND_TOOL_LITERAL = 0,
+    BM_BUILD_STEP_COMMAND_TOOL_CMAKE,
+    BM_BUILD_STEP_COMMAND_TOOL_CPACK,
+} BM_Build_Step_Command_Tool;
+
+typedef enum {
+    BM_CPACK_COMPONENTS_GROUPING_ONE_PER_GROUP = 0,
+    BM_CPACK_COMPONENTS_GROUPING_IGNORE,
+    BM_CPACK_COMPONENTS_GROUPING_ALL_COMPONENTS_IN_ONE,
+    BM_CPACK_COMPONENTS_GROUPING_INVALID,
+} BM_CPack_Components_Grouping;
+
+typedef enum {
+    BM_INSTALL_RULE_ITEM_PATH = 0,
+    BM_INSTALL_RULE_ITEM_SCRIPT,
+    BM_INSTALL_RULE_ITEM_CODE,
+    BM_INSTALL_RULE_ITEM_EXPORT_ANDROID_MK,
+    BM_INSTALL_RULE_ITEM_IMPORTED_RUNTIME_ARTIFACTS,
+    BM_INSTALL_RULE_ITEM_RUNTIME_DEPENDENCY_SET,
+    BM_INSTALL_RULE_ITEM_TAGGED_UNKNOWN,
+} BM_Install_Rule_Item_Kind;
+
 typedef struct {
     bool emits;
     String_View path;
@@ -112,6 +135,7 @@ bool bm_model_has_project(const Build_Model *model);
 bool bm_target_id_is_valid(BM_Target_Id id);
 bool bm_build_step_id_is_valid(BM_Build_Step_Id id);
 bool bm_replay_action_id_is_valid(BM_Replay_Action_Id id);
+BM_CPack_Components_Grouping bm_cpack_components_grouping_from_string(String_View value);
 bool bm_directory_id_is_valid(BM_Directory_Id id);
 bool bm_test_id_is_valid(BM_Test_Id id);
 bool bm_export_id_is_valid(BM_Export_Id id);
@@ -213,6 +237,7 @@ BM_String_Item_Span bm_query_target_link_directories_raw(const Build_Model *mode
 size_t bm_query_target_raw_property_count(const Build_Model *model, BM_Target_Id id);
 String_View bm_query_target_raw_property_name(const Build_Model *model, BM_Target_Id id, size_t property_index);
 BM_String_Span bm_query_target_raw_property_items(const Build_Model *model, BM_Target_Id id, String_View property_name);
+BM_String_Span bm_query_target_public_headers(const Build_Model *model, BM_Target_Id id);
 bool bm_query_target_modeled_property_value(const Build_Model *model,
                                             BM_Target_Id id,
                                             String_View property_name,
@@ -236,6 +261,10 @@ bool bm_query_target_c_extensions(const Build_Model *model, BM_Target_Id id);
 String_View bm_query_target_cxx_standard(const Build_Model *model, BM_Target_Id id);
 bool bm_query_target_cxx_standard_required(const Build_Model *model, BM_Target_Id id);
 bool bm_query_target_cxx_extensions(const Build_Model *model, BM_Target_Id id);
+bool bm_query_target_language_extensions_override(const Build_Model *model,
+                                                  BM_Target_Id id,
+                                                  BM_Compile_Feature_Lang lang,
+                                                  bool *out_extensions);
 bool bm_query_target_win32_executable(const Build_Model *model, BM_Target_Id id);
 bool bm_query_target_macosx_bundle(const Build_Model *model, BM_Target_Id id);
 
@@ -275,6 +304,12 @@ bool bm_query_build_step_effective_command_argv(const Build_Model *model,
                                                 const BM_Query_Eval_Context *ctx,
                                                 Arena *scratch,
                                                 BM_String_Span *out);
+bool bm_query_build_step_effective_command_tool(const Build_Model *model,
+                                                BM_Build_Step_Id id,
+                                                size_t command_index,
+                                                const BM_Query_Eval_Context *ctx,
+                                                Arena *scratch,
+                                                BM_Build_Step_Command_Tool *out);
 
 BM_Replay_Action_Kind bm_query_replay_action_kind(const Build_Model *model, BM_Replay_Action_Id id);
 BM_Replay_Opcode bm_query_replay_action_opcode(const Build_Model *model, BM_Replay_Action_Id id);
@@ -548,6 +583,7 @@ bool bm_query_test_effective_command(const Build_Model *model,
 BM_Install_Rule_Kind bm_query_install_rule_kind(const Build_Model *model, BM_Install_Rule_Id id);
 BM_Directory_Id bm_query_install_rule_owner_directory(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_item_raw(const Build_Model *model, BM_Install_Rule_Id id);
+BM_Install_Rule_Item_Kind bm_query_install_rule_item_kind(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_destination(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_rename(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_component(const Build_Model *model, BM_Install_Rule_Id id);
@@ -641,6 +677,8 @@ String_View bm_query_cpack_package_output_directory(const Build_Model *model, BM
 String_View bm_query_cpack_package_archive_file_name(const Build_Model *model, BM_CPack_Package_Id id);
 String_View bm_query_cpack_package_archive_file_extension(const Build_Model *model, BM_CPack_Package_Id id);
 String_View bm_query_cpack_package_components_grouping(const Build_Model *model, BM_CPack_Package_Id id);
+BM_CPack_Components_Grouping bm_query_cpack_package_components_grouping_kind(const Build_Model *model,
+                                                                             BM_CPack_Package_Id id);
 String_View bm_query_cpack_package_project_config_file(const Build_Model *model, BM_CPack_Package_Id id);
 BM_String_Span bm_query_cpack_package_generators(const Build_Model *model, BM_CPack_Package_Id id);
 bool bm_query_cpack_package_include_toplevel_directory(const Build_Model *model, BM_CPack_Package_Id id);

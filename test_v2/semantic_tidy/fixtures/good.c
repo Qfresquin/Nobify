@@ -19,7 +19,40 @@ typedef struct Build_Model Build_Model;
 typedef struct Build_Model_Draft Build_Model_Draft;
 typedef struct BM_Builder BM_Builder;
 typedef unsigned int BM_Target_Id;
+typedef unsigned int BM_Build_Step_Id;
+typedef unsigned int BM_Install_Rule_Id;
+typedef unsigned int BM_CPack_Package_Id;
+typedef struct {
+    const char *data;
+    unsigned long count;
+} String_View;
+typedef struct {
+    const String_View *items;
+    unsigned long count;
+} BM_String_Span;
 typedef struct Nob_File_Paths Nob_File_Paths;
+typedef enum {
+    BM_BUILD_STEP_COMMAND_TOOL_LITERAL = 0,
+    BM_BUILD_STEP_COMMAND_TOOL_CMAKE,
+    BM_BUILD_STEP_COMMAND_TOOL_CPACK,
+} BM_Build_Step_Command_Tool;
+typedef enum {
+    BM_CPACK_COMPONENTS_GROUPING_ONE_PER_GROUP = 0,
+    BM_CPACK_COMPONENTS_GROUPING_IGNORE,
+    BM_CPACK_COMPONENTS_GROUPING_ALL_COMPONENTS_IN_ONE,
+    BM_CPACK_COMPONENTS_GROUPING_INVALID,
+} BM_CPack_Components_Grouping;
+typedef enum {
+    BM_INSTALL_RULE_ITEM_PATH = 0,
+    BM_INSTALL_RULE_ITEM_SCRIPT,
+    BM_INSTALL_RULE_ITEM_CODE,
+    BM_INSTALL_RULE_ITEM_EXPORT_ANDROID_MK,
+    BM_INSTALL_RULE_ITEM_TAGGED_UNKNOWN,
+} BM_Install_Rule_Item_Kind;
+typedef enum {
+    BM_COMPILE_FEATURE_LANG_C = 0,
+    BM_COMPILE_FEATURE_LANG_CXX,
+} BM_Compile_Feature_Lang;
 typedef struct {
     int exists;
     int type;
@@ -42,6 +75,22 @@ static int eval_service_glob(EvalExecContext *ctx, const void *req, void *out);
 static char *nob_temp_sprintf(const char *fmt, ...);
 static char *copy_to_persistent(const char *value);
 static const char *bm_query_target_name(const Build_Model *model, BM_Target_Id id);
+static int bm_query_build_step_effective_command_tool(const Build_Model *model,
+                                                      BM_Build_Step_Id id,
+                                                      unsigned long command_index,
+                                                      const void *ctx,
+                                                      void *scratch,
+                                                      BM_Build_Step_Command_Tool *out);
+static BM_CPack_Components_Grouping bm_query_cpack_package_components_grouping_kind(const Build_Model *model,
+                                                                                    BM_CPack_Package_Id id);
+static BM_Install_Rule_Item_Kind bm_query_install_rule_item_kind(const Build_Model *model,
+                                                                 BM_Install_Rule_Id id);
+static int bm_query_target_language_extensions_override(const Build_Model *model,
+                                                        BM_Target_Id id,
+                                                        BM_Compile_Feature_Lang lang,
+                                                        int *out_extensions);
+static BM_String_Span bm_query_target_public_headers(const Build_Model *model,
+                                                     BM_Target_Id id);
 static int eval_fs_glob(EvalExecContext *ctx, const char *pattern, Nob_File_Paths *out);
 
 Eval_Result eval_handle_good(EvalExecContext *ctx, const void *node) {
@@ -149,6 +198,33 @@ static const char *helper_codegen_path_resolution_host_effect_good(const Build_M
 
 static int helper_pure_layer_ambient_env_good(const void *explicit_options) {
     return explicit_options != 0;
+}
+
+static int helper_codegen_build_step_tool_heuristic_good(const Build_Model *model,
+                                                         BM_Build_Step_Id id,
+                                                         BM_Build_Step_Command_Tool *out) {
+    return bm_query_build_step_effective_command_tool(model, id, 0, 0, 0, out);
+}
+
+static int helper_codegen_cpack_grouping_heuristic_good(const Build_Model *model,
+                                                        BM_CPack_Package_Id id) {
+    return bm_query_cpack_package_components_grouping_kind(model, id) != BM_CPACK_COMPONENTS_GROUPING_INVALID;
+}
+
+static int helper_codegen_install_pseudo_item_heuristic_good(const Build_Model *model,
+                                                             BM_Install_Rule_Id id) {
+    return bm_query_install_rule_item_kind(model, id) != BM_INSTALL_RULE_ITEM_TAGGED_UNKNOWN;
+}
+
+static int helper_codegen_language_extensions_raw_property_good(const Build_Model *model,
+                                                                BM_Target_Id id,
+                                                                int *out_extensions) {
+    return bm_query_target_language_extensions_override(model, id, BM_COMPILE_FEATURE_LANG_CXX, out_extensions);
+}
+
+static int helper_codegen_public_header_raw_property_good(const Build_Model *model,
+                                                          BM_Target_Id id) {
+    return bm_query_target_public_headers(model, id).count > 0;
 }
 
 static const char *helper_codegen_public_host_effect_good(const Build_Model *model,

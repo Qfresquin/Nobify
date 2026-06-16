@@ -671,10 +671,8 @@ static bool bm_validate_structural_pass(const Build_Model_Draft *draft, Diag_Sin
                           "CPack package snapshot has no generators",
                           "package snapshots require at least one effective generator");
         }
-        if (!bm_string_view_is_empty(record->components_grouping) &&
-            !nob_sv_eq(record->components_grouping, nob_sv_from_cstr("ONE_PER_GROUP")) &&
-            !nob_sv_eq(record->components_grouping, nob_sv_from_cstr("IGNORE")) &&
-            !nob_sv_eq(record->components_grouping, nob_sv_from_cstr("ALL_COMPONENTS_IN_ONE"))) {
+        if (bm_cpack_components_grouping_from_string(record->components_grouping) ==
+            BM_CPACK_COMPONENTS_GROUPING_INVALID) {
             *had_error = true;
             bm_diag_error(sink,
                           record->provenance,

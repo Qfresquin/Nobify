@@ -227,12 +227,13 @@ static bool cg_step_emit_ensure_declared_paths(String_View sentinel_path,
 static bool cg_step_emit_command_arg(Nob_String_Builder *out,
                                      const char *cmd_var,
                                      String_View arg,
+                                     BM_Build_Step_Command_Tool tool,
                                      bool first_arg) {
     if (!out || !cmd_var) return false;
-    if (first_arg && nob_sv_eq(arg, nob_sv_from_cstr("cmake"))) {
+    if (first_arg && tool == BM_BUILD_STEP_COMMAND_TOOL_CMAKE) {
         return cg_emit_cmd_append_expr(out, cmd_var, "resolve_cmake_bin()");
     }
-    if (first_arg && nob_sv_eq(arg, nob_sv_from_cstr("cpack"))) {
+    if (first_arg && tool == BM_BUILD_STEP_COMMAND_TOOL_CPACK) {
         return cg_emit_cmd_append_expr(out, cmd_var, "resolve_cpack_bin()");
     }
     return cg_emit_cmd_append_sv(out, cmd_var, arg);
@@ -255,6 +256,7 @@ static bool cg_step_emit_commands(CG_Context *ctx,
 
     for (size_t cmd_index = 0; cmd_index < bm_query_build_step_command_count(ctx->model, info->id); ++cmd_index) {
         BM_String_Span argv = {0};
+        BM_Build_Step_Command_Tool tool = BM_BUILD_STEP_COMMAND_TOOL_LITERAL;
         if (!bm_query_build_step_effective_command_argv(ctx->model,
                                                         info->id,
                                                         cmd_index,
@@ -263,10 +265,18 @@ static bool cg_step_emit_commands(CG_Context *ctx,
                                                         &argv)) {
             return false;
         }
+        if (!bm_query_build_step_effective_command_tool(ctx->model,
+                                                       info->id,
+                                                       cmd_index,
+                                                       &qctx,
+                                                       ctx->scratch,
+                                                       &tool)) {
+            return false;
+        }
         nob_sb_append_cstr(out, "        {\n");
         nob_sb_append_cstr(out, "            Nob_Cmd step_cmd = {0};\n");
         for (size_t arg = 0; arg < argv.count; ++arg) {
-            if (!cg_step_emit_command_arg(out, "step_cmd", argv.items[arg], arg == 0)) return false;
+            if (!cg_step_emit_command_arg(out, "step_cmd", argv.items[arg], tool, arg == 0)) return false;
         }
         nob_sb_append_cstr(out, "            bool ok = run_cmd_in_dir(");
         if (has_working_dir) {

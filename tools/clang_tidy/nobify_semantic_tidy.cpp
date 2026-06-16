@@ -1359,6 +1359,185 @@ private:
     }
 };
 
+class CodegenBuildStepToolHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenBuildStepToolHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(callExpr(callee(functionDecl(hasName("nob_sv_eq"))),
+                                    hasDescendant(stringLiteral().bind("literal")),
+                                    hasAncestor(functionDecl().bind("function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+        const auto *Literal = Result.Nodes.getNodeAs<StringLiteral>("literal");
+        if (!Call || !FD || !Literal) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
+        if (!applies(Path, FD)) return;
+        llvm::StringRef Value = Literal->getString();
+        if (Value != "cmake" && Value != "cpack") return;
+
+        diag(Call->getExprLoc(),
+             "codegen must not classify build-step tools by argv string comparison; use build-model command tool queries");
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (contains(Path, "src_v2/codegen/")) return true;
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("codegen_build_step_tool_heuristic");
+    }
+};
+
+class CodegenCPackGroupingHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenCPackGroupingHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(callExpr(callee(functionDecl(hasName("nob_sv_eq"))),
+                                    hasDescendant(stringLiteral().bind("literal")),
+                                    hasAncestor(functionDecl().bind("function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+        const auto *Literal = Result.Nodes.getNodeAs<StringLiteral>("literal");
+        if (!Call || !FD || !Literal) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
+        if (!applies(Path, FD)) return;
+        llvm::StringRef Value = Literal->getString();
+        if (Value != "ONE_PER_GROUP" && Value != "IGNORE" && Value != "ALL_COMPONENTS_IN_ONE") return;
+
+        diag(Call->getExprLoc(),
+             "codegen must not interpret CPACK_COMPONENTS_GROUPING by string comparison; use build-model package grouping queries");
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (contains(Path, "src_v2/codegen/")) return true;
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("codegen_cpack_grouping_heuristic");
+    }
+};
+
+class CodegenInstallPseudoItemHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenInstallPseudoItemHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(callExpr(callee(functionDecl(hasName("cg_sv_has_prefix"))),
+                                    hasDescendant(stringLiteral().bind("literal")),
+                                    hasAncestor(functionDecl().bind("function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+        const auto *Literal = Result.Nodes.getNodeAs<StringLiteral>("literal");
+        if (!Call || !FD || !Literal) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
+        if (!applies(Path, FD)) return;
+        llvm::StringRef Value = Literal->getString();
+        if (Value != "SCRIPT::" && Value != "CODE::" && Value != "EXPORT_ANDROID_MK::") return;
+
+        diag(Call->getExprLoc(),
+             "codegen must not classify install pseudo-items by raw TAG:: prefixes; use build-model install item kind queries");
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (contains(Path, "src_v2/codegen/")) return true;
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("codegen_install_pseudo_item_heuristic");
+    }
+};
+
+class CodegenLanguageExtensionsRawPropertyCheck : public ClangTidyCheck {
+public:
+    CodegenLanguageExtensionsRawPropertyCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(callExpr(callee(functionDecl(hasName("bm_query_target_raw_property_items"))),
+                                    hasDescendant(stringLiteral().bind("literal")),
+                                    hasAncestor(functionDecl().bind("function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+        const auto *Literal = Result.Nodes.getNodeAs<StringLiteral>("literal");
+        if (!Call || !FD || !Literal) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
+        if (!applies(Path, FD)) return;
+        llvm::StringRef Value = Literal->getString();
+        if (Value != "C_EXTENSIONS" && Value != "CXX_EXTENSIONS") return;
+
+        diag(Call->getExprLoc(),
+             "codegen must not inspect raw C/CXX extension properties; use build-model language extension override queries");
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (contains(Path, "src_v2/codegen/")) return true;
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("codegen_language_extensions_raw_property");
+    }
+};
+
+class CodegenPublicHeaderRawPropertyCheck : public ClangTidyCheck {
+public:
+    CodegenPublicHeaderRawPropertyCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(callExpr(callee(functionDecl(hasName("bm_query_target_raw_property_items"))),
+                                    hasDescendant(stringLiteral().bind("literal")),
+                                    hasAncestor(functionDecl().bind("function")))
+                               .bind("call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
+        const auto *Literal = Result.Nodes.getNodeAs<StringLiteral>("literal");
+        if (!Call || !FD || !Literal) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
+        if (!applies(Path, FD)) return;
+        if (Literal->getString() != "PUBLIC_HEADER") return;
+
+        diag(Call->getExprLoc(),
+             "codegen must not inspect raw PUBLIC_HEADER target properties; use build-model public header queries");
+    }
+
+private:
+    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
+        if (contains(Path, "src_v2/codegen/")) return true;
+        if (!isFixturePath(Path) || !FD) return false;
+        return FD->getName().contains("codegen_public_header_raw_property");
+    }
+};
+
 class EvaluatorHostServiceBoundaryCheck : public ClangTidyCheck {
 public:
     EvaluatorHostServiceBoundaryCheck(StringRef Name, ClangTidyContext *Context)
@@ -1915,6 +2094,16 @@ public:
             "nobify-codegen-public-host-effect");
         Factories.registerCheck<PureLayerAmbientEnvCheck>(
             "nobify-pure-layer-ambient-env");
+        Factories.registerCheck<CodegenBuildStepToolHeuristicCheck>(
+            "nobify-codegen-build-step-tool-heuristic");
+        Factories.registerCheck<CodegenCPackGroupingHeuristicCheck>(
+            "nobify-codegen-cpack-grouping-heuristic");
+        Factories.registerCheck<CodegenInstallPseudoItemHeuristicCheck>(
+            "nobify-codegen-install-pseudo-item-heuristic");
+        Factories.registerCheck<CodegenLanguageExtensionsRawPropertyCheck>(
+            "nobify-codegen-language-extensions-raw-property");
+        Factories.registerCheck<CodegenPublicHeaderRawPropertyCheck>(
+            "nobify-codegen-public-header-raw-property");
         Factories.registerCheck<EvaluatorHostServiceBoundaryCheck>(
             "nobify-evaluator-host-service-boundary");
         Factories.registerCheck<BuildModelQueryReadonlyCheck>(

@@ -64,12 +64,13 @@ static const char *cg_replay_opcode_name(BM_Replay_Opcode opcode) {
 static bool cg_validate_install_rule(CG_Context *ctx, BM_Install_Rule_Id id) {
     BM_Install_Rule_Kind kind = bm_query_install_rule_kind(ctx->model, id);
     String_View item = bm_query_install_rule_item_raw(ctx->model, id);
+    BM_Install_Rule_Item_Kind item_kind = bm_query_install_rule_item_kind(ctx->model, id);
     if (!ctx) return false;
 
     if (kind == BM_INSTALL_RULE_FILE || kind == BM_INSTALL_RULE_PROGRAM) {
-        if (cg_sv_has_prefix(item, "SCRIPT::") ||
-            cg_sv_has_prefix(item, "CODE::") ||
-            cg_sv_has_prefix(item, "EXPORT_ANDROID_MK::")) {
+        if (item_kind == BM_INSTALL_RULE_ITEM_SCRIPT ||
+            item_kind == BM_INSTALL_RULE_ITEM_CODE ||
+            item_kind == BM_INSTALL_RULE_ITEM_EXPORT_ANDROID_MK) {
             nob_log(NOB_ERROR,
                     "codegen: install pseudo-item is not supported in the install backend: %.*s",
                     (int)item.count,
@@ -154,6 +155,8 @@ static bool cg_validate_package_model(CG_Context *ctx) {
         String_View output_dir = bm_query_cpack_package_output_directory(ctx->model, id, ctx->scratch);
         String_View project_config_file = bm_query_cpack_package_project_config_file(ctx->model, id);
         String_View grouping = bm_query_cpack_package_components_grouping(ctx->model, id);
+        BM_CPack_Components_Grouping grouping_kind =
+            bm_query_cpack_package_components_grouping_kind(ctx->model, id);
         BM_String_Span generators = bm_query_cpack_package_generators(ctx->model, id);
 
         if (package_name.count == 0 || file_name.count == 0 || output_dir.count == 0) {
@@ -170,10 +173,7 @@ static bool cg_validate_package_model(CG_Context *ctx) {
             return false;
         }
 
-        if (grouping.count > 0 &&
-            !nob_sv_eq(grouping, nob_sv_from_cstr("ONE_PER_GROUP")) &&
-            !nob_sv_eq(grouping, nob_sv_from_cstr("IGNORE")) &&
-            !nob_sv_eq(grouping, nob_sv_from_cstr("ALL_COMPONENTS_IN_ONE"))) {
+        if (grouping_kind == BM_CPACK_COMPONENTS_GROUPING_INVALID) {
             nob_log(NOB_ERROR,
                     "codegen: unsupported CPACK_COMPONENTS_GROUPING '%.*s'",
                     (int)grouping.count,
