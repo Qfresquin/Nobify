@@ -194,7 +194,6 @@ typedef bool (*SemanticTypeMatcherFn)(QualType Type);
 typedef struct {
     SemanticLayerAppliesFn applies;
     SemanticTypeMatcherFn forbidden_type;
-    const char *forbidden_call_regex;
     const char *var_message;
     const char *param_message;
     const char *return_message;
@@ -261,7 +260,6 @@ static void checkLayerDependency(const MatchFinder::MatchResult &Result,
 
 typedef struct {
     SemanticLayerAppliesFn applies;
-    const char *forbidden_call_regex;
     const char *message;
 } Semantic_Forbidden_Call_Rule;
 
@@ -283,6 +281,127 @@ static void checkForbiddenCall(const MatchFinder::MatchResult &Result,
 
     llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
     if (!Rule.applies(Path, FD)) return;
+
+    Check.diag(Call->getExprLoc(), Rule.message);
+}
+
+typedef bool (*SemanticMemberAppliesFn)(llvm::StringRef Path,
+                                        ASTContext *Context,
+                                        const MemberExpr *Member);
+typedef bool (*SemanticRecordMatcherFn)(const RecordDecl *Record);
+
+typedef struct {
+    SemanticMemberAppliesFn applies;
+    SemanticRecordMatcherFn record_matches;
+    const char *message;
+} Semantic_Member_Access_Rule;
+
+static bool ancestorFunctionNameContains(ASTContext *Context,
+                                         const MemberExpr *Member,
+                                         llvm::StringRef Needle) {
+    if (!Context || !Member) return false;
+
+    DynTypedNodeList Parents = Context->getParents(*Member);
+    while (!Parents.empty()) {
+        if (const auto *FD = Parents[0].get<FunctionDecl>()) {
+            return FD->getName().contains(Needle);
+        }
+        if (const auto *StmtParent = Parents[0].get<Stmt>()) {
+            Parents = Context->getParents(*StmtParent);
+            continue;
+        }
+        if (const auto *DeclParent = Parents[0].get<Decl>()) {
+            Parents = Context->getParents(*DeclParent);
+            continue;
+        }
+        break;
+    }
+    return false;
+}
+
+static const RecordDecl *recordFromMemberExpr(const MemberExpr *Member) {
+    if (!Member) return nullptr;
+    const FieldDecl *Field = dyn_cast<FieldDecl>(Member->getMemberDecl());
+    return Field ? Field->getParent() : nullptr;
+}
+
+static void registerMemberAccessMatcher(MatchFinder *Finder, ClangTidyCheck *Check) {
+    Finder->addMatcher(memberExpr().bind("member-access"), Check);
+}
+
+static void registerMemberMutationMatcher(MatchFinder *Finder, ClangTidyCheck *Check) {
+    auto Member = memberExpr().bind("member-mutation");
+    Finder->addMatcher(binaryOperator(isAssignmentOperator(),
+                                      hasLHS(ignoringParenImpCasts(Member))),
+                       Check);
+    Finder->addMatcher(unaryOperator(anyOf(hasOperatorName("++"), hasOperatorName("--")),
+                                     hasUnaryOperand(ignoringParenImpCasts(Member))),
+                       Check);
+}
+
+static void checkMemberAccess(const MatchFinder::MatchResult &Result,
+                              ClangTidyCheck &Check,
+                              const Semantic_Member_Access_Rule &Rule,
+                              const char *BindName) {
+    const auto *Member = Result.Nodes.getNodeAs<MemberExpr>(BindName);
+    if (!Member) return;
+
+    llvm::StringRef Path = fileName(*Result.SourceManager, Member->getExprLoc());
+    if (!Rule.applies(Path, Result.Context, Member)) return;
+
+    const RecordDecl *Record = recordFromMemberExpr(Member);
+    if (Record && Rule.record_matches(Record)) {
+        Check.diag(Member->getExprLoc(), Rule.message);
+    }
+}
+
+static bool recordIsBuildModelOrBMRecord(const RecordDecl *Record) {
+    if (!Record) return false;
+    llvm::StringRef Name = Record->getName();
+    return Name == "Build_Model" || Name.starts_with("BM_");
+}
+
+static bool recordIsFrozenBuildModelRecord(const RecordDecl *Record) {
+    if (!Record) return false;
+    llvm::StringRef Name = Record->getName();
+    return Name == "Build_Model" || Name.ends_with("_Record");
+}
+
+static bool recordIsDraftOrFrozenBuildModelRecord(const RecordDecl *Record) {
+    if (!Record) return false;
+    llvm::StringRef Name = Record->getName();
+    return Name == "Build_Model_Draft" || Name == "Build_Model" || Name.ends_with("_Record");
+}
+
+typedef bool (*SemanticStringLiteralMatcherFn)(llvm::StringRef Value);
+
+typedef struct {
+    SemanticLayerAppliesFn applies;
+    SemanticStringLiteralMatcherFn literal_matches;
+    const char *message;
+} Semantic_Call_Literal_Rule;
+
+static void registerCallLiteralMatcher(MatchFinder *Finder,
+                                       ClangTidyCheck *Check,
+                                       const char *CalleeName) {
+    Finder->addMatcher(callExpr(callee(functionDecl(hasName(CalleeName))),
+                                hasDescendant(stringLiteral().bind("semantic-literal")),
+                                hasAncestor(functionDecl().bind("semantic-literal-function")))
+                           .bind("semantic-literal-call"),
+                       Check);
+}
+
+static void checkCallLiteral(const MatchFinder::MatchResult &Result,
+                             ClangTidyCheck &Check,
+                             const Semantic_Call_Literal_Rule &Rule) {
+    const auto *Call = Result.Nodes.getNodeAs<CallExpr>("semantic-literal-call");
+    const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("semantic-literal-function");
+    const auto *Literal = Result.Nodes.getNodeAs<StringLiteral>("semantic-literal");
+    if (!Call || !FD || !Literal) return;
+
+    llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
+    if (!Rule.applies(Path, FD)) return;
+    if (!Rule.literal_matches(Literal->getString())) return;
 
     Check.diag(Call->getExprLoc(), Rule.message);
 }
@@ -835,31 +954,37 @@ public:
     }
 };
 
+static bool appliesBuildModelQueryFacade(llvm::StringRef Path,
+                                         ASTContext *Context,
+                                         const MemberExpr *Member) {
+    (void)Context;
+    (void)Member;
+    return isProductionBuildModelConsumerPath(Path);
+}
+
 class BuildModelQueryBoundaryCheck : public ClangTidyCheck {
 public:
     BuildModelQueryBoundaryCheck(StringRef Name, ClangTidyContext *Context)
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        Finder->addMatcher(memberExpr().bind("member"), this);
+        registerMemberAccessMatcher(Finder, this);
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const auto *Member = Result.Nodes.getNodeAs<MemberExpr>("member");
-        if (!Member) return;
-        llvm::StringRef Path = fileName(*Result.SourceManager, Member->getExprLoc());
-        if (!isProductionBuildModelConsumerPath(Path)) return;
-        const FieldDecl *Field = dyn_cast<FieldDecl>(Member->getMemberDecl());
-        if (!Field) return;
-        const RecordDecl *Record = Field->getParent();
-        if (!Record) return;
-        llvm::StringRef Name = Record->getName();
-        if (Name == "Build_Model" || Name.starts_with("BM_")) {
-            diag(Member->getExprLoc(),
-                 "production consumers must use bm_query_* instead of direct build-model record fields");
-        }
+        static const Semantic_Member_Access_Rule Rule = {
+            appliesBuildModelQueryFacade,
+            recordIsBuildModelOrBMRecord,
+            "production consumers must use bm_query_* instead of direct build-model record fields",
+        };
+        checkMemberAccess(Result, *this, Rule, "member-access");
     }
 };
+
+static bool appliesCodegenEventIrBoundary(llvm::StringRef Path, const FunctionDecl *FD) {
+    (void)FD;
+    return isCodegenBoundaryPath(Path);
+}
 
 class CodegenEventIrBoundaryCheck : public ClangTidyCheck {
 public:
@@ -867,54 +992,36 @@ public:
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        Finder->addMatcher(varDecl().bind("var"), this);
-        Finder->addMatcher(parmVarDecl().bind("param"), this);
-        Finder->addMatcher(functionDecl(isDefinition()).bind("function"), this);
+        registerLayerDependencyMatchers(Finder, this, "");
         Finder->addMatcher(declRefExpr(to(enumConstantDecl(matchesName("^EVENT_")))).bind("event-constant"),
                            this);
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const SourceManager &SM = *Result.SourceManager;
-
-        if (const auto *VD = Result.Nodes.getNodeAs<VarDecl>("var")) {
-            llvm::StringRef Path = fileName(SM, VD->getLocation());
-            if (!isCodegenBoundaryPath(Path) || isa<ParmVarDecl>(VD)) return;
-            if (typeNamesEventIr(VD->getType())) {
-                diag(VD->getLocation(),
-                     "codegen must consume the frozen build model, not Event IR values");
-            }
-            return;
-        }
-
-        if (const auto *PD = Result.Nodes.getNodeAs<ParmVarDecl>("param")) {
-            llvm::StringRef Path = fileName(SM, PD->getLocation());
-            if (!isCodegenBoundaryPath(Path)) return;
-            if (typeNamesEventIr(PD->getType())) {
-                diag(PD->getLocation(),
-                     "codegen APIs must not accept Event IR; route semantics through build_model and bm_query_*");
-            }
-            return;
-        }
-
-        if (const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function")) {
-            llvm::StringRef Path = fileName(SM, FD->getLocation());
-            if (!isCodegenBoundaryPath(Path)) return;
-            if (typeNamesEventIr(FD->getReturnType())) {
-                diag(FD->getLocation(),
-                     "codegen APIs must not return Event IR; expose frozen build-model query results instead");
-            }
-            return;
-        }
-
         if (const auto *Ref = Result.Nodes.getNodeAs<DeclRefExpr>("event-constant")) {
-            llvm::StringRef Path = fileName(SM, Ref->getExprLoc());
+            llvm::StringRef Path = fileName(*Result.SourceManager, Ref->getExprLoc());
             if (!isCodegenBoundaryPath(Path)) return;
             diag(Ref->getExprLoc(),
                  "codegen must not branch on EVENT_*; preserve this semantic distinction upstream");
+            return;
         }
+
+        static const Semantic_Layer_Dependency_Rule Rule = {
+            appliesCodegenEventIrBoundary,
+            typeNamesEventIr,
+            "codegen must consume the frozen build model, not Event IR values",
+            "codegen APIs must not accept Event IR; route semantics through build_model and bm_query_*",
+            "codegen APIs must not return Event IR; expose frozen build-model query results instead",
+            "",
+        };
+        checkLayerDependency(Result, *this, Rule);
     }
 };
+
+static bool appliesBuildModelCodegenDependency(llvm::StringRef Path, const FunctionDecl *FD) {
+    (void)FD;
+    return isBuildModelOwnerPath(Path) || isFixturePath(Path);
+}
 
 class BuildModelCodegenDependencyCheck : public ClangTidyCheck {
 public:
@@ -922,52 +1029,19 @@ public:
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        Finder->addMatcher(varDecl().bind("var"), this);
-        Finder->addMatcher(parmVarDecl().bind("param"), this);
-        Finder->addMatcher(functionDecl(isDefinition()).bind("function"), this);
-        Finder->addMatcher(callExpr(callee(functionDecl(matchesName("^nob_codegen_")))).bind("call"),
-                           this);
+        registerLayerDependencyMatchers(Finder, this, "^nob_codegen_");
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const SourceManager &SM = *Result.SourceManager;
-
-        if (const auto *VD = Result.Nodes.getNodeAs<VarDecl>("var")) {
-            llvm::StringRef Path = fileName(SM, VD->getLocation());
-            if ((!isBuildModelOwnerPath(Path) && !isFixturePath(Path)) || isa<ParmVarDecl>(VD)) return;
-            if (typeNamesCodegen(VD->getType())) {
-                diag(VD->getLocation(),
-                     "build_model must not store codegen types; expose frozen facts through bm_query_*");
-            }
-            return;
-        }
-
-        if (const auto *PD = Result.Nodes.getNodeAs<ParmVarDecl>("param")) {
-            llvm::StringRef Path = fileName(SM, PD->getLocation());
-            if (!isBuildModelOwnerPath(Path) && !isFixturePath(Path)) return;
-            if (typeNamesCodegen(PD->getType())) {
-                diag(PD->getLocation(),
-                     "build_model APIs must not accept codegen types; keep codegen downstream of bm_query_*");
-            }
-            return;
-        }
-
-        if (const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function")) {
-            llvm::StringRef Path = fileName(SM, FD->getLocation());
-            if (!isBuildModelOwnerPath(Path) && !isFixturePath(Path)) return;
-            if (typeNamesCodegen(FD->getReturnType())) {
-                diag(FD->getLocation(),
-                     "build_model APIs must not return codegen types; keep backend policy out of the frozen model");
-            }
-            return;
-        }
-
-        if (const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call")) {
-            llvm::StringRef Path = fileName(SM, Call->getExprLoc());
-            if (!isBuildModelOwnerPath(Path) && !isFixturePath(Path)) return;
-            diag(Call->getExprLoc(),
-                 "build_model must not call nob_codegen_*; codegen consumes build_model, not the reverse");
-        }
+        static const Semantic_Layer_Dependency_Rule Rule = {
+            appliesBuildModelCodegenDependency,
+            typeNamesCodegen,
+            "build_model must not store codegen types; expose frozen facts through bm_query_*",
+            "build_model APIs must not accept codegen types; keep codegen downstream of bm_query_*",
+            "build_model APIs must not return codegen types; keep backend policy out of the frozen model",
+            "build_model must not call nob_codegen_*; codegen consumes build_model, not the reverse",
+        };
+        checkLayerDependency(Result, *this, Rule);
     }
 };
 
@@ -991,7 +1065,6 @@ public:
     void check(const MatchFinder::MatchResult &Result) override {
         static const Semantic_Forbidden_Call_Rule Rule = {
             appliesEvaluatorFileHostEnumeration,
-            "^(nob_read_entire_dir|opendir|readdir|closedir|tinydir_open|tinydir_readfile|tinydir_next|tinydir_close)$",
             "file() evaluator handlers must use centralized filesystem enumeration helpers instead of direct host directory walking",
         };
         checkForbiddenCall(Result, *this, Rule);
@@ -1078,7 +1151,6 @@ public:
     void check(const MatchFinder::MatchResult &Result) override {
         static const Semantic_Forbidden_Call_Rule Rule = {
             appliesBuildModelConstructionQueryLayer,
-            "^bm_query_",
             "build_model construction and freeze code must not call bm_query_*; use owned records before exposing the query layer",
         };
         checkForbiddenCall(Result, *this, Rule);
@@ -1104,7 +1176,6 @@ public:
         static const Semantic_Layer_Dependency_Rule Rule = {
             appliesEvaluatorBuildModelDependency,
             typeNamesFrozenBuildModel,
-            "^bm_query_",
             "evaluator must emit Event IR instead of consuming the frozen Build_Model",
             "evaluator APIs must not accept Build_Model; keep build_model downstream of Event IR",
             "evaluator APIs must not return Build_Model; publish typed Event IR instead",
@@ -1133,7 +1204,6 @@ public:
         static const Semantic_Layer_Dependency_Rule Rule = {
             appliesCodegenEvaluatorDependency,
             typeNamesEvaluatorState,
-            "^eval_",
             "codegen must not store evaluator execution state; consume frozen build-model queries instead",
             "codegen APIs must not accept evaluator state; route semantics through Event IR and build_model",
             "codegen APIs must not return evaluator state; backend output comes from build-model facts",
@@ -1162,7 +1232,6 @@ public:
         static const Semantic_Layer_Dependency_Rule Rule = {
             appliesEvaluatorBuildModelLifecycle,
             typeNamesBuildModelLifecycle,
-            "^(bm_builder_|builder_|bm_freeze|bm_validate)",
             "evaluator must not store build-model builder or draft state; emit Event IR instead",
             "evaluator APIs must not accept build-model builder or draft state; publish Event IR",
             "evaluator APIs must not return build-model builder or draft state",
@@ -1191,7 +1260,6 @@ public:
         static const Semantic_Layer_Dependency_Rule Rule = {
             appliesCodegenBuildModelLifecycle,
             typeNamesBuildModelLifecycle,
-            "^(bm_builder_|builder_|bm_freeze|bm_validate)",
             "codegen must not store build-model builder or draft state; consume frozen query APIs",
             "codegen APIs must not accept build-model builder or draft state; use frozen Build_Model queries",
             "codegen APIs must not return build-model builder or draft state",
@@ -1201,41 +1269,41 @@ public:
     }
 };
 
+static bool appliesCodegenRenderHostEffect(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_render_host_effect") ||
+           FD->getName().contains("codegen_path_resolution_host_effect");
+}
+
 class CodegenRenderHostEffectCheck : public ClangTidyCheck {
 public:
     CodegenRenderHostEffectCheck(StringRef Name, ClangTidyContext *Context)
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
-                                    "^(nob_file_exists|nob_get_file_type|nob_read_entire_dir|nob_write_entire_file|nob_read_entire_file|nob_cmd_run|system|popen|stat|lstat|access|realpath|fopen|open|remove|rename|unlink|rmdir)$"))),
-                                    hasAncestor(functionDecl().bind("function")))
-                               .bind("call"),
-                           this);
+        registerForbiddenCallMatcher(
+            Finder,
+            this,
+            "^(nob_file_exists|nob_get_file_type|nob_read_entire_dir|nob_write_entire_file|nob_read_entire_file|nob_cmd_run|system|popen|stat|lstat|access|realpath|fopen|open|remove|rename|unlink|rmdir)$");
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
-        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
-        if (!Call || !FD) return;
-
-        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
-        if (!applies(Path, FD)) return;
-
-        diag(Call->getExprLoc(),
-             "codegen render functions must not perform host effects; emit generated backend code or use an outer write wrapper");
-    }
-
-private:
-    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
-        if (contains(Path, "src_v2/codegen/")) {
-            return true;
-        }
-        if (!isFixturePath(Path) || !FD) return false;
-        return FD->getName().contains("codegen_render_host_effect") ||
-               FD->getName().contains("codegen_path_resolution_host_effect");
+        static const Semantic_Forbidden_Call_Rule Rule = {
+            appliesCodegenRenderHostEffect,
+            "codegen render functions must not perform host effects; emit generated backend code or use an outer write wrapper",
+        };
+        checkForbiddenCall(Result, *this, Rule);
     }
 };
+
+static bool appliesCodegenPublicHostEffect(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) {
+        return FD && FD->getName().starts_with("nob_codegen_");
+    }
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_public_host_effect");
+}
 
 class CodegenPublicHostEffectCheck : public ClangTidyCheck {
 public:
@@ -1243,34 +1311,26 @@ public:
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
-                                    "^(cg_host_ensure_dir|nob_mkdir_if_not_exists|nob_write_entire_file|nob_read_entire_file|nob_cmd_run|system|popen|fopen|open|remove|rename|unlink|rmdir)$"))),
-                                    hasAncestor(functionDecl().bind("function")))
-                               .bind("call"),
-                           this);
+        registerForbiddenCallMatcher(
+            Finder,
+            this,
+            "^(cg_host_ensure_dir|nob_mkdir_if_not_exists|nob_write_entire_file|nob_read_entire_file|nob_cmd_run|system|popen|fopen|open|remove|rename|unlink|rmdir)$");
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
-        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
-        if (!Call || !FD) return;
-
-        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
-        if (!applies(Path, FD)) return;
-
-        diag(Call->getExprLoc(),
-             "public codegen APIs must not perform host effects; render into a buffer and let the app or test harness write files");
-    }
-
-private:
-    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
-        if (contains(Path, "src_v2/codegen/")) {
-            return FD->getName().starts_with("nob_codegen_");
-        }
-        if (!isFixturePath(Path) || !FD) return false;
-        return FD->getName().contains("codegen_public_host_effect");
+        static const Semantic_Forbidden_Call_Rule Rule = {
+            appliesCodegenPublicHostEffect,
+            "public codegen APIs must not perform host effects; render into a buffer and let the app or test harness write files",
+        };
+        checkForbiddenCall(Result, *this, Rule);
     }
 };
+
+static bool appliesPureLayerAmbientEnv(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (isPureSemanticLayerPath(Path)) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("pure_layer_ambient_env");
+}
 
 class PureLayerAmbientEnvCheck : public ClangTidyCheck {
 public:
@@ -1278,32 +1338,30 @@ public:
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
-                                    "^(getenv|secure_getenv|setenv|unsetenv|putenv|_putenv|_putenv_s)$"))),
-                                    hasAncestor(functionDecl().bind("function")))
-                               .bind("call"),
-                           this);
+        registerForbiddenCallMatcher(
+            Finder,
+            this,
+            "^(getenv|secure_getenv|setenv|unsetenv|putenv|_putenv|_putenv_s)$");
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
-        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
-        if (!Call || !FD) return;
-
-        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
-        if (!applies(Path, FD)) return;
-
-        diag(Call->getExprLoc(),
-             "pure semantic layers must not read or mutate ambient environment; pass explicit options or use the owning runtime boundary");
-    }
-
-private:
-    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
-        if (isPureSemanticLayerPath(Path)) return true;
-        if (!isFixturePath(Path) || !FD) return false;
-        return FD->getName().contains("pure_layer_ambient_env");
+        static const Semantic_Forbidden_Call_Rule Rule = {
+            appliesPureLayerAmbientEnv,
+            "pure semantic layers must not read or mutate ambient environment; pass explicit options or use the owning runtime boundary",
+        };
+        checkForbiddenCall(Result, *this, Rule);
     }
 };
+
+static bool literalIsBuildStepToolHeuristic(llvm::StringRef Value) {
+    return Value == "cmake" || Value == "cpack";
+}
+
+static bool appliesCodegenBuildStepToolHeuristic(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_build_step_tool_heuristic");
+}
 
 class CodegenBuildStepToolHeuristicCheck : public ClangTidyCheck {
 public:
@@ -1311,35 +1369,28 @@ public:
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        Finder->addMatcher(callExpr(callee(functionDecl(hasName("nob_sv_eq"))),
-                                    hasDescendant(stringLiteral().bind("literal")),
-                                    hasAncestor(functionDecl().bind("function")))
-                               .bind("call"),
-                           this);
+        registerCallLiteralMatcher(Finder, this, "nob_sv_eq");
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
-        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
-        const auto *Literal = Result.Nodes.getNodeAs<StringLiteral>("literal");
-        if (!Call || !FD || !Literal) return;
-
-        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
-        if (!applies(Path, FD)) return;
-        llvm::StringRef Value = Literal->getString();
-        if (Value != "cmake" && Value != "cpack") return;
-
-        diag(Call->getExprLoc(),
-             "codegen must not classify build-step tools by argv string comparison; use build-model command tool queries");
-    }
-
-private:
-    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
-        if (contains(Path, "src_v2/codegen/")) return true;
-        if (!isFixturePath(Path) || !FD) return false;
-        return FD->getName().contains("codegen_build_step_tool_heuristic");
+        static const Semantic_Call_Literal_Rule Rule = {
+            appliesCodegenBuildStepToolHeuristic,
+            literalIsBuildStepToolHeuristic,
+            "codegen must not classify build-step tools by argv string comparison; use build-model command tool queries",
+        };
+        checkCallLiteral(Result, *this, Rule);
     }
 };
+
+static bool literalIsCPackGroupingHeuristic(llvm::StringRef Value) {
+    return Value == "ONE_PER_GROUP" || Value == "IGNORE" || Value == "ALL_COMPONENTS_IN_ONE";
+}
+
+static bool appliesCodegenCPackGroupingHeuristic(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_cpack_grouping_heuristic");
+}
 
 class CodegenCPackGroupingHeuristicCheck : public ClangTidyCheck {
 public:
@@ -1347,35 +1398,29 @@ public:
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        Finder->addMatcher(callExpr(callee(functionDecl(hasName("nob_sv_eq"))),
-                                    hasDescendant(stringLiteral().bind("literal")),
-                                    hasAncestor(functionDecl().bind("function")))
-                               .bind("call"),
-                           this);
+        registerCallLiteralMatcher(Finder, this, "nob_sv_eq");
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
-        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
-        const auto *Literal = Result.Nodes.getNodeAs<StringLiteral>("literal");
-        if (!Call || !FD || !Literal) return;
-
-        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
-        if (!applies(Path, FD)) return;
-        llvm::StringRef Value = Literal->getString();
-        if (Value != "ONE_PER_GROUP" && Value != "IGNORE" && Value != "ALL_COMPONENTS_IN_ONE") return;
-
-        diag(Call->getExprLoc(),
-             "codegen must not interpret CPACK_COMPONENTS_GROUPING by string comparison; use build-model package grouping queries");
-    }
-
-private:
-    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
-        if (contains(Path, "src_v2/codegen/")) return true;
-        if (!isFixturePath(Path) || !FD) return false;
-        return FD->getName().contains("codegen_cpack_grouping_heuristic");
+        static const Semantic_Call_Literal_Rule Rule = {
+            appliesCodegenCPackGroupingHeuristic,
+            literalIsCPackGroupingHeuristic,
+            "codegen must not interpret CPACK_COMPONENTS_GROUPING by string comparison; use build-model package grouping queries",
+        };
+        checkCallLiteral(Result, *this, Rule);
     }
 };
+
+static bool literalIsInstallPseudoItemHeuristic(llvm::StringRef Value) {
+    return Value == "SCRIPT::" || Value == "CODE::" || Value == "EXPORT_ANDROID_MK::";
+}
+
+static bool appliesCodegenInstallPseudoItemHeuristic(llvm::StringRef Path,
+                                                     const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_install_pseudo_item_heuristic");
+}
 
 class CodegenInstallPseudoItemHeuristicCheck : public ClangTidyCheck {
 public:
@@ -1383,35 +1428,29 @@ public:
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        Finder->addMatcher(callExpr(callee(functionDecl(hasName("cg_sv_has_prefix"))),
-                                    hasDescendant(stringLiteral().bind("literal")),
-                                    hasAncestor(functionDecl().bind("function")))
-                               .bind("call"),
-                           this);
+        registerCallLiteralMatcher(Finder, this, "cg_sv_has_prefix");
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
-        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
-        const auto *Literal = Result.Nodes.getNodeAs<StringLiteral>("literal");
-        if (!Call || !FD || !Literal) return;
-
-        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
-        if (!applies(Path, FD)) return;
-        llvm::StringRef Value = Literal->getString();
-        if (Value != "SCRIPT::" && Value != "CODE::" && Value != "EXPORT_ANDROID_MK::") return;
-
-        diag(Call->getExprLoc(),
-             "codegen must not classify install pseudo-items by raw TAG:: prefixes; use build-model install item kind queries");
-    }
-
-private:
-    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
-        if (contains(Path, "src_v2/codegen/")) return true;
-        if (!isFixturePath(Path) || !FD) return false;
-        return FD->getName().contains("codegen_install_pseudo_item_heuristic");
+        static const Semantic_Call_Literal_Rule Rule = {
+            appliesCodegenInstallPseudoItemHeuristic,
+            literalIsInstallPseudoItemHeuristic,
+            "codegen must not classify install pseudo-items by raw TAG:: prefixes; use build-model install item kind queries",
+        };
+        checkCallLiteral(Result, *this, Rule);
     }
 };
+
+static bool literalIsLanguageExtensionsRawProperty(llvm::StringRef Value) {
+    return Value == "C_EXTENSIONS" || Value == "CXX_EXTENSIONS";
+}
+
+static bool appliesCodegenLanguageExtensionsRawProperty(llvm::StringRef Path,
+                                                        const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_language_extensions_raw_property");
+}
 
 class CodegenLanguageExtensionsRawPropertyCheck : public ClangTidyCheck {
 public:
@@ -1419,35 +1458,28 @@ public:
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        Finder->addMatcher(callExpr(callee(functionDecl(hasName("bm_query_target_raw_property_items"))),
-                                    hasDescendant(stringLiteral().bind("literal")),
-                                    hasAncestor(functionDecl().bind("function")))
-                               .bind("call"),
-                           this);
+        registerCallLiteralMatcher(Finder, this, "bm_query_target_raw_property_items");
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
-        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
-        const auto *Literal = Result.Nodes.getNodeAs<StringLiteral>("literal");
-        if (!Call || !FD || !Literal) return;
-
-        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
-        if (!applies(Path, FD)) return;
-        llvm::StringRef Value = Literal->getString();
-        if (Value != "C_EXTENSIONS" && Value != "CXX_EXTENSIONS") return;
-
-        diag(Call->getExprLoc(),
-             "codegen must not inspect raw C/CXX extension properties; use build-model language extension override queries");
-    }
-
-private:
-    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
-        if (contains(Path, "src_v2/codegen/")) return true;
-        if (!isFixturePath(Path) || !FD) return false;
-        return FD->getName().contains("codegen_language_extensions_raw_property");
+        static const Semantic_Call_Literal_Rule Rule = {
+            appliesCodegenLanguageExtensionsRawProperty,
+            literalIsLanguageExtensionsRawProperty,
+            "codegen must not inspect raw C/CXX extension properties; use build-model language extension override queries",
+        };
+        checkCallLiteral(Result, *this, Rule);
     }
 };
+
+static bool literalIsPublicHeaderRawProperty(llvm::StringRef Value) {
+    return Value == "PUBLIC_HEADER";
+}
+
+static bool appliesCodegenPublicHeaderRawProperty(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_public_header_raw_property");
+}
 
 class CodegenPublicHeaderRawPropertyCheck : public ClangTidyCheck {
 public:
@@ -1455,34 +1487,24 @@ public:
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        Finder->addMatcher(callExpr(callee(functionDecl(hasName("bm_query_target_raw_property_items"))),
-                                    hasDescendant(stringLiteral().bind("literal")),
-                                    hasAncestor(functionDecl().bind("function")))
-                               .bind("call"),
-                           this);
+        registerCallLiteralMatcher(Finder, this, "bm_query_target_raw_property_items");
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
-        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
-        const auto *Literal = Result.Nodes.getNodeAs<StringLiteral>("literal");
-        if (!Call || !FD || !Literal) return;
-
-        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
-        if (!applies(Path, FD)) return;
-        if (Literal->getString() != "PUBLIC_HEADER") return;
-
-        diag(Call->getExprLoc(),
-             "codegen must not inspect raw PUBLIC_HEADER target properties; use build-model public header queries");
-    }
-
-private:
-    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
-        if (contains(Path, "src_v2/codegen/")) return true;
-        if (!isFixturePath(Path) || !FD) return false;
-        return FD->getName().contains("codegen_public_header_raw_property");
+        static const Semantic_Call_Literal_Rule Rule = {
+            appliesCodegenPublicHeaderRawProperty,
+            literalIsPublicHeaderRawProperty,
+            "codegen must not inspect raw PUBLIC_HEADER target properties; use build-model public header queries",
+        };
+        checkCallLiteral(Result, *this, Rule);
     }
 };
+
+static bool appliesEvaluatorHostServiceBoundary(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (isEvaluatorHostServiceConsumerPath(Path)) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("evaluator_host_service_boundary");
+}
 
 class EvaluatorHostServiceBoundaryCheck : public ClangTidyCheck {
 public:
@@ -1490,32 +1512,28 @@ public:
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(
-                                    "^(nob_file_exists|nob_get_file_type|nob_mkdir_if_not_exists|nob_walk_dir|nob_read_entire_dir|nob_read_entire_file|nob_write_entire_file|nob_copy_file|nob_cmd_run|stat|lstat|access|realpath|fopen|open|remove|rename|unlink|rmdir)$"))),
-                                    hasAncestor(functionDecl().bind("function")))
-                               .bind("call"),
-                           this);
+        registerForbiddenCallMatcher(
+            Finder,
+            this,
+            "^(nob_file_exists|nob_get_file_type|nob_mkdir_if_not_exists|nob_walk_dir|nob_read_entire_dir|nob_read_entire_file|nob_write_entire_file|nob_copy_file|nob_cmd_run|stat|lstat|access|realpath|fopen|open|remove|rename|unlink|rmdir)$");
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
-        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("function");
-        if (!Call || !FD) return;
-
-        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
-        if (!applies(Path, FD)) return;
-
-        diag(Call->getExprLoc(),
-             "evaluator command helpers must use eval_service_* or eval_process_* for host effects");
-    }
-
-private:
-    bool applies(llvm::StringRef Path, const FunctionDecl *FD) const {
-        if (isEvaluatorHostServiceConsumerPath(Path)) return true;
-        if (!isFixturePath(Path) || !FD) return false;
-        return FD->getName().contains("evaluator_host_service_boundary");
+        static const Semantic_Forbidden_Call_Rule Rule = {
+            appliesEvaluatorHostServiceBoundary,
+            "evaluator command helpers must use eval_service_* or eval_process_* for host effects",
+        };
+        checkForbiddenCall(Result, *this, Rule);
     }
 };
+
+static bool appliesBuildModelQueryReadonly(llvm::StringRef Path,
+                                           ASTContext *Context,
+                                           const MemberExpr *Member) {
+    if (isBuildModelQueryPath(Path)) return true;
+    if (!isFixturePath(Path)) return false;
+    return ancestorFunctionNameContains(Context, Member, "query_mutates");
+}
 
 class BuildModelQueryReadonlyCheck : public ClangTidyCheck {
 public:
@@ -1523,53 +1541,16 @@ public:
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        auto FrozenMember = memberExpr().bind("member");
-        Finder->addMatcher(binaryOperator(isAssignmentOperator(),
-                                          hasLHS(ignoringParenImpCasts(FrozenMember))),
-                           this);
-        Finder->addMatcher(unaryOperator(anyOf(hasOperatorName("++"), hasOperatorName("--")),
-                                         hasUnaryOperand(ignoringParenImpCasts(FrozenMember))),
-                           this);
+        registerMemberMutationMatcher(Finder, this);
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const auto *Member = Result.Nodes.getNodeAs<MemberExpr>("member");
-        if (!Member) return;
-
-        llvm::StringRef Path = fileName(*Result.SourceManager, Member->getExprLoc());
-        if (!applies(Path, Result.Context, Member)) return;
-
-        const FieldDecl *Field = dyn_cast<FieldDecl>(Member->getMemberDecl());
-        const RecordDecl *Record = Field ? Field->getParent() : nullptr;
-        if (!Record) return;
-        llvm::StringRef Name = Record->getName();
-        if (Name == "Build_Model" || Name.ends_with("_Record")) {
-            diag(Member->getExprLoc(),
-                 "build_model query code must not mutate frozen model records");
-        }
-    }
-
-private:
-    bool applies(llvm::StringRef Path, ASTContext *Context, const MemberExpr *Member) const {
-        if (isBuildModelQueryPath(Path)) return true;
-        if (!isFixturePath(Path) || !Context || !Member) return false;
-
-        DynTypedNodeList Parents = Context->getParents(*Member);
-        while (!Parents.empty()) {
-            if (const auto *FD = Parents[0].get<FunctionDecl>()) {
-                return FD->getName().contains("query_mutates");
-            }
-            if (const auto *StmtParent = Parents[0].get<Stmt>()) {
-                Parents = Context->getParents(*StmtParent);
-                continue;
-            }
-            if (const auto *DeclParent = Parents[0].get<Decl>()) {
-                Parents = Context->getParents(*DeclParent);
-                continue;
-            }
-            break;
-        }
-        return false;
+        static const Semantic_Member_Access_Rule Rule = {
+            appliesBuildModelQueryReadonly,
+            recordIsFrozenBuildModelRecord,
+            "build_model query code must not mutate frozen model records",
+        };
+        checkMemberAccess(Result, *this, Rule, "member-mutation");
     }
 };
 
@@ -1592,7 +1573,6 @@ public:
         static const Semantic_Layer_Dependency_Rule Rule = {
             appliesBuildModelQueryFrozenBoundary,
             typeNamesBuildModelLifecycle,
-            "^(bm_builder_|builder_|bm_freeze|bm_validate)",
             "build_model query code must not store builder or draft state; query frozen Build_Model records",
             "build_model query APIs must not accept builder or draft state; accept frozen Build_Model",
             "build_model query APIs must not return builder or draft state",
@@ -1602,59 +1582,30 @@ public:
     }
 };
 
+static bool appliesBuildModelValidateReadonly(llvm::StringRef Path,
+                                              ASTContext *Context,
+                                              const MemberExpr *Member) {
+    if (isBuildModelValidatePath(Path)) return true;
+    if (!isFixturePath(Path)) return false;
+    return ancestorFunctionNameContains(Context, Member, "validate_mutates");
+}
+
 class BuildModelValidateReadonlyCheck : public ClangTidyCheck {
 public:
     BuildModelValidateReadonlyCheck(StringRef Name, ClangTidyContext *Context)
         : ClangTidyCheck(Name, Context) {}
 
     void registerMatchers(MatchFinder *Finder) override {
-        auto DraftMember = memberExpr().bind("member");
-        Finder->addMatcher(binaryOperator(isAssignmentOperator(),
-                                          hasLHS(ignoringParenImpCasts(DraftMember))),
-                           this);
-        Finder->addMatcher(unaryOperator(anyOf(hasOperatorName("++"), hasOperatorName("--")),
-                                         hasUnaryOperand(ignoringParenImpCasts(DraftMember))),
-                           this);
+        registerMemberMutationMatcher(Finder, this);
     }
 
     void check(const MatchFinder::MatchResult &Result) override {
-        const auto *Member = Result.Nodes.getNodeAs<MemberExpr>("member");
-        if (!Member) return;
-
-        llvm::StringRef Path = fileName(*Result.SourceManager, Member->getExprLoc());
-        if (!applies(Path, Result.Context, Member)) return;
-
-        const FieldDecl *Field = dyn_cast<FieldDecl>(Member->getMemberDecl());
-        const RecordDecl *Record = Field ? Field->getParent() : nullptr;
-        if (!Record) return;
-        llvm::StringRef Name = Record->getName();
-        if (Name == "Build_Model_Draft" || Name == "Build_Model" || Name.ends_with("_Record")) {
-            diag(Member->getExprLoc(),
-                 "build_model validation must report invalid state without mutating draft or model records");
-        }
-    }
-
-private:
-    bool applies(llvm::StringRef Path, ASTContext *Context, const MemberExpr *Member) const {
-        if (isBuildModelValidatePath(Path)) return true;
-        if (!isFixturePath(Path) || !Context || !Member) return false;
-
-        DynTypedNodeList Parents = Context->getParents(*Member);
-        while (!Parents.empty()) {
-            if (const auto *FD = Parents[0].get<FunctionDecl>()) {
-                return FD->getName().contains("validate_mutates");
-            }
-            if (const auto *StmtParent = Parents[0].get<Stmt>()) {
-                Parents = Context->getParents(*StmtParent);
-                continue;
-            }
-            if (const auto *DeclParent = Parents[0].get<Decl>()) {
-                Parents = Context->getParents(*DeclParent);
-                continue;
-            }
-            break;
-        }
-        return false;
+        static const Semantic_Member_Access_Rule Rule = {
+            appliesBuildModelValidateReadonly,
+            recordIsDraftOrFrozenBuildModelRecord,
+            "build_model validation must report invalid state without mutating draft or model records",
+        };
+        checkMemberAccess(Result, *this, Rule, "member-mutation");
     }
 };
 
@@ -1677,7 +1628,6 @@ public:
         static const Semantic_Layer_Dependency_Rule Rule = {
             appliesBuildModelValidateDraftBoundary,
             typeNamesFrozenModelOrBuilderState,
-            "^(bm_query_|bm_builder_|builder_|bm_freeze)",
             "build_model draft validation must not store frozen model or builder state",
             "build_model draft validation APIs must not accept frozen model or builder state",
             "build_model draft validation APIs must not return frozen model or builder state",
@@ -1706,7 +1656,6 @@ public:
         static const Semantic_Layer_Dependency_Rule Rule = {
             appliesBuildModelFreezeBuilderBoundary,
             typeNamesBuildModelBuilderState,
-            "^(bm_builder_|builder_)",
             "build_model freeze must not store builder state; freeze consumes the finalized draft",
             "build_model freeze APIs must not accept builder state; accept Build_Model_Draft instead",
             "build_model freeze APIs must not return builder state",
@@ -1735,7 +1684,6 @@ public:
         static const Semantic_Layer_Dependency_Rule Rule = {
             appliesBuildModelBuilderUpstreamBoundary,
             typeNamesEvaluatorOrParserState,
-            "^(eval_|parse_)",
             "build_model builder must consume Event IR instead of evaluator or parser state",
             "build_model builder APIs must not accept evaluator or parser state; use Event IR",
             "build_model builder APIs must not return evaluator or parser state",
