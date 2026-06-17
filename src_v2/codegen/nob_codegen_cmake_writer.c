@@ -1,18 +1,8 @@
 #include "nob_codegen_internal.h"
 
 bool cg_target_export_name(CG_Context *ctx, BM_Target_Id id, String_View *out) {
-    String_View export_name = {0};
     if (!ctx || !out) return false;
-    *out = bm_query_target_name(ctx->model, id);
-    if (!bm_query_target_modeled_property_value(ctx->model,
-                                                id,
-                                                nob_sv_from_cstr("EXPORT_NAME"),
-                                                ctx->scratch,
-                                                &export_name)) {
-        return false;
-    }
-    if (export_name.count > 0) *out = export_name;
-    return true;
+    return bm_query_target_effective_export_name(ctx->model, id, ctx->scratch, out);
 }
 
 bool cg_target_exported_name(CG_Context *ctx,
@@ -334,8 +324,11 @@ static bool cg_collect_target_link_languages(CG_Context *ctx,
     *out = nob_sv_from_cstr("");
 
     for (size_t i = 0; i < bm_query_target_source_count(ctx->model, target_id); ++i) {
-        String_View language = bm_query_target_source_effective_language(ctx->model, target_id, i);
+        BM_Target_Source_Language_Kind language_kind =
+            bm_query_target_source_effective_language_kind(ctx->model, target_id, i);
+        String_View language = bm_query_target_source_language_kind_name(language_kind);
         if (language.count == 0) continue;
+        if (language_kind == BM_TARGET_SOURCE_LANGUAGE_UNSUPPORTED) continue;
         if (!cg_collect_unique_path(ctx->scratch, &languages, language)) return false;
     }
 

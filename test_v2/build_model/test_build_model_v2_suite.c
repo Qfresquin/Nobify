@@ -2135,6 +2135,21 @@ TEST(build_model_tests_preserve_argv_properties_scope_and_target_resolution) {
     ASSERT(build_model_string_equals_at(effective_labels, 0, "fast"));
     ASSERT(build_model_string_equals_at(effective_labels, 1, "unit"));
     ASSERT(build_model_string_equals_at(effective_labels, 2, "extra-suffix"));
+    ASSERT(bm_query_test_effective_property_kind_items(model,
+                                                       target_test,
+                                                       BM_TEST_PROPERTY_LABELS,
+                                                       query_arena,
+                                                       &effective_labels));
+    ASSERT(effective_labels.count == 3);
+    ASSERT(build_model_string_equals_at(effective_labels, 0, "fast"));
+    ASSERT(build_model_string_equals_at(effective_labels, 1, "unit"));
+    ASSERT(build_model_string_equals_at(effective_labels, 2, "extra-suffix"));
+    ASSERT(nob_sv_eq(bm_query_test_effective_property_kind_first(model,
+                                                                 target_test,
+                                                                 BM_TEST_PROPERTY_LABELS,
+                                                                 query_arena,
+                                                                 NULL),
+                     nob_sv_from_cstr("fast")));
 
     ctx.config = nob_sv_from_cstr("Debug");
     ctx.platform_id = nob_sv_from_cstr("Linux");
@@ -3842,6 +3857,12 @@ TEST(build_model_source_effective_language_centralizes_supported_c_and_cxx_class
     ASSERT(bm_query_target_source_effective_language(model, app_id, header_h).count == 0);
     ASSERT(bm_query_target_source_effective_language(model, app_id, skip_c).count == 0);
     ASSERT(bm_query_target_source_effective_language(model, app_id, data_txt).count == 0);
+    ASSERT(bm_query_target_source_effective_language_kind(model, app_id, main_c) == BM_TARGET_SOURCE_LANGUAGE_C);
+    ASSERT(bm_query_target_source_effective_language_kind(model, app_id, helper_cpp) == BM_TARGET_SOURCE_LANGUAGE_CXX);
+    ASSERT(bm_query_target_source_effective_language_kind(model, app_id, explicit_cxx) == BM_TARGET_SOURCE_LANGUAGE_CXX);
+    ASSERT(bm_query_target_source_effective_language_kind(model, app_id, header_h) == BM_TARGET_SOURCE_LANGUAGE_NONE);
+    ASSERT(bm_query_target_source_effective_language_kind(model, app_id, skip_c) == BM_TARGET_SOURCE_LANGUAGE_NONE);
+    ASSERT(bm_query_target_source_effective_language_kind(model, app_id, data_txt) == BM_TARGET_SOURCE_LANGUAGE_NONE);
 
     test_semantic_pipeline_fixture_destroy(&fixture);
     TEST_PASS();
@@ -3916,9 +3937,19 @@ TEST(build_model_effective_link_language_uses_config_platform_imported_mapping_a
 
     ASSERT(bm_query_target_effective_link_language(model, app_id, &linux_ctx, query_arena, &language));
     ASSERT(nob_sv_eq(language, nob_sv_from_cstr("CXX")));
+    {
+        BM_Target_Link_Language_Kind kind = BM_TARGET_LINK_LANGUAGE_NONE;
+        ASSERT(bm_query_target_effective_link_language_kind(model, app_id, &linux_ctx, query_arena, &kind));
+        ASSERT(kind == BM_TARGET_LINK_LANGUAGE_CXX);
+    }
 
     ASSERT(bm_query_target_effective_link_language(model, app_id, &windows_ctx, query_arena, &language));
     ASSERT(nob_sv_eq(language, nob_sv_from_cstr("C")));
+    {
+        BM_Target_Link_Language_Kind kind = BM_TARGET_LINK_LANGUAGE_NONE;
+        ASSERT(bm_query_target_effective_link_language_kind(model, app_id, &windows_ctx, query_arena, &kind));
+        ASSERT(kind == BM_TARGET_LINK_LANGUAGE_C);
+    }
 
     ASSERT(bm_query_target_effective_link_language(model, alias_id, &rel_windows_ctx, query_arena, &language));
     ASSERT(nob_sv_eq(language, nob_sv_from_cstr("CXX")));
@@ -3930,13 +3961,18 @@ TEST(build_model_effective_link_language_uses_config_platform_imported_mapping_a
 
     ASSERT(bm_query_session_target_effective_link_language(session, app_id, &linux_ctx, &language));
     ASSERT(nob_sv_eq(language, nob_sv_from_cstr("CXX")));
+    {
+        BM_Target_Link_Language_Kind kind = BM_TARGET_LINK_LANGUAGE_NONE;
+        ASSERT(bm_query_session_target_effective_link_language_kind(session, app_id, &linux_ctx, &kind));
+        ASSERT(kind == BM_TARGET_LINK_LANGUAGE_CXX);
+    }
     ASSERT(bm_query_session_target_effective_link_language(session, app_id, &linux_ctx, &language));
     ASSERT(nob_sv_eq(language, nob_sv_from_cstr("CXX")));
     ASSERT(bm_query_session_target_effective_link_language(session, app_id, &windows_ctx, &language));
     ASSERT(nob_sv_eq(language, nob_sv_from_cstr("C")));
     ASSERT(bm_query_session_target_effective_link_language(session, app_id, &rel_windows_ctx, &language));
     ASSERT(nob_sv_eq(language, nob_sv_from_cstr("CXX")));
-    ASSERT(stats->effective_link_language_hits == 1);
+    ASSERT(stats->effective_link_language_hits == 2);
     ASSERT(stats->effective_link_language_misses == 3);
 
     arena_destroy(query_arena);
@@ -5287,6 +5323,25 @@ TEST(build_model_usage_requirement_property_setters_promote_to_canonical_item_st
                                           &property_value));
     ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("c_std_99")));
     ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("c_std_11")));
+    ASSERT(bm_query_target_interface_requirement_value(model,
+                                                       iface_id,
+                                                       BM_TARGET_INTERFACE_REQUIREMENT_SYSTEM_INCLUDE_DIRECTORIES,
+                                                       query_arena,
+                                                       &property_value));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("iface/sys")));
+    ASSERT(bm_query_target_interface_requirement_value(model,
+                                                       iface_id,
+                                                       BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_FEATURES,
+                                                       query_arena,
+                                                       &property_value));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("c_std_99")));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("c_std_11")));
+    ASSERT(bm_query_target_interface_requirement_value(model,
+                                                       iface_id,
+                                                       BM_TARGET_INTERFACE_REQUIREMENT_LINK_LIBRARIES,
+                                                       query_arena,
+                                                       &property_value));
+    ASSERT(build_model_sv_contains(property_value, nob_sv_from_cstr("m")));
 
     raw_compile_options_prop = bm_query_target_raw_property_items(model,
                                                                   iface_id,
@@ -5623,6 +5678,93 @@ TEST(build_model_same_family_target_property_cycles_fail_deterministically) {
     TEST_PASS();
 }
 
+TEST(build_model_compile_definition_spelling_is_typed_by_query_layer) {
+    BM_Compile_Definition_Spelling raw = bm_query_compile_definition_spelling(nob_sv_from_cstr("FEATURE=1"));
+    BM_Compile_Definition_Spelling flagged = bm_query_compile_definition_spelling(nob_sv_from_cstr("-DFEATURE=1"));
+    BM_Compile_Definition_Spelling empty_flag = bm_query_compile_definition_spelling(nob_sv_from_cstr("-D"));
+
+    ASSERT(raw.kind == BM_COMPILE_DEFINITION_SPELLING_VALUE);
+    ASSERT(nob_sv_eq(raw.value, nob_sv_from_cstr("FEATURE=1")));
+    ASSERT(flagged.kind == BM_COMPILE_DEFINITION_SPELLING_D_FLAG);
+    ASSERT(nob_sv_eq(flagged.value, nob_sv_from_cstr("FEATURE=1")));
+    ASSERT(empty_flag.kind == BM_COMPILE_DEFINITION_SPELLING_D_FLAG);
+    ASSERT(empty_flag.value.count == 0);
+
+    TEST_PASS();
+}
+
+TEST(build_model_compile_option_spelling_is_typed_by_query_layer) {
+    BM_Compile_Option_Spelling raw = bm_query_compile_option_spelling(nob_sv_from_cstr("-Wall"));
+    BM_Compile_Option_Spelling standard = bm_query_compile_option_spelling(nob_sv_from_cstr("-std=c11"));
+    BM_Compile_Option_Spelling spaced = bm_query_compile_option_spelling(nob_sv_from_cstr(" -std=c11"));
+
+    ASSERT(raw.kind == BM_COMPILE_OPTION_SPELLING_ARGUMENT);
+    ASSERT(nob_sv_eq(raw.argument, nob_sv_from_cstr("-Wall")));
+    ASSERT(raw.standard.count == 0);
+    ASSERT(standard.kind == BM_COMPILE_OPTION_SPELLING_STANDARD_FLAG);
+    ASSERT(nob_sv_eq(standard.argument, nob_sv_from_cstr("-std=c11")));
+    ASSERT(nob_sv_eq(standard.standard, nob_sv_from_cstr("c11")));
+    ASSERT(spaced.kind == BM_COMPILE_OPTION_SPELLING_ARGUMENT);
+
+    TEST_PASS();
+}
+
+TEST(build_model_link_directory_spelling_is_typed_by_query_layer) {
+    BM_Link_Directory_Spelling raw = bm_query_link_directory_spelling(nob_sv_from_cstr("lib"));
+    BM_Link_Directory_Spelling flagged = bm_query_link_directory_spelling(nob_sv_from_cstr("-Llib"));
+    BM_Link_Directory_Spelling spaced_flag = bm_query_link_directory_spelling(nob_sv_from_cstr("-L lib"));
+
+    ASSERT(raw.kind == BM_LINK_DIRECTORY_SPELLING_PATH);
+    ASSERT(nob_sv_eq(raw.path, nob_sv_from_cstr("lib")));
+    ASSERT(flagged.kind == BM_LINK_DIRECTORY_SPELLING_L_FLAG);
+    ASSERT(nob_sv_eq(flagged.path, nob_sv_from_cstr("lib")));
+    ASSERT(spaced_flag.kind == BM_LINK_DIRECTORY_SPELLING_L_FLAG);
+    ASSERT(nob_sv_eq(spaced_flag.path, nob_sv_from_cstr("lib")));
+
+    TEST_PASS();
+}
+
+TEST(build_model_target_kind_capabilities_are_typed_by_query_layer) {
+    ASSERT(bm_target_kind_is_artifact_target(BM_TARGET_EXECUTABLE));
+    ASSERT(bm_target_kind_is_artifact_target(BM_TARGET_STATIC_LIBRARY));
+    ASSERT(bm_target_kind_is_artifact_target(BM_TARGET_SHARED_LIBRARY));
+    ASSERT(bm_target_kind_is_artifact_target(BM_TARGET_MODULE_LIBRARY));
+    ASSERT(!bm_target_kind_is_artifact_target(BM_TARGET_INTERFACE_LIBRARY));
+    ASSERT(!bm_target_kind_is_artifact_target(BM_TARGET_UTILITY));
+    ASSERT(!bm_target_kind_is_artifact_target(BM_TARGET_OBJECT_LIBRARY));
+    ASSERT(!bm_target_kind_is_artifact_target(BM_TARGET_UNKNOWN_LIBRARY));
+
+    ASSERT(bm_target_kind_is_non_emitting_build_target(BM_TARGET_INTERFACE_LIBRARY));
+    ASSERT(bm_target_kind_is_non_emitting_build_target(BM_TARGET_UTILITY));
+    ASSERT(!bm_target_kind_is_non_emitting_build_target(BM_TARGET_OBJECT_LIBRARY));
+
+    ASSERT(bm_target_kind_is_supported_build_target(BM_TARGET_EXECUTABLE));
+    ASSERT(bm_target_kind_is_supported_build_target(BM_TARGET_INTERFACE_LIBRARY));
+    ASSERT(!bm_target_kind_is_supported_build_target(BM_TARGET_OBJECT_LIBRARY));
+    ASSERT(!bm_target_kind_is_supported_build_target(BM_TARGET_UNKNOWN_LIBRARY));
+
+    ASSERT(bm_target_kind_is_usage_only(BM_TARGET_INTERFACE_LIBRARY));
+    ASSERT(!bm_target_kind_is_usage_only(BM_TARGET_UTILITY));
+    ASSERT(bm_target_kind_has_linkable_artifact(BM_TARGET_STATIC_LIBRARY));
+    ASSERT(bm_target_kind_has_linkable_artifact(BM_TARGET_SHARED_LIBRARY));
+    ASSERT(!bm_target_kind_has_linkable_artifact(BM_TARGET_EXECUTABLE));
+    ASSERT(!bm_target_kind_has_linkable_artifact(BM_TARGET_UNKNOWN_LIBRARY));
+    ASSERT(bm_target_kind_has_imported_linkable_artifact(BM_TARGET_UNKNOWN_LIBRARY));
+    ASSERT(bm_target_kind_requires_position_independent_code(BM_TARGET_SHARED_LIBRARY));
+    ASSERT(bm_target_kind_requires_position_independent_code(BM_TARGET_MODULE_LIBRARY));
+    ASSERT(!bm_target_kind_requires_position_independent_code(BM_TARGET_STATIC_LIBRARY));
+    ASSERT(bm_target_kind_is_installable_target(BM_TARGET_EXECUTABLE));
+    ASSERT(bm_target_kind_is_installable_target(BM_TARGET_STATIC_LIBRARY));
+    ASSERT(bm_target_kind_is_installable_target(BM_TARGET_SHARED_LIBRARY));
+    ASSERT(bm_target_kind_is_installable_target(BM_TARGET_MODULE_LIBRARY));
+    ASSERT(bm_target_kind_is_installable_target(BM_TARGET_INTERFACE_LIBRARY));
+    ASSERT(!bm_target_kind_is_installable_target(BM_TARGET_OBJECT_LIBRARY));
+    ASSERT(!bm_target_kind_is_installable_target(BM_TARGET_UTILITY));
+    ASSERT(!bm_target_kind_is_installable_target(BM_TARGET_UNKNOWN_LIBRARY));
+
+    TEST_PASS();
+}
+
 TEST(build_model_install_queries_materialize_effective_default_components) {
     Test_Semantic_Pipeline_Config config = {0};
     Test_Semantic_Pipeline_Fixture fixture = {0};
@@ -5787,6 +5929,9 @@ TEST(build_model_install_queries_cover_supported_target_kinds_and_rule_families)
     ASSERT(demo_export_id != BM_EXPORT_ID_INVALID);
     ASSERT(plugin_export_id != BM_EXPORT_ID_INVALID);
     ASSERT(bm_query_install_rule_count(model) == 8);
+    ASSERT(bm_query_export_has_artifact_targets(model, demo_export_id));
+    ASSERT(bm_query_export_has_artifact_targets(model, plugin_export_id));
+    ASSERT(!bm_query_export_has_artifact_targets(model, BM_EXPORT_ID_INVALID));
 
     ASSERT(bm_query_install_rule_kind(model, (BM_Install_Rule_Id)0) == BM_INSTALL_RULE_TARGET);
     ASSERT(bm_query_install_rule_owner_directory(model, (BM_Install_Rule_Id)0) == root_dir_id);
@@ -5983,12 +6128,10 @@ TEST(build_model_standalone_export_queries_cover_build_tree_and_package_registry
     ASSERT(sub_dir_id != BM_DIRECTORY_ID_INVALID);
     ASSERT(core_id != BM_TARGET_ID_INVALID);
     ASSERT(helper_id != BM_TARGET_ID_INVALID);
-    ASSERT(bm_query_target_modeled_property_value(model,
-                                                  core_id,
-                                                  nob_sv_from_cstr("EXPORT_NAME"),
-                                                  fixture.scratch_arena,
-                                                  &export_name));
+    ASSERT(bm_query_target_effective_export_name(model, core_id, fixture.scratch_arena, &export_name));
     ASSERT(nob_sv_eq(export_name, nob_sv_from_cstr("api")));
+    ASSERT(bm_query_target_effective_export_name(model, helper_id, fixture.scratch_arena, &export_name));
+    ASSERT(nob_sv_eq(export_name, nob_sv_from_cstr("helper")));
 
     ASSERT(bm_query_export_count(model) == 4);
     for (size_t i = 0; i < bm_query_export_count(model); ++i) {
@@ -6421,6 +6564,11 @@ TEST(build_model_cpack_package_queries_surface_generation_plan) {
     ASSERT(generators.count == 2);
     ASSERT(build_model_string_equals_at(generators, 0, "TGZ"));
     ASSERT(build_model_string_equals_at(generators, 1, "ZIP"));
+    ASSERT(bm_query_cpack_package_generator_kind(model, (BM_CPack_Package_Id)0, 0) == BM_CPACK_GENERATOR_TGZ);
+    ASSERT(bm_query_cpack_package_generator_kind(model, (BM_CPack_Package_Id)0, 1) == BM_CPACK_GENERATOR_ZIP);
+    ASSERT(bm_query_cpack_package_has_generator_kind(model, (BM_CPack_Package_Id)0, BM_CPACK_GENERATOR_TGZ));
+    ASSERT(bm_query_cpack_package_has_generator_kind(model, (BM_CPack_Package_Id)0, BM_CPACK_GENERATOR_ZIP));
+    ASSERT(!bm_query_cpack_package_has_generator_kind(model, (BM_CPack_Package_Id)0, BM_CPACK_GENERATOR_TXZ));
     ASSERT(components_all.count == 1);
     ASSERT(build_model_string_equals_at(components_all, 0, "Runtime"));
 
@@ -6500,6 +6648,10 @@ void run_build_model_v2_tests(int *passed, int *failed, int *skipped) {
     test_build_model_effective_queries_dedup_and_preserve_first_occurrence(passed, failed, skipped);
     test_build_model_effective_queries_terminate_interface_cycles_without_duplicate_contributions(passed, failed, skipped);
     test_build_model_usage_requirement_property_setters_promote_to_canonical_item_storage(passed, failed, skipped);
+    test_build_model_compile_definition_spelling_is_typed_by_query_layer(passed, failed, skipped);
+    test_build_model_compile_option_spelling_is_typed_by_query_layer(passed, failed, skipped);
+    test_build_model_link_directory_spelling_is_typed_by_query_layer(passed, failed, skipped);
+    test_build_model_target_kind_capabilities_are_typed_by_query_layer(passed, failed, skipped);
     test_build_model_install_and_export_queries_surface_typed_metadata(passed, failed, skipped);
     test_build_model_install_queries_materialize_effective_default_components(passed, failed, skipped);
     test_build_model_install_queries_cover_supported_target_kinds_and_rule_families(passed, failed, skipped);

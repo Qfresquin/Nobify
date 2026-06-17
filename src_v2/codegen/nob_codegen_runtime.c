@@ -13,14 +13,12 @@ static bool cg_step_uses_bare_tool(CG_Context *ctx, const char *tool_name) {
     return false;
 }
 
-static bool cg_package_generator_enabled(CG_Context *ctx, const char *generator_name) {
-    if (!ctx || !generator_name) return false;
+static bool cg_package_generator_kind_enabled(CG_Context *ctx, BM_CPack_Generator_Kind kind) {
+    if (!ctx) return false;
     for (size_t package_index = 0; package_index < bm_query_cpack_package_count(ctx->model); ++package_index) {
-        BM_String_Span generators =
-            bm_query_cpack_package_generators(ctx->model, (BM_CPack_Package_Id)package_index);
-        for (size_t i = 0; i < generators.count; ++i) {
-            if (nob_sv_eq(generators.items[i], nob_sv_from_cstr(generator_name))) return true;
-        }
+        if (bm_query_cpack_package_has_generator_kind(ctx->model,
+                                                      (BM_CPack_Package_Id)package_index,
+                                                      kind)) return true;
     }
     return false;
 }
@@ -93,8 +91,8 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
         needs_install_copy_directory = true;
         needs_package_archive = true;
         ctx->helper_bits |= CG_HELPER_CPACK_RESOLVER;
-        if (cg_package_generator_enabled(ctx, "TGZ")) ctx->helper_bits |= CG_HELPER_GZIP_RESOLVER;
-        if (cg_package_generator_enabled(ctx, "TXZ")) ctx->helper_bits |= CG_HELPER_XZ_RESOLVER;
+        if (cg_package_generator_kind_enabled(ctx, BM_CPACK_GENERATOR_TGZ)) ctx->helper_bits |= CG_HELPER_GZIP_RESOLVER;
+        if (cg_package_generator_kind_enabled(ctx, BM_CPACK_GENERATOR_TXZ)) ctx->helper_bits |= CG_HELPER_XZ_RESOLVER;
     }
 
     for (size_t replay_index = 0; replay_index < bm_query_replay_action_count(ctx->model); ++replay_index) {

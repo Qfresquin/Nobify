@@ -2,14 +2,12 @@
 
 #include <ctype.h>
 
-static bool cg_package_has_generator(CG_Context *ctx, const char *generator_name) {
-    if (!ctx || !generator_name) return false;
+static bool cg_package_has_generator_kind(CG_Context *ctx, BM_CPack_Generator_Kind kind) {
+    if (!ctx) return false;
     for (size_t package_index = 0; package_index < bm_query_cpack_package_count(ctx->model); ++package_index) {
-        BM_String_Span generators =
-            bm_query_cpack_package_generators(ctx->model, (BM_CPack_Package_Id)package_index);
-        for (size_t i = 0; i < generators.count; ++i) {
-            if (nob_sv_eq(generators.items[i], nob_sv_from_cstr(generator_name))) return true;
-        }
+        if (bm_query_cpack_package_has_generator_kind(ctx->model,
+                                                      (BM_CPack_Package_Id)package_index,
+                                                      kind)) return true;
     }
     return false;
 }
@@ -429,9 +427,9 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         return true;
     }
 
-    has_tgz = cg_package_has_generator(ctx, "TGZ");
-    has_txz = cg_package_has_generator(ctx, "TXZ");
-    has_zip = cg_package_has_generator(ctx, "ZIP");
+    has_tgz = cg_package_has_generator_kind(ctx, BM_CPACK_GENERATOR_TGZ);
+    has_txz = cg_package_has_generator_kind(ctx, BM_CPACK_GENERATOR_TXZ);
+    has_zip = cg_package_has_generator_kind(ctx, BM_CPACK_GENERATOR_ZIP);
 
     if (!cg_emit_package_plan_tables(ctx, out)) return false;
 

@@ -613,15 +613,18 @@ static bool bm_query_effective_item_key(Arena *scratch,
                                               out_key);
         }
 
-        case BM_EFFECTIVE_LINK_DIRECTORIES:
-            if (value.count >= 2 && value.data[0] == '-' && value.data[1] == 'L') {
-                BM_String_Item_View path_item = item;
-                String_View normalized = {0};
-                path_item.value = nob_sv_trim(nob_sv_from_parts(value.data + 2, value.count - 2));
-                if (!bm_query_item_effective_path_key(scratch, path_item, &normalized)) return false;
+        case BM_EFFECTIVE_LINK_DIRECTORIES: {
+            BM_Link_Directory_Spelling spelling = bm_query_link_directory_spelling(value);
+            BM_String_Item_View path_item = item;
+            String_View normalized = {0};
+            path_item.value = spelling.path;
+            if (!bm_query_item_effective_path_key(scratch, path_item, &normalized)) return false;
+            if (spelling.kind == BM_LINK_DIRECTORY_SPELLING_L_FLAG) {
                 return bm_query_make_prefixed_key(scratch, nob_sv_from_cstr("-L"), normalized, out_key);
             }
-            return bm_query_item_effective_path_key(scratch, item, out_key);
+            *out_key = normalized;
+            return true;
+        }
 
         case BM_EFFECTIVE_COMPILE_DEFINITIONS:
         case BM_EFFECTIVE_COMPILE_OPTIONS:

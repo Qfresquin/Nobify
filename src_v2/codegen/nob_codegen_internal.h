@@ -224,7 +224,7 @@ bool cg_query_imported_link_languages_cached(CG_Context *ctx,
 bool cg_query_effective_link_language_cached(CG_Context *ctx,
                                              BM_Target_Id id,
                                              const BM_Query_Eval_Context *qctx,
-                                             String_View *out);
+                                             BM_Target_Link_Language_Kind *out);
 bool cg_resolve_link_item_ref(CG_Context *ctx,
                               const BM_Query_Eval_Context *qctx,
                               BM_Link_Item_View item,

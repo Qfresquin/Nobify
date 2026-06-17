@@ -99,10 +99,10 @@ bool cg_query_imported_link_languages_cached(CG_Context *ctx,
 bool cg_query_effective_link_language_cached(CG_Context *ctx,
                                              BM_Target_Id id,
                                              const BM_Query_Eval_Context *qctx,
-                                             String_View *out) {
+                                             BM_Target_Link_Language_Kind *out) {
     if (!ctx || !qctx || !out || !ctx->query_session) return false;
-    *out = nob_sv_from_cstr("");
-    return bm_query_session_target_effective_link_language(ctx->query_session, id, qctx, out);
+    *out = BM_TARGET_LINK_LANGUAGE_NONE;
+    return bm_query_session_target_effective_link_language_kind(ctx->query_session, id, qctx, out);
 }
 
 static bool cg_rebase_artifact_view_from_cwd(CG_Context *ctx,
@@ -143,7 +143,7 @@ bool cg_resolve_target_ref(CG_Context *ctx,
     out->kind = info->imported ? CG_RESOLVED_TARGET_IMPORTED : CG_RESOLVED_TARGET_LOCAL;
     out->target_kind = info->kind;
     out->imported = info->imported;
-    out->usage_only = info->kind == BM_TARGET_INTERFACE_LIBRARY;
+    out->usage_only = bm_target_kind_is_usage_only(info->kind);
     out->linkable_artifact = false;
 
     if (info->imported) {
@@ -155,9 +155,7 @@ bool cg_resolve_target_ref(CG_Context *ctx,
         out->effective_file = effective_file;
         out->effective_linker_file = effective_linker_file;
         out->imported_link_languages = imported_langs;
-        if (info->kind == BM_TARGET_STATIC_LIBRARY ||
-            info->kind == BM_TARGET_SHARED_LIBRARY ||
-            info->kind == BM_TARGET_UNKNOWN_LIBRARY) {
+        if (bm_target_kind_has_imported_linkable_artifact(info->kind)) {
             out->linkable_artifact = true;
             out->rebuild_input_path = effective_linker_file.count > 0 ? effective_linker_file : effective_file;
         }
@@ -177,6 +175,6 @@ bool cg_resolve_target_ref(CG_Context *ctx,
     out->rebuild_input_path = out->effective_linker_file.count > 0
         ? out->effective_linker_file
         : out->effective_file;
-    out->linkable_artifact = cg_target_kind_is_linkable_artifact(info->kind);
+    out->linkable_artifact = bm_target_kind_has_linkable_artifact(info->kind);
     return true;
 }

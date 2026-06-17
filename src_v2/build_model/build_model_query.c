@@ -877,6 +877,14 @@ static String_View bm_query_target_source_record_effective_language(const BM_Tar
     return bm_query_source_language_from_path(source->effective_path);
 }
 
+static BM_Target_Source_Language_Kind bm_query_source_language_kind_from_effective(String_View language) {
+    String_View trimmed = nob_sv_trim(language);
+    if (trimmed.count == 0) return BM_TARGET_SOURCE_LANGUAGE_NONE;
+    if (bm_sv_eq_ci_query(trimmed, nob_sv_from_cstr("C"))) return BM_TARGET_SOURCE_LANGUAGE_C;
+    if (bm_sv_eq_ci_query(trimmed, nob_sv_from_cstr("CXX"))) return BM_TARGET_SOURCE_LANGUAGE_CXX;
+    return BM_TARGET_SOURCE_LANGUAGE_UNSUPPORTED;
+}
+
 static const BM_Target_File_Set_Record *bm_query_target_file_set_record(const Build_Model *model,
                                                                         BM_Target_Id id,
                                                                         size_t file_set_index) {
@@ -1117,6 +1125,53 @@ bool bm_query_target_modeled_property_value(const Build_Model *model,
     return true;
 }
 
+bool bm_query_target_interface_requirement_value(const Build_Model *model,
+                                                 BM_Target_Id id,
+                                                 BM_Target_Interface_Requirement_Kind kind,
+                                                 Arena *scratch,
+                                                 String_View *out) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    if (!scratch || !out) return false;
+    *out = nob_sv_from_cstr("");
+    if (!target) return true;
+
+    switch (kind) {
+        case BM_TARGET_INTERFACE_REQUIREMENT_INCLUDE_DIRECTORIES:
+            return bm_query_append_joined_items(
+                scratch, out, target->include_directories, BM_VISIBILITY_PUBLIC, BM_VISIBILITY_INTERFACE);
+        case BM_TARGET_INTERFACE_REQUIREMENT_SYSTEM_INCLUDE_DIRECTORIES:
+            return bm_query_append_joined_items_with_flags(scratch,
+                                                           out,
+                                                           target->include_directories,
+                                                           BM_VISIBILITY_PUBLIC,
+                                                           BM_VISIBILITY_INTERFACE,
+                                                           BM_ITEM_FLAG_SYSTEM,
+                                                           0);
+        case BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_DEFINITIONS:
+            return bm_query_append_joined_items(
+                scratch, out, target->compile_definitions, BM_VISIBILITY_PUBLIC, BM_VISIBILITY_INTERFACE);
+        case BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_OPTIONS:
+            return bm_query_append_joined_items(
+                scratch, out, target->compile_options, BM_VISIBILITY_PUBLIC, BM_VISIBILITY_INTERFACE);
+        case BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_FEATURES:
+            return bm_query_append_joined_items(
+                scratch, out, target->compile_features, BM_VISIBILITY_PUBLIC, BM_VISIBILITY_INTERFACE);
+        case BM_TARGET_INTERFACE_REQUIREMENT_LINK_OPTIONS:
+            return bm_query_append_joined_items(
+                scratch, out, target->link_options, BM_VISIBILITY_PUBLIC, BM_VISIBILITY_INTERFACE);
+        case BM_TARGET_INTERFACE_REQUIREMENT_LINK_DIRECTORIES:
+            return bm_query_append_joined_items(
+                scratch, out, target->link_directories, BM_VISIBILITY_PUBLIC, BM_VISIBILITY_INTERFACE);
+        case BM_TARGET_INTERFACE_REQUIREMENT_LINK_LIBRARIES:
+            return bm_query_append_joined_link_items(scratch,
+                                                     out,
+                                                     target->link_libraries,
+                                                     BM_VISIBILITY_PUBLIC,
+                                                     BM_VISIBILITY_INTERFACE);
+    }
+    return true;
+}
+
 bool bm_query_target_raw_property_value(const Build_Model *model,
                                         BM_Target_Id id,
                                         String_View property_name,
@@ -1257,6 +1312,14 @@ static bool bm_query_link_language_is_c(String_View language) {
     return bm_sv_eq_ci_query(nob_sv_trim(language), nob_sv_from_cstr("C"));
 }
 
+static BM_Target_Link_Language_Kind bm_query_link_language_kind_from_effective(String_View language) {
+    String_View trimmed = nob_sv_trim(language);
+    if (trimmed.count == 0) return BM_TARGET_LINK_LANGUAGE_NONE;
+    if (bm_query_link_language_is_cxx(trimmed)) return BM_TARGET_LINK_LANGUAGE_CXX;
+    if (bm_query_link_language_is_c(trimmed)) return BM_TARGET_LINK_LANGUAGE_C;
+    return BM_TARGET_LINK_LANGUAGE_UNSUPPORTED;
+}
+
 static bool bm_query_target_link_item_target_id(const Build_Model *model,
                                                 BM_Link_Item_View item,
                                                 BM_Target_Id *out) {
@@ -1382,6 +1445,19 @@ bool bm_query_target_effective_link_language(const Build_Model *model,
     return bm_query_target_effective_link_language_impl(model, id, ctx, scratch, visiting, out);
 }
 
+bool bm_query_target_effective_link_language_kind(const Build_Model *model,
+                                                  BM_Target_Id id,
+                                                  const BM_Query_Eval_Context *ctx,
+                                                  Arena *scratch,
+                                                  BM_Target_Link_Language_Kind *out) {
+    String_View language = nob_sv_from_cstr("");
+    if (out) *out = BM_TARGET_LINK_LANGUAGE_NONE;
+    if (!out) return false;
+    if (!bm_query_target_effective_link_language(model, id, ctx, scratch, &language)) return false;
+    *out = bm_query_link_language_kind_from_effective(language);
+    return true;
+}
+
 #include "build_model_query_session.c"
 
 bool bm_model_has_project(const Build_Model *model) { return model ? model->project.present : false; }
@@ -1399,6 +1475,13 @@ BM_CPack_Components_Grouping bm_cpack_components_grouping_from_string(String_Vie
     if (nob_sv_eq(value, nob_sv_from_cstr("IGNORE"))) return BM_CPACK_COMPONENTS_GROUPING_IGNORE;
     if (nob_sv_eq(value, nob_sv_from_cstr("ALL_COMPONENTS_IN_ONE"))) return BM_CPACK_COMPONENTS_GROUPING_ALL_COMPONENTS_IN_ONE;
     return BM_CPACK_COMPONENTS_GROUPING_INVALID;
+}
+
+BM_CPack_Generator_Kind bm_cpack_generator_kind_from_string(String_View value) {
+    if (nob_sv_eq(value, nob_sv_from_cstr("TGZ"))) return BM_CPACK_GENERATOR_TGZ;
+    if (nob_sv_eq(value, nob_sv_from_cstr("TXZ"))) return BM_CPACK_GENERATOR_TXZ;
+    if (nob_sv_eq(value, nob_sv_from_cstr("ZIP"))) return BM_CPACK_GENERATOR_ZIP;
+    return BM_CPACK_GENERATOR_UNSUPPORTED;
 }
 
 size_t bm_query_directory_count(const Build_Model *model) { return model ? arena_arr_len(model->directories) : 0; }
@@ -1534,6 +1617,50 @@ BM_Target_Id bm_query_target_by_name(const Build_Model *model, String_View name)
     return bm_find_target_by_name_id(model, name);
 }
 
+bool bm_target_kind_is_artifact_target(BM_Target_Kind kind) {
+    return kind == BM_TARGET_EXECUTABLE ||
+           kind == BM_TARGET_STATIC_LIBRARY ||
+           kind == BM_TARGET_SHARED_LIBRARY ||
+           kind == BM_TARGET_MODULE_LIBRARY;
+}
+
+bool bm_target_kind_is_non_emitting_build_target(BM_Target_Kind kind) {
+    return kind == BM_TARGET_INTERFACE_LIBRARY ||
+           kind == BM_TARGET_UTILITY;
+}
+
+bool bm_target_kind_is_supported_build_target(BM_Target_Kind kind) {
+    return bm_target_kind_is_artifact_target(kind) ||
+           bm_target_kind_is_non_emitting_build_target(kind);
+}
+
+bool bm_target_kind_is_usage_only(BM_Target_Kind kind) {
+    return kind == BM_TARGET_INTERFACE_LIBRARY;
+}
+
+bool bm_target_kind_has_linkable_artifact(BM_Target_Kind kind) {
+    return kind == BM_TARGET_STATIC_LIBRARY ||
+           kind == BM_TARGET_SHARED_LIBRARY;
+}
+
+bool bm_target_kind_has_imported_linkable_artifact(BM_Target_Kind kind) {
+    return bm_target_kind_has_linkable_artifact(kind) ||
+           kind == BM_TARGET_UNKNOWN_LIBRARY;
+}
+
+bool bm_target_kind_requires_position_independent_code(BM_Target_Kind kind) {
+    return kind == BM_TARGET_SHARED_LIBRARY ||
+           kind == BM_TARGET_MODULE_LIBRARY;
+}
+
+bool bm_target_kind_is_installable_target(BM_Target_Kind kind) {
+    return kind == BM_TARGET_EXECUTABLE ||
+           kind == BM_TARGET_STATIC_LIBRARY ||
+           kind == BM_TARGET_SHARED_LIBRARY ||
+           kind == BM_TARGET_MODULE_LIBRARY ||
+           kind == BM_TARGET_INTERFACE_LIBRARY;
+}
+
 BM_Test_Id bm_query_test_by_name(const Build_Model *model, String_View name) {
     if (!model) return BM_TEST_ID_INVALID;
     for (size_t i = 0; i < arena_arr_len(model->test_name_index); ++i) {
@@ -1553,6 +1680,25 @@ BM_Package_Id bm_query_package_by_name(const Build_Model *model, String_View nam
 String_View bm_query_target_name(const Build_Model *model, BM_Target_Id id) {
     const BM_Target_Record *target = bm_model_target(model, id);
     return target ? target->name : (String_View){0};
+}
+
+bool bm_query_target_effective_export_name(const Build_Model *model,
+                                           BM_Target_Id id,
+                                           Arena *scratch,
+                                           String_View *out) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    String_View export_name = nob_sv_from_cstr("");
+    if (!scratch || !out) return false;
+    *out = target ? target->name : nob_sv_from_cstr("");
+    if (!target) return true;
+    if (!bm_query_append_joined_raw_record(scratch,
+                                           &export_name,
+                                           bm_find_raw_property(target->raw_properties,
+                                                                nob_sv_from_cstr("EXPORT_NAME")))) {
+        return false;
+    }
+    if (export_name.count > 0) *out = export_name;
+    return true;
 }
 
 BM_Target_Kind bm_query_target_kind(const Build_Model *model, BM_Target_Id id) {
@@ -1658,6 +1804,29 @@ String_View bm_query_target_source_effective_language(const Build_Model *model,
                                                       size_t source_index) {
     const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
     return bm_query_target_source_record_effective_language(source);
+}
+
+BM_Target_Source_Language_Kind bm_query_target_source_effective_language_kind(const Build_Model *model,
+                                                                              BM_Target_Id id,
+                                                                              size_t source_index) {
+    const BM_Target_Source_Record *source = bm_query_target_source_record(model, id, source_index);
+    String_View raw_language = source ? nob_sv_trim(source->language) : nob_sv_from_cstr("");
+    String_View effective_language = bm_query_target_source_record_effective_language(source);
+    if (effective_language.count > 0) {
+        return bm_query_source_language_kind_from_effective(effective_language);
+    }
+    return raw_language.count > 0 ? BM_TARGET_SOURCE_LANGUAGE_UNSUPPORTED
+                                  : BM_TARGET_SOURCE_LANGUAGE_NONE;
+}
+
+String_View bm_query_target_source_language_kind_name(BM_Target_Source_Language_Kind kind) {
+    switch (kind) {
+        case BM_TARGET_SOURCE_LANGUAGE_C: return nob_sv_from_cstr("C");
+        case BM_TARGET_SOURCE_LANGUAGE_CXX: return nob_sv_from_cstr("CXX");
+        case BM_TARGET_SOURCE_LANGUAGE_UNSUPPORTED: return nob_sv_from_cstr("UNSUPPORTED");
+        case BM_TARGET_SOURCE_LANGUAGE_NONE:
+        default: return nob_sv_from_cstr("");
+    }
 }
 
 BM_String_Item_Span bm_query_target_source_compile_definitions(const Build_Model *model, BM_Target_Id id, size_t source_index) {
@@ -1792,6 +1961,93 @@ BM_String_Span bm_query_target_raw_property_items(const Build_Model *model, BM_T
 
 BM_String_Span bm_query_target_public_headers(const Build_Model *model, BM_Target_Id id) {
     return bm_query_target_raw_property_items(model, id, nob_sv_from_cstr("PUBLIC_HEADER"));
+}
+
+static bool bm_query_link_item_has_suffix(String_View value, const char *suffix) {
+    return nob_sv_end_with(value, suffix);
+}
+
+static bool bm_query_link_item_is_link_file(String_View value) {
+    return bm_query_link_item_has_suffix(value, ".a") ||
+           bm_query_link_item_has_suffix(value, ".lib") ||
+           bm_query_link_item_has_suffix(value, ".dll") ||
+           bm_query_link_item_has_suffix(value, ".so") ||
+           bm_query_link_item_has_suffix(value, ".dylib") ||
+           bm_query_link_item_has_suffix(value, ".o") ||
+           bm_query_link_item_has_suffix(value, ".obj");
+}
+
+static bool bm_query_link_item_name_char_is_bare(unsigned char c) {
+    return (c >= 'a' && c <= 'z') ||
+           (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') ||
+           c == '_' || c == '+' || c == '.' || c == '-';
+}
+
+static bool bm_query_link_item_is_bare_library_name(String_View value) {
+    if (value.count == 0) return false;
+    for (size_t i = 0; i < value.count; ++i) {
+        if (!bm_query_link_item_name_char_is_bare((unsigned char)value.data[i])) return false;
+    }
+    return true;
+}
+
+static bool bm_query_link_item_contains_char(String_View value, char needle) {
+    if (!value.data) return false;
+    for (size_t i = 0; i < value.count; ++i) {
+        if (value.data[i] == needle) return true;
+    }
+    return false;
+}
+
+BM_Link_Item_Spelling_Kind bm_query_link_item_spelling_kind(String_View value) {
+    if (value.count == 0) return BM_LINK_ITEM_SPELLING_EMPTY;
+    if (value.data && value.data[0] == '-') return BM_LINK_ITEM_SPELLING_FLAG;
+    if (bm_query_link_item_contains_char(value, '/')) return BM_LINK_ITEM_SPELLING_PATH;
+    if (bm_query_link_item_is_link_file(value)) return BM_LINK_ITEM_SPELLING_LINK_FILE;
+    if (bm_query_link_item_is_bare_library_name(value)) return BM_LINK_ITEM_SPELLING_BARE_LIBRARY;
+    return BM_LINK_ITEM_SPELLING_UNSUPPORTED;
+}
+
+BM_Compile_Definition_Spelling bm_query_compile_definition_spelling(String_View value) {
+    BM_Compile_Definition_Spelling spelling = {0};
+    spelling.kind = BM_COMPILE_DEFINITION_SPELLING_VALUE;
+    spelling.value = value;
+    if (value.count >= 2 && value.data && value.data[0] == '-' && value.data[1] == 'D') {
+        spelling.kind = BM_COMPILE_DEFINITION_SPELLING_D_FLAG;
+        spelling.value = nob_sv_from_parts(value.data + 2, value.count - 2);
+    }
+    return spelling;
+}
+
+BM_Compile_Option_Spelling bm_query_compile_option_spelling(String_View value) {
+    BM_Compile_Option_Spelling spelling = {0};
+    spelling.kind = BM_COMPILE_OPTION_SPELLING_ARGUMENT;
+    spelling.argument = value;
+    spelling.standard = nob_sv_from_cstr("");
+    if (value.count >= 5 &&
+        value.data &&
+        value.data[0] == '-' &&
+        value.data[1] == 's' &&
+        value.data[2] == 't' &&
+        value.data[3] == 'd' &&
+        value.data[4] == '=') {
+        spelling.kind = BM_COMPILE_OPTION_SPELLING_STANDARD_FLAG;
+        spelling.standard = nob_sv_from_parts(value.data + 5, value.count - 5);
+    }
+    return spelling;
+}
+
+BM_Link_Directory_Spelling bm_query_link_directory_spelling(String_View value) {
+    BM_Link_Directory_Spelling spelling = {0};
+    String_View trimmed = nob_sv_trim(value);
+    spelling.kind = BM_LINK_DIRECTORY_SPELLING_PATH;
+    spelling.path = value;
+    if (trimmed.count >= 2 && trimmed.data && trimmed.data[0] == '-' && trimmed.data[1] == 'L') {
+        spelling.kind = BM_LINK_DIRECTORY_SPELLING_L_FLAG;
+        spelling.path = nob_sv_trim(nob_sv_from_parts(trimmed.data + 2, trimmed.count - 2));
+    }
+    return spelling;
 }
 
 BM_String_Span bm_query_target_precompile_headers(const Build_Model *model, BM_Target_Id id) {
@@ -2897,6 +3153,55 @@ bool bm_query_test_effective_property_items(const Build_Model *model,
     return true;
 }
 
+String_View bm_test_property_kind_name(BM_Test_Property_Kind kind) {
+    switch (kind) {
+        case BM_TEST_PROPERTY_DISABLED: return nob_sv_from_cstr("DISABLED");
+        case BM_TEST_PROPERTY_WILL_FAIL: return nob_sv_from_cstr("WILL_FAIL");
+        case BM_TEST_PROPERTY_SKIP_RETURN_CODE: return nob_sv_from_cstr("SKIP_RETURN_CODE");
+        case BM_TEST_PROPERTY_PASS_REGULAR_EXPRESSION: return nob_sv_from_cstr("PASS_REGULAR_EXPRESSION");
+        case BM_TEST_PROPERTY_FAIL_REGULAR_EXPRESSION: return nob_sv_from_cstr("FAIL_REGULAR_EXPRESSION");
+        case BM_TEST_PROPERTY_SKIP_REGULAR_EXPRESSION: return nob_sv_from_cstr("SKIP_REGULAR_EXPRESSION");
+        case BM_TEST_PROPERTY_TIMEOUT: return nob_sv_from_cstr("TIMEOUT");
+        case BM_TEST_PROPERTY_TIMEOUT_AFTER_MATCH: return nob_sv_from_cstr("TIMEOUT_AFTER_MATCH");
+        case BM_TEST_PROPERTY_REQUIRED_FILES: return nob_sv_from_cstr("REQUIRED_FILES");
+        case BM_TEST_PROPERTY_ENVIRONMENT: return nob_sv_from_cstr("ENVIRONMENT");
+        case BM_TEST_PROPERTY_ENVIRONMENT_MODIFICATION: return nob_sv_from_cstr("ENVIRONMENT_MODIFICATION");
+        case BM_TEST_PROPERTY_DEPENDS: return nob_sv_from_cstr("DEPENDS");
+        case BM_TEST_PROPERTY_FIXTURES_SETUP: return nob_sv_from_cstr("FIXTURES_SETUP");
+        case BM_TEST_PROPERTY_FIXTURES_REQUIRED: return nob_sv_from_cstr("FIXTURES_REQUIRED");
+        case BM_TEST_PROPERTY_FIXTURES_CLEANUP: return nob_sv_from_cstr("FIXTURES_CLEANUP");
+        case BM_TEST_PROPERTY_LABELS: return nob_sv_from_cstr("LABELS");
+    }
+    return nob_sv_from_cstr("");
+}
+
+bool bm_query_test_effective_property_kind_items(const Build_Model *model,
+                                                 BM_Test_Id id,
+                                                 BM_Test_Property_Kind kind,
+                                                 Arena *scratch,
+                                                 BM_String_Span *out) {
+    String_View name = bm_test_property_kind_name(kind);
+    if (name.count == 0) {
+        if (out) *out = (BM_String_Span){0};
+        return true;
+    }
+    return bm_query_test_effective_property_items(model, id, name, scratch, out);
+}
+
+String_View bm_query_test_effective_property_kind_first(const Build_Model *model,
+                                                        BM_Test_Id id,
+                                                        BM_Test_Property_Kind kind,
+                                                        Arena *scratch,
+                                                        BM_String_Span *out_span) {
+    BM_String_Span span = {0};
+    if (out_span) *out_span = (BM_String_Span){0};
+    if (!bm_query_test_effective_property_kind_items(model, id, kind, scratch, &span)) {
+        return nob_sv_from_cstr("");
+    }
+    if (out_span) *out_span = span;
+    return span.count > 0 ? span.items[0] : nob_sv_from_cstr("");
+}
+
 static bool bm_append_split_string_views(Arena *scratch, String_View **out, String_View value) {
     Genex_Context gx = {0};
     Gx_Sv_List pieces = {0};
@@ -3273,6 +3578,14 @@ BM_Target_Id_Span bm_query_export_targets(const Build_Model *model, BM_Export_Id
     return span;
 }
 
+bool bm_query_export_has_artifact_targets(const Build_Model *model, BM_Export_Id id) {
+    BM_Target_Id_Span targets = bm_query_export_targets(model, id);
+    for (size_t i = 0; i < targets.count; ++i) {
+        if (bm_target_kind_is_artifact_target(bm_query_target_kind(model, targets.items[i]))) return true;
+    }
+    return false;
+}
+
 bool bm_query_export_enabled(const Build_Model *model, BM_Export_Id id) {
     const BM_Export_Record *record = bm_model_export(model, id);
     return record ? record->enabled : false;
@@ -3580,6 +3893,24 @@ String_View bm_query_cpack_package_project_config_file(const Build_Model *model,
 BM_String_Span bm_query_cpack_package_generators(const Build_Model *model, BM_CPack_Package_Id id) {
     const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
     return record ? bm_string_span(record->generators) : (BM_String_Span){0};
+}
+
+BM_CPack_Generator_Kind bm_query_cpack_package_generator_kind(const Build_Model *model,
+                                                              BM_CPack_Package_Id id,
+                                                              size_t generator_index) {
+    BM_String_Span generators = bm_query_cpack_package_generators(model, id);
+    if (generator_index >= generators.count) return BM_CPACK_GENERATOR_UNSUPPORTED;
+    return bm_cpack_generator_kind_from_string(generators.items[generator_index]);
+}
+
+bool bm_query_cpack_package_has_generator_kind(const Build_Model *model,
+                                               BM_CPack_Package_Id id,
+                                               BM_CPack_Generator_Kind kind) {
+    BM_String_Span generators = bm_query_cpack_package_generators(model, id);
+    for (size_t i = 0; i < generators.count; ++i) {
+        if (bm_cpack_generator_kind_from_string(generators.items[i]) == kind) return true;
+    }
+    return false;
 }
 
 bool bm_query_cpack_package_include_toplevel_directory(const Build_Model *model, BM_CPack_Package_Id id) {

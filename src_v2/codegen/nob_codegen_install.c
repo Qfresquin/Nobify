@@ -323,22 +323,10 @@ typedef enum {
     CG_INSTALL_EXPORT_EMIT_NOCONFIG,
 } CG_Install_Export_Emit_Mode;
 
-static bool cg_export_has_non_interface_targets(CG_Context *ctx, BM_Export_Id export_id) {
-    BM_Target_Id_Span targets = {0};
-    if (!ctx) return false;
-    targets = bm_query_export_targets(ctx->model, export_id);
-    for (size_t i = 0; i < targets.count; ++i) {
-        if (bm_query_target_kind(ctx->model, targets.items[i]) != BM_TARGET_INTERFACE_LIBRARY) {
-            return true;
-        }
-    }
-    return false;
-}
-
 static bool cg_export_collect_direct_property_values(CG_Context *ctx,
                                                      BM_Target_Id target_id,
                                                      BM_Query_Usage_Mode usage_mode,
-                                                     String_View property_name,
+                                                     BM_Target_Interface_Requirement_Kind kind,
                                                      bool rewrite_import_prefix,
                                                      String_View **out) {
     BM_Query_Eval_Context qctx = {0};
@@ -353,7 +341,7 @@ static bool cg_export_collect_direct_property_values(CG_Context *ctx,
     qctx.install_interface_active = true;
     qctx.install_prefix = nob_sv_from_cstr("${_IMPORT_PREFIX}");
 
-    if (!bm_query_target_modeled_property_value(ctx->model, target_id, property_name, ctx->scratch, &raw)) {
+    if (!bm_query_target_interface_requirement_value(ctx->model, target_id, kind, ctx->scratch, &raw)) {
         return false;
     }
     if (raw.count == 0) return true;
@@ -392,11 +380,11 @@ static bool cg_export_collect_direct_link_libraries(CG_Context *ctx,
     qctx.install_prefix = nob_sv_from_cstr("${_IMPORT_PREFIX}");
     exported_targets = bm_query_export_targets(ctx->model, export_id);
 
-    if (!bm_query_target_modeled_property_value(ctx->model,
-                                                target_id,
-                                                nob_sv_from_cstr("INTERFACE_LINK_LIBRARIES"),
-                                                ctx->scratch,
-                                                &raw)) {
+    if (!bm_query_target_interface_requirement_value(ctx->model,
+                                                     target_id,
+                                                     BM_TARGET_INTERFACE_REQUIREMENT_LINK_LIBRARIES,
+                                                     ctx->scratch,
+                                                     &raw)) {
         return false;
     }
     if (raw.count == 0) return true;
@@ -431,15 +419,15 @@ static bool cg_export_collect_interface_includes(CG_Context *ctx,
                                                  bool want_system,
                                                  String_View **out) {
     String_View install_dest = bm_query_install_rule_includes_destination(ctx->model, rule_id);
-    String_View property_name = want_system
-        ? nob_sv_from_cstr("INTERFACE_SYSTEM_INCLUDE_DIRECTORIES")
-        : nob_sv_from_cstr("INTERFACE_INCLUDE_DIRECTORIES");
+    BM_Target_Interface_Requirement_Kind kind = want_system
+        ? BM_TARGET_INTERFACE_REQUIREMENT_SYSTEM_INCLUDE_DIRECTORIES
+        : BM_TARGET_INTERFACE_REQUIREMENT_INCLUDE_DIRECTORIES;
     (void)export_id;
 
     if (!cg_export_collect_direct_property_values(ctx,
                                                   target_id,
                                                   BM_QUERY_USAGE_COMPILE,
-                                                  property_name,
+                                                  kind,
                                                   true,
                                                   out)) {
         return false;
@@ -455,13 +443,13 @@ static bool cg_export_collect_interface_includes(CG_Context *ctx,
 static bool cg_export_collect_effective_values(CG_Context *ctx,
                                                BM_Target_Id target_id,
                                                BM_Query_Usage_Mode usage_mode,
-                                               String_View property_name,
+                                               BM_Target_Interface_Requirement_Kind kind,
                                                bool rewrite_import_prefix,
                                                String_View **out) {
     return cg_export_collect_direct_property_values(ctx,
                                                     target_id,
                                                     usage_mode,
-                                                    property_name,
+                                                    kind,
                                                     rewrite_import_prefix,
                                                     out);
 }
@@ -507,31 +495,31 @@ static bool cg_export_emit_target_properties(CG_Context *ctx,
         !cg_export_collect_effective_values(ctx,
                                             target_id,
                                             BM_QUERY_USAGE_COMPILE,
-                                            nob_sv_from_cstr("INTERFACE_COMPILE_DEFINITIONS"),
+                                            BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_DEFINITIONS,
                                             false,
                                             &compile_defs) ||
         !cg_export_collect_effective_values(ctx,
                                             target_id,
                                             BM_QUERY_USAGE_COMPILE,
-                                            nob_sv_from_cstr("INTERFACE_COMPILE_OPTIONS"),
+                                            BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_OPTIONS,
                                             false,
                                             &compile_opts) ||
         !cg_export_collect_effective_values(ctx,
                                             target_id,
                                             BM_QUERY_USAGE_COMPILE,
-                                            nob_sv_from_cstr("INTERFACE_COMPILE_FEATURES"),
+                                            BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_FEATURES,
                                             false,
                                             &compile_features) ||
         !cg_export_collect_effective_values(ctx,
                                             target_id,
                                             BM_QUERY_USAGE_LINK,
-                                            nob_sv_from_cstr("INTERFACE_LINK_OPTIONS"),
+                                            BM_TARGET_INTERFACE_REQUIREMENT_LINK_OPTIONS,
                                             false,
                                             &link_opts) ||
         !cg_export_collect_effective_values(ctx,
                                             target_id,
                                             BM_QUERY_USAGE_LINK,
-                                            nob_sv_from_cstr("INTERFACE_LINK_DIRECTORIES"),
+                                            BM_TARGET_INTERFACE_REQUIREMENT_LINK_DIRECTORIES,
                                             true,
                                             &link_dirs) ||
         !cg_export_collect_direct_link_libraries(ctx, export_id, target_id, export_namespace, &link_libs) ||
@@ -972,7 +960,7 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
 
     for (size_t export_index = 0; export_index < bm_query_export_count(ctx->model); ++export_index) {
         BM_Export_Id export_id = (BM_Export_Id)export_index;
-        bool use_noconfig = cg_export_has_non_interface_targets(ctx, export_id);
+        bool use_noconfig = bm_query_export_has_artifact_targets(ctx->model, export_id);
         if (bm_query_export_kind(ctx->model, export_id) != BM_EXPORT_INSTALL) continue;
         if (!cg_emit_install_component_guard_open(out, bm_query_export_component(ctx->model, export_id))) {
             return false;

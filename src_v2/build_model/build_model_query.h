@@ -37,6 +37,13 @@ typedef enum {
 } BM_CPack_Components_Grouping;
 
 typedef enum {
+    BM_CPACK_GENERATOR_TGZ = 0,
+    BM_CPACK_GENERATOR_TXZ,
+    BM_CPACK_GENERATOR_ZIP,
+    BM_CPACK_GENERATOR_UNSUPPORTED,
+} BM_CPack_Generator_Kind;
+
+typedef enum {
     BM_INSTALL_RULE_ITEM_PATH = 0,
     BM_INSTALL_RULE_ITEM_SCRIPT,
     BM_INSTALL_RULE_ITEM_CODE,
@@ -45,6 +52,71 @@ typedef enum {
     BM_INSTALL_RULE_ITEM_RUNTIME_DEPENDENCY_SET,
     BM_INSTALL_RULE_ITEM_TAGGED_UNKNOWN,
 } BM_Install_Rule_Item_Kind;
+
+typedef enum {
+    BM_TARGET_SOURCE_LANGUAGE_NONE = 0,
+    BM_TARGET_SOURCE_LANGUAGE_C,
+    BM_TARGET_SOURCE_LANGUAGE_CXX,
+    BM_TARGET_SOURCE_LANGUAGE_UNSUPPORTED,
+} BM_Target_Source_Language_Kind;
+
+typedef enum {
+    BM_TARGET_LINK_LANGUAGE_NONE = 0,
+    BM_TARGET_LINK_LANGUAGE_C,
+    BM_TARGET_LINK_LANGUAGE_CXX,
+    BM_TARGET_LINK_LANGUAGE_UNSUPPORTED,
+} BM_Target_Link_Language_Kind;
+
+typedef enum {
+    BM_TARGET_INTERFACE_REQUIREMENT_INCLUDE_DIRECTORIES = 0,
+    BM_TARGET_INTERFACE_REQUIREMENT_SYSTEM_INCLUDE_DIRECTORIES,
+    BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_DEFINITIONS,
+    BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_OPTIONS,
+    BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_FEATURES,
+    BM_TARGET_INTERFACE_REQUIREMENT_LINK_OPTIONS,
+    BM_TARGET_INTERFACE_REQUIREMENT_LINK_DIRECTORIES,
+    BM_TARGET_INTERFACE_REQUIREMENT_LINK_LIBRARIES,
+} BM_Target_Interface_Requirement_Kind;
+
+typedef enum {
+    BM_LINK_ITEM_SPELLING_EMPTY = 0,
+    BM_LINK_ITEM_SPELLING_FLAG,
+    BM_LINK_ITEM_SPELLING_PATH,
+    BM_LINK_ITEM_SPELLING_LINK_FILE,
+    BM_LINK_ITEM_SPELLING_BARE_LIBRARY,
+    BM_LINK_ITEM_SPELLING_UNSUPPORTED,
+} BM_Link_Item_Spelling_Kind;
+
+typedef enum {
+    BM_COMPILE_DEFINITION_SPELLING_VALUE = 0,
+    BM_COMPILE_DEFINITION_SPELLING_D_FLAG,
+} BM_Compile_Definition_Spelling_Kind;
+
+typedef struct {
+    BM_Compile_Definition_Spelling_Kind kind;
+    String_View value;
+} BM_Compile_Definition_Spelling;
+
+typedef enum {
+    BM_COMPILE_OPTION_SPELLING_ARGUMENT = 0,
+    BM_COMPILE_OPTION_SPELLING_STANDARD_FLAG,
+} BM_Compile_Option_Spelling_Kind;
+
+typedef struct {
+    BM_Compile_Option_Spelling_Kind kind;
+    String_View argument;
+    String_View standard;
+} BM_Compile_Option_Spelling;
+
+typedef enum {
+    BM_LINK_DIRECTORY_SPELLING_PATH = 0,
+    BM_LINK_DIRECTORY_SPELLING_L_FLAG,
+} BM_Link_Directory_Spelling_Kind;
+
+typedef struct {
+    BM_Link_Directory_Spelling_Kind kind;
+    String_View path;
+} BM_Link_Directory_Spelling;
 
 typedef struct {
     bool emits;
@@ -136,6 +208,7 @@ bool bm_target_id_is_valid(BM_Target_Id id);
 bool bm_build_step_id_is_valid(BM_Build_Step_Id id);
 bool bm_replay_action_id_is_valid(BM_Replay_Action_Id id);
 BM_CPack_Components_Grouping bm_cpack_components_grouping_from_string(String_View value);
+BM_CPack_Generator_Kind bm_cpack_generator_kind_from_string(String_View value);
 bool bm_directory_id_is_valid(BM_Directory_Id id);
 bool bm_test_id_is_valid(BM_Test_Id id);
 bool bm_export_id_is_valid(BM_Export_Id id);
@@ -175,6 +248,14 @@ BM_String_Span bm_query_directory_raw_property_items(const Build_Model *model, B
 BM_Target_Id bm_query_target_by_name(const Build_Model *model, String_View name);
 BM_Test_Id bm_query_test_by_name(const Build_Model *model, String_View name);
 BM_Package_Id bm_query_package_by_name(const Build_Model *model, String_View name);
+bool bm_target_kind_is_artifact_target(BM_Target_Kind kind);
+bool bm_target_kind_is_non_emitting_build_target(BM_Target_Kind kind);
+bool bm_target_kind_is_supported_build_target(BM_Target_Kind kind);
+bool bm_target_kind_is_usage_only(BM_Target_Kind kind);
+bool bm_target_kind_has_linkable_artifact(BM_Target_Kind kind);
+bool bm_target_kind_has_imported_linkable_artifact(BM_Target_Kind kind);
+bool bm_target_kind_requires_position_independent_code(BM_Target_Kind kind);
+bool bm_target_kind_is_installable_target(BM_Target_Kind kind);
 
 BM_String_Item_Span bm_query_global_include_directories_raw(const Build_Model *model);
 BM_String_Item_Span bm_query_global_system_include_directories_raw(const Build_Model *model);
@@ -186,6 +267,10 @@ BM_String_Item_Span bm_query_global_link_options_raw(const Build_Model *model);
 BM_String_Span bm_query_global_raw_property_items(const Build_Model *model, String_View property_name);
 
 String_View bm_query_target_name(const Build_Model *model, BM_Target_Id id);
+bool bm_query_target_effective_export_name(const Build_Model *model,
+                                           BM_Target_Id id,
+                                           Arena *scratch,
+                                           String_View *out);
 BM_Target_Kind bm_query_target_kind(const Build_Model *model, BM_Target_Id id);
 BM_Directory_Id bm_query_target_owner_directory(const Build_Model *model, BM_Target_Id id);
 bool bm_query_target_is_imported(const Build_Model *model, BM_Target_Id id);
@@ -205,6 +290,10 @@ bool bm_query_target_source_is_compile_input(const Build_Model *model, BM_Target
 bool bm_query_target_source_header_file_only(const Build_Model *model, BM_Target_Id id, size_t source_index);
 String_View bm_query_target_source_language(const Build_Model *model, BM_Target_Id id, size_t source_index);
 String_View bm_query_target_source_effective_language(const Build_Model *model, BM_Target_Id id, size_t source_index);
+BM_Target_Source_Language_Kind bm_query_target_source_effective_language_kind(const Build_Model *model,
+                                                                              BM_Target_Id id,
+                                                                              size_t source_index);
+String_View bm_query_target_source_language_kind_name(BM_Target_Source_Language_Kind kind);
 BM_String_Item_Span bm_query_target_source_compile_definitions(const Build_Model *model, BM_Target_Id id, size_t source_index);
 BM_String_Item_Span bm_query_target_source_compile_options(const Build_Model *model, BM_Target_Id id, size_t source_index);
 BM_String_Item_Span bm_query_target_source_include_directories(const Build_Model *model, BM_Target_Id id, size_t source_index);
@@ -238,6 +327,10 @@ size_t bm_query_target_raw_property_count(const Build_Model *model, BM_Target_Id
 String_View bm_query_target_raw_property_name(const Build_Model *model, BM_Target_Id id, size_t property_index);
 BM_String_Span bm_query_target_raw_property_items(const Build_Model *model, BM_Target_Id id, String_View property_name);
 BM_String_Span bm_query_target_public_headers(const Build_Model *model, BM_Target_Id id);
+BM_Link_Item_Spelling_Kind bm_query_link_item_spelling_kind(String_View value);
+BM_Compile_Definition_Spelling bm_query_compile_definition_spelling(String_View value);
+BM_Compile_Option_Spelling bm_query_compile_option_spelling(String_View value);
+BM_Link_Directory_Spelling bm_query_link_directory_spelling(String_View value);
 BM_String_Span bm_query_target_precompile_headers(const Build_Model *model, BM_Target_Id id);
 BM_String_Span bm_query_target_precompile_headers_reuse_from(const Build_Model *model, BM_Target_Id id);
 BM_String_Span bm_query_target_interface_precompile_headers(const Build_Model *model, BM_Target_Id id);
@@ -246,6 +339,11 @@ bool bm_query_target_modeled_property_value(const Build_Model *model,
                                             String_View property_name,
                                             Arena *scratch,
                                             String_View *out);
+bool bm_query_target_interface_requirement_value(const Build_Model *model,
+                                                 BM_Target_Id id,
+                                                 BM_Target_Interface_Requirement_Kind kind,
+                                                 Arena *scratch,
+                                                 String_View *out);
 bool bm_query_target_property_value(const Build_Model *model,
                                     BM_Target_Id id,
                                     String_View property_name,
@@ -540,6 +638,11 @@ bool bm_query_target_effective_link_language(const Build_Model *model,
                                              const BM_Query_Eval_Context *ctx,
                                              Arena *scratch,
                                              String_View *out);
+bool bm_query_target_effective_link_language_kind(const Build_Model *model,
+                                                  BM_Target_Id id,
+                                                  const BM_Query_Eval_Context *ctx,
+                                                  Arena *scratch,
+                                                  BM_Target_Link_Language_Kind *out);
 bool bm_query_target_imported_known_configurations(const Build_Model *model,
                                                    BM_Target_Id id,
                                                    Arena *scratch,
@@ -565,6 +668,10 @@ bool bm_query_session_target_effective_link_language(BM_Query_Session *session,
                                                      BM_Target_Id id,
                                                      const BM_Query_Eval_Context *ctx,
                                                      String_View *out);
+bool bm_query_session_target_effective_link_language_kind(BM_Query_Session *session,
+                                                          BM_Target_Id id,
+                                                          const BM_Query_Eval_Context *ctx,
+                                                          BM_Target_Link_Language_Kind *out);
 
 bool bm_query_testing_enabled(const Build_Model *model);
 String_View bm_query_test_name(const Build_Model *model, BM_Test_Id id);
@@ -577,11 +684,41 @@ BM_String_Span bm_query_test_configurations(const Build_Model *model, BM_Test_Id
 BM_Target_Id bm_query_test_resolved_command_target(const Build_Model *model, BM_Test_Id id);
 bool bm_query_test_uses_name_signature(const Build_Model *model, BM_Test_Id id);
 BM_String_Span bm_query_test_raw_property_items(const Build_Model *model, BM_Test_Id id, String_View property_name);
+typedef enum {
+    BM_TEST_PROPERTY_DISABLED = 0,
+    BM_TEST_PROPERTY_WILL_FAIL,
+    BM_TEST_PROPERTY_SKIP_RETURN_CODE,
+    BM_TEST_PROPERTY_PASS_REGULAR_EXPRESSION,
+    BM_TEST_PROPERTY_FAIL_REGULAR_EXPRESSION,
+    BM_TEST_PROPERTY_SKIP_REGULAR_EXPRESSION,
+    BM_TEST_PROPERTY_TIMEOUT,
+    BM_TEST_PROPERTY_TIMEOUT_AFTER_MATCH,
+    BM_TEST_PROPERTY_REQUIRED_FILES,
+    BM_TEST_PROPERTY_ENVIRONMENT,
+    BM_TEST_PROPERTY_ENVIRONMENT_MODIFICATION,
+    BM_TEST_PROPERTY_DEPENDS,
+    BM_TEST_PROPERTY_FIXTURES_SETUP,
+    BM_TEST_PROPERTY_FIXTURES_REQUIRED,
+    BM_TEST_PROPERTY_FIXTURES_CLEANUP,
+    BM_TEST_PROPERTY_LABELS,
+} BM_Test_Property_Kind;
+
 bool bm_query_test_effective_property_items(const Build_Model *model,
                                             BM_Test_Id id,
                                             String_View property_name,
                                             Arena *scratch,
                                             BM_String_Span *out);
+String_View bm_test_property_kind_name(BM_Test_Property_Kind kind);
+bool bm_query_test_effective_property_kind_items(const Build_Model *model,
+                                                 BM_Test_Id id,
+                                                 BM_Test_Property_Kind kind,
+                                                 Arena *scratch,
+                                                 BM_String_Span *out);
+String_View bm_query_test_effective_property_kind_first(const Build_Model *model,
+                                                        BM_Test_Id id,
+                                                        BM_Test_Property_Kind kind,
+                                                        Arena *scratch,
+                                                        BM_String_Span *out_span);
 bool bm_query_test_effective_command(const Build_Model *model,
                                      BM_Test_Id id,
                                      const BM_Query_Eval_Context *ctx,
@@ -625,6 +762,7 @@ String_View bm_query_export_file_name(const Build_Model *model, BM_Export_Id id)
 String_View bm_query_export_output_file_path(const Build_Model *model, BM_Export_Id id, Arena *scratch);
 String_View bm_query_export_component(const Build_Model *model, BM_Export_Id id);
 BM_Target_Id_Span bm_query_export_targets(const Build_Model *model, BM_Export_Id id);
+bool bm_query_export_has_artifact_targets(const Build_Model *model, BM_Export_Id id);
 bool bm_query_export_enabled(const Build_Model *model, BM_Export_Id id);
 String_View bm_query_export_package_name(const Build_Model *model, BM_Export_Id id);
 String_View bm_query_export_registry_prefix(const Build_Model *model, BM_Export_Id id);
@@ -689,6 +827,12 @@ BM_CPack_Components_Grouping bm_query_cpack_package_components_grouping_kind(con
                                                                              BM_CPack_Package_Id id);
 String_View bm_query_cpack_package_project_config_file(const Build_Model *model, BM_CPack_Package_Id id);
 BM_String_Span bm_query_cpack_package_generators(const Build_Model *model, BM_CPack_Package_Id id);
+BM_CPack_Generator_Kind bm_query_cpack_package_generator_kind(const Build_Model *model,
+                                                              BM_CPack_Package_Id id,
+                                                              size_t generator_index);
+bool bm_query_cpack_package_has_generator_kind(const Build_Model *model,
+                                               BM_CPack_Package_Id id,
+                                               BM_CPack_Generator_Kind kind);
 bool bm_query_cpack_package_include_toplevel_directory(const Build_Model *model, BM_CPack_Package_Id id);
 bool bm_query_cpack_package_archive_component_install(const Build_Model *model, BM_CPack_Package_Id id);
 BM_String_Span bm_query_cpack_package_components_all(const Build_Model *model, BM_CPack_Package_Id id);

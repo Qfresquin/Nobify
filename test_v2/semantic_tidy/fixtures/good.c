@@ -22,6 +22,7 @@ typedef unsigned int BM_Target_Id;
 typedef unsigned int BM_Build_Step_Id;
 typedef unsigned int BM_Install_Rule_Id;
 typedef unsigned int BM_CPack_Package_Id;
+typedef unsigned int BM_Test_Id;
 typedef struct {
     const char *data;
     unsigned long count;
@@ -30,6 +31,8 @@ typedef struct {
     const String_View *items;
     unsigned long count;
 } BM_String_Span;
+typedef struct BM_Query_Session BM_Query_Session;
+typedef struct BM_Query_Eval_Context BM_Query_Eval_Context;
 typedef struct Nob_File_Paths Nob_File_Paths;
 typedef enum {
     BM_BUILD_STEP_COMMAND_TOOL_LITERAL = 0,
@@ -43,6 +46,12 @@ typedef enum {
     BM_CPACK_COMPONENTS_GROUPING_INVALID,
 } BM_CPack_Components_Grouping;
 typedef enum {
+    BM_CPACK_GENERATOR_TGZ = 0,
+    BM_CPACK_GENERATOR_TXZ,
+    BM_CPACK_GENERATOR_ZIP,
+    BM_CPACK_GENERATOR_UNSUPPORTED,
+} BM_CPack_Generator_Kind;
+typedef enum {
     BM_INSTALL_RULE_ITEM_PATH = 0,
     BM_INSTALL_RULE_ITEM_SCRIPT,
     BM_INSTALL_RULE_ITEM_CODE,
@@ -50,9 +59,71 @@ typedef enum {
     BM_INSTALL_RULE_ITEM_TAGGED_UNKNOWN,
 } BM_Install_Rule_Item_Kind;
 typedef enum {
+    BM_TARGET_EXECUTABLE = 0,
+    BM_TARGET_STATIC_LIBRARY,
+    BM_TARGET_SHARED_LIBRARY,
+    BM_TARGET_MODULE_LIBRARY,
+    BM_TARGET_INTERFACE_LIBRARY,
+    BM_TARGET_OBJECT_LIBRARY,
+    BM_TARGET_UTILITY,
+    BM_TARGET_UNKNOWN_LIBRARY,
+} BM_Target_Kind;
+typedef enum {
+    BM_TARGET_SOURCE_LANGUAGE_NONE = 0,
+    BM_TARGET_SOURCE_LANGUAGE_C,
+    BM_TARGET_SOURCE_LANGUAGE_CXX,
+    BM_TARGET_SOURCE_LANGUAGE_UNSUPPORTED,
+} BM_Target_Source_Language_Kind;
+typedef enum {
+    BM_TARGET_LINK_LANGUAGE_NONE = 0,
+    BM_TARGET_LINK_LANGUAGE_C,
+    BM_TARGET_LINK_LANGUAGE_CXX,
+    BM_TARGET_LINK_LANGUAGE_UNSUPPORTED,
+} BM_Target_Link_Language_Kind;
+typedef enum {
+    BM_TARGET_INTERFACE_REQUIREMENT_LINK_LIBRARIES = 0,
+} BM_Target_Interface_Requirement_Kind;
+typedef enum {
+    BM_LINK_ITEM_SPELLING_EMPTY = 0,
+    BM_LINK_ITEM_SPELLING_FLAG,
+    BM_LINK_ITEM_SPELLING_PATH,
+    BM_LINK_ITEM_SPELLING_LINK_FILE,
+    BM_LINK_ITEM_SPELLING_BARE_LIBRARY,
+    BM_LINK_ITEM_SPELLING_UNSUPPORTED,
+} BM_Link_Item_Spelling_Kind;
+typedef enum {
+    BM_COMPILE_DEFINITION_SPELLING_VALUE = 0,
+    BM_COMPILE_DEFINITION_SPELLING_D_FLAG,
+} BM_Compile_Definition_Spelling_Kind;
+typedef struct {
+    BM_Compile_Definition_Spelling_Kind kind;
+    String_View value;
+} BM_Compile_Definition_Spelling;
+typedef enum {
+    BM_COMPILE_OPTION_SPELLING_ARGUMENT = 0,
+    BM_COMPILE_OPTION_SPELLING_STANDARD_FLAG,
+} BM_Compile_Option_Spelling_Kind;
+typedef struct {
+    BM_Compile_Option_Spelling_Kind kind;
+    String_View argument;
+    String_View standard;
+} BM_Compile_Option_Spelling;
+typedef enum {
+    BM_LINK_DIRECTORY_SPELLING_PATH = 0,
+    BM_LINK_DIRECTORY_SPELLING_L_FLAG,
+} BM_Link_Directory_Spelling_Kind;
+typedef struct {
+    BM_Link_Directory_Spelling_Kind kind;
+    String_View path;
+} BM_Link_Directory_Spelling;
+typedef enum {
     BM_COMPILE_FEATURE_LANG_C = 0,
     BM_COMPILE_FEATURE_LANG_CXX,
 } BM_Compile_Feature_Lang;
+typedef enum {
+    BM_TEST_PROPERTY_DISABLED = 0,
+    BM_TEST_PROPERTY_LABELS,
+} BM_Test_Property_Kind;
 typedef struct {
     int exists;
     int type;
@@ -83,6 +154,9 @@ static int bm_query_build_step_effective_command_tool(const Build_Model *model,
                                                       BM_Build_Step_Command_Tool *out);
 static BM_CPack_Components_Grouping bm_query_cpack_package_components_grouping_kind(const Build_Model *model,
                                                                                     BM_CPack_Package_Id id);
+static BM_CPack_Generator_Kind bm_query_cpack_package_generator_kind(const Build_Model *model,
+                                                                     BM_CPack_Package_Id id,
+                                                                     unsigned long generator_index);
 static BM_Install_Rule_Item_Kind bm_query_install_rule_item_kind(const Build_Model *model,
                                                                  BM_Install_Rule_Id id);
 static int bm_query_target_language_extensions_override(const Build_Model *model,
@@ -91,6 +165,37 @@ static int bm_query_target_language_extensions_override(const Build_Model *model
                                                         int *out_extensions);
 static BM_String_Span bm_query_target_public_headers(const Build_Model *model,
                                                      BM_Target_Id id);
+static BM_Target_Source_Language_Kind bm_query_target_source_effective_language_kind(const Build_Model *model,
+                                                                                    BM_Target_Id id,
+                                                                                    unsigned long source_index);
+static int bm_query_target_effective_export_name(const Build_Model *model,
+                                                 BM_Target_Id id,
+                                                 void *scratch,
+                                                 String_View *out);
+static int bm_query_export_has_artifact_targets(const Build_Model *model, int export_id);
+static BM_Link_Item_Spelling_Kind bm_query_link_item_spelling_kind(String_View value);
+static BM_Compile_Definition_Spelling bm_query_compile_definition_spelling(String_View value);
+static BM_Compile_Option_Spelling bm_query_compile_option_spelling(String_View value);
+static BM_Link_Directory_Spelling bm_query_link_directory_spelling(String_View value);
+static int bm_target_kind_is_artifact_target(BM_Target_Kind kind);
+static int bm_target_kind_is_non_emitting_build_target(BM_Target_Kind kind);
+static int bm_target_kind_has_linkable_artifact(BM_Target_Kind kind);
+static int bm_target_kind_requires_position_independent_code(BM_Target_Kind kind);
+static int bm_target_kind_is_installable_target(BM_Target_Kind kind);
+static String_View bm_query_test_effective_property_kind_first(const Build_Model *model,
+                                                               BM_Test_Id id,
+                                                               BM_Test_Property_Kind kind,
+                                                               void *scratch,
+                                                               BM_String_Span *out_span);
+static int bm_query_target_interface_requirement_value(const Build_Model *model,
+                                                       BM_Target_Id id,
+                                                       BM_Target_Interface_Requirement_Kind kind,
+                                                       void *scratch,
+                                                       String_View *out);
+static int bm_query_session_target_effective_link_language_kind(BM_Query_Session *session,
+                                                                BM_Target_Id id,
+                                                                const BM_Query_Eval_Context *ctx,
+                                                                BM_Target_Link_Language_Kind *out);
 static int eval_fs_glob(EvalExecContext *ctx, const char *pattern, Nob_File_Paths *out);
 
 Eval_Result eval_handle_good(EvalExecContext *ctx, const void *node) {
@@ -211,6 +316,11 @@ static int helper_codegen_cpack_grouping_heuristic_good(const Build_Model *model
     return bm_query_cpack_package_components_grouping_kind(model, id) != BM_CPACK_COMPONENTS_GROUPING_INVALID;
 }
 
+static int helper_codegen_cpack_generator_heuristic_good(const Build_Model *model,
+                                                         BM_CPack_Package_Id id) {
+    return bm_query_cpack_package_generator_kind(model, id, 0) != BM_CPACK_GENERATOR_UNSUPPORTED;
+}
+
 static int helper_codegen_install_pseudo_item_heuristic_good(const Build_Model *model,
                                                              BM_Install_Rule_Id id) {
     return bm_query_install_rule_item_kind(model, id) != BM_INSTALL_RULE_ITEM_TAGGED_UNKNOWN;
@@ -225,6 +335,80 @@ static int helper_codegen_language_extensions_raw_property_good(const Build_Mode
 static int helper_codegen_public_header_raw_property_good(const Build_Model *model,
                                                           BM_Target_Id id) {
     return bm_query_target_public_headers(model, id).count > 0;
+}
+
+static int helper_codegen_source_language_query_good(const Build_Model *model,
+                                                     BM_Target_Id id,
+                                                     unsigned long source_index) {
+    return bm_query_target_source_effective_language_kind(model, id, source_index) ==
+           BM_TARGET_SOURCE_LANGUAGE_CXX;
+}
+
+static int helper_codegen_test_property_string_query_good(const Build_Model *model,
+                                                          BM_Test_Id id,
+                                                          void *scratch) {
+    return bm_query_test_effective_property_kind_first(model,
+                                                       id,
+                                                       BM_TEST_PROPERTY_DISABLED,
+                                                       scratch,
+                                                       0).count > 0;
+}
+
+static int helper_codegen_interface_requirement_string_query_good(const Build_Model *model,
+                                                                  BM_Target_Id id,
+                                                                  void *scratch,
+                                                                  String_View *out) {
+    return bm_query_target_interface_requirement_value(model,
+                                                       id,
+                                                       BM_TARGET_INTERFACE_REQUIREMENT_LINK_LIBRARIES,
+                                                       scratch,
+                                                       out);
+}
+
+static int helper_codegen_compile_definition_spelling_heuristic_good(String_View item) {
+    return bm_query_compile_definition_spelling(item).kind == BM_COMPILE_DEFINITION_SPELLING_D_FLAG;
+}
+
+static int helper_codegen_compile_option_spelling_heuristic_good(String_View item) {
+    return bm_query_compile_option_spelling(item).kind == BM_COMPILE_OPTION_SPELLING_STANDARD_FLAG;
+}
+
+static int helper_codegen_link_directory_spelling_heuristic_good(String_View item) {
+    return bm_query_link_directory_spelling(item).kind == BM_LINK_DIRECTORY_SPELLING_L_FLAG;
+}
+
+static int helper_codegen_target_kind_capability_heuristic_good(BM_Target_Kind kind) {
+    return bm_target_kind_is_artifact_target(kind) ||
+           bm_target_kind_is_non_emitting_build_target(kind) ||
+           bm_target_kind_has_linkable_artifact(kind) ||
+           bm_target_kind_requires_position_independent_code(kind);
+}
+
+static int helper_codegen_install_target_kind_heuristic_good(BM_Target_Kind kind) {
+    return bm_target_kind_is_installable_target(kind);
+}
+
+static int helper_codegen_export_artifact_target_heuristic_good(const Build_Model *model, int export_id) {
+    return bm_query_export_has_artifact_targets(model, export_id);
+}
+
+static int helper_codegen_link_language_string_query_good(BM_Query_Session *session,
+                                                          BM_Target_Id id,
+                                                          const BM_Query_Eval_Context *ctx) {
+    BM_Target_Link_Language_Kind kind = BM_TARGET_LINK_LANGUAGE_NONE;
+    if (!bm_query_session_target_effective_link_language_kind(session, id, ctx, &kind)) return 0;
+    return kind == BM_TARGET_LINK_LANGUAGE_CXX;
+}
+
+static int helper_codegen_export_name_string_query_good(const Build_Model *model,
+                                                        BM_Target_Id id,
+                                                        void *scratch,
+                                                        String_View *out) {
+    return bm_query_target_effective_export_name(model, id, scratch, out);
+}
+
+static int helper_codegen_link_item_spelling_heuristic_good(String_View item) {
+    return bm_query_link_item_spelling_kind(item) == BM_LINK_ITEM_SPELLING_LINK_FILE;
 }
 
 static const char *helper_codegen_public_host_effect_good(const Build_Model *model,

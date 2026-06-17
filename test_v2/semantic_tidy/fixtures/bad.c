@@ -49,9 +49,12 @@ typedef struct {
     const String_View *items;
     unsigned long count;
 } BM_String_Span;
+typedef struct BM_Query_Session BM_Query_Session;
+typedef struct BM_Query_Eval_Context BM_Query_Eval_Context;
 typedef unsigned int BM_Target_Id;
 typedef unsigned int BM_Build_Step_Id;
 typedef unsigned int BM_CPack_Package_Id;
+typedef unsigned int BM_Test_Id;
 typedef enum {
     NOB_FILE_REGULAR = 0,
     NOB_FILE_DIRECTORY,
@@ -69,9 +72,37 @@ static const char *bm_query_target_name(const Build_Model *model, BM_Target_Id i
 static int bm_builder_current_directory_id(BM_Builder *builder);
 static Build_Model_Draft *bm_builder_finalize(BM_Builder *builder);
 static int cg_sv_has_prefix(String_View sv, const char *prefix);
+static int cg_ends_with(String_View sv, const char *suffix);
+static int cg_target_is_supported_concrete(int kind);
+static int cg_target_is_non_emitting(int kind);
+static int cg_target_kind_is_linkable_artifact(int kind);
+static int cg_target_needs_pic(void *ctx, int kind);
+enum {
+    BM_TARGET_INTERFACE_LIBRARY = 4,
+    BM_TARGET_OBJECT_LIBRARY = 5,
+    BM_TARGET_UTILITY = 6,
+    BM_TARGET_UNKNOWN_LIBRARY = 7,
+};
 static BM_String_Span bm_query_target_raw_property_items(const Build_Model *model,
                                                          BM_Target_Id id,
                                                          String_View property_name);
+static String_View bm_query_target_source_effective_language(const Build_Model *model,
+                                                             BM_Target_Id id,
+                                                             unsigned long source_index);
+static int bm_query_test_effective_property_items(const Build_Model *model,
+                                                  BM_Test_Id id,
+                                                  String_View property_name,
+                                                  void *scratch,
+                                                  BM_String_Span *out);
+static int bm_query_target_modeled_property_value(const Build_Model *model,
+                                                  BM_Target_Id id,
+                                                  String_View property_name,
+                                                  void *scratch,
+                                                  String_View *out);
+static int bm_query_session_target_effective_link_language(BM_Query_Session *session,
+                                                           BM_Target_Id id,
+                                                           const BM_Query_Eval_Context *ctx,
+                                                           String_View *out);
 static char *getenv(const char *name);
 static long time(long *out);
 static int nob_sv_eq(String_View left, String_View right);
@@ -269,10 +300,28 @@ static int helper_bad_codegen_cpack_grouping_heuristic(String_View grouping) {
            nob_sv_eq(grouping, nob_sv_from_cstr("ALL_COMPONENTS_IN_ONE"));
 }
 
+static int helper_bad_codegen_cpack_generator_heuristic(String_View generator) {
+    return nob_sv_eq(generator, nob_sv_from_cstr("TGZ")) ||
+           nob_sv_eq(generator, nob_sv_from_cstr("TXZ")) ||
+           nob_sv_eq(generator, nob_sv_from_cstr("ZIP"));
+}
+
 static int helper_bad_codegen_install_pseudo_item_heuristic(String_View item) {
     return cg_sv_has_prefix(item, "SCRIPT::") ||
            cg_sv_has_prefix(item, "CODE::") ||
            cg_sv_has_prefix(item, "EXPORT_ANDROID_MK::");
+}
+
+static int helper_bad_codegen_compile_definition_spelling_heuristic(String_View item) {
+    return cg_sv_has_prefix(item, "-D");
+}
+
+static int helper_bad_codegen_compile_option_spelling_heuristic(String_View item) {
+    return cg_sv_has_prefix(item, "-std=");
+}
+
+static int helper_bad_codegen_link_directory_spelling_heuristic(String_View item) {
+    return cg_sv_has_prefix(item, "-L");
 }
 
 static int helper_bad_codegen_language_extensions_raw_property(const Build_Model *model,
@@ -284,6 +333,80 @@ static int helper_bad_codegen_language_extensions_raw_property(const Build_Model
 static int helper_bad_codegen_public_header_raw_property(const Build_Model *model,
                                                          BM_Target_Id id) {
     return bm_query_target_raw_property_items(model, id, nob_sv_from_cstr("PUBLIC_HEADER")).count > 0;
+}
+
+static int helper_bad_codegen_source_language_query(const Build_Model *model,
+                                                    BM_Target_Id id,
+                                                    unsigned long source_index) {
+    return bm_query_target_source_effective_language(model, id, source_index).count > 0;
+}
+
+static int helper_bad_codegen_test_property_string_query(const Build_Model *model,
+                                                         BM_Test_Id id,
+                                                         void *scratch,
+                                                         BM_String_Span *out) {
+    return bm_query_test_effective_property_items(model,
+                                                  id,
+                                                  nob_sv_from_cstr("DISABLED"),
+                                                  scratch,
+                                                  out);
+}
+
+static int helper_bad_codegen_interface_requirement_string_query(const Build_Model *model,
+                                                                 BM_Target_Id id,
+                                                                 void *scratch,
+                                                                 String_View *out) {
+    return bm_query_target_modeled_property_value(model,
+                                                  id,
+                                                  nob_sv_from_cstr("INTERFACE_LINK_LIBRARIES"),
+                                                  scratch,
+                                                  out);
+}
+
+static int helper_bad_codegen_link_language_string_query(BM_Query_Session *session,
+                                                         BM_Target_Id id,
+                                                         const BM_Query_Eval_Context *ctx) {
+    String_View language = {0};
+    if (!bm_query_session_target_effective_link_language(session, id, ctx, &language)) return 0;
+    return nob_sv_eq(language, nob_sv_from_cstr("CXX"));
+}
+
+static int helper_bad_codegen_export_name_string_query(const Build_Model *model,
+                                                       BM_Target_Id id,
+                                                       void *scratch,
+                                                       String_View *out) {
+    return bm_query_target_modeled_property_value(model,
+                                                  id,
+                                                  nob_sv_from_cstr("EXPORT_NAME"),
+                                                  scratch,
+                                                  out);
+}
+
+static int helper_bad_codegen_link_item_spelling_heuristic(String_View item) {
+    return cg_ends_with(item, ".a") ||
+           cg_ends_with(item, ".lib") ||
+           cg_ends_with(item, ".dll") ||
+           cg_ends_with(item, ".so") ||
+           cg_ends_with(item, ".dylib") ||
+           cg_ends_with(item, ".o") ||
+           cg_ends_with(item, ".obj");
+}
+
+static int helper_bad_codegen_target_kind_capability_heuristic(void *ctx, int kind) {
+    return cg_target_is_supported_concrete(kind) ||
+           cg_target_is_non_emitting(kind) ||
+           cg_target_kind_is_linkable_artifact(kind) ||
+           cg_target_needs_pic(ctx, kind);
+}
+
+static int helper_bad_codegen_install_target_kind_heuristic(int kind) {
+    return kind == BM_TARGET_OBJECT_LIBRARY ||
+           kind == BM_TARGET_UTILITY ||
+           kind == BM_TARGET_UNKNOWN_LIBRARY;
+}
+
+static int helper_bad_codegen_export_artifact_target_heuristic(int kind) {
+    return kind != BM_TARGET_INTERFACE_LIBRARY;
 }
 
 static int helper_bad_codegen_public_host_effect(const char *path) {

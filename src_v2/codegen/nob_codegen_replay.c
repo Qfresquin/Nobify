@@ -1155,20 +1155,6 @@ static bool cg_emit_c_string_array(Nob_String_Builder *out, const char *name, BM
     return true;
 }
 
-static String_View cg_test_property_first(const Build_Model *model,
-                                          BM_Test_Id id,
-                                          String_View property_name,
-                                          Arena *scratch,
-                                          BM_String_Span *out_span) {
-    BM_String_Span span = {0};
-    if (out_span) *out_span = (BM_String_Span){0};
-    if (!bm_query_test_effective_property_items(model, id, property_name, scratch, &span)) {
-        return nob_sv_from_cstr("");
-    }
-    if (out_span) *out_span = span;
-    return span.count > 0 ? span.items[0] : nob_sv_from_cstr("");
-}
-
 static bool cg_join_string_span(Arena *scratch, BM_String_Span span, String_View *out) {
     Nob_String_Builder sb = {0};
     char *copy = NULL;
@@ -2072,32 +2058,32 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
         String_View fixtures_required = {0};
         String_View fixtures_cleanup = {0};
         String_View labels = {0};
-        String_View disabled = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("DISABLED"), ctx->scratch, NULL);
-        String_View will_fail = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("WILL_FAIL"), ctx->scratch, NULL);
-        String_View skip_return_code = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("SKIP_RETURN_CODE"), ctx->scratch, NULL);
-        String_View pass_regex = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("PASS_REGULAR_EXPRESSION"), ctx->scratch, NULL);
-        String_View fail_regex = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("FAIL_REGULAR_EXPRESSION"), ctx->scratch, NULL);
-        String_View skip_regex = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("SKIP_REGULAR_EXPRESSION"), ctx->scratch, NULL);
-        String_View timeout = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("TIMEOUT"), ctx->scratch, NULL);
-        String_View timeout_after_match = cg_test_property_first(ctx->model, id, nob_sv_from_cstr("TIMEOUT_AFTER_MATCH"), ctx->scratch, NULL);
+        String_View disabled = bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_DISABLED, ctx->scratch, NULL);
+        String_View will_fail = bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_WILL_FAIL, ctx->scratch, NULL);
+        String_View skip_return_code = bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_SKIP_RETURN_CODE, ctx->scratch, NULL);
+        String_View pass_regex = bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_PASS_REGULAR_EXPRESSION, ctx->scratch, NULL);
+        String_View fail_regex = bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_FAIL_REGULAR_EXPRESSION, ctx->scratch, NULL);
+        String_View skip_regex = bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_SKIP_REGULAR_EXPRESSION, ctx->scratch, NULL);
+        String_View timeout = bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_TIMEOUT, ctx->scratch, NULL);
+        String_View timeout_after_match = bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_TIMEOUT_AFTER_MATCH, ctx->scratch, NULL);
         if (!bm_query_test_effective_command(ctx->model, id, NULL, ctx->scratch, &effective_command)) return false;
         emulator_argv = effective_command.emulator_argv;
         working_dir = effective_command.working_directory;
-        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("REQUIRED_FILES"), ctx->scratch, &property_span);
+        (void)bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_REQUIRED_FILES, ctx->scratch, &property_span);
         if (!cg_join_string_span(ctx->scratch, property_span, &required_files)) return false;
-        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("ENVIRONMENT"), ctx->scratch, &property_span);
+        (void)bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_ENVIRONMENT, ctx->scratch, &property_span);
         if (!cg_join_string_span(ctx->scratch, property_span, &environment)) return false;
-        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("ENVIRONMENT_MODIFICATION"), ctx->scratch, &property_span);
+        (void)bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_ENVIRONMENT_MODIFICATION, ctx->scratch, &property_span);
         if (!cg_join_string_span(ctx->scratch, property_span, &environment_modification)) return false;
-        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("DEPENDS"), ctx->scratch, &property_span);
+        (void)bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_DEPENDS, ctx->scratch, &property_span);
         if (!cg_join_string_span(ctx->scratch, property_span, &depends)) return false;
-        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("FIXTURES_SETUP"), ctx->scratch, &property_span);
+        (void)bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_FIXTURES_SETUP, ctx->scratch, &property_span);
         if (!cg_join_string_span(ctx->scratch, property_span, &fixtures_setup)) return false;
-        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("FIXTURES_REQUIRED"), ctx->scratch, &property_span);
+        (void)bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_FIXTURES_REQUIRED, ctx->scratch, &property_span);
         if (!cg_join_string_span(ctx->scratch, property_span, &fixtures_required)) return false;
-        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("FIXTURES_CLEANUP"), ctx->scratch, &property_span);
+        (void)bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_FIXTURES_CLEANUP, ctx->scratch, &property_span);
         if (!cg_join_string_span(ctx->scratch, property_span, &fixtures_cleanup)) return false;
-        (void)cg_test_property_first(ctx->model, id, nob_sv_from_cstr("LABELS"), ctx->scratch, &property_span);
+        (void)bm_query_test_effective_property_kind_first(ctx->model, id, BM_TEST_PROPERTY_LABELS, ctx->scratch, &property_span);
         if (!cg_join_string_span(ctx->scratch, property_span, &labels)) return false;
         if (!bm_directory_id_is_valid(owner) ||
             !cg_effective_owner_binary_dir(ctx, owner, &effective_owner_binary_dir)) {

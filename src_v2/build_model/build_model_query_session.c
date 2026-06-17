@@ -881,3 +881,15 @@ bool bm_query_session_target_effective_link_language(BM_Query_Session *session,
                                                      String_View *out) {
     return bm_query_session_effective_link_language_cached(session, id, ctx, true, out);
 }
+
+bool bm_query_session_target_effective_link_language_kind(BM_Query_Session *session,
+                                                          BM_Target_Id id,
+                                                          const BM_Query_Eval_Context *ctx,
+                                                          BM_Target_Link_Language_Kind *out) {
+    String_View language = nob_sv_from_cstr("");
+    if (out) *out = BM_TARGET_LINK_LANGUAGE_NONE;
+    if (!out) return false;
+    if (!bm_query_session_effective_link_language_cached(session, id, ctx, true, &language)) return false;
+    *out = bm_query_link_language_kind_from_effective(language);
+    return true;
+}

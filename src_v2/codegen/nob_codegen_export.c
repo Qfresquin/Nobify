@@ -51,7 +51,7 @@ static bool cg_export_collect_build_direct_property_values(CG_Context *ctx,
                                                            BM_Target_Id target_id,
                                                            String_View config,
                                                            BM_Query_Usage_Mode usage_mode,
-                                                           const char *property_name,
+                                                           BM_Target_Interface_Requirement_Kind kind,
                                                            String_View **out) {
     String_View raw = {0};
     String_View resolved = {0};
@@ -64,11 +64,11 @@ static bool cg_export_collect_build_direct_property_values(CG_Context *ctx,
     qctx.build_interface_active = true;
     qctx.build_local_interface_active = false;
     qctx.install_interface_active = false;
-    if (!bm_query_target_modeled_property_value(ctx->model,
-                                                target_id,
-                                                nob_sv_from_cstr(property_name),
-                                                ctx->scratch,
-                                                &raw) ||
+    if (!bm_query_target_interface_requirement_value(ctx->model,
+                                                     target_id,
+                                                     kind,
+                                                     ctx->scratch,
+                                                     &raw) ||
         raw.count == 0) {
         return true;
     }
@@ -97,18 +97,18 @@ static bool cg_export_collect_build_interface_includes(CG_Context *ctx,
                                                    config,
                                                    nob_sv_from_cstr(""));
     BM_Directory_Id owner_dir = BM_DIRECTORY_ID_INVALID;
-    const char *property_name = want_system ?
-        "INTERFACE_SYSTEM_INCLUDE_DIRECTORIES" :
-        "INTERFACE_INCLUDE_DIRECTORIES";
+    BM_Target_Interface_Requirement_Kind kind = want_system
+        ? BM_TARGET_INTERFACE_REQUIREMENT_SYSTEM_INCLUDE_DIRECTORIES
+        : BM_TARGET_INTERFACE_REQUIREMENT_INCLUDE_DIRECTORIES;
     qctx.build_interface_active = true;
     qctx.build_local_interface_active = false;
     qctx.install_interface_active = false;
     owner_dir = bm_query_target_owner_directory(ctx->model, target_id);
-    if (!bm_query_target_modeled_property_value(ctx->model,
-                                                target_id,
-                                                nob_sv_from_cstr(property_name),
-                                                ctx->scratch,
-                                                &raw) ||
+    if (!bm_query_target_interface_requirement_value(ctx->model,
+                                                     target_id,
+                                                     kind,
+                                                     ctx->scratch,
+                                                     &raw) ||
         raw.count == 0) {
         return true;
     }
@@ -144,11 +144,11 @@ static bool cg_export_collect_build_link_libraries(CG_Context *ctx,
     qctx.build_interface_active = true;
     qctx.build_local_interface_active = false;
     qctx.install_interface_active = false;
-    if (!bm_query_target_modeled_property_value(ctx->model,
-                                                target_id,
-                                                nob_sv_from_cstr("INTERFACE_LINK_LIBRARIES"),
-                                                ctx->scratch,
-                                                &raw) ||
+    if (!bm_query_target_interface_requirement_value(ctx->model,
+                                                     target_id,
+                                                     BM_TARGET_INTERFACE_REQUIREMENT_LINK_LIBRARIES,
+                                                     ctx->scratch,
+                                                     &raw) ||
         raw.count == 0) {
         return true;
     }
@@ -209,11 +209,11 @@ static bool cg_export_emit_build_tree_target_properties(CG_Context *ctx,
 
     if (!cg_export_collect_build_interface_includes(ctx, target_id, config, false, &include_items) ||
         !cg_export_collect_build_interface_includes(ctx, target_id, config, true, &system_include_items) ||
-        !cg_export_collect_build_direct_property_values(ctx, target_id, config, BM_QUERY_USAGE_COMPILE, "INTERFACE_COMPILE_DEFINITIONS", &compile_defs) ||
-        !cg_export_collect_build_direct_property_values(ctx, target_id, config, BM_QUERY_USAGE_COMPILE, "INTERFACE_COMPILE_OPTIONS", &compile_opts) ||
-        !cg_export_collect_build_direct_property_values(ctx, target_id, config, BM_QUERY_USAGE_COMPILE, "INTERFACE_COMPILE_FEATURES", &compile_features) ||
-        !cg_export_collect_build_direct_property_values(ctx, target_id, config, BM_QUERY_USAGE_LINK, "INTERFACE_LINK_OPTIONS", &link_opts) ||
-        !cg_export_collect_build_direct_property_values(ctx, target_id, config, BM_QUERY_USAGE_LINK, "INTERFACE_LINK_DIRECTORIES", &link_dirs) ||
+        !cg_export_collect_build_direct_property_values(ctx, target_id, config, BM_QUERY_USAGE_COMPILE, BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_DEFINITIONS, &compile_defs) ||
+        !cg_export_collect_build_direct_property_values(ctx, target_id, config, BM_QUERY_USAGE_COMPILE, BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_OPTIONS, &compile_opts) ||
+        !cg_export_collect_build_direct_property_values(ctx, target_id, config, BM_QUERY_USAGE_COMPILE, BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_FEATURES, &compile_features) ||
+        !cg_export_collect_build_direct_property_values(ctx, target_id, config, BM_QUERY_USAGE_LINK, BM_TARGET_INTERFACE_REQUIREMENT_LINK_OPTIONS, &link_opts) ||
+        !cg_export_collect_build_direct_property_values(ctx, target_id, config, BM_QUERY_USAGE_LINK, BM_TARGET_INTERFACE_REQUIREMENT_LINK_DIRECTORIES, &link_dirs) ||
         !cg_export_collect_build_link_libraries(ctx, export_id, target_id, export_namespace, config, &link_libs) ||
         !cg_collect_target_link_languages(ctx, target_id, &link_languages_joined) ||
         !cg_join_sv_list(ctx->scratch, include_items, &includes_joined) ||

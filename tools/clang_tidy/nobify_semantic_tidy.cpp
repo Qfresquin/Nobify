@@ -1689,6 +1689,35 @@ public:
     }
 };
 
+static bool literalIsCPackGeneratorHeuristic(llvm::StringRef Value) {
+    return Value == "TGZ" || Value == "TXZ" || Value == "ZIP";
+}
+
+static bool appliesCodegenCPackGeneratorHeuristic(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_cpack_generator_heuristic");
+}
+
+class CodegenCPackGeneratorHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenCPackGeneratorHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerCallLiteralMatcher(Finder, this, "nob_sv_eq");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Call_Literal_Rule Rule = {
+            appliesCodegenCPackGeneratorHeuristic,
+            literalIsCPackGeneratorHeuristic,
+            "codegen must not classify CPack generators by string comparison; use build-model package generator queries",
+        };
+        checkCallLiteral(Result, *this, Rule);
+    }
+};
+
 static bool literalIsInstallPseudoItemHeuristic(llvm::StringRef Value) {
     return Value == "SCRIPT::" || Value == "CODE::" || Value == "EXPORT_ANDROID_MK::";
 }
@@ -1716,6 +1745,228 @@ public:
             "codegen must not classify install pseudo-items by raw TAG:: prefixes; use build-model install item kind queries",
         };
         checkCallLiteral(Result, *this, Rule);
+    }
+};
+
+static bool literalIsCompileDefinitionSpellingHeuristic(llvm::StringRef Value) {
+    return Value == "-D";
+}
+
+static bool appliesCodegenCompileDefinitionSpellingHeuristic(llvm::StringRef Path,
+                                                             const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_compile_definition_spelling_heuristic");
+}
+
+class CodegenCompileDefinitionSpellingHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenCompileDefinitionSpellingHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerCallLiteralMatcher(Finder, this, "cg_sv_has_prefix");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Call_Literal_Rule Rule = {
+            appliesCodegenCompileDefinitionSpellingHeuristic,
+            literalIsCompileDefinitionSpellingHeuristic,
+            "codegen must not classify compile definitions by -D prefix; use build-model compile definition spelling queries",
+        };
+        checkCallLiteral(Result, *this, Rule);
+    }
+};
+
+static bool literalIsCompileOptionSpellingHeuristic(llvm::StringRef Value) {
+    return Value == "-std=";
+}
+
+static bool appliesCodegenCompileOptionSpellingHeuristic(llvm::StringRef Path,
+                                                         const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_compile_option_spelling_heuristic");
+}
+
+class CodegenCompileOptionSpellingHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenCompileOptionSpellingHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerCallLiteralMatcher(Finder, this, "cg_sv_has_prefix");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Call_Literal_Rule Rule = {
+            appliesCodegenCompileOptionSpellingHeuristic,
+            literalIsCompileOptionSpellingHeuristic,
+            "codegen must not classify compile options by -std= prefix; use build-model compile option spelling queries",
+        };
+        checkCallLiteral(Result, *this, Rule);
+    }
+};
+
+static bool literalIsLinkDirectorySpellingHeuristic(llvm::StringRef Value) {
+    return Value == "-L";
+}
+
+static bool appliesCodegenLinkDirectorySpellingHeuristic(llvm::StringRef Path,
+                                                         const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_link_directory_spelling_heuristic");
+}
+
+class CodegenLinkDirectorySpellingHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenLinkDirectorySpellingHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerCallLiteralMatcher(Finder, this, "cg_sv_has_prefix");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Call_Literal_Rule Rule = {
+            appliesCodegenLinkDirectorySpellingHeuristic,
+            literalIsLinkDirectorySpellingHeuristic,
+            "codegen must not classify link directories by -L prefix; use build-model link directory spelling queries",
+        };
+        checkCallLiteral(Result, *this, Rule);
+    }
+};
+
+static bool literalIsLinkItemFileSuffix(llvm::StringRef Value) {
+    return Value == ".a" || Value == ".lib" || Value == ".dll" ||
+           Value == ".so" || Value == ".dylib" || Value == ".o" ||
+           Value == ".obj";
+}
+
+static bool appliesCodegenLinkItemSpellingHeuristic(llvm::StringRef Path,
+                                                    const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_link_item_spelling_heuristic");
+}
+
+class CodegenLinkItemSpellingHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenLinkItemSpellingHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerCallLiteralMatcher(Finder, this, "cg_ends_with");
+        registerCallLiteralMatcher(Finder, this, "nob_sv_end_with");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Call_Literal_Rule Rule = {
+            appliesCodegenLinkItemSpellingHeuristic,
+            literalIsLinkItemFileSuffix,
+            "codegen must not classify link-item files by suffix; use build-model link item spelling queries",
+        };
+        checkCallLiteral(Result, *this, Rule);
+    }
+};
+
+static bool appliesCodegenTargetKindCapabilityHeuristic(llvm::StringRef Path,
+                                                        const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_target_kind_capability_heuristic");
+}
+
+class CodegenTargetKindCapabilityHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenTargetKindCapabilityHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerForbiddenCallMatcher(Finder,
+                                     this,
+                                     "^cg_target_(is_supported_concrete|is_non_emitting|kind_is_linkable_artifact|needs_pic)$");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Forbidden_Call_Rule Rule = {
+            appliesCodegenTargetKindCapabilityHeuristic,
+            "codegen must not own target-kind capability taxonomies; use build-model target kind capability queries",
+        };
+        checkForbiddenCall(Result, *this, Rule);
+    }
+};
+
+static bool appliesCodegenInstallTargetKindHeuristic(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (!FD) return false;
+    if (contains(Path, "src_v2/codegen/")) return FD->getName().contains("validate_install_rule");
+    if (!isFixturePath(Path)) return false;
+    return FD->getName().contains("codegen_install_target_kind_heuristic");
+}
+
+static bool enumIsInstallUnsupportedTargetKind(llvm::StringRef Name) {
+    return Name.ends_with("BM_TARGET_OBJECT_LIBRARY") ||
+           Name.ends_with("BM_TARGET_UTILITY") ||
+           Name.ends_with("BM_TARGET_UNKNOWN_LIBRARY");
+}
+
+class CodegenInstallTargetKindHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenInstallTargetKindHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(declRefExpr(to(enumConstantDecl().bind("install-target-kind-constant")),
+                                       hasAncestor(functionDecl().bind("install-target-kind-function")))
+                               .bind("install-target-kind-ref"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Ref = Result.Nodes.getNodeAs<DeclRefExpr>("install-target-kind-ref");
+        const auto *ECD = Result.Nodes.getNodeAs<EnumConstantDecl>("install-target-kind-constant");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("install-target-kind-function");
+        if (!Ref || !ECD || !FD) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Ref->getExprLoc());
+        if (!appliesCodegenInstallTargetKindHeuristic(Path, FD)) return;
+        if (!enumIsInstallUnsupportedTargetKind(ECD->getQualifiedNameAsString())) return;
+
+        diag(Ref->getExprLoc(),
+             "codegen install validation must not classify target kinds directly; use build-model installable target-kind queries");
+    }
+};
+
+static bool appliesCodegenExportArtifactTargetHeuristic(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (!FD) return false;
+    if (contains(Path, "src_v2/codegen/")) return FD->getName().contains("export_has_non_interface_targets");
+    if (!isFixturePath(Path)) return false;
+    return FD->getName().contains("codegen_export_artifact_target_heuristic");
+}
+
+class CodegenExportArtifactTargetHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenExportArtifactTargetHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(declRefExpr(to(enumConstantDecl(hasName("BM_TARGET_INTERFACE_LIBRARY"))),
+                                       hasAncestor(functionDecl().bind("export-artifact-target-function")))
+                               .bind("export-artifact-target-ref"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Ref = Result.Nodes.getNodeAs<DeclRefExpr>("export-artifact-target-ref");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("export-artifact-target-function");
+        if (!Ref || !FD) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Ref->getExprLoc());
+        if (!appliesCodegenExportArtifactTargetHeuristic(Path, FD)) return;
+
+        diag(Ref->getExprLoc(),
+             "codegen install export must not classify artifact targets through BM_TARGET_INTERFACE_LIBRARY; use build-model export target queries");
     }
 };
 
@@ -1773,6 +2024,160 @@ public:
             appliesCodegenPublicHeaderRawProperty,
             literalIsPublicHeaderRawProperty,
             "codegen must not inspect raw PUBLIC_HEADER target properties; use build-model public header queries",
+        };
+        checkCallLiteral(Result, *this, Rule);
+    }
+};
+
+static bool appliesCodegenSourceLanguageStringQuery(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_source_language_query");
+}
+
+class CodegenSourceLanguageStringQueryCheck : public ClangTidyCheck {
+public:
+    CodegenSourceLanguageStringQueryCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerForbiddenCallMatcher(Finder, this, "^bm_query_target_source_effective_language$");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Forbidden_Call_Rule Rule = {
+            appliesCodegenSourceLanguageStringQuery,
+            "codegen must not classify source language from strings; use build-model source language kind queries",
+        };
+        checkForbiddenCall(Result, *this, Rule);
+    }
+};
+
+static bool appliesCodegenLinkLanguageStringQuery(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_link_language_string_query");
+}
+
+class CodegenLinkLanguageStringQueryCheck : public ClangTidyCheck {
+public:
+    CodegenLinkLanguageStringQueryCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerForbiddenCallMatcher(
+            Finder,
+            this,
+            "^bm_query_(session_target_)?effective_link_language$");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Forbidden_Call_Rule Rule = {
+            appliesCodegenLinkLanguageStringQuery,
+            "codegen must not classify target link language from strings; use build-model link language kind queries",
+        };
+        checkForbiddenCall(Result, *this, Rule);
+    }
+};
+
+static bool literalIsTargetExportNameProperty(llvm::StringRef Value) {
+    return Value == "EXPORT_NAME";
+}
+
+static bool appliesCodegenExportNameStringQuery(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_export_name_string_query");
+}
+
+class CodegenExportNameStringQueryCheck : public ClangTidyCheck {
+public:
+    CodegenExportNameStringQueryCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerCallLiteralMatcher(Finder, this, "bm_query_target_modeled_property_value");
+        registerCallLiteralMatcher(Finder, this, "bm_query_target_property_value");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Call_Literal_Rule Rule = {
+            appliesCodegenExportNameStringQuery,
+            literalIsTargetExportNameProperty,
+            "codegen must not resolve target export identity through EXPORT_NAME strings; use build-model effective export-name queries",
+        };
+        checkCallLiteral(Result, *this, Rule);
+    }
+};
+
+static bool literalIsCTestPropertyString(llvm::StringRef Value) {
+    return Value == "DISABLED" || Value == "WILL_FAIL" || Value == "SKIP_RETURN_CODE" ||
+           Value == "PASS_REGULAR_EXPRESSION" || Value == "FAIL_REGULAR_EXPRESSION" ||
+           Value == "SKIP_REGULAR_EXPRESSION" || Value == "TIMEOUT" ||
+           Value == "TIMEOUT_AFTER_MATCH" || Value == "REQUIRED_FILES" ||
+           Value == "ENVIRONMENT" || Value == "ENVIRONMENT_MODIFICATION" ||
+           Value == "DEPENDS" || Value == "FIXTURES_SETUP" ||
+           Value == "FIXTURES_REQUIRED" || Value == "FIXTURES_CLEANUP" ||
+           Value == "LABELS";
+}
+
+static bool appliesCodegenTestPropertyStringQuery(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_test_property_string_query");
+}
+
+class CodegenTestPropertyStringQueryCheck : public ClangTidyCheck {
+public:
+    CodegenTestPropertyStringQueryCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerCallLiteralMatcher(Finder, this, "bm_query_test_effective_property_items");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Call_Literal_Rule Rule = {
+            appliesCodegenTestPropertyStringQuery,
+            literalIsCTestPropertyString,
+            "codegen must not query CTest properties by raw string; use build-model test property kind queries",
+        };
+        checkCallLiteral(Result, *this, Rule);
+    }
+};
+
+static bool literalIsInterfaceRequirementProperty(llvm::StringRef Value) {
+    return Value == "INTERFACE_INCLUDE_DIRECTORIES" ||
+           Value == "INTERFACE_SYSTEM_INCLUDE_DIRECTORIES" ||
+           Value == "INTERFACE_COMPILE_DEFINITIONS" ||
+           Value == "INTERFACE_COMPILE_OPTIONS" ||
+           Value == "INTERFACE_COMPILE_FEATURES" ||
+           Value == "INTERFACE_LINK_OPTIONS" ||
+           Value == "INTERFACE_LINK_DIRECTORIES" ||
+           Value == "INTERFACE_LINK_LIBRARIES";
+}
+
+static bool appliesCodegenInterfaceRequirementStringQuery(llvm::StringRef Path,
+                                                          const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_interface_requirement_string_query");
+}
+
+class CodegenInterfaceRequirementStringQueryCheck : public ClangTidyCheck {
+public:
+    CodegenInterfaceRequirementStringQueryCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerCallLiteralMatcher(Finder, this, "bm_query_target_modeled_property_value");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Call_Literal_Rule Rule = {
+            appliesCodegenInterfaceRequirementStringQuery,
+            literalIsInterfaceRequirementProperty,
+            "codegen must not select interface usage requirements by property string; use build-model interface requirement queries",
         };
         checkCallLiteral(Result, *this, Rule);
     }
@@ -2142,12 +2547,38 @@ public:
             "nobify-codegen-build-step-tool-heuristic");
         Factories.registerCheck<CodegenCPackGroupingHeuristicCheck>(
             "nobify-codegen-cpack-grouping-heuristic");
+        Factories.registerCheck<CodegenCPackGeneratorHeuristicCheck>(
+            "nobify-codegen-cpack-generator-heuristic");
         Factories.registerCheck<CodegenInstallPseudoItemHeuristicCheck>(
             "nobify-codegen-install-pseudo-item-heuristic");
+        Factories.registerCheck<CodegenCompileDefinitionSpellingHeuristicCheck>(
+            "nobify-codegen-compile-definition-spelling-heuristic");
+        Factories.registerCheck<CodegenCompileOptionSpellingHeuristicCheck>(
+            "nobify-codegen-compile-option-spelling-heuristic");
+        Factories.registerCheck<CodegenLinkDirectorySpellingHeuristicCheck>(
+            "nobify-codegen-link-directory-spelling-heuristic");
+        Factories.registerCheck<CodegenLinkItemSpellingHeuristicCheck>(
+            "nobify-codegen-link-item-spelling-heuristic");
+        Factories.registerCheck<CodegenTargetKindCapabilityHeuristicCheck>(
+            "nobify-codegen-target-kind-capability-heuristic");
+        Factories.registerCheck<CodegenInstallTargetKindHeuristicCheck>(
+            "nobify-codegen-install-target-kind-heuristic");
+        Factories.registerCheck<CodegenExportArtifactTargetHeuristicCheck>(
+            "nobify-codegen-export-artifact-target-heuristic");
         Factories.registerCheck<CodegenLanguageExtensionsRawPropertyCheck>(
             "nobify-codegen-language-extensions-raw-property");
         Factories.registerCheck<CodegenPublicHeaderRawPropertyCheck>(
             "nobify-codegen-public-header-raw-property");
+        Factories.registerCheck<CodegenSourceLanguageStringQueryCheck>(
+            "nobify-codegen-source-language-string-query");
+        Factories.registerCheck<CodegenLinkLanguageStringQueryCheck>(
+            "nobify-codegen-link-language-string-query");
+        Factories.registerCheck<CodegenExportNameStringQueryCheck>(
+            "nobify-codegen-export-name-string-query");
+        Factories.registerCheck<CodegenTestPropertyStringQueryCheck>(
+            "nobify-codegen-test-property-string-query");
+        Factories.registerCheck<CodegenInterfaceRequirementStringQueryCheck>(
+            "nobify-codegen-interface-requirement-string-query");
         Factories.registerCheck<CodegenRawPropertyEscapeCheck>(
             "nobify-codegen-raw-property-escape");
         Factories.registerCheck<EvaluatorHostServiceBoundaryCheck>(

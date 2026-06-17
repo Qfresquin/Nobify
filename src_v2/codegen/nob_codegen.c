@@ -95,35 +95,12 @@ static bool cg_push_unique_config(CG_Context *ctx, String_View config) {
     return arena_arr_push(ctx->scratch, ctx->known_configs, nob_sv_from_parts(copy, config.count));
 }
 
-static bool cg_ends_with(String_View sv, const char *suffix) {
-    return nob_sv_end_with(sv, suffix);
-}
-
 static bool cg_collect_known_configs(CG_Context *ctx) {
     BM_String_Span known_configs = {0};
     if (!ctx || !ctx->model) return false;
     known_configs = bm_query_known_configurations(ctx->model);
     for (size_t i = 0; i < known_configs.count; ++i) {
         if (!cg_push_unique_config(ctx, known_configs.items[i])) return false;
-    }
-    return true;
-}
-
-static bool cg_is_link_file_like(String_View sv) {
-    return cg_ends_with(sv, ".a") ||
-           cg_ends_with(sv, ".lib") ||
-           cg_ends_with(sv, ".dll") ||
-           cg_ends_with(sv, ".so") ||
-           cg_ends_with(sv, ".dylib") ||
-           cg_ends_with(sv, ".o") ||
-           cg_ends_with(sv, ".obj");
-}
-
-static bool cg_is_bare_library_name(String_View sv) {
-    if (sv.count == 0) return false;
-    for (size_t i = 0; i < sv.count; ++i) {
-        unsigned char c = (unsigned char)sv.data[i];
-        if (!(isalnum(c) || c == '_' || c == '+' || c == '.' || c == '-')) return false;
     }
     return true;
 }
@@ -449,29 +426,6 @@ static BM_Target_Id cg_resolve_alias_target(CG_Context *ctx, BM_Target_Id id) {
     return current;
 }
 
-static bool cg_target_is_supported_concrete(BM_Target_Kind kind) {
-    return kind == BM_TARGET_EXECUTABLE ||
-           kind == BM_TARGET_STATIC_LIBRARY ||
-           kind == BM_TARGET_SHARED_LIBRARY ||
-           kind == BM_TARGET_MODULE_LIBRARY;
-}
-
-static bool cg_target_is_non_emitting(BM_Target_Kind kind) {
-    return kind == BM_TARGET_INTERFACE_LIBRARY ||
-           kind == BM_TARGET_UTILITY;
-}
-
-static bool cg_target_needs_pic(CG_Context *ctx, BM_Target_Kind kind) {
-    if (!ctx || ctx->policy.backend != NOB_CODEGEN_BACKEND_POSIX) return false;
-    return kind == BM_TARGET_SHARED_LIBRARY ||
-           kind == BM_TARGET_MODULE_LIBRARY;
-}
-
-static bool cg_target_kind_is_linkable_artifact(BM_Target_Kind kind) {
-    return kind == BM_TARGET_STATIC_LIBRARY ||
-           kind == BM_TARGET_SHARED_LIBRARY;
-}
-
 #include "nob_codegen_platform.c"
 #include "nob_codegen_resolve.c"
 
@@ -482,17 +436,20 @@ static bool cg_check_no_genex(const char *what, String_View sv) {
     return false;
 }
 
-static bool cg_source_lang_from_effective_language(String_View language, CG_Source_Lang *out_lang) {
+static bool cg_source_lang_from_kind(BM_Target_Source_Language_Kind kind, CG_Source_Lang *out_lang) {
     if (out_lang) *out_lang = CG_SOURCE_LANG_C;
-    if (cg_sv_eq_ci(language, nob_sv_from_cstr("C"))) {
-        if (out_lang) *out_lang = CG_SOURCE_LANG_C;
-        return true;
+    switch (kind) {
+        case BM_TARGET_SOURCE_LANGUAGE_C:
+            if (out_lang) *out_lang = CG_SOURCE_LANG_C;
+            return true;
+        case BM_TARGET_SOURCE_LANGUAGE_CXX:
+            if (out_lang) *out_lang = CG_SOURCE_LANG_CXX;
+            return true;
+        case BM_TARGET_SOURCE_LANGUAGE_NONE:
+        case BM_TARGET_SOURCE_LANGUAGE_UNSUPPORTED:
+        default:
+            return false;
     }
-    if (cg_sv_eq_ci(language, nob_sv_from_cstr("CXX"))) {
-        if (out_lang) *out_lang = CG_SOURCE_LANG_CXX;
-        return true;
-    }
-    return false;
 }
 
 static const BM_Target_Artifact_View *cg_target_artifact_for_config(const CG_Target_Info *info,
@@ -597,14 +554,13 @@ static bool cg_init_targets(CG_Context *ctx) {
         }
 
         if (!info->alias && !info->imported &&
-            !cg_target_is_supported_concrete(info->kind) &&
-            !cg_target_is_non_emitting(info->kind)) {
+            !bm_target_kind_is_supported_build_target(info->kind)) {
             nob_log(NOB_ERROR, "codegen: unsupported target kind for '%.*s'",
                     (int)info->name.count, info->name.data ? info->name.data : "");
             return false;
         }
 
-        info->emits_artifact = !info->alias && !info->imported && cg_target_is_supported_concrete(info->kind);
+        info->emits_artifact = !info->alias && !info->imported && bm_target_kind_is_artifact_target(info->kind);
         if (info->emits_artifact && !cg_init_target_artifact_branches(ctx, info)) {
             return false;
         }
@@ -714,7 +670,7 @@ bool cg_resolve_link_item_ref(CG_Context *ctx,
         out->kind = info->imported ? CG_RESOLVED_TARGET_IMPORTED : CG_RESOLVED_TARGET_LOCAL;
         out->target_kind = info->kind;
         out->imported = info->imported;
-        out->usage_only = info->kind == BM_TARGET_INTERFACE_LIBRARY;
+        out->usage_only = bm_target_kind_is_usage_only(info->kind);
         if (info->imported) {
             if (!cg_query_target_file_cached(ctx, target_id, qctx, false, &effective_file) ||
                 !cg_query_target_file_cached(ctx, target_id, qctx, true, &effective_linker_file) ||
@@ -724,10 +680,7 @@ bool cg_resolve_link_item_ref(CG_Context *ctx,
             out->effective_file = effective_file;
             out->effective_linker_file = effective_linker_file;
             out->imported_link_languages = imported_langs;
-            out->linkable_artifact =
-                info->kind == BM_TARGET_STATIC_LIBRARY ||
-                info->kind == BM_TARGET_SHARED_LIBRARY ||
-                info->kind == BM_TARGET_UNKNOWN_LIBRARY;
+            out->linkable_artifact = bm_target_kind_has_imported_linkable_artifact(info->kind);
             out->rebuild_input_path = effective_linker_file.count > 0 ? effective_linker_file : effective_file;
             return true;
         }
@@ -744,7 +697,7 @@ bool cg_resolve_link_item_ref(CG_Context *ctx,
         out->rebuild_input_path = out->effective_linker_file.count > 0
             ? out->effective_linker_file
             : out->effective_file;
-        out->linkable_artifact = cg_target_kind_is_linkable_artifact(info->kind);
+        out->linkable_artifact = bm_target_kind_has_linkable_artifact(info->kind);
         return true;
     }
     return cg_resolve_target_ref(ctx, qctx, item.value, out);
@@ -1095,7 +1048,7 @@ static bool cg_target_needs_cxx_linker_for_config(CG_Context *ctx,
                                                   String_View config,
                                                   bool *out) {
     BM_Query_Eval_Context qctx = {0};
-    String_View link_language = nob_sv_from_cstr("");
+    BM_Target_Link_Language_Kind link_language = BM_TARGET_LINK_LANGUAGE_NONE;
     if (out) *out = false;
     if (!ctx || !out || !bm_target_id_is_valid(id)) return false;
 
@@ -1104,7 +1057,7 @@ static bool cg_target_needs_cxx_linker_for_config(CG_Context *ctx,
 
     qctx = cg_make_query_ctx(ctx, id, BM_QUERY_USAGE_LINK, config, nob_sv_from_cstr(""));
     if (!cg_query_effective_link_language_cached(ctx, id, &qctx, &link_language)) return false;
-    *out = cg_sv_eq_ci(link_language, nob_sv_from_cstr("CXX"));
+    *out = link_language == BM_TARGET_LINK_LANGUAGE_CXX;
     return true;
 }
 
@@ -1113,33 +1066,25 @@ static bool cg_collect_compile_sources(CG_Context *ctx, BM_Target_Id id, CG_Sour
 
     for (size_t i = 0; i < source_count; ++i) {
         String_View src = bm_query_target_source_effective(ctx->model, id, i);
-        String_View source_language = bm_query_target_source_effective_language(ctx->model, id, i);
-        String_View raw_source_language = nob_sv_trim(bm_query_target_source_language(ctx->model, id, i));
+        BM_Target_Source_Language_Kind source_language =
+            bm_query_target_source_effective_language_kind(ctx->model, id, i);
         String_View rebased = {0};
         CG_Source_Lang lang = CG_SOURCE_LANG_C;
         bool dup = false;
 
         if (!bm_query_target_source_is_compile_input(ctx->model, id, i)) continue;
         if (!cg_check_no_genex("target source", src)) return false;
-        if (source_language.count == 0) {
-            if (raw_source_language.count > 0) {
-                nob_log(NOB_ERROR,
-                        "codegen: unsupported source LANGUAGE on target '%.*s': %.*s",
-                        (int)bm_query_target_name(ctx->model, id).count,
-                        bm_query_target_name(ctx->model, id).data ? bm_query_target_name(ctx->model, id).data : "",
-                        (int)raw_source_language.count,
-                        raw_source_language.data ? raw_source_language.data : "");
-                return false;
-            }
+        if (source_language == BM_TARGET_SOURCE_LANGUAGE_NONE) {
             continue;
         }
-        if (!cg_source_lang_from_effective_language(source_language, &lang)) {
+        if (!cg_source_lang_from_kind(source_language, &lang)) {
+            String_View language_name = bm_query_target_source_language_kind_name(source_language);
             nob_log(NOB_ERROR,
-                    "codegen: unsupported effective source language on target '%.*s': %.*s",
+                    "codegen: unsupported source language on target '%.*s': %.*s",
                     (int)bm_query_target_name(ctx->model, id).count,
                     bm_query_target_name(ctx->model, id).data ? bm_query_target_name(ctx->model, id).data : "",
-                    (int)source_language.count,
-                    source_language.data ? source_language.data : "");
+                    (int)language_name.count,
+                    language_name.data ? language_name.data : "");
             return false;
         }
 
@@ -1207,6 +1152,29 @@ static bool cg_collect_source_compile_items(CG_Context *ctx,
     return true;
 }
 
+static bool cg_collect_compile_definition_arg(CG_Context *ctx, String_View item, String_View **out) {
+    BM_Compile_Definition_Spelling spelling = {0};
+    const char *prefix = NULL;
+    char *arg = NULL;
+    if (!ctx || !out) return false;
+    spelling = bm_query_compile_definition_spelling(item);
+    prefix = cg_policy_is_windows(ctx) ? "/D" : "-D";
+    arg = cg_arena_sprintf(ctx->scratch,
+                           "%s%.*s",
+                           prefix,
+                           (int)spelling.value.count,
+                           spelling.value.data ? spelling.value.data : "");
+    return arg && cg_collect_unique_path(ctx->scratch, out, nob_sv_from_cstr(arg));
+}
+
+static bool cg_collect_compile_option_arg(CG_Context *ctx, String_View item, String_View **out) {
+    BM_Compile_Option_Spelling spelling = {0};
+    if (!ctx || !out) return false;
+    spelling = bm_query_compile_option_spelling(item);
+    if (cg_policy_is_windows(ctx) && spelling.kind == BM_COMPILE_OPTION_SPELLING_STANDARD_FLAG) return true;
+    return cg_collect_unique_path(ctx->scratch, out, spelling.argument);
+}
+
 static bool cg_collect_source_compile_args(CG_Context *ctx,
                                            BM_Target_Id id,
                                            String_View config,
@@ -1243,22 +1211,11 @@ static bool cg_collect_source_compile_args(CG_Context *ctx,
     }
 
     for (size_t i = 0; i < arena_arr_len(source_defs); ++i) {
-        String_View item = source_defs[i].value;
-        char *arg = NULL;
-        if (cg_policy_is_windows(ctx)) {
-            if (cg_sv_has_prefix(item, "-D")) item = nob_sv_from_parts(item.data + 2, item.count - 2);
-            arg = cg_arena_sprintf(ctx->scratch, "/D%.*s", (int)item.count, item.data ? item.data : "");
-        } else if (cg_sv_has_prefix(item, "-D")) {
-            arg = arena_strndup(ctx->scratch, item.data, item.count);
-        } else {
-            arg = cg_arena_sprintf(ctx->scratch, "-D%.*s", (int)item.count, item.data ? item.data : "");
-        }
-        if (!arg || !cg_collect_unique_path(ctx->scratch, out, nob_sv_from_cstr(arg))) return false;
+        if (!cg_collect_compile_definition_arg(ctx, source_defs[i].value, out)) return false;
     }
 
     for (size_t i = 0; i < arena_arr_len(source_opts); ++i) {
-        if (cg_policy_is_windows(ctx) && cg_sv_has_prefix(source_opts[i].value, "-std=")) continue;
-        if (!cg_collect_unique_path(ctx->scratch, out, source_opts[i].value)) return false;
+        if (!cg_collect_compile_option_arg(ctx, source_opts[i].value, out)) return false;
     }
 
     return true;
@@ -1300,24 +1257,11 @@ static bool cg_collect_compile_args(CG_Context *ctx,
     }
 
     for (size_t i = 0; i < defs.count; ++i) {
-        String_View item = defs.items[i].value;
-        char *arg = NULL;
-        if (cg_policy_is_windows(ctx)) {
-            if (cg_sv_has_prefix(item, "-D")) {
-                item = nob_sv_from_parts(item.data + 2, item.count - 2);
-            }
-            arg = cg_arena_sprintf(ctx->scratch, "/D%.*s", (int)item.count, item.data ? item.data : "");
-        } else if (cg_sv_has_prefix(item, "-D")) {
-            arg = arena_strndup(ctx->scratch, item.data, item.count);
-        } else {
-            arg = cg_arena_sprintf(ctx->scratch, "-D%.*s", (int)item.count, item.data ? item.data : "");
-        }
-        if (!arg || !cg_collect_unique_path(ctx->scratch, out, nob_sv_from_cstr(arg))) return false;
+        if (!cg_collect_compile_definition_arg(ctx, defs.items[i].value, out)) return false;
     }
 
     for (size_t i = 0; i < opts.count; ++i) {
-        if (cg_policy_is_windows(ctx) && cg_sv_has_prefix(opts.items[i].value, "-std=")) continue;
-        if (!cg_collect_unique_path(ctx->scratch, out, opts.items[i].value)) return false;
+        if (!cg_collect_compile_option_arg(ctx, opts.items[i].value, out)) return false;
     }
 
     return cg_collect_source_compile_args(ctx, id, config, source, out);
@@ -1332,19 +1276,12 @@ static bool cg_collect_link_dir_args(CG_Context *ctx,
     if (!cg_query_effective_items_cached(ctx, id, &qctx, CG_EFFECTIVE_LINK_DIRECTORIES, &dirs)) return false;
 
     for (size_t i = 0; i < dirs.count; ++i) {
+        BM_Link_Directory_Spelling spelling = bm_query_link_directory_spelling(dirs.items[i].value);
+        BM_String_Item_View path_item = dirs.items[i];
         String_View path = {0};
         char *arg = NULL;
-        if (cg_sv_has_prefix(dirs.items[i].value, "-L")) {
-            if (cg_policy_is_windows(ctx)) {
-                path = nob_sv_trim(nob_sv_from_parts(dirs.items[i].value.data + 2, dirs.items[i].value.count - 2));
-                arg = cg_arena_sprintf(ctx->scratch, "/LIBPATH:%.*s", (int)path.count, path.data ? path.data : "");
-                if (!arg || !cg_collect_unique_path(ctx->scratch, out, nob_sv_from_cstr(arg))) return false;
-            } else if (!cg_collect_unique_path(ctx->scratch, out, dirs.items[i].value)) {
-                return false;
-            }
-            continue;
-        }
-        if (!cg_rebase_from_provenance(ctx, dirs.items[i].value, dirs.items[i].provenance, &path)) return false;
+        path_item.value = spelling.path;
+        if (!cg_rebase_from_provenance(ctx, path_item.value, path_item.provenance, &path)) return false;
         arg = cg_policy_is_windows(ctx)
             ? cg_arena_sprintf(ctx->scratch, "/LIBPATH:%.*s", (int)path.count, path.data ? path.data : "")
             : cg_arena_sprintf(ctx->scratch, "-L%.*s", (int)path.count, path.data ? path.data : "");
@@ -1429,34 +1366,33 @@ static bool cg_collect_link_library_args(CG_Context *ctx,
             continue;
         }
 
-        if (cg_sv_has_prefix(item, "-")) {
-            if (out_args && !cg_collect_unique_path(ctx->scratch, out_args, item)) return false;
-            continue;
+        switch (bm_query_link_item_spelling_kind(item)) {
+            case BM_LINK_ITEM_SPELLING_FLAG:
+                if (out_args && !cg_collect_unique_path(ctx->scratch, out_args, item)) return false;
+                continue;
+            case BM_LINK_ITEM_SPELLING_PATH: {
+                String_View path = {0};
+                if (!cg_rebase_from_provenance(ctx, item, libs.items[i].provenance, &path)) return false;
+                if (out_args && !cg_collect_unique_path(ctx->scratch, out_args, path)) return false;
+                continue;
+            }
+            case BM_LINK_ITEM_SPELLING_LINK_FILE:
+                if (out_args && !cg_collect_unique_path(ctx->scratch, out_args, item)) return false;
+                continue;
+            case BM_LINK_ITEM_SPELLING_BARE_LIBRARY: {
+                char *arg = cg_policy_is_windows(ctx)
+                    ? cg_arena_sprintf(ctx->scratch, "%.*s.lib", (int)item.count, item.data ? item.data : "")
+                    : cg_arena_sprintf(ctx->scratch, "-l%.*s", (int)item.count, item.data ? item.data : "");
+                if (!arg || (out_args && !cg_collect_unique_path(ctx->scratch, out_args, nob_sv_from_cstr(arg)))) return false;
+                continue;
+            }
+            case BM_LINK_ITEM_SPELLING_EMPTY:
+            case BM_LINK_ITEM_SPELLING_UNSUPPORTED:
+            default:
+                nob_log(NOB_ERROR, "codegen: unsupported link library item: %.*s",
+                        (int)item.count, item.data ? item.data : "");
+                return false;
         }
-
-        if (cg_sv_contains(item, "/")) {
-            String_View path = {0};
-            if (!cg_rebase_from_provenance(ctx, item, libs.items[i].provenance, &path)) return false;
-            if (out_args && !cg_collect_unique_path(ctx->scratch, out_args, path)) return false;
-            continue;
-        }
-
-        if (cg_is_link_file_like(item)) {
-            if (out_args && !cg_collect_unique_path(ctx->scratch, out_args, item)) return false;
-            continue;
-        }
-
-        if (cg_is_bare_library_name(item)) {
-            char *arg = cg_policy_is_windows(ctx)
-                ? cg_arena_sprintf(ctx->scratch, "%.*s.lib", (int)item.count, item.data ? item.data : "")
-                : cg_arena_sprintf(ctx->scratch, "-l%.*s", (int)item.count, item.data ? item.data : "");
-            if (!arg || (out_args && !cg_collect_unique_path(ctx->scratch, out_args, nob_sv_from_cstr(arg)))) return false;
-            continue;
-        }
-
-        nob_log(NOB_ERROR, "codegen: unsupported link library item: %.*s",
-                (int)item.count, item.data ? item.data : "");
-        return false;
     }
 
     return true;
@@ -1860,7 +1796,8 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
                 (int)info->name.count, info->name.data ? info->name.data : "");
         return false;
     }
-    needs_pic = cg_target_needs_pic(ctx, info->kind);
+    needs_pic = ctx->policy.backend == NOB_CODEGEN_BACKEND_POSIX &&
+                bm_target_kind_requires_position_independent_code(info->kind);
 
     {
         String_View object_subdir = {0};

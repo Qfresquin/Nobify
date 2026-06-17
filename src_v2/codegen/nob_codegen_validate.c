@@ -81,9 +81,7 @@ static bool cg_validate_install_rule(CG_Context *ctx, BM_Install_Rule_Id id) {
     if (kind == BM_INSTALL_RULE_TARGET) {
         BM_Target_Id target_id = bm_query_install_rule_target(ctx->model, id);
         BM_Target_Kind target_kind = bm_query_target_kind(ctx->model, target_id);
-        if (target_kind == BM_TARGET_OBJECT_LIBRARY ||
-            target_kind == BM_TARGET_UTILITY ||
-            target_kind == BM_TARGET_UNKNOWN_LIBRARY) {
+        if (!bm_target_kind_is_installable_target(target_kind)) {
             nob_log(NOB_ERROR,
                     "codegen: install(TARGETS) does not support target kind '%d' yet",
                     (int)target_kind);
@@ -190,17 +188,20 @@ static bool cg_validate_package_model(CG_Context *ctx) {
         }
 
         for (size_t i = 0; i < generators.count; ++i) {
-            if (nob_sv_eq(generators.items[i], nob_sv_from_cstr("TGZ")) ||
-                nob_sv_eq(generators.items[i], nob_sv_from_cstr("TXZ")) ||
-                nob_sv_eq(generators.items[i], nob_sv_from_cstr("ZIP"))) {
-                saw_supported_generator = true;
-                continue;
+            switch (bm_query_cpack_package_generator_kind(ctx->model, id, i)) {
+                case BM_CPACK_GENERATOR_TGZ:
+                case BM_CPACK_GENERATOR_TXZ:
+                case BM_CPACK_GENERATOR_ZIP:
+                    saw_supported_generator = true;
+                    continue;
+                case BM_CPACK_GENERATOR_UNSUPPORTED:
+                default:
+                    nob_log(NOB_ERROR,
+                            "codegen: unsupported package generator '%.*s' (supported: TGZ, TXZ, ZIP)",
+                            (int)generators.items[i].count,
+                            generators.items[i].data ? generators.items[i].data : "");
+                    return false;
             }
-            nob_log(NOB_ERROR,
-                    "codegen: unsupported package generator '%.*s' (supported: TGZ, TXZ, ZIP)",
-                    (int)generators.items[i].count,
-                    generators.items[i].data ? generators.items[i].data : "");
-            return false;
         }
     }
 
