@@ -2204,7 +2204,9 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
     for (size_t i = 0; i < ctx->target_count; ++i) {
         const CG_Target_Info *info = &ctx->targets[i];
         const CG_Target_Info *resolved = cg_target_info(ctx, info->resolved_id);
-        if (!info->name.count || !resolved || resolved->kind != BM_TARGET_EXECUTABLE) continue;
+        if (!info->name.count ||
+            !resolved ||
+            resolved->build_emission_kind != BM_TARGET_BUILD_EMISSION_LINK_EXECUTABLE) continue;
         if (info->imported || !resolved->emits_artifact) continue;
         nob_sb_append_cstr(out, "    if (strcmp(token, ");
         if (!cg_sb_append_c_string(out, info->name)) return false;
@@ -2234,7 +2236,9 @@ static bool cg_emit_test_functions(CG_Context *ctx, Nob_String_Builder *out) {
     for (size_t i = 0; i < ctx->target_count; ++i) {
         const CG_Target_Info *info = &ctx->targets[i];
         const CG_Target_Info *resolved = cg_target_info(ctx, info->resolved_id);
-        if (!info->name.count || !resolved || resolved->kind != BM_TARGET_EXECUTABLE) continue;
+        if (!info->name.count ||
+            !resolved ||
+            resolved->build_emission_kind != BM_TARGET_BUILD_EMISSION_LINK_EXECUTABLE) continue;
         if (info->imported || !resolved->emits_artifact) continue;
         nob_sb_append_cstr(out, "    if (strcmp(token, ");
         if (!cg_sb_append_c_string(out, info->name)) return false;

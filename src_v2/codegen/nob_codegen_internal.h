@@ -39,6 +39,8 @@ typedef struct {
     BM_Target_Id id;
     BM_Target_Id resolved_id;
     BM_Target_Kind kind;
+    BM_Target_Build_Emission_Kind build_emission_kind;
+    BM_Target_Build_Emission_Metadata build_emission_metadata;
     bool imported;
     bool alias;
     bool exclude_from_all;
@@ -96,7 +98,7 @@ typedef struct {
     BM_Target_Id target_id;
     BM_Target_Id resolved_target_id;
     CG_Resolved_Target_Kind kind;
-    BM_Target_Kind target_kind;
+    BM_Target_Link_Input_Kind link_input_kind;
     bool imported;
     bool usage_only;
     bool linkable_artifact;
@@ -250,7 +252,7 @@ bool cg_export_noconfig_output_file_path(CG_Context *ctx,
                                          BM_Export_Id export_id,
                                          String_View *out);
 bool cg_export_target_in_span(BM_Target_Id_Span span, BM_Target_Id id);
-bool cg_emit_cmake_imported_target_declaration(BM_Target_Kind kind,
+bool cg_emit_cmake_imported_target_declaration(BM_CMake_Imported_Target_Declaration declaration,
                                                String_View exported_name,
                                                Nob_String_Builder *sb);
 bool cg_build_cmake_targets_file_contents(CG_Context *ctx,

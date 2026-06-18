@@ -77,7 +77,13 @@ static int cg_target_is_supported_concrete(int kind);
 static int cg_target_is_non_emitting(int kind);
 static int cg_target_kind_is_linkable_artifact(int kind);
 static int cg_target_needs_pic(void *ctx, int kind);
+static int bm_target_kind_is_artifact_target(int kind);
+static int bm_target_kind_requires_position_independent_code(int kind);
 enum {
+    BM_TARGET_EXECUTABLE = 0,
+    BM_TARGET_STATIC_LIBRARY = 1,
+    BM_TARGET_SHARED_LIBRARY = 2,
+    BM_TARGET_MODULE_LIBRARY = 3,
     BM_TARGET_INTERFACE_LIBRARY = 4,
     BM_TARGET_OBJECT_LIBRARY = 5,
     BM_TARGET_UTILITY = 6,
@@ -407,6 +413,52 @@ static int helper_bad_codegen_install_target_kind_heuristic(int kind) {
 
 static int helper_bad_codegen_export_artifact_target_heuristic(int kind) {
     return kind != BM_TARGET_INTERFACE_LIBRARY;
+}
+
+static int helper_bad_codegen_precompile_header_target_kind_heuristic(int kind) {
+    return kind == BM_TARGET_INTERFACE_LIBRARY ||
+           kind == BM_TARGET_UTILITY;
+}
+
+static int helper_bad_codegen_link_input_target_kind_heuristic(int kind) {
+    return kind == BM_TARGET_MODULE_LIBRARY ||
+           kind == BM_TARGET_EXECUTABLE;
+}
+
+static int helper_bad_codegen_build_emission_target_kind_heuristic(int kind) {
+    return kind == BM_TARGET_STATIC_LIBRARY ||
+           kind == BM_TARGET_EXECUTABLE ||
+           kind == BM_TARGET_SHARED_LIBRARY ||
+           kind == BM_TARGET_MODULE_LIBRARY ||
+           kind == BM_TARGET_INTERFACE_LIBRARY ||
+           kind == BM_TARGET_UTILITY;
+}
+
+static int helper_bad_codegen_build_emission_metadata_target_kind_query(int kind) {
+    return bm_target_kind_is_artifact_target(kind) ||
+           bm_target_kind_requires_position_independent_code(kind);
+}
+
+static int helper_bad_codegen_install_artifact_target_kind_heuristic(int kind) {
+    return kind == BM_TARGET_EXECUTABLE ||
+           kind == BM_TARGET_STATIC_LIBRARY ||
+           kind == BM_TARGET_SHARED_LIBRARY ||
+           kind == BM_TARGET_MODULE_LIBRARY;
+}
+
+static int helper_bad_codegen_install_export_metadata_target_kind_heuristic(int kind) {
+    return kind == BM_TARGET_INTERFACE_LIBRARY ||
+           kind == BM_TARGET_STATIC_LIBRARY ||
+           kind == BM_TARGET_SHARED_LIBRARY ||
+           kind == BM_TARGET_MODULE_LIBRARY;
+}
+
+static int helper_bad_codegen_cmake_imported_declaration_target_kind_heuristic(int kind) {
+    return kind == BM_TARGET_EXECUTABLE ||
+           kind == BM_TARGET_STATIC_LIBRARY ||
+           kind == BM_TARGET_SHARED_LIBRARY ||
+           kind == BM_TARGET_MODULE_LIBRARY ||
+           kind == BM_TARGET_INTERFACE_LIBRARY;
 }
 
 static int helper_bad_codegen_public_host_effect(const char *path) {

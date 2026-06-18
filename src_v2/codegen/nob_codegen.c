@@ -516,7 +516,7 @@ static bool cg_compute_target_state_path(CG_Context *ctx,
         *out = info->artifact_path;
         return true;
     }
-    if (info->alias || info->imported || info->kind != BM_TARGET_UTILITY) {
+    if (info->build_emission_kind != BM_TARGET_BUILD_EMISSION_UTILITY) {
         *out = nob_sv_from_cstr("");
         return true;
     }
@@ -542,6 +542,8 @@ static bool cg_init_targets(CG_Context *ctx) {
         info->kind = bm_query_target_kind(ctx->model, id);
         info->imported = bm_query_target_is_imported(ctx->model, id);
         info->alias = bm_query_target_is_alias(ctx->model, id);
+        info->build_emission_kind = bm_target_build_emission_kind(info->kind, info->imported, info->alias);
+        info->build_emission_metadata = bm_target_build_emission_metadata(info->build_emission_kind);
         info->exclude_from_all = bm_query_target_exclude_from_all(ctx->model, id);
         info->resolved_id = info->alias ? cg_resolve_alias_target(ctx, id) : id;
         info->ident = cg_make_identifier(ctx->scratch, info->name, i);
@@ -553,14 +555,13 @@ static bool cg_init_targets(CG_Context *ctx) {
             return false;
         }
 
-        if (!info->alias && !info->imported &&
-            !bm_target_kind_is_supported_build_target(info->kind)) {
+        if (info->build_emission_kind == BM_TARGET_BUILD_EMISSION_UNSUPPORTED) {
             nob_log(NOB_ERROR, "codegen: unsupported target kind for '%.*s'",
                     (int)info->name.count, info->name.data ? info->name.data : "");
             return false;
         }
 
-        info->emits_artifact = !info->alias && !info->imported && bm_target_kind_is_artifact_target(info->kind);
+        info->emits_artifact = info->build_emission_metadata.emits_artifact;
         if (info->emits_artifact && !cg_init_target_artifact_branches(ctx, info)) {
             return false;
         }
@@ -573,6 +574,8 @@ static bool cg_init_targets(CG_Context *ctx) {
         if (!bm_target_id_is_valid(resolved) || (size_t)resolved >= ctx->target_count) return false;
         ctx->targets[i].artifact_path = ctx->targets[resolved].artifact_path;
         ctx->targets[i].kind = ctx->targets[resolved].kind;
+        ctx->targets[i].build_emission_kind = ctx->targets[resolved].build_emission_kind;
+        ctx->targets[i].build_emission_metadata = ctx->targets[resolved].build_emission_metadata;
         ctx->targets[i].imported = ctx->targets[resolved].imported;
         ctx->targets[i].emits_artifact = ctx->targets[resolved].emits_artifact;
         ctx->targets[i].linker_artifact_path = ctx->targets[resolved].linker_artifact_path;
@@ -668,9 +671,9 @@ bool cg_resolve_link_item_ref(CG_Context *ctx,
         out->target_id = target_id;
         out->resolved_target_id = info->resolved_id;
         out->kind = info->imported ? CG_RESOLVED_TARGET_IMPORTED : CG_RESOLVED_TARGET_LOCAL;
-        out->target_kind = info->kind;
+        out->link_input_kind = bm_target_kind_link_input_kind(info->kind, info->imported);
         out->imported = info->imported;
-        out->usage_only = bm_target_kind_is_usage_only(info->kind);
+        out->usage_only = out->link_input_kind == BM_TARGET_LINK_INPUT_USAGE_ONLY;
         if (info->imported) {
             if (!cg_query_target_file_cached(ctx, target_id, qctx, false, &effective_file) ||
                 !cg_query_target_file_cached(ctx, target_id, qctx, true, &effective_linker_file) ||
@@ -680,7 +683,7 @@ bool cg_resolve_link_item_ref(CG_Context *ctx,
             out->effective_file = effective_file;
             out->effective_linker_file = effective_linker_file;
             out->imported_link_languages = imported_langs;
-            out->linkable_artifact = bm_target_kind_has_imported_linkable_artifact(info->kind);
+            out->linkable_artifact = out->link_input_kind == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT;
             out->rebuild_input_path = effective_linker_file.count > 0 ? effective_linker_file : effective_file;
             return true;
         }
@@ -697,7 +700,7 @@ bool cg_resolve_link_item_ref(CG_Context *ctx,
         out->rebuild_input_path = out->effective_linker_file.count > 0
             ? out->effective_linker_file
             : out->effective_file;
-        out->linkable_artifact = bm_target_kind_has_linkable_artifact(info->kind);
+        out->linkable_artifact = out->link_input_kind == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT;
         return true;
     }
     return cg_resolve_target_ref(ctx, qctx, item.value, out);
@@ -805,7 +808,7 @@ static bool cg_reject_unsupported_precompile_headers(CG_Context *ctx, const CG_T
     uint8_t *visited = NULL;
     BM_Target_Id offender = BM_TARGET_ID_INVALID;
     if (!ctx || !info) return false;
-    if (info->alias || info->imported || info->kind == BM_TARGET_INTERFACE_LIBRARY || info->kind == BM_TARGET_UTILITY) {
+    if (info->alias || info->imported || !info->emits_artifact) {
         return true;
     }
     if (cg_string_span_has_nonempty_item(bm_query_target_precompile_headers(ctx->model, info->id)) ||
@@ -1323,14 +1326,14 @@ static bool cg_collect_link_library_args(CG_Context *ctx,
         if (cg_resolve_link_item_ref(ctx, &qctx, libs.items[i], &dep)) {
             String_View dep_path = {0};
             if (dep.usage_only) continue;
-            if (dep.target_kind == BM_TARGET_MODULE_LIBRARY) {
+            if (dep.link_input_kind == BM_TARGET_LINK_INPUT_MODULE_LIBRARY) {
                 nob_log(NOB_ERROR, "codegen: target '%.*s' is not linkable in the selected backend",
                         (int)item.count, item.data ? item.data : "");
                 return false;
             }
             if (dep.imported) {
                 String_View rebased_dep_path = {0};
-                if (dep.target_kind == BM_TARGET_EXECUTABLE) {
+                if (dep.link_input_kind == BM_TARGET_LINK_INPUT_IMPORTED_EXECUTABLE) {
                     nob_log(NOB_ERROR, "codegen: imported executable '%.*s' is not a valid link input",
                             (int)item.count, item.data ? item.data : "");
                     return false;
@@ -1624,9 +1627,9 @@ static bool cg_emit_link_args_runtime(CG_Context *ctx,
                                              artifact.path.data ? artifact.path.data : "");
             if (!out_arg) return false;
             if (!cg_emit_cmd_append_sv(out, "link_cmd", nob_sv_from_cstr("/NOLOGO"))) return false;
-            if (info->kind == BM_TARGET_SHARED_LIBRARY) {
+            if (info->build_emission_kind == BM_TARGET_BUILD_EMISSION_LINK_SHARED_LIBRARY) {
                 if (!cg_emit_cmd_append_sv(out, "link_cmd", ctx->policy.shared_link_flag)) return false;
-            } else if (info->kind == BM_TARGET_MODULE_LIBRARY) {
+            } else if (info->build_emission_kind == BM_TARGET_BUILD_EMISSION_LINK_MODULE_LIBRARY) {
                 if (!cg_emit_cmd_append_sv(out, "link_cmd", ctx->policy.module_link_flag)) return false;
             }
             if (!cg_emit_cmd_append_sv(out, "link_cmd", nob_sv_from_cstr(out_arg))) return false;
@@ -1640,9 +1643,9 @@ static bool cg_emit_link_args_runtime(CG_Context *ctx,
                 }
             }
         } else {
-            if (info->kind == BM_TARGET_SHARED_LIBRARY) {
+            if (info->build_emission_kind == BM_TARGET_BUILD_EMISSION_LINK_SHARED_LIBRARY) {
                 if (!cg_emit_cmd_append_sv(out, "link_cmd", ctx->policy.shared_link_flag)) return false;
-            } else if (info->kind == BM_TARGET_MODULE_LIBRARY) {
+            } else if (info->build_emission_kind == BM_TARGET_BUILD_EMISSION_LINK_MODULE_LIBRARY) {
                 if (!cg_emit_cmd_append_sv(out, "link_cmd", ctx->policy.module_link_flag)) return false;
             }
             if (!cg_emit_cmd_append_sv(out, "link_cmd", nob_sv_from_cstr("-o")) ||
@@ -1766,7 +1769,7 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         return true;
     }
 
-    if (info->imported || info->kind == BM_TARGET_INTERFACE_LIBRARY) {
+    if (info->build_emission_kind == BM_TARGET_BUILD_EMISSION_ORDER_ONLY) {
         if (!cg_emit_build_order_phase(ctx, info, CG_BUILD_ORDER_EXPLICIT_PREREQUISITES, out)) return false;
         nob_sb_append_cstr(out, "    build_state = 2;\n");
         nob_sb_append_cstr(out, "    return true;\n");
@@ -1779,7 +1782,7 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
 
     if (!cg_emit_build_order_phase(ctx, info, CG_BUILD_ORDER_EXPLICIT_PREREQUISITES, out)) return false;
 
-    if (info->kind == BM_TARGET_UTILITY) {
+    if (info->build_emission_kind == BM_TARGET_BUILD_EMISSION_UTILITY) {
         if (!cg_emit_build_order_phase(ctx, info, CG_BUILD_ORDER_CUSTOM_TARGET_STEPS, out)) return false;
         nob_sb_append_cstr(out, "    build_state = 2;\n");
         nob_sb_append_cstr(out, "    return true;\n");
@@ -1797,7 +1800,7 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         return false;
     }
     needs_pic = ctx->policy.backend == NOB_CODEGEN_BACKEND_POSIX &&
-                bm_target_kind_requires_position_independent_code(info->kind);
+                info->build_emission_metadata.requires_position_independent_code_on_posix;
 
     {
         String_View object_subdir = {0};
@@ -1885,7 +1888,7 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         return false;
     }
 
-    if (info->kind == BM_TARGET_STATIC_LIBRARY) {
+    if (info->build_emission_metadata.uses_archiver) {
         for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
             String_View config = branch < arena_arr_len(ctx->known_configs) ? ctx->known_configs[branch] : nob_sv_from_cstr("");
             BM_Target_Artifact_View artifact = {0};
@@ -1925,9 +1928,7 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
             nob_sb_append_cstr(out, "        }\n");
         }
         if (!cg_emit_runtime_config_branches_suffix(ctx, out)) return false;
-    } else if (info->kind == BM_TARGET_EXECUTABLE ||
-               info->kind == BM_TARGET_SHARED_LIBRARY ||
-               info->kind == BM_TARGET_MODULE_LIBRARY) {
+    } else if (info->build_emission_metadata.uses_linker) {
         if (!cg_emit_link_args_runtime(ctx, info, sources, arena_arr_len(sources), object_dir, out)) return false;
     }
 
@@ -1944,7 +1945,8 @@ static bool cg_emit_build_request(CG_Context *ctx, Nob_String_Builder *out) {
     nob_sb_append_cstr(out, "static bool build_default_targets(void) {\n");
     for (size_t i = 0; i < ctx->target_count; ++i) {
         const CG_Target_Info *info = &ctx->targets[i];
-        bool default_buildable = info->emits_artifact || info->kind == BM_TARGET_UTILITY;
+        bool default_buildable = info->emits_artifact ||
+                                 info->build_emission_kind == BM_TARGET_BUILD_EMISSION_UTILITY;
         if (info->alias || info->imported || info->exclude_from_all || !default_buildable) continue;
         nob_sb_append_cstr(out, "    if (!build_");
         nob_sb_append_cstr(out, info->ident);

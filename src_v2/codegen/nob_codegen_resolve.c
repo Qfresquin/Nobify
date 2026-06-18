@@ -141,9 +141,9 @@ bool cg_resolve_target_ref(CG_Context *ctx,
     out->target_id = target_id;
     out->resolved_target_id = info->resolved_id;
     out->kind = info->imported ? CG_RESOLVED_TARGET_IMPORTED : CG_RESOLVED_TARGET_LOCAL;
-    out->target_kind = info->kind;
+    out->link_input_kind = bm_target_kind_link_input_kind(info->kind, info->imported);
     out->imported = info->imported;
-    out->usage_only = bm_target_kind_is_usage_only(info->kind);
+    out->usage_only = out->link_input_kind == BM_TARGET_LINK_INPUT_USAGE_ONLY;
     out->linkable_artifact = false;
 
     if (info->imported) {
@@ -155,7 +155,7 @@ bool cg_resolve_target_ref(CG_Context *ctx,
         out->effective_file = effective_file;
         out->effective_linker_file = effective_linker_file;
         out->imported_link_languages = imported_langs;
-        if (bm_target_kind_has_imported_linkable_artifact(info->kind)) {
+        if (out->link_input_kind == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT) {
             out->linkable_artifact = true;
             out->rebuild_input_path = effective_linker_file.count > 0 ? effective_linker_file : effective_file;
         }
@@ -175,6 +175,6 @@ bool cg_resolve_target_ref(CG_Context *ctx,
     out->rebuild_input_path = out->effective_linker_file.count > 0
         ? out->effective_linker_file
         : out->effective_file;
-    out->linkable_artifact = bm_target_kind_has_linkable_artifact(info->kind);
+    out->linkable_artifact = out->link_input_kind == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT;
     return true;
 }

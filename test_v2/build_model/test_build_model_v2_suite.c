@@ -5762,6 +5762,143 @@ TEST(build_model_target_kind_capabilities_are_typed_by_query_layer) {
     ASSERT(!bm_target_kind_is_installable_target(BM_TARGET_UTILITY));
     ASSERT(!bm_target_kind_is_installable_target(BM_TARGET_UNKNOWN_LIBRARY));
 
+    ASSERT(bm_target_kind_link_input_kind(BM_TARGET_INTERFACE_LIBRARY, false) == BM_TARGET_LINK_INPUT_USAGE_ONLY);
+    ASSERT(bm_target_kind_link_input_kind(BM_TARGET_STATIC_LIBRARY, false) == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT);
+    ASSERT(bm_target_kind_link_input_kind(BM_TARGET_SHARED_LIBRARY, false) == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT);
+    ASSERT(bm_target_kind_link_input_kind(BM_TARGET_MODULE_LIBRARY, false) == BM_TARGET_LINK_INPUT_MODULE_LIBRARY);
+    ASSERT(bm_target_kind_link_input_kind(BM_TARGET_MODULE_LIBRARY, true) == BM_TARGET_LINK_INPUT_MODULE_LIBRARY);
+    ASSERT(bm_target_kind_link_input_kind(BM_TARGET_EXECUTABLE, true) == BM_TARGET_LINK_INPUT_IMPORTED_EXECUTABLE);
+    ASSERT(bm_target_kind_link_input_kind(BM_TARGET_EXECUTABLE, false) == BM_TARGET_LINK_INPUT_NOT_LINKABLE);
+    ASSERT(bm_target_kind_link_input_kind(BM_TARGET_UNKNOWN_LIBRARY, true) == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT);
+    ASSERT(bm_target_kind_link_input_kind(BM_TARGET_UNKNOWN_LIBRARY, false) == BM_TARGET_LINK_INPUT_NOT_LINKABLE);
+
+    ASSERT(bm_target_build_emission_kind(BM_TARGET_EXECUTABLE, false, true) == BM_TARGET_BUILD_EMISSION_NONE);
+    ASSERT(bm_target_build_emission_kind(BM_TARGET_EXECUTABLE, true, false) == BM_TARGET_BUILD_EMISSION_ORDER_ONLY);
+    ASSERT(bm_target_build_emission_kind(BM_TARGET_INTERFACE_LIBRARY, false, false) == BM_TARGET_BUILD_EMISSION_ORDER_ONLY);
+    ASSERT(bm_target_build_emission_kind(BM_TARGET_UTILITY, false, false) == BM_TARGET_BUILD_EMISSION_UTILITY);
+    ASSERT(bm_target_build_emission_kind(BM_TARGET_STATIC_LIBRARY, false, false) == BM_TARGET_BUILD_EMISSION_STATIC_ARCHIVE);
+    ASSERT(bm_target_build_emission_kind(BM_TARGET_EXECUTABLE, false, false) == BM_TARGET_BUILD_EMISSION_LINK_EXECUTABLE);
+    ASSERT(bm_target_build_emission_kind(BM_TARGET_SHARED_LIBRARY, false, false) == BM_TARGET_BUILD_EMISSION_LINK_SHARED_LIBRARY);
+    ASSERT(bm_target_build_emission_kind(BM_TARGET_MODULE_LIBRARY, false, false) == BM_TARGET_BUILD_EMISSION_LINK_MODULE_LIBRARY);
+    ASSERT(bm_target_build_emission_kind(BM_TARGET_OBJECT_LIBRARY, false, false) == BM_TARGET_BUILD_EMISSION_UNSUPPORTED);
+    ASSERT(bm_target_build_emission_kind(BM_TARGET_UNKNOWN_LIBRARY, false, false) == BM_TARGET_BUILD_EMISSION_UNSUPPORTED);
+    {
+        BM_Target_Build_Emission_Metadata none =
+            bm_target_build_emission_metadata(BM_TARGET_BUILD_EMISSION_NONE);
+        BM_Target_Build_Emission_Metadata archive =
+            bm_target_build_emission_metadata(BM_TARGET_BUILD_EMISSION_STATIC_ARCHIVE);
+        BM_Target_Build_Emission_Metadata exe =
+            bm_target_build_emission_metadata(BM_TARGET_BUILD_EMISSION_LINK_EXECUTABLE);
+        BM_Target_Build_Emission_Metadata shared =
+            bm_target_build_emission_metadata(BM_TARGET_BUILD_EMISSION_LINK_SHARED_LIBRARY);
+        BM_Target_Build_Emission_Metadata module =
+            bm_target_build_emission_metadata(BM_TARGET_BUILD_EMISSION_LINK_MODULE_LIBRARY);
+
+        ASSERT(!none.emits_artifact);
+        ASSERT(archive.emits_artifact);
+        ASSERT(archive.uses_archiver);
+        ASSERT(!archive.uses_linker);
+        ASSERT(!archive.requires_link_paths);
+        ASSERT(!archive.requires_position_independent_code_on_posix);
+        ASSERT(exe.emits_artifact);
+        ASSERT(!exe.uses_archiver);
+        ASSERT(exe.uses_linker);
+        ASSERT(exe.requires_link_paths);
+        ASSERT(!exe.requires_position_independent_code_on_posix);
+        ASSERT(shared.emits_artifact);
+        ASSERT(shared.uses_linker);
+        ASSERT(shared.requires_link_paths);
+        ASSERT(shared.requires_position_independent_code_on_posix);
+        ASSERT(module.emits_artifact);
+        ASSERT(module.uses_linker);
+        ASSERT(module.requires_link_paths);
+        ASSERT(module.requires_position_independent_code_on_posix);
+    }
+    {
+        BM_CMake_Imported_Target_Declaration exe =
+            bm_target_cmake_imported_declaration(BM_TARGET_EXECUTABLE);
+        BM_CMake_Imported_Target_Declaration static_lib =
+            bm_target_cmake_imported_declaration(BM_TARGET_STATIC_LIBRARY);
+        BM_CMake_Imported_Target_Declaration shared_lib =
+            bm_target_cmake_imported_declaration(BM_TARGET_SHARED_LIBRARY);
+        BM_CMake_Imported_Target_Declaration module_lib =
+            bm_target_cmake_imported_declaration(BM_TARGET_MODULE_LIBRARY);
+        BM_CMake_Imported_Target_Declaration iface =
+            bm_target_cmake_imported_declaration(BM_TARGET_INTERFACE_LIBRARY);
+        BM_CMake_Imported_Target_Declaration object_lib =
+            bm_target_cmake_imported_declaration(BM_TARGET_OBJECT_LIBRARY);
+
+        ASSERT(exe.kind == BM_CMAKE_IMPORTED_TARGET_DECL_EXECUTABLE);
+        ASSERT(exe.library_kind.count == 0);
+        ASSERT(static_lib.kind == BM_CMAKE_IMPORTED_TARGET_DECL_LIBRARY);
+        ASSERT(nob_sv_eq(static_lib.library_kind, nob_sv_from_cstr("STATIC")));
+        ASSERT(shared_lib.kind == BM_CMAKE_IMPORTED_TARGET_DECL_LIBRARY);
+        ASSERT(nob_sv_eq(shared_lib.library_kind, nob_sv_from_cstr("SHARED")));
+        ASSERT(module_lib.kind == BM_CMAKE_IMPORTED_TARGET_DECL_LIBRARY);
+        ASSERT(nob_sv_eq(module_lib.library_kind, nob_sv_from_cstr("MODULE")));
+        ASSERT(iface.kind == BM_CMAKE_IMPORTED_TARGET_DECL_LIBRARY);
+        ASSERT(nob_sv_eq(iface.library_kind, nob_sv_from_cstr("INTERFACE")));
+        ASSERT(object_lib.kind == BM_CMAKE_IMPORTED_TARGET_DECL_UNSUPPORTED);
+    }
+
+    ASSERT(bm_target_install_artifact_kind(BM_TARGET_EXECUTABLE, false, false) == BM_INSTALL_TARGET_ARTIFACT_RUNTIME);
+    ASSERT(bm_target_install_artifact_kind(BM_TARGET_STATIC_LIBRARY, false, false) == BM_INSTALL_TARGET_ARTIFACT_ARCHIVE);
+    ASSERT(bm_target_install_artifact_kind(BM_TARGET_SHARED_LIBRARY, false, false) == BM_INSTALL_TARGET_ARTIFACT_LIBRARY);
+    ASSERT(bm_target_install_artifact_kind(BM_TARGET_SHARED_LIBRARY, false, true) == BM_INSTALL_TARGET_ARTIFACT_LIBRARY);
+    ASSERT(bm_target_install_artifact_kind(BM_TARGET_MODULE_LIBRARY, false, false) == BM_INSTALL_TARGET_ARTIFACT_LIBRARY);
+    ASSERT(bm_target_install_artifact_kind(BM_TARGET_SHARED_LIBRARY, true, false) == BM_INSTALL_TARGET_ARTIFACT_RUNTIME);
+    ASSERT(bm_target_install_artifact_kind(BM_TARGET_SHARED_LIBRARY, true, true) == BM_INSTALL_TARGET_ARTIFACT_ARCHIVE);
+    ASSERT(bm_target_install_artifact_kind(BM_TARGET_MODULE_LIBRARY, true, false) == BM_INSTALL_TARGET_ARTIFACT_RUNTIME);
+    ASSERT(bm_target_install_artifact_kind(BM_TARGET_MODULE_LIBRARY, true, true) == BM_INSTALL_TARGET_ARTIFACT_ARCHIVE);
+    ASSERT(bm_target_install_artifact_kind(BM_TARGET_INTERFACE_LIBRARY, false, false) == BM_INSTALL_TARGET_ARTIFACT_NONE);
+    ASSERT(bm_target_install_artifact_kind(BM_TARGET_OBJECT_LIBRARY, false, false) == BM_INSTALL_TARGET_ARTIFACT_NONE);
+    ASSERT(bm_target_install_artifact_kind(BM_TARGET_UTILITY, false, false) == BM_INSTALL_TARGET_ARTIFACT_NONE);
+
+    {
+        BM_Install_Export_Target_Metadata metadata =
+            bm_target_install_export_metadata(BM_TARGET_INTERFACE_LIBRARY, false);
+        ASSERT(metadata.interface_only);
+        ASSERT(!metadata.emits_imported_noconfig);
+    }
+    {
+        BM_Install_Export_Target_Metadata metadata =
+            bm_target_install_export_metadata(BM_TARGET_STATIC_LIBRARY, false);
+        ASSERT(!metadata.interface_only);
+        ASSERT(metadata.emits_imported_noconfig);
+        ASSERT(metadata.emits_link_interface_languages);
+        ASSERT(!metadata.emits_common_language_runtime);
+        ASSERT(!metadata.emits_soname);
+        ASSERT(!metadata.emits_no_soname);
+    }
+    {
+        BM_Install_Export_Target_Metadata metadata =
+            bm_target_install_export_metadata(BM_TARGET_SHARED_LIBRARY, false);
+        ASSERT(metadata.emits_imported_noconfig);
+        ASSERT(metadata.emits_soname);
+        ASSERT(!metadata.emits_no_soname);
+    }
+    {
+        BM_Install_Export_Target_Metadata metadata =
+            bm_target_install_export_metadata(BM_TARGET_SHARED_LIBRARY, true);
+        ASSERT(metadata.emits_imported_noconfig);
+        ASSERT(!metadata.emits_soname);
+    }
+    {
+        BM_Install_Export_Target_Metadata metadata =
+            bm_target_install_export_metadata(BM_TARGET_MODULE_LIBRARY, false);
+        ASSERT(metadata.emits_imported_noconfig);
+        ASSERT(metadata.emits_common_language_runtime);
+        ASSERT(!metadata.emits_soname);
+        ASSERT(metadata.emits_no_soname);
+    }
+    {
+        BM_Install_Export_Target_Metadata metadata =
+            bm_target_install_export_metadata(BM_TARGET_MODULE_LIBRARY, true);
+        ASSERT(metadata.emits_imported_noconfig);
+        ASSERT(metadata.emits_common_language_runtime);
+        ASSERT(!metadata.emits_no_soname);
+    }
+
     TEST_PASS();
 }
 

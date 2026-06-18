@@ -111,39 +111,35 @@ bool cg_export_target_in_span(BM_Target_Id_Span span, BM_Target_Id id) {
     return false;
 }
 
-bool cg_emit_cmake_imported_target_declaration(BM_Target_Kind kind,
+bool cg_emit_cmake_imported_target_declaration(BM_CMake_Imported_Target_Declaration declaration,
                                                String_View exported_name,
                                                Nob_String_Builder *sb) {
-    const char *cmake_kind = "UNKNOWN";
     if (!sb) return false;
 
-    switch (kind) {
-        case BM_TARGET_EXECUTABLE: cmake_kind = "EXECUTABLE"; break;
-        case BM_TARGET_STATIC_LIBRARY: cmake_kind = "STATIC"; break;
-        case BM_TARGET_SHARED_LIBRARY: cmake_kind = "SHARED"; break;
-        case BM_TARGET_MODULE_LIBRARY: cmake_kind = "MODULE"; break;
-        case BM_TARGET_INTERFACE_LIBRARY: cmake_kind = "INTERFACE"; break;
-        default:
-            nob_log(NOB_ERROR,
-                    "codegen: unsupported exported target kind for '%.*s'",
-                    (int)exported_name.count,
-                    exported_name.data ? exported_name.data : "");
-            return false;
-    }
-
-    if (kind == BM_TARGET_EXECUTABLE) {
+    if (declaration.kind == BM_CMAKE_IMPORTED_TARGET_DECL_EXECUTABLE) {
         nob_sb_append_cstr(sb, "add_executable(");
         if (!cg_cmake_append_escaped(sb, exported_name)) return false;
         nob_sb_append_cstr(sb, " IMPORTED)\n");
         return true;
     }
 
-    nob_sb_append_cstr(sb, "add_library(");
-    if (!cg_cmake_append_escaped(sb, exported_name)) return false;
-    nob_sb_append_cstr(sb, " ");
-    nob_sb_append_cstr(sb, cmake_kind);
-    nob_sb_append_cstr(sb, " IMPORTED)\n");
-    return true;
+    if (declaration.kind == BM_CMAKE_IMPORTED_TARGET_DECL_LIBRARY &&
+        declaration.library_kind.count > 0) {
+        nob_sb_append_cstr(sb, "add_library(");
+        if (!cg_cmake_append_escaped(sb, exported_name)) return false;
+        nob_sb_append_cstr(sb, " ");
+        nob_sb_append_buf(sb,
+                          declaration.library_kind.data ? declaration.library_kind.data : "",
+                          declaration.library_kind.count);
+        nob_sb_append_cstr(sb, " IMPORTED)\n");
+        return true;
+    }
+
+    nob_log(NOB_ERROR,
+            "codegen: unsupported exported target kind for '%.*s'",
+            (int)exported_name.count,
+            exported_name.data ? exported_name.data : "");
+    return false;
 }
 
 static bool cg_emit_cmake_import_prelude(CG_Context *ctx,
@@ -399,7 +395,8 @@ bool cg_build_cmake_targets_file_contents(CG_Context *ctx,
     if (!cg_emit_cmake_import_prelude(ctx, export_id, install_style, &sb)) return false;
     for (size_t i = 0; i < targets.count; ++i) {
         BM_Target_Id target_id = targets.items[i];
-        BM_Target_Kind kind = bm_query_target_kind(ctx->model, target_id);
+        BM_CMake_Imported_Target_Declaration declaration =
+            bm_target_cmake_imported_declaration(bm_query_target_kind(ctx->model, target_id));
         String_View exported_name = {0};
         if (!cg_target_exported_name(ctx, target_id, export_namespace, &exported_name)) {
             nob_sb_free(sb);
@@ -411,7 +408,7 @@ bool cg_build_cmake_targets_file_contents(CG_Context *ctx,
             return false;
         }
         nob_sb_append_cstr(&sb, "\n");
-        if (!cg_emit_cmake_imported_target_declaration(kind, exported_name, &sb)) {
+        if (!cg_emit_cmake_imported_target_declaration(declaration, exported_name, &sb)) {
             nob_sb_free(sb);
             return false;
         }

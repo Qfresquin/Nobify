@@ -43,18 +43,21 @@ void cg_collect_helper_requirements(CG_Context *ctx) {
     if (arena_arr_len(ctx->known_configs) > 0) ctx->helper_bits |= CG_HELPER_CONFIG_MATCHES;
 
     for (size_t i = 0; i < ctx->target_count; ++i) {
+        BM_Target_Build_Emission_Kind emission_kind = ctx->targets[i].build_emission_kind;
+        BM_Target_Build_Emission_Metadata metadata = ctx->targets[i].build_emission_metadata;
         if (ctx->targets[i].alias || ctx->targets[i].imported) continue;
         if (ctx->targets[i].emits_artifact) {
             needs_compile_toolchain = true;
-            if (ctx->targets[i].kind == BM_TARGET_STATIC_LIBRARY) {
+            if (metadata.uses_archiver) {
                 needs_archive_tool = true;
-            } else if (ctx->targets[i].kind == BM_TARGET_EXECUTABLE ||
-                       ctx->targets[i].kind == BM_TARGET_SHARED_LIBRARY ||
-                       ctx->targets[i].kind == BM_TARGET_MODULE_LIBRARY) {
+            } else if (metadata.requires_link_paths) {
                 needs_require_paths = true;
-                if (!ctx->policy.use_compiler_driver_for_executable_link ||
-                    !ctx->policy.use_compiler_driver_for_shared_link ||
-                    !ctx->policy.use_compiler_driver_for_module_link) {
+                if ((emission_kind == BM_TARGET_BUILD_EMISSION_LINK_EXECUTABLE &&
+                     !ctx->policy.use_compiler_driver_for_executable_link) ||
+                    (emission_kind == BM_TARGET_BUILD_EMISSION_LINK_SHARED_LIBRARY &&
+                     !ctx->policy.use_compiler_driver_for_shared_link) ||
+                    (emission_kind == BM_TARGET_BUILD_EMISSION_LINK_MODULE_LIBRARY &&
+                     !ctx->policy.use_compiler_driver_for_module_link)) {
                     needs_link_tool = true;
                 }
             }

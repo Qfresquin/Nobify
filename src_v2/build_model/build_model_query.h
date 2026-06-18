@@ -256,6 +256,14 @@ bool bm_target_kind_has_linkable_artifact(BM_Target_Kind kind);
 bool bm_target_kind_has_imported_linkable_artifact(BM_Target_Kind kind);
 bool bm_target_kind_requires_position_independent_code(BM_Target_Kind kind);
 bool bm_target_kind_is_installable_target(BM_Target_Kind kind);
+BM_Target_Link_Input_Kind bm_target_kind_link_input_kind(BM_Target_Kind kind, bool imported);
+BM_Target_Build_Emission_Kind bm_target_build_emission_kind(BM_Target_Kind kind, bool imported, bool alias);
+BM_Target_Build_Emission_Metadata bm_target_build_emission_metadata(BM_Target_Build_Emission_Kind kind);
+BM_Install_Target_Artifact_Kind bm_target_install_artifact_kind(BM_Target_Kind kind,
+                                                                bool windows,
+                                                                bool linker_artifact);
+BM_Install_Export_Target_Metadata bm_target_install_export_metadata(BM_Target_Kind kind, bool windows);
+BM_CMake_Imported_Target_Declaration bm_target_cmake_imported_declaration(BM_Target_Kind kind);
 
 BM_String_Item_Span bm_query_global_include_directories_raw(const Build_Model *model);
 BM_String_Item_Span bm_query_global_system_include_directories_raw(const Build_Model *model);

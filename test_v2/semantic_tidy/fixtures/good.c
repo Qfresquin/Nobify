@@ -69,6 +69,53 @@ typedef enum {
     BM_TARGET_UNKNOWN_LIBRARY,
 } BM_Target_Kind;
 typedef enum {
+    BM_TARGET_LINK_INPUT_USAGE_ONLY = 0,
+    BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT,
+    BM_TARGET_LINK_INPUT_MODULE_LIBRARY,
+    BM_TARGET_LINK_INPUT_IMPORTED_EXECUTABLE,
+    BM_TARGET_LINK_INPUT_NOT_LINKABLE,
+} BM_Target_Link_Input_Kind;
+typedef enum {
+    BM_TARGET_BUILD_EMISSION_NONE = 0,
+    BM_TARGET_BUILD_EMISSION_ORDER_ONLY,
+    BM_TARGET_BUILD_EMISSION_UTILITY,
+    BM_TARGET_BUILD_EMISSION_STATIC_ARCHIVE,
+    BM_TARGET_BUILD_EMISSION_LINK_EXECUTABLE,
+    BM_TARGET_BUILD_EMISSION_LINK_SHARED_LIBRARY,
+    BM_TARGET_BUILD_EMISSION_LINK_MODULE_LIBRARY,
+    BM_TARGET_BUILD_EMISSION_UNSUPPORTED,
+} BM_Target_Build_Emission_Kind;
+typedef struct {
+    int emits_artifact;
+    int uses_archiver;
+    int uses_linker;
+    int requires_link_paths;
+    int requires_position_independent_code_on_posix;
+} BM_Target_Build_Emission_Metadata;
+typedef enum {
+    BM_INSTALL_TARGET_ARTIFACT_NONE = 0,
+    BM_INSTALL_TARGET_ARTIFACT_RUNTIME,
+    BM_INSTALL_TARGET_ARTIFACT_ARCHIVE,
+    BM_INSTALL_TARGET_ARTIFACT_LIBRARY,
+} BM_Install_Target_Artifact_Kind;
+typedef struct {
+    int interface_only;
+    int emits_imported_noconfig;
+    int emits_link_interface_languages;
+    int emits_common_language_runtime;
+    int emits_soname;
+    int emits_no_soname;
+} BM_Install_Export_Target_Metadata;
+typedef enum {
+    BM_CMAKE_IMPORTED_TARGET_DECL_UNSUPPORTED = 0,
+    BM_CMAKE_IMPORTED_TARGET_DECL_EXECUTABLE,
+    BM_CMAKE_IMPORTED_TARGET_DECL_LIBRARY,
+} BM_CMake_Imported_Target_Declaration_Kind;
+typedef struct {
+    BM_CMake_Imported_Target_Declaration_Kind kind;
+    String_View library_kind;
+} BM_CMake_Imported_Target_Declaration;
+typedef enum {
     BM_TARGET_SOURCE_LANGUAGE_NONE = 0,
     BM_TARGET_SOURCE_LANGUAGE_C,
     BM_TARGET_SOURCE_LANGUAGE_CXX,
@@ -182,6 +229,14 @@ static int bm_target_kind_is_non_emitting_build_target(BM_Target_Kind kind);
 static int bm_target_kind_has_linkable_artifact(BM_Target_Kind kind);
 static int bm_target_kind_requires_position_independent_code(BM_Target_Kind kind);
 static int bm_target_kind_is_installable_target(BM_Target_Kind kind);
+static BM_Target_Link_Input_Kind bm_target_kind_link_input_kind(BM_Target_Kind kind, int imported);
+static BM_Target_Build_Emission_Kind bm_target_build_emission_kind(BM_Target_Kind kind, int imported, int alias);
+static BM_Target_Build_Emission_Metadata bm_target_build_emission_metadata(BM_Target_Build_Emission_Kind kind);
+static BM_Install_Target_Artifact_Kind bm_target_install_artifact_kind(BM_Target_Kind kind,
+                                                                       int windows,
+                                                                       int linker_artifact);
+static BM_Install_Export_Target_Metadata bm_target_install_export_metadata(BM_Target_Kind kind, int windows);
+static BM_CMake_Imported_Target_Declaration bm_target_cmake_imported_declaration(BM_Target_Kind kind);
 static String_View bm_query_test_effective_property_kind_first(const Build_Model *model,
                                                                BM_Test_Id id,
                                                                BM_Test_Property_Kind kind,
@@ -390,6 +445,55 @@ static int helper_codegen_install_target_kind_heuristic_good(BM_Target_Kind kind
 
 static int helper_codegen_export_artifact_target_heuristic_good(const Build_Model *model, int export_id) {
     return bm_query_export_has_artifact_targets(model, export_id);
+}
+
+static int helper_codegen_precompile_header_target_kind_heuristic_good(BM_Target_Kind kind) {
+    return !bm_target_kind_is_artifact_target(kind);
+}
+
+static int helper_codegen_link_input_target_kind_heuristic_good(BM_Target_Kind kind, int imported) {
+    BM_Target_Link_Input_Kind input_kind = bm_target_kind_link_input_kind(kind, imported);
+    return input_kind == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT ||
+           input_kind == BM_TARGET_LINK_INPUT_USAGE_ONLY;
+}
+
+static int helper_codegen_build_emission_target_kind_heuristic_good(BM_Target_Kind kind, int imported, int alias) {
+    BM_Target_Build_Emission_Kind emission_kind = bm_target_build_emission_kind(kind, imported, alias);
+    BM_Target_Build_Emission_Metadata metadata = bm_target_build_emission_metadata(emission_kind);
+    return metadata.emits_artifact ||
+           metadata.uses_archiver ||
+           metadata.uses_linker ||
+           metadata.requires_link_paths ||
+           metadata.requires_position_independent_code_on_posix ||
+           emission_kind == BM_TARGET_BUILD_EMISSION_UTILITY;
+}
+
+static int helper_codegen_install_artifact_target_kind_heuristic_good(BM_Target_Kind kind,
+                                                                      int windows,
+                                                                      int linker_artifact) {
+    BM_Install_Target_Artifact_Kind artifact_kind =
+        bm_target_install_artifact_kind(kind, windows, linker_artifact);
+    return artifact_kind == BM_INSTALL_TARGET_ARTIFACT_RUNTIME ||
+           artifact_kind == BM_INSTALL_TARGET_ARTIFACT_ARCHIVE ||
+           artifact_kind == BM_INSTALL_TARGET_ARTIFACT_LIBRARY;
+}
+
+static int helper_codegen_install_export_metadata_target_kind_heuristic_good(BM_Target_Kind kind,
+                                                                             int windows) {
+    BM_Install_Export_Target_Metadata metadata = bm_target_install_export_metadata(kind, windows);
+    return metadata.interface_only ||
+           metadata.emits_imported_noconfig ||
+           metadata.emits_link_interface_languages ||
+           metadata.emits_common_language_runtime ||
+           metadata.emits_soname ||
+           metadata.emits_no_soname;
+}
+
+static int helper_codegen_cmake_imported_declaration_target_kind_heuristic_good(BM_Target_Kind kind) {
+    BM_CMake_Imported_Target_Declaration declaration = bm_target_cmake_imported_declaration(kind);
+    return declaration.kind == BM_CMAKE_IMPORTED_TARGET_DECL_EXECUTABLE ||
+           declaration.kind == BM_CMAKE_IMPORTED_TARGET_DECL_LIBRARY ||
+           declaration.library_kind.count > 0;
 }
 
 static int helper_codegen_link_language_string_query_good(BM_Query_Session *session,

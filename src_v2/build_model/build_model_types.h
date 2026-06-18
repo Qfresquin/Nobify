@@ -110,6 +110,60 @@ typedef enum {
 } BM_Target_Kind;
 
 typedef enum {
+    BM_TARGET_LINK_INPUT_USAGE_ONLY = 0,
+    BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT,
+    BM_TARGET_LINK_INPUT_MODULE_LIBRARY,
+    BM_TARGET_LINK_INPUT_IMPORTED_EXECUTABLE,
+    BM_TARGET_LINK_INPUT_NOT_LINKABLE,
+} BM_Target_Link_Input_Kind;
+
+typedef enum {
+    BM_TARGET_BUILD_EMISSION_NONE = 0,
+    BM_TARGET_BUILD_EMISSION_ORDER_ONLY,
+    BM_TARGET_BUILD_EMISSION_UTILITY,
+    BM_TARGET_BUILD_EMISSION_STATIC_ARCHIVE,
+    BM_TARGET_BUILD_EMISSION_LINK_EXECUTABLE,
+    BM_TARGET_BUILD_EMISSION_LINK_SHARED_LIBRARY,
+    BM_TARGET_BUILD_EMISSION_LINK_MODULE_LIBRARY,
+    BM_TARGET_BUILD_EMISSION_UNSUPPORTED,
+} BM_Target_Build_Emission_Kind;
+
+typedef struct {
+    bool emits_artifact;
+    bool uses_archiver;
+    bool uses_linker;
+    bool requires_link_paths;
+    bool requires_position_independent_code_on_posix;
+} BM_Target_Build_Emission_Metadata;
+
+typedef enum {
+    BM_INSTALL_TARGET_ARTIFACT_NONE = 0,
+    BM_INSTALL_TARGET_ARTIFACT_RUNTIME,
+    BM_INSTALL_TARGET_ARTIFACT_ARCHIVE,
+    BM_INSTALL_TARGET_ARTIFACT_LIBRARY,
+} BM_Install_Target_Artifact_Kind;
+
+typedef struct {
+    bool interface_only;
+    bool emits_imported_noconfig;
+    bool emits_link_interface_languages;
+    bool emits_common_language_runtime;
+    bool emits_soname;
+    bool emits_no_soname;
+} BM_Install_Export_Target_Metadata;
+
+typedef enum {
+    BM_CMAKE_IMPORTED_TARGET_DECL_UNSUPPORTED = 0,
+    BM_CMAKE_IMPORTED_TARGET_DECL_EXECUTABLE,
+    BM_CMAKE_IMPORTED_TARGET_DECL_LIBRARY,
+} BM_CMake_Imported_Target_Declaration_Kind;
+
+typedef struct {
+    BM_CMake_Imported_Target_Declaration_Kind kind;
+    String_View library_kind;
+} BM_CMake_Imported_Target_Declaration;
+
+typedef enum {
     BM_TARGET_SOURCE_REGULAR = 0,
     BM_TARGET_SOURCE_HEADER_FILE_SET,
     BM_TARGET_SOURCE_CXX_MODULE_FILE_SET,

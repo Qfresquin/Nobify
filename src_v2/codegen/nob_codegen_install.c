@@ -33,34 +33,21 @@ static String_View cg_install_effective_component(String_View specific, String_V
 
 static String_View cg_install_rule_target_component(CG_Context *ctx,
                                                     BM_Install_Rule_Id rule_id,
-                                                    BM_Target_Kind kind,
-                                                    bool linker_artifact) {
+                                                    BM_Install_Target_Artifact_Kind artifact_kind) {
     String_View fallback = {0};
     if (!ctx) return (String_View){0};
     fallback = bm_query_install_rule_component(ctx->model, rule_id);
-    switch (kind) {
-        case BM_TARGET_EXECUTABLE:
+    switch (artifact_kind) {
+        case BM_INSTALL_TARGET_ARTIFACT_RUNTIME:
             return cg_install_effective_component(bm_query_install_rule_runtime_component(ctx->model, rule_id),
                                                   fallback);
-        case BM_TARGET_STATIC_LIBRARY:
+        case BM_INSTALL_TARGET_ARTIFACT_ARCHIVE:
             return cg_install_effective_component(bm_query_install_rule_archive_component(ctx->model, rule_id),
                                                   fallback);
-        case BM_TARGET_SHARED_LIBRARY:
-        case BM_TARGET_MODULE_LIBRARY:
-            if (cg_policy_is_windows(ctx) && linker_artifact) {
-                return cg_install_effective_component(bm_query_install_rule_archive_component(ctx->model, rule_id),
-                                                      fallback);
-            }
-            if (cg_policy_is_windows(ctx)) {
-                return cg_install_effective_component(bm_query_install_rule_runtime_component(ctx->model, rule_id),
-                                                      fallback);
-            }
+        case BM_INSTALL_TARGET_ARTIFACT_LIBRARY:
             return cg_install_effective_component(bm_query_install_rule_library_component(ctx->model, rule_id),
                                                   fallback);
-        case BM_TARGET_INTERFACE_LIBRARY:
-        case BM_TARGET_OBJECT_LIBRARY:
-        case BM_TARGET_UTILITY:
-        case BM_TARGET_UNKNOWN_LIBRARY:
+        case BM_INSTALL_TARGET_ARTIFACT_NONE:
             return fallback;
     }
     return fallback;
@@ -117,8 +104,7 @@ static bool cg_resolve_install_item_from_owner_dirs(CG_Context *ctx,
 
 static bool cg_install_rule_target_destination_for_kind(CG_Context *ctx,
                                                         BM_Install_Rule_Id rule_id,
-                                                        BM_Target_Kind kind,
-                                                        bool linker_artifact,
+                                                        BM_Install_Target_Artifact_Kind artifact_kind,
                                                         String_View *out) {
     String_View general = bm_query_install_rule_destination(ctx->model, rule_id);
     String_View archive = bm_query_install_rule_archive_destination(ctx->model, rule_id);
@@ -127,30 +113,20 @@ static bool cg_install_rule_target_destination_for_kind(CG_Context *ctx,
     if (!ctx || !out) return false;
     *out = general;
 
-    switch (kind) {
-        case BM_TARGET_EXECUTABLE:
+    switch (artifact_kind) {
+        case BM_INSTALL_TARGET_ARTIFACT_RUNTIME:
             *out = cg_install_target_destination(runtime, general);
             return true;
 
-        case BM_TARGET_STATIC_LIBRARY:
+        case BM_INSTALL_TARGET_ARTIFACT_ARCHIVE:
             *out = cg_install_target_destination(archive, general);
             return true;
 
-        case BM_TARGET_SHARED_LIBRARY:
-        case BM_TARGET_MODULE_LIBRARY:
-            if (cg_policy_is_windows(ctx) && linker_artifact) {
-                *out = cg_install_target_destination(archive, general);
-            } else if (cg_policy_is_windows(ctx)) {
-                *out = cg_install_target_destination(runtime, general);
-            } else {
-                *out = cg_install_target_destination(library, general);
-            }
+        case BM_INSTALL_TARGET_ARTIFACT_LIBRARY:
+            *out = cg_install_target_destination(library, general);
             return true;
 
-        case BM_TARGET_INTERFACE_LIBRARY:
-        case BM_TARGET_OBJECT_LIBRARY:
-        case BM_TARGET_UTILITY:
-        case BM_TARGET_UNKNOWN_LIBRARY:
+        case BM_INSTALL_TARGET_ARTIFACT_NONE:
             return true;
     }
 
@@ -165,9 +141,11 @@ static bool cg_resolve_install_rule_target_destination_for_kind(CG_Context *ctx,
                                                                 String_View config,
                                                                 String_View *out) {
     String_View raw_destination = {0};
+    BM_Install_Target_Artifact_Kind artifact_kind = BM_INSTALL_TARGET_ARTIFACT_NONE;
     if (!ctx || !out) return false;
     *out = nob_sv_from_cstr("");
-    if (!cg_install_rule_target_destination_for_kind(ctx, rule_id, kind, linker_artifact, &raw_destination)) {
+    artifact_kind = bm_target_install_artifact_kind(kind, cg_policy_is_windows(ctx), linker_artifact);
+    if (!cg_install_rule_target_destination_for_kind(ctx, rule_id, artifact_kind, &raw_destination)) {
         return false;
     }
     return cg_resolve_single_install_string_for_config(ctx, target_id, config, raw_destination, out);
@@ -483,11 +461,13 @@ static bool cg_export_emit_target_properties(CG_Context *ctx,
     String_View *link_opts = NULL;
     String_View *link_dirs = NULL;
     String_View *link_libs = NULL;
+    BM_Install_Export_Target_Metadata metadata = {0};
     CG_Install_Export_Emit_Mode mode = userdata
         ? *(const CG_Install_Export_Emit_Mode*)userdata
         : CG_INSTALL_EXPORT_EMIT_MAIN;
     (void)config;
     if (!ctx || !info || !sb) return false;
+    metadata = bm_target_install_export_metadata(info->kind, cg_policy_is_windows(ctx));
     rule_id = bm_query_install_rule_for_export_target(ctx->model, export_id, target_id);
 
     if (!cg_export_collect_interface_includes(ctx, export_id, rule_id, target_id, false, &include_items) ||
@@ -594,7 +574,7 @@ static bool cg_export_emit_target_properties(CG_Context *ctx,
             }
             nob_sb_append_cstr(sb, ")\n\n");
         }
-        if (info->kind == BM_TARGET_INTERFACE_LIBRARY) {
+        if (metadata.interface_only) {
             nob_sb_append_cstr(sb,
                 "if(CMAKE_VERSION VERSION_LESS 3.0.0)\n"
                 "  message(FATAL_ERROR \"This file relies on consumers using CMake 3.0.0 or greater.\")\n"
@@ -603,7 +583,7 @@ static bool cg_export_emit_target_properties(CG_Context *ctx,
         return true;
     }
 
-    if (info->kind == BM_TARGET_INTERFACE_LIBRARY) return true;
+    if (!metadata.emits_imported_noconfig) return true;
 
     nob_sb_append_cstr(sb, "# Import target \"");
     if (!cg_cmake_append_escaped(sb, exported_name)) return false;
@@ -614,12 +594,12 @@ static bool cg_export_emit_target_properties(CG_Context *ctx,
     nob_sb_append_cstr(sb, "set_target_properties(");
     if (!cg_cmake_append_escaped(sb, exported_name)) return false;
     nob_sb_append_cstr(sb, " PROPERTIES\n");
-    if (info->kind == BM_TARGET_STATIC_LIBRARY && link_languages_joined.count > 0) {
+    if (metadata.emits_link_interface_languages && link_languages_joined.count > 0) {
         nob_sb_append_cstr(sb, "  IMPORTED_LINK_INTERFACE_LANGUAGES_NOCONFIG \"");
         if (!cg_cmake_append_escaped(sb, link_languages_joined)) return false;
         nob_sb_append_cstr(sb, "\"\n");
     }
-    if (info->kind == BM_TARGET_MODULE_LIBRARY) {
+    if (metadata.emits_common_language_runtime) {
         nob_sb_append_cstr(sb, "  IMPORTED_COMMON_LANGUAGE_RUNTIME_NOCONFIG \"\"\n");
     }
     if (runtime_rel.count > 0) {
@@ -628,13 +608,13 @@ static bool cg_export_emit_target_properties(CG_Context *ctx,
         if (!cg_cmake_append_escaped(sb, runtime_expr)) return false;
         nob_sb_append_cstr(sb, "\"\n");
     }
-    if (info->kind == BM_TARGET_SHARED_LIBRARY && runtime_rel.count > 0 && !cg_policy_is_windows(ctx)) {
+    if (metadata.emits_soname && runtime_rel.count > 0) {
         String_View soname = cg_basename_to_arena(ctx->scratch, runtime_rel);
         nob_sb_append_cstr(sb, "  IMPORTED_SONAME_NOCONFIG \"");
         if (!cg_cmake_append_escaped(sb, soname)) return false;
         nob_sb_append_cstr(sb, "\"\n");
     }
-    if (info->kind == BM_TARGET_MODULE_LIBRARY && !cg_policy_is_windows(ctx)) {
+    if (metadata.emits_no_soname) {
         nob_sb_append_cstr(sb, "  IMPORTED_NO_SONAME_NOCONFIG \"TRUE\"\n");
     }
     nob_sb_append_cstr(sb, "  )\n\n");
@@ -745,9 +725,11 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
                 nob_log(NOB_ERROR, "codegen: install rule references an unknown target");
                 return false;
             }
-            if (info->kind != BM_TARGET_INTERFACE_LIBRARY && info->emits_artifact) {
+            if (info->emits_artifact) {
                 String_View runtime_component = {0};
-                runtime_component = cg_install_rule_target_component(ctx, id, info->kind, false);
+                BM_Install_Target_Artifact_Kind artifact_kind =
+                    bm_target_install_artifact_kind(info->kind, cg_policy_is_windows(ctx), false);
+                runtime_component = cg_install_rule_target_component(ctx, id, artifact_kind);
                 if (!cg_emit_install_component_guard_open(out, runtime_component)) {
                     return false;
                 }

@@ -1661,6 +1661,102 @@ bool bm_target_kind_is_installable_target(BM_Target_Kind kind) {
            kind == BM_TARGET_INTERFACE_LIBRARY;
 }
 
+BM_Target_Link_Input_Kind bm_target_kind_link_input_kind(BM_Target_Kind kind, bool imported) {
+    if (bm_target_kind_is_usage_only(kind)) return BM_TARGET_LINK_INPUT_USAGE_ONLY;
+    if (kind == BM_TARGET_MODULE_LIBRARY) return BM_TARGET_LINK_INPUT_MODULE_LIBRARY;
+    if (imported && kind == BM_TARGET_EXECUTABLE) return BM_TARGET_LINK_INPUT_IMPORTED_EXECUTABLE;
+    if (imported && bm_target_kind_has_imported_linkable_artifact(kind)) {
+        return BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT;
+    }
+    if (!imported && bm_target_kind_has_linkable_artifact(kind)) {
+        return BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT;
+    }
+    return BM_TARGET_LINK_INPUT_NOT_LINKABLE;
+}
+
+BM_Target_Build_Emission_Kind bm_target_build_emission_kind(BM_Target_Kind kind, bool imported, bool alias) {
+    if (alias) return BM_TARGET_BUILD_EMISSION_NONE;
+    if (imported || kind == BM_TARGET_INTERFACE_LIBRARY) return BM_TARGET_BUILD_EMISSION_ORDER_ONLY;
+    if (kind == BM_TARGET_UTILITY) return BM_TARGET_BUILD_EMISSION_UTILITY;
+    if (kind == BM_TARGET_STATIC_LIBRARY) return BM_TARGET_BUILD_EMISSION_STATIC_ARCHIVE;
+    if (kind == BM_TARGET_EXECUTABLE) return BM_TARGET_BUILD_EMISSION_LINK_EXECUTABLE;
+    if (kind == BM_TARGET_SHARED_LIBRARY) return BM_TARGET_BUILD_EMISSION_LINK_SHARED_LIBRARY;
+    if (kind == BM_TARGET_MODULE_LIBRARY) return BM_TARGET_BUILD_EMISSION_LINK_MODULE_LIBRARY;
+    return BM_TARGET_BUILD_EMISSION_UNSUPPORTED;
+}
+
+BM_Target_Build_Emission_Metadata bm_target_build_emission_metadata(BM_Target_Build_Emission_Kind kind) {
+    BM_Target_Build_Emission_Metadata metadata = {0};
+    metadata.emits_artifact = kind == BM_TARGET_BUILD_EMISSION_STATIC_ARCHIVE ||
+                              kind == BM_TARGET_BUILD_EMISSION_LINK_EXECUTABLE ||
+                              kind == BM_TARGET_BUILD_EMISSION_LINK_SHARED_LIBRARY ||
+                              kind == BM_TARGET_BUILD_EMISSION_LINK_MODULE_LIBRARY;
+    metadata.uses_archiver = kind == BM_TARGET_BUILD_EMISSION_STATIC_ARCHIVE;
+    metadata.uses_linker = kind == BM_TARGET_BUILD_EMISSION_LINK_EXECUTABLE ||
+                           kind == BM_TARGET_BUILD_EMISSION_LINK_SHARED_LIBRARY ||
+                           kind == BM_TARGET_BUILD_EMISSION_LINK_MODULE_LIBRARY;
+    metadata.requires_link_paths = metadata.uses_linker;
+    metadata.requires_position_independent_code_on_posix =
+        kind == BM_TARGET_BUILD_EMISSION_LINK_SHARED_LIBRARY ||
+        kind == BM_TARGET_BUILD_EMISSION_LINK_MODULE_LIBRARY;
+    return metadata;
+}
+
+BM_Install_Target_Artifact_Kind bm_target_install_artifact_kind(BM_Target_Kind kind,
+                                                                bool windows,
+                                                                bool linker_artifact) {
+    if (kind == BM_TARGET_EXECUTABLE) return BM_INSTALL_TARGET_ARTIFACT_RUNTIME;
+    if (kind == BM_TARGET_STATIC_LIBRARY) return BM_INSTALL_TARGET_ARTIFACT_ARCHIVE;
+    if (kind == BM_TARGET_SHARED_LIBRARY || kind == BM_TARGET_MODULE_LIBRARY) {
+        if (windows && linker_artifact) return BM_INSTALL_TARGET_ARTIFACT_ARCHIVE;
+        if (windows) return BM_INSTALL_TARGET_ARTIFACT_RUNTIME;
+        return BM_INSTALL_TARGET_ARTIFACT_LIBRARY;
+    }
+    return BM_INSTALL_TARGET_ARTIFACT_NONE;
+}
+
+BM_Install_Export_Target_Metadata bm_target_install_export_metadata(BM_Target_Kind kind, bool windows) {
+    BM_Install_Export_Target_Metadata metadata = {0};
+    metadata.interface_only = kind == BM_TARGET_INTERFACE_LIBRARY;
+    metadata.emits_imported_noconfig = !metadata.interface_only;
+    metadata.emits_link_interface_languages = kind == BM_TARGET_STATIC_LIBRARY;
+    metadata.emits_common_language_runtime = kind == BM_TARGET_MODULE_LIBRARY;
+    metadata.emits_soname = kind == BM_TARGET_SHARED_LIBRARY && !windows;
+    metadata.emits_no_soname = kind == BM_TARGET_MODULE_LIBRARY && !windows;
+    return metadata;
+}
+
+BM_CMake_Imported_Target_Declaration bm_target_cmake_imported_declaration(BM_Target_Kind kind) {
+    BM_CMake_Imported_Target_Declaration declaration = {0};
+    switch (kind) {
+        case BM_TARGET_EXECUTABLE:
+            declaration.kind = BM_CMAKE_IMPORTED_TARGET_DECL_EXECUTABLE;
+            return declaration;
+        case BM_TARGET_STATIC_LIBRARY:
+            declaration.kind = BM_CMAKE_IMPORTED_TARGET_DECL_LIBRARY;
+            declaration.library_kind = nob_sv_from_cstr("STATIC");
+            return declaration;
+        case BM_TARGET_SHARED_LIBRARY:
+            declaration.kind = BM_CMAKE_IMPORTED_TARGET_DECL_LIBRARY;
+            declaration.library_kind = nob_sv_from_cstr("SHARED");
+            return declaration;
+        case BM_TARGET_MODULE_LIBRARY:
+            declaration.kind = BM_CMAKE_IMPORTED_TARGET_DECL_LIBRARY;
+            declaration.library_kind = nob_sv_from_cstr("MODULE");
+            return declaration;
+        case BM_TARGET_INTERFACE_LIBRARY:
+            declaration.kind = BM_CMAKE_IMPORTED_TARGET_DECL_LIBRARY;
+            declaration.library_kind = nob_sv_from_cstr("INTERFACE");
+            return declaration;
+        case BM_TARGET_OBJECT_LIBRARY:
+        case BM_TARGET_UTILITY:
+        case BM_TARGET_UNKNOWN_LIBRARY:
+            break;
+    }
+    declaration.kind = BM_CMAKE_IMPORTED_TARGET_DECL_UNSUPPORTED;
+    return declaration;
+}
+
 BM_Test_Id bm_query_test_by_name(const Build_Model *model, String_View name) {
     if (!model) return BM_TEST_ID_INVALID;
     for (size_t i = 0; i < arena_arr_len(model->test_name_index); ++i) {

@@ -1970,6 +1970,310 @@ public:
     }
 };
 
+static bool appliesCodegenPrecompileHeaderTargetKindHeuristic(llvm::StringRef Path,
+                                                              const FunctionDecl *FD) {
+    if (!FD) return false;
+    if (contains(Path, "src_v2/codegen/")) {
+        return FD->getName().contains("reject_unsupported_precompile_headers");
+    }
+    if (!isFixturePath(Path)) return false;
+    return FD->getName().contains("codegen_precompile_header_target_kind_heuristic");
+}
+
+static bool enumIsPrecompileHeaderSkippedTargetKind(llvm::StringRef Name) {
+    return Name.ends_with("BM_TARGET_INTERFACE_LIBRARY") ||
+           Name.ends_with("BM_TARGET_UTILITY");
+}
+
+class CodegenPrecompileHeaderTargetKindHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenPrecompileHeaderTargetKindHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(declRefExpr(to(enumConstantDecl().bind("pch-target-kind-constant")),
+                                       hasAncestor(functionDecl().bind("pch-target-kind-function")))
+                               .bind("pch-target-kind-ref"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Ref = Result.Nodes.getNodeAs<DeclRefExpr>("pch-target-kind-ref");
+        const auto *ECD = Result.Nodes.getNodeAs<EnumConstantDecl>("pch-target-kind-constant");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("pch-target-kind-function");
+        if (!Ref || !ECD || !FD) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Ref->getExprLoc());
+        if (!appliesCodegenPrecompileHeaderTargetKindHeuristic(Path, FD)) return;
+        if (!enumIsPrecompileHeaderSkippedTargetKind(ECD->getQualifiedNameAsString())) return;
+
+        diag(Ref->getExprLoc(),
+             "codegen precompile-header validation must not classify target kinds directly; use build-model target-kind capability queries");
+    }
+};
+
+static bool appliesCodegenLinkInputTargetKindHeuristic(llvm::StringRef Path,
+                                                       const FunctionDecl *FD) {
+    if (!FD) return false;
+    if (contains(Path, "src_v2/codegen/")) return FD->getName().contains("collect_link_library_args");
+    if (!isFixturePath(Path)) return false;
+    return FD->getName().contains("codegen_link_input_target_kind_heuristic");
+}
+
+static bool enumIsLinkInputTargetKind(llvm::StringRef Name) {
+    return Name.ends_with("BM_TARGET_MODULE_LIBRARY") ||
+           Name.ends_with("BM_TARGET_EXECUTABLE");
+}
+
+class CodegenLinkInputTargetKindHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenLinkInputTargetKindHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(declRefExpr(to(enumConstantDecl().bind("link-input-target-kind-constant")),
+                                       hasAncestor(functionDecl().bind("link-input-target-kind-function")))
+                               .bind("link-input-target-kind-ref"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Ref = Result.Nodes.getNodeAs<DeclRefExpr>("link-input-target-kind-ref");
+        const auto *ECD = Result.Nodes.getNodeAs<EnumConstantDecl>("link-input-target-kind-constant");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("link-input-target-kind-function");
+        if (!Ref || !ECD || !FD) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Ref->getExprLoc());
+        if (!appliesCodegenLinkInputTargetKindHeuristic(Path, FD)) return;
+        if (!enumIsLinkInputTargetKind(ECD->getQualifiedNameAsString())) return;
+
+        diag(Ref->getExprLoc(),
+             "codegen link input handling must not classify target kinds directly; use build-model link input kind queries");
+    }
+};
+
+static bool appliesCodegenBuildEmissionTargetKindHeuristic(llvm::StringRef Path,
+                                                           const FunctionDecl *FD) {
+    if (!FD) return false;
+    if (contains(Path, "src_v2/codegen/")) {
+        return FD->getName().contains("compute_target_state_path") ||
+               FD->getName().contains("collect_helper_requirements") ||
+               FD->getName().contains("emit_test_functions") ||
+               FD->getName().contains("emit_build_target") ||
+               FD->getName().contains("emit_build_request") ||
+               FD->getName().contains("emit_link_args_runtime");
+    }
+    if (!isFixturePath(Path)) return false;
+    return FD->getName().contains("codegen_build_emission_target_kind_heuristic");
+}
+
+static bool enumIsBuildEmissionTargetKind(llvm::StringRef Name) {
+    return Name.ends_with("BM_TARGET_EXECUTABLE") ||
+           Name.ends_with("BM_TARGET_STATIC_LIBRARY") ||
+           Name.ends_with("BM_TARGET_SHARED_LIBRARY") ||
+           Name.ends_with("BM_TARGET_MODULE_LIBRARY") ||
+           Name.ends_with("BM_TARGET_INTERFACE_LIBRARY") ||
+           Name.ends_with("BM_TARGET_UTILITY");
+}
+
+class CodegenBuildEmissionTargetKindHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenBuildEmissionTargetKindHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(declRefExpr(to(enumConstantDecl().bind("build-emission-target-kind-constant")),
+                                       hasAncestor(functionDecl().bind("build-emission-target-kind-function")))
+                               .bind("build-emission-target-kind-ref"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Ref = Result.Nodes.getNodeAs<DeclRefExpr>("build-emission-target-kind-ref");
+        const auto *ECD = Result.Nodes.getNodeAs<EnumConstantDecl>("build-emission-target-kind-constant");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("build-emission-target-kind-function");
+        if (!Ref || !ECD || !FD) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Ref->getExprLoc());
+        if (!appliesCodegenBuildEmissionTargetKindHeuristic(Path, FD)) return;
+        if (!enumIsBuildEmissionTargetKind(ECD->getQualifiedNameAsString())) return;
+
+        diag(Ref->getExprLoc(),
+             "codegen build emission must not classify target kinds directly; use build-model build emission kind queries");
+    }
+};
+
+static bool appliesCodegenBuildEmissionMetadataTargetKindQuery(llvm::StringRef Path,
+                                                               const FunctionDecl *FD) {
+    if (!FD) return false;
+    if (contains(Path, "src_v2/codegen/")) {
+        return FD->getName().contains("reject_unsupported_precompile_headers") ||
+               FD->getName().contains("collect_helper_requirements") ||
+               FD->getName().contains("emit_build_target");
+    }
+    if (!isFixturePath(Path)) return false;
+    return FD->getName().contains("codegen_build_emission_metadata_target_kind_query");
+}
+
+class CodegenBuildEmissionMetadataTargetKindQueryCheck : public ClangTidyCheck {
+public:
+    CodegenBuildEmissionMetadataTargetKindQueryCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(callExpr(callee(functionDecl(hasAnyName(
+                                           "bm_target_kind_is_artifact_target",
+                                           "bm_target_kind_requires_position_independent_code"))),
+                                    hasAncestor(functionDecl().bind("build-emission-metadata-function")))
+                               .bind("build-emission-metadata-call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("build-emission-metadata-call");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("build-emission-metadata-function");
+        if (!Call || !FD) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
+        if (!appliesCodegenBuildEmissionMetadataTargetKindQuery(Path, FD)) return;
+
+        diag(Call->getExprLoc(),
+             "codegen build emission must not use target-kind capability queries directly; use build-model build emission metadata");
+    }
+};
+
+static bool appliesCodegenInstallArtifactTargetKindHeuristic(llvm::StringRef Path,
+                                                             const FunctionDecl *FD) {
+    if (!FD) return false;
+    if (contains(Path, "src_v2/codegen/")) {
+        return FD->getName().contains("install_rule_target_component") ||
+               FD->getName().contains("install_rule_target_destination_for_kind");
+    }
+    if (!isFixturePath(Path)) return false;
+    return FD->getName().contains("codegen_install_artifact_target_kind_heuristic");
+}
+
+static bool enumIsInstallArtifactTargetKind(llvm::StringRef Name) {
+    return Name.ends_with("BM_TARGET_EXECUTABLE") ||
+           Name.ends_with("BM_TARGET_STATIC_LIBRARY") ||
+           Name.ends_with("BM_TARGET_SHARED_LIBRARY") ||
+           Name.ends_with("BM_TARGET_MODULE_LIBRARY");
+}
+
+class CodegenInstallArtifactTargetKindHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenInstallArtifactTargetKindHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(declRefExpr(to(enumConstantDecl().bind("install-artifact-target-kind-constant")),
+                                       hasAncestor(functionDecl().bind("install-artifact-target-kind-function")))
+                               .bind("install-artifact-target-kind-ref"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Ref = Result.Nodes.getNodeAs<DeclRefExpr>("install-artifact-target-kind-ref");
+        const auto *ECD = Result.Nodes.getNodeAs<EnumConstantDecl>("install-artifact-target-kind-constant");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("install-artifact-target-kind-function");
+        if (!Ref || !ECD || !FD) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Ref->getExprLoc());
+        if (!appliesCodegenInstallArtifactTargetKindHeuristic(Path, FD)) return;
+        if (!enumIsInstallArtifactTargetKind(ECD->getQualifiedNameAsString())) return;
+
+        diag(Ref->getExprLoc(),
+             "codegen install artifact routing must not classify target kinds directly; use build-model install artifact kind queries");
+    }
+};
+
+static bool appliesCodegenInstallExportMetadataTargetKindHeuristic(llvm::StringRef Path,
+                                                                   const FunctionDecl *FD) {
+    if (!FD) return false;
+    if (contains(Path, "src_v2/codegen/")) return FD->getName().contains("export_emit_target_properties");
+    if (!isFixturePath(Path)) return false;
+    return FD->getName().contains("codegen_install_export_metadata_target_kind_heuristic");
+}
+
+static bool enumIsInstallExportMetadataTargetKind(llvm::StringRef Name) {
+    return Name.ends_with("BM_TARGET_INTERFACE_LIBRARY") ||
+           Name.ends_with("BM_TARGET_STATIC_LIBRARY") ||
+           Name.ends_with("BM_TARGET_SHARED_LIBRARY") ||
+           Name.ends_with("BM_TARGET_MODULE_LIBRARY");
+}
+
+class CodegenInstallExportMetadataTargetKindHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenInstallExportMetadataTargetKindHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(declRefExpr(to(enumConstantDecl().bind("install-export-metadata-target-kind-constant")),
+                                       hasAncestor(functionDecl().bind("install-export-metadata-target-kind-function")))
+                               .bind("install-export-metadata-target-kind-ref"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Ref = Result.Nodes.getNodeAs<DeclRefExpr>("install-export-metadata-target-kind-ref");
+        const auto *ECD = Result.Nodes.getNodeAs<EnumConstantDecl>("install-export-metadata-target-kind-constant");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("install-export-metadata-target-kind-function");
+        if (!Ref || !ECD || !FD) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Ref->getExprLoc());
+        if (!appliesCodegenInstallExportMetadataTargetKindHeuristic(Path, FD)) return;
+        if (!enumIsInstallExportMetadataTargetKind(ECD->getQualifiedNameAsString())) return;
+
+        diag(Ref->getExprLoc(),
+             "codegen install export metadata must not classify target kinds directly; use build-model install export metadata queries");
+    }
+};
+
+static bool appliesCodegenCMakeImportedDeclarationTargetKindHeuristic(llvm::StringRef Path,
+                                                                      const FunctionDecl *FD) {
+    if (!FD) return false;
+    if (contains(Path, "src_v2/codegen/")) {
+        return FD->getName().contains("emit_cmake_imported_target_declaration");
+    }
+    if (!isFixturePath(Path)) return false;
+    return FD->getName().contains("codegen_cmake_imported_declaration_target_kind_heuristic");
+}
+
+static bool enumIsCMakeImportedDeclarationTargetKind(llvm::StringRef Name) {
+    return Name.ends_with("BM_TARGET_EXECUTABLE") ||
+           Name.ends_with("BM_TARGET_STATIC_LIBRARY") ||
+           Name.ends_with("BM_TARGET_SHARED_LIBRARY") ||
+           Name.ends_with("BM_TARGET_MODULE_LIBRARY") ||
+           Name.ends_with("BM_TARGET_INTERFACE_LIBRARY");
+}
+
+class CodegenCMakeImportedDeclarationTargetKindHeuristicCheck : public ClangTidyCheck {
+public:
+    CodegenCMakeImportedDeclarationTargetKindHeuristicCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(declRefExpr(to(enumConstantDecl().bind("cmake-import-target-kind-constant")),
+                                       hasAncestor(functionDecl().bind("cmake-import-target-kind-function")))
+                               .bind("cmake-import-target-kind-ref"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Ref = Result.Nodes.getNodeAs<DeclRefExpr>("cmake-import-target-kind-ref");
+        const auto *ECD = Result.Nodes.getNodeAs<EnumConstantDecl>("cmake-import-target-kind-constant");
+        const auto *FD = Result.Nodes.getNodeAs<FunctionDecl>("cmake-import-target-kind-function");
+        if (!Ref || !ECD || !FD) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Ref->getExprLoc());
+        if (!appliesCodegenCMakeImportedDeclarationTargetKindHeuristic(Path, FD)) return;
+        if (!enumIsCMakeImportedDeclarationTargetKind(ECD->getQualifiedNameAsString())) return;
+
+        diag(Ref->getExprLoc(),
+             "codegen CMake imported target declarations must not classify target kinds directly; use build-model imported declaration queries");
+    }
+};
+
 static bool literalIsLanguageExtensionsRawProperty(llvm::StringRef Value) {
     return Value == "C_EXTENSIONS" || Value == "CXX_EXTENSIONS";
 }
@@ -2565,6 +2869,20 @@ public:
             "nobify-codegen-install-target-kind-heuristic");
         Factories.registerCheck<CodegenExportArtifactTargetHeuristicCheck>(
             "nobify-codegen-export-artifact-target-heuristic");
+        Factories.registerCheck<CodegenPrecompileHeaderTargetKindHeuristicCheck>(
+            "nobify-codegen-precompile-header-target-kind-heuristic");
+        Factories.registerCheck<CodegenLinkInputTargetKindHeuristicCheck>(
+            "nobify-codegen-link-input-target-kind-heuristic");
+        Factories.registerCheck<CodegenBuildEmissionTargetKindHeuristicCheck>(
+            "nobify-codegen-build-emission-target-kind-heuristic");
+        Factories.registerCheck<CodegenBuildEmissionMetadataTargetKindQueryCheck>(
+            "nobify-codegen-build-emission-metadata-target-kind-query");
+        Factories.registerCheck<CodegenInstallArtifactTargetKindHeuristicCheck>(
+            "nobify-codegen-install-artifact-target-kind-heuristic");
+        Factories.registerCheck<CodegenInstallExportMetadataTargetKindHeuristicCheck>(
+            "nobify-codegen-install-export-metadata-target-kind-heuristic");
+        Factories.registerCheck<CodegenCMakeImportedDeclarationTargetKindHeuristicCheck>(
+            "nobify-codegen-cmake-imported-declaration-target-kind-heuristic");
         Factories.registerCheck<CodegenLanguageExtensionsRawPropertyCheck>(
             "nobify-codegen-language-extensions-raw-property");
         Factories.registerCheck<CodegenPublicHeaderRawPropertyCheck>(
