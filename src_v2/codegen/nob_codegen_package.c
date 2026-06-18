@@ -262,6 +262,19 @@ static bool cg_emit_package_plan_tables(CG_Context *ctx, Nob_String_Builder *out
         "    const char **components;\n"
         "    size_t component_count;\n"
         "} Nob_Package_Archive_Unit;\n\n"
+        "typedef enum {\n"
+        "    NOB_PACKAGE_GENERATOR_TGZ = 0,\n"
+        "    NOB_PACKAGE_GENERATOR_TXZ,\n"
+        "    NOB_PACKAGE_GENERATOR_ZIP,\n"
+        "    NOB_PACKAGE_GENERATOR_UNSUPPORTED,\n"
+        "} Nob_Package_Generator_Kind;\n\n"
+        "typedef struct {\n"
+        "    Nob_Package_Generator_Kind kind;\n"
+        "    const char *name;\n"
+        "    const char *default_extension;\n"
+        "    const char *config_file_name;\n"
+        "    bool supported;\n"
+        "} Nob_Package_Generator;\n\n"
         "typedef struct {\n"
         "    const char *package_name;\n"
         "    const char *package_version;\n"
@@ -275,7 +288,7 @@ static bool cg_emit_package_plan_tables(CG_Context *ctx, Nob_String_Builder *out
         "    const char *metadata_output_path;\n"
         "    bool include_toplevel_directory;\n"
         "    bool archive_component_install;\n"
-        "    const char **generators;\n"
+        "    const Nob_Package_Generator *generators;\n"
         "    size_t generator_count;\n"
         "    const Nob_Package_Archive_Unit *archive_units;\n"
         "    size_t archive_unit_count;\n"
@@ -293,14 +306,29 @@ static bool cg_emit_package_plan_tables(CG_Context *ctx, Nob_String_Builder *out
 
     for (size_t package_index = 0; package_index < bm_query_cpack_package_count(ctx->model); ++package_index) {
         BM_CPack_Package_Id id = (BM_CPack_Package_Id)package_index;
-        BM_String_Span generators = bm_query_cpack_package_generators(ctx->model, id);
         CG_Package_Archive_Unit *units = NULL;
-        nob_sb_append_cstr(out, "static const char *g_package_generators_");
+        nob_sb_append_cstr(out, "static const Nob_Package_Generator g_package_generators_");
         nob_sb_append_cstr(out, nob_temp_sprintf("%zu", package_index));
-        nob_sb_append_cstr(out, "[] = {");
-        for (size_t i = 0; i < generators.count; ++i) {
-            if (i > 0) nob_sb_append_cstr(out, ", ");
-            if (!cg_sb_append_c_string(out, generators.items[i])) return false;
+        nob_sb_append_cstr(out, "[] = {\n");
+        for (size_t i = 0; i < bm_query_cpack_package_generator_count(ctx->model, id); ++i) {
+            BM_CPack_Generator_View generator = bm_query_cpack_package_generator_view(ctx->model, id, i);
+            nob_sb_append_cstr(out, "    { .kind = ");
+            switch (generator.kind) {
+                case BM_CPACK_GENERATOR_TGZ: nob_sb_append_cstr(out, "NOB_PACKAGE_GENERATOR_TGZ"); break;
+                case BM_CPACK_GENERATOR_TXZ: nob_sb_append_cstr(out, "NOB_PACKAGE_GENERATOR_TXZ"); break;
+                case BM_CPACK_GENERATOR_ZIP: nob_sb_append_cstr(out, "NOB_PACKAGE_GENERATOR_ZIP"); break;
+                case BM_CPACK_GENERATOR_UNSUPPORTED:
+                default: nob_sb_append_cstr(out, "NOB_PACKAGE_GENERATOR_UNSUPPORTED"); break;
+            }
+            nob_sb_append_cstr(out, ", .name = ");
+            if (!cg_sb_append_c_string(out, generator.name)) return false;
+            nob_sb_append_cstr(out, ", .default_extension = ");
+            if (!cg_sb_append_c_string(out, generator.default_extension)) return false;
+            nob_sb_append_cstr(out, ", .config_file_name = ");
+            if (!cg_sb_append_c_string(out, generator.config_file_name)) return false;
+            nob_sb_append_cstr(out, ", .supported = ");
+            nob_sb_append_cstr(out, generator.supported ? "true" : "false");
+            nob_sb_append_cstr(out, " },\n");
         }
         nob_sb_append_cstr(out, "};\n");
         if (!cg_package_build_archive_units(ctx, id, &units)) return false;
@@ -345,7 +373,7 @@ static bool cg_emit_package_plan_tables(CG_Context *ctx, Nob_String_Builder *out
         String_View staging_root = {0};
         String_View payload_root = {0};
         String_View metadata_path = {0};
-        BM_String_Span generators = bm_query_cpack_package_generators(ctx->model, id);
+        size_t generator_count = bm_query_cpack_package_generator_count(ctx->model, id);
         String_View archive_file_name = bm_query_cpack_package_archive_file_name(ctx->model, id);
         if (archive_file_name.count == 0) archive_file_name = bm_query_cpack_package_file_name(ctx->model, id);
         if (!cg_package_output_dir(ctx, id, &output_dir) ||
@@ -393,7 +421,7 @@ static bool cg_emit_package_plan_tables(CG_Context *ctx, Nob_String_Builder *out
         nob_sb_append_cstr(out, ",\n        .generators = g_package_generators_");
         nob_sb_append_cstr(out, nob_temp_sprintf("%zu", package_index));
         nob_sb_append_cstr(out, ",\n        .generator_count = ");
-        nob_sb_append_cstr(out, nob_temp_sprintf("%zu", generators.count));
+        nob_sb_append_cstr(out, nob_temp_sprintf("%zu", generator_count));
         nob_sb_append_cstr(out, ",\n        .archive_units = ");
         if (arena_arr_len(units) > 0) {
             nob_sb_append_cstr(out, "g_package_archive_units_");
@@ -442,22 +470,12 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "    if (!*b) return 1;\n"
         "    return strcmp(*a, *b);\n"
         "}\n\n"
-        "static const char *package_generator_default_extension(const char *generator) {\n"
-        "    if (!generator) return \"\";\n"
-        "    if (strcmp(generator, \"TGZ\") == 0) return \".tar.gz\";\n"
-        "    if (strcmp(generator, \"TXZ\") == 0) return \".tar.xz\";\n"
-        "    if (strcmp(generator, \"ZIP\") == 0) return \".zip\";\n"
-        "    return \"\";\n"
-        "}\n\n"
-        "static const char *package_generator_extension(const Nob_Package_Plan *plan, const char *generator) {\n"
+        "static const char *package_generator_extension(const Nob_Package_Plan *plan, const Nob_Package_Generator *generator) {\n"
         "    if (plan && plan->archive_file_extension && plan->archive_file_extension[0] != '\\0') {\n"
         "        if (plan->archive_file_extension[0] == '.') return plan->archive_file_extension;\n"
         "        return nob_temp_sprintf(\".%s\", plan->archive_file_extension);\n"
         "    }\n"
-        "    return package_generator_default_extension(generator);\n"
-        "}\n\n"
-        "static bool package_generator_supported(const char *generator) {\n"
-        "    return generator && (strcmp(generator, \"TGZ\") == 0 || strcmp(generator, \"TXZ\") == 0 || strcmp(generator, \"ZIP\") == 0);\n"
+        "    return generator && generator->default_extension ? generator->default_extension : \"\";\n"
         "}\n\n"
         "static const char *package_join_path(const char *lhs, const char *rhs) {\n"
         "    if (!lhs || lhs[0] == '\\0') return rhs;\n"
@@ -479,10 +497,10 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "    if (package_path_is_absolute(path)) return path;\n"
         "    return package_join_path(nob_get_current_dir_temp(), path);\n"
         "}\n\n"
-        "static const char *package_make_archive_name(const Nob_Package_Request *request, const char *generator) {\n"
+        "static const char *package_make_archive_name(const Nob_Package_Request *request, const Nob_Package_Generator *generator) {\n"
         "    return nob_temp_sprintf(\"%s%s\", request->archive_file_name, package_generator_extension(request->plan, generator));\n"
         "}\n\n"
-        "static const char *package_make_archive_path(const Nob_Package_Request *request, const char *generator) {\n"
+        "static const char *package_make_archive_path(const Nob_Package_Request *request, const Nob_Package_Generator *generator) {\n"
         "    return package_join_path(package_make_absolute_path(request->effective_output_dir),\n"
         "                             package_make_archive_name(request, generator));\n"
         "}\n\n"
@@ -586,26 +604,26 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "    return \"Linux\";\n"
         "#endif\n"
         "}\n\n"
-        "static const char *package_cpack_generator_root(const Nob_Package_Request *request, const char *generator) {\n"
+        "static const char *package_cpack_generator_root(const Nob_Package_Request *request, const Nob_Package_Generator *generator) {\n"
         "    const char *output_dir = NULL;\n"
-        "    if (!request || !generator) return NULL;\n"
+        "    if (!request || !generator || !generator->name) return NULL;\n"
         "    output_dir = package_make_absolute_path(request->effective_output_dir);\n"
         "    return package_join_path(package_join_path(package_join_path(output_dir, \"_CPack_Packages\"),\n"
         "                                               package_cpack_platform()),\n"
-        "                            generator);\n"
+        "                            generator->name);\n"
         "}\n\n"
-        "static const char *package_cpack_payload_root(const Nob_Package_Request *request, const char *generator) {\n"
+        "static const char *package_cpack_payload_root(const Nob_Package_Request *request, const Nob_Package_Generator *generator) {\n"
         "    const char *generator_root = package_cpack_generator_root(request, generator);\n"
         "    if (!request || !request->plan || !generator_root) return NULL;\n"
         "    return package_join_path(generator_root, request->plan->package_file_name);\n"
         "}\n\n"
-        "static const char *package_cpack_archive_path(const Nob_Package_Request *request, const char *generator) {\n"
+        "static const char *package_cpack_archive_path(const Nob_Package_Request *request, const Nob_Package_Generator *generator) {\n"
         "    const char *generator_root = package_cpack_generator_root(request, generator);\n"
         "    if (!generator_root) return NULL;\n"
         "    return package_join_path(generator_root, package_make_archive_name(request, generator));\n"
         "}\n\n"
         "static bool __attribute__((unused)) package_sync_cpack_tree(const Nob_Package_Request *request,\n"
-        "                                    const char *generator,\n"
+        "                                    const Nob_Package_Generator *generator,\n"
         "                                    const char *archive_path) {\n"
         "    const char *generator_root = NULL;\n"
         "    const char *payload_root = NULL;\n"
@@ -624,7 +642,7 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "    return true;\n"
         "}\n\n"
         "static bool package_metadata_append(const Nob_Package_Request *request,\n"
-        "                                    const char *generator,\n"
+        "                                    const Nob_Package_Generator *generator,\n"
         "                                    const char *archive_path) {\n"
         "    FILE *fp = NULL;\n"
         "    struct stat st = {0};\n"
@@ -642,7 +660,7 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "    }\n"
         "    fprintf(fp,\n"
         "            \"generator=%s\\nfile=%s\\nsize=%lld\\npackage=%s\\nversion=%s\\ninclude_toplevel=%d\\n\\n\",\n"
-        "            generator,\n"
+        "            generator->name ? generator->name : \"\",\n"
         "            archive_path,\n"
         "            (long long)st.st_size,\n"
         "            request->plan->package_name ? request->plan->package_name : \"\",\n"
@@ -690,7 +708,7 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "    snprintf(patch, 32, \"%.*s\", (int)lengths[2], segments[2]);\n"
         "}\n\n"
         "static bool package_write_cpack_config(const Nob_Package_Request *request,\n"
-        "                                       const char *generator,\n"
+        "                                       const Nob_Package_Generator *generator,\n"
         "                                       const char *config_path) {\n"
         "    FILE *fp = NULL;\n"
         "    char version_major[32] = {0};\n"
@@ -700,7 +718,7 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "    const char *package_version = NULL;\n"
         "    const char *output_dir = NULL;\n"
         "    char *summary = NULL;\n"
-        "    if (!request || !request->plan || !generator || !config_path) return false;\n"
+        "    if (!request || !request->plan || !generator || !generator->name || !config_path) return false;\n"
         "    if (!ensure_parent_dir(config_path)) return false;\n"
         "    fp = fopen(config_path, \"wb\");\n"
         "    if (!fp) {\n"
@@ -721,7 +739,7 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_VERSION_MINOR\", version_minor) ||\n"
         "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_VERSION_PATCH\", version_patch) ||\n"
         "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_FILE_NAME\", request->archive_file_name ? request->archive_file_name : package_name) ||\n"
-        "        !package_write_cmake_set(fp, \"CPACK_GENERATOR\", generator) ||\n"
+        "        !package_write_cmake_set(fp, \"CPACK_GENERATOR\", generator->name) ||\n"
         "        !package_write_cmake_set(fp, \"CPACK_PACKAGE_DIRECTORY\", output_dir) ||\n"
         "        !package_write_cmake_set(fp, \"CPACK_SYSTEM_NAME\", package_cpack_platform()) ||\n"
         "        !package_write_cmake_set(fp, \"CPACK_TOPLEVEL_TAG\", package_cpack_platform())) {\n"
@@ -1117,16 +1135,17 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
     }
 
     nob_sb_append_cstr(out,
-        "static bool package_generate_archive(const Nob_Package_Request *request, const char *generator) {\n"
+        "static bool package_generate_archive(const Nob_Package_Request *request, const Nob_Package_Generator *generator) {\n"
         "    const char *archive_path = NULL;\n"
         "    if (!request || !request->plan || !generator) return false;\n"
+        "    if (!generator->supported || !generator->config_file_name) return false;\n"
         "    archive_path = package_make_archive_path(request, generator);\n"
         "    if (!ensure_dir(request->effective_output_dir)) return false;\n");
 
     if (has_tgz) {
         nob_sb_append_cstr(out,
-            "    if (strcmp(generator, \"TGZ\") == 0) {\n"
-            "        const char *config_path = package_join_path(request->plan->plan_root, \"CPackTGZConfig.cmake\");\n"
+            "    if (generator->kind == NOB_PACKAGE_GENERATOR_TGZ) {\n"
+            "        const char *config_path = package_join_path(request->plan->plan_root, generator->config_file_name);\n"
             "        const char *generator_root = package_cpack_generator_root(request, generator);\n"
             "        if (!remove_path_recursive(archive_path) || !remove_path_recursive(generator_root) || !remove_path_recursive(config_path)) return false;\n"
             "        if (!package_write_cpack_config(request, generator, config_path) || !package_run_cpack_config(config_path)) return false;\n"
@@ -1135,8 +1154,8 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
     }
     if (has_txz) {
         nob_sb_append_cstr(out,
-            "    if (strcmp(generator, \"TXZ\") == 0) {\n"
-            "        const char *config_path = package_join_path(request->plan->plan_root, \"CPackTXZConfig.cmake\");\n"
+            "    if (generator->kind == NOB_PACKAGE_GENERATOR_TXZ) {\n"
+            "        const char *config_path = package_join_path(request->plan->plan_root, generator->config_file_name);\n"
             "        const char *generator_root = package_cpack_generator_root(request, generator);\n"
             "        if (!remove_path_recursive(archive_path) || !remove_path_recursive(generator_root) || !remove_path_recursive(config_path)) return false;\n"
             "        if (!package_write_cpack_config(request, generator, config_path) || !package_run_cpack_config(config_path)) return false;\n"
@@ -1145,8 +1164,8 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
     }
     if (has_zip) {
         nob_sb_append_cstr(out,
-            "    if (strcmp(generator, \"ZIP\") == 0) {\n"
-            "        const char *config_path = package_join_path(request->plan->plan_root, \"CPackZIPConfig.cmake\");\n"
+            "    if (generator->kind == NOB_PACKAGE_GENERATOR_ZIP) {\n"
+            "        const char *config_path = package_join_path(request->plan->plan_root, generator->config_file_name);\n"
             "        const char *generator_root = package_cpack_generator_root(request, generator);\n"
             "        if (!remove_path_recursive(archive_path) || !remove_path_recursive(generator_root) || !remove_path_recursive(config_path)) return false;\n"
             "        if (!package_write_cpack_config(request, generator, config_path) || !package_run_cpack_config(config_path)) return false;\n"
@@ -1154,7 +1173,7 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
             "    }\n");
     }
     nob_sb_append_cstr(out,
-        "    nob_log(NOB_ERROR, \"package: unsupported generator '%s'\", generator);\n"
+        "    nob_log(NOB_ERROR, \"package: unsupported generator '%s'\", generator->name ? generator->name : \"\");\n"
         "    return false;\n"
         "}\n\n"
         "static bool package_run_plan(const Nob_Package_Plan *plan,\n"
@@ -1166,8 +1185,9 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "    if (!package_request_init(plan, selected_generator, output_dir_override, &request)) return false;\n"
         "    if (!remove_path_recursive(request.metadata_output_path)) return false;\n"
         "    for (size_t i = 0; i < plan->generator_count; ++i) {\n"
-        "        const char *generator = plan->generators[i];\n"
-        "        if (selected_generator && selected_generator[0] != '\\0' && strcmp(selected_generator, generator) != 0) {\n"
+        "        const Nob_Package_Generator *generator = &plan->generators[i];\n"
+        "        if (selected_generator && selected_generator[0] != '\\0' &&\n"
+        "            (!generator->name || strcmp(selected_generator, generator->name) != 0)) {\n"
         "            continue;\n"
         "        }\n"
         "        if (plan->archive_component_install) {\n"
@@ -1188,10 +1208,6 @@ bool cg_emit_package_function(CG_Context *ctx, Nob_String_Builder *out) {
         "}\n\n"
         "static bool package_all(const char *selected_generator, const char *output_dir_override) {\n"
         "    bool executed = false;\n"
-        "    if (selected_generator && selected_generator[0] != '\\0' && !package_generator_supported(selected_generator)) {\n"
-        "        nob_log(NOB_ERROR, \"package: unsupported generator '%s'\", selected_generator);\n"
-        "        return false;\n"
-        "    }\n"
         "    if (g_package_plan_count == 0) return true;\n"
         "    for (size_t i = 0; i < g_package_plan_count; ++i) {\n"
         "        if (!package_run_plan(&g_package_plans[i], selected_generator, output_dir_override, &executed)) return false;\n"

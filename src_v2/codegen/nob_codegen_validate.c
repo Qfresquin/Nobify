@@ -63,28 +63,27 @@ static const char *cg_replay_opcode_name(BM_Replay_Opcode opcode) {
 
 static bool cg_validate_install_rule(CG_Context *ctx, BM_Install_Rule_Id id) {
     BM_Install_Rule_Kind kind = bm_query_install_rule_kind(ctx->model, id);
-    String_View item = bm_query_install_rule_item_raw(ctx->model, id);
-    BM_Install_Rule_Item_Kind item_kind = bm_query_install_rule_item_kind(ctx->model, id);
+    BM_Install_Rule_Item_View item = bm_query_install_rule_item_view(ctx->model, id);
     if (!ctx) return false;
 
     if (kind == BM_INSTALL_RULE_FILE || kind == BM_INSTALL_RULE_PROGRAM) {
-        if (item_kind == BM_INSTALL_RULE_ITEM_SCRIPT ||
-            item_kind == BM_INSTALL_RULE_ITEM_CODE ||
-            item_kind == BM_INSTALL_RULE_ITEM_EXPORT_ANDROID_MK) {
+        if (item.kind == BM_INSTALL_RULE_ITEM_SCRIPT ||
+            item.kind == BM_INSTALL_RULE_ITEM_CODE ||
+            item.kind == BM_INSTALL_RULE_ITEM_EXPORT_ANDROID_MK) {
             nob_log(NOB_ERROR,
                     "codegen: install pseudo-item is not supported in the install backend: %.*s",
-                    (int)item.count,
-                    item.data ? item.data : "");
+                    (int)item.raw.count,
+                    item.raw.data ? item.raw.data : "");
             return false;
         }
     }
     if (kind == BM_INSTALL_RULE_TARGET) {
-        BM_Target_Id target_id = bm_query_install_rule_target(ctx->model, id);
-        BM_Target_Kind target_kind = bm_query_target_kind(ctx->model, target_id);
-        if (!bm_target_kind_is_installable_target(target_kind)) {
+        BM_Install_Rule_Target_Validation validation =
+            bm_query_install_rule_target_validation(ctx->model, id);
+        if (validation.kind != BM_INSTALL_RULE_TARGET_VALIDATION_SUPPORTED) {
             nob_log(NOB_ERROR,
                     "codegen: install(TARGETS) does not support target kind '%d' yet",
-                    (int)target_kind);
+                    (int)validation.target_kind);
             return false;
         }
     }
@@ -155,7 +154,7 @@ static bool cg_validate_package_model(CG_Context *ctx) {
         String_View grouping = bm_query_cpack_package_components_grouping(ctx->model, id);
         BM_CPack_Components_Grouping grouping_kind =
             bm_query_cpack_package_components_grouping_kind(ctx->model, id);
-        BM_String_Span generators = bm_query_cpack_package_generators(ctx->model, id);
+        size_t generator_count = bm_query_cpack_package_generator_count(ctx->model, id);
 
         if (package_name.count == 0 || file_name.count == 0 || output_dir.count == 0) {
             nob_log(NOB_ERROR,
@@ -179,7 +178,7 @@ static bool cg_validate_package_model(CG_Context *ctx) {
             return false;
         }
 
-        if (generators.count == 0) {
+        if (generator_count == 0) {
             nob_log(NOB_ERROR,
                     "codegen: CPack package plan '%.*s' has no configured generators",
                     (int)package_name.count,
@@ -187,8 +186,9 @@ static bool cg_validate_package_model(CG_Context *ctx) {
             return false;
         }
 
-        for (size_t i = 0; i < generators.count; ++i) {
-            switch (bm_query_cpack_package_generator_kind(ctx->model, id, i)) {
+        for (size_t i = 0; i < generator_count; ++i) {
+            BM_CPack_Generator_View generator = bm_query_cpack_package_generator_view(ctx->model, id, i);
+            switch (generator.kind) {
                 case BM_CPACK_GENERATOR_TGZ:
                 case BM_CPACK_GENERATOR_TXZ:
                 case BM_CPACK_GENERATOR_ZIP:
@@ -198,8 +198,8 @@ static bool cg_validate_package_model(CG_Context *ctx) {
                 default:
                     nob_log(NOB_ERROR,
                             "codegen: unsupported package generator '%.*s' (supported: TGZ, TXZ, ZIP)",
-                            (int)generators.items[i].count,
-                            generators.items[i].data ? generators.items[i].data : "");
+                            (int)generator.name.count,
+                            generator.name.data ? generator.name.data : "");
                     return false;
             }
         }

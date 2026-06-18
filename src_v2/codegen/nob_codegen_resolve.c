@@ -141,7 +141,7 @@ bool cg_resolve_target_ref(CG_Context *ctx,
     out->target_id = target_id;
     out->resolved_target_id = info->resolved_id;
     out->kind = info->imported ? CG_RESOLVED_TARGET_IMPORTED : CG_RESOLVED_TARGET_LOCAL;
-    out->link_input_kind = bm_target_kind_link_input_kind(info->kind, info->imported);
+    out->link_input_kind = bm_query_target_link_input_kind(ctx->model, target_id);
     out->imported = info->imported;
     out->usage_only = out->link_input_kind == BM_TARGET_LINK_INPUT_USAGE_ONLY;
     out->linkable_artifact = false;

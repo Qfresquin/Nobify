@@ -1938,6 +1938,202 @@ public:
     }
 };
 
+static bool stringRefEqualsAny(llvm::StringRef Value,
+                               const char *const *Needles,
+                               size_t Count) {
+    for (size_t I = 0; I < Count; ++I) {
+        if (Needles[I] && Value == Needles[I]) return true;
+    }
+    return false;
+}
+
+static bool stringRefContainsAny(llvm::StringRef Value,
+                                 const char *const *Needles,
+                                 size_t Count) {
+    for (size_t I = 0; I < Count; ++I) {
+        if (Needles[I] && Value.contains(Needles[I])) return true;
+    }
+    return false;
+}
+
+typedef struct {
+    const char *const *production_function_needles;
+    size_t production_function_count;
+    const char *fixture_function_needle;
+    const char *const *forbidden_callees;
+    size_t forbidden_callee_count;
+    const char *message;
+} Codegen_Target_Semantic_Contract_Rule;
+
+static const char *codegenTargetSemanticContractMessage(llvm::StringRef Path,
+                                                        const FunctionDecl *FD,
+                                                        llvm::StringRef CalleeName) {
+    static const char *const InstallValidationFns[] = {"validate_install_rule"};
+    static const char *const InstallValidationCalls[] = {
+        "bm_query_target_kind",
+        "bm_target_kind_is_installable_target",
+    };
+    static const char *const LinkInputFns[] = {
+        "resolve_link_item_ref",
+        "resolve_target_ref",
+    };
+    static const char *const LinkInputCalls[] = {"bm_target_kind_link_input_kind"};
+    static const char *const InstallArtifactFns[] = {
+        "resolve_install_rule_target_destination_for_kind",
+        "emit_install_rules",
+    };
+    static const char *const InstallArtifactCalls[] = {"bm_target_install_artifact_kind"};
+    static const char *const InstallExportFns[] = {"export_emit_target_properties"};
+    static const char *const InstallExportCalls[] = {"bm_target_install_export_metadata"};
+    static const char *const CMakeImportFns[] = {"emit_cmake_import_file"};
+    static const char *const CMakeImportCalls[] = {
+        "bm_query_target_kind",
+        "bm_target_cmake_imported_declaration",
+    };
+    static const char *const BuildEmissionFns[] = {"init_targets"};
+    static const char *const BuildEmissionCalls[] = {
+        "bm_query_target_kind",
+        "bm_query_target_is_imported",
+        "bm_query_target_is_alias",
+        "bm_target_build_emission_kind",
+        "bm_target_build_emission_metadata",
+    };
+    static const Codegen_Target_Semantic_Contract_Rule Rules[] = {
+        {
+            InstallValidationFns,
+            sizeof(InstallValidationFns) / sizeof(InstallValidationFns[0]),
+            "codegen_install_target_validation_target_kind_query",
+            InstallValidationCalls,
+            sizeof(InstallValidationCalls) / sizeof(InstallValidationCalls[0]),
+            "codegen install validation must not compose target-kind queries; use build-model install rule target validation",
+        },
+        {
+            LinkInputFns,
+            sizeof(LinkInputFns) / sizeof(LinkInputFns[0]),
+            "codegen_link_input_target_kind_query",
+            LinkInputCalls,
+            sizeof(LinkInputCalls) / sizeof(LinkInputCalls[0]),
+            "codegen link input resolution must not compose target kind and imported state; use build-model target link input queries",
+        },
+        {
+            InstallArtifactFns,
+            sizeof(InstallArtifactFns) / sizeof(InstallArtifactFns[0]),
+            "codegen_install_artifact_target_kind_query",
+            InstallArtifactCalls,
+            sizeof(InstallArtifactCalls) / sizeof(InstallArtifactCalls[0]),
+            "codegen install artifact routing must not compose target kind directly; use build-model target install artifact queries",
+        },
+        {
+            InstallExportFns,
+            sizeof(InstallExportFns) / sizeof(InstallExportFns[0]),
+            "codegen_install_export_metadata_target_kind_query",
+            InstallExportCalls,
+            sizeof(InstallExportCalls) / sizeof(InstallExportCalls[0]),
+            "codegen install export metadata must not compose target kind directly; use build-model target install export metadata queries",
+        },
+        {
+            CMakeImportFns,
+            sizeof(CMakeImportFns) / sizeof(CMakeImportFns[0]),
+            "codegen_cmake_imported_declaration_target_kind_query",
+            CMakeImportCalls,
+            sizeof(CMakeImportCalls) / sizeof(CMakeImportCalls[0]),
+            "codegen CMake imported target declarations must not compose target kind directly; use build-model target imported declaration queries",
+        },
+        {
+            BuildEmissionFns,
+            sizeof(BuildEmissionFns) / sizeof(BuildEmissionFns[0]),
+            "codegen_build_emission_target_kind_query",
+            BuildEmissionCalls,
+            sizeof(BuildEmissionCalls) / sizeof(BuildEmissionCalls[0]),
+            "codegen target initialization must not compose build emission from target kind/imported/alias state; use build-model target build emission queries",
+        },
+    };
+
+    if (!FD) return nullptr;
+    const bool ProductionCodegen = contains(Path, "src_v2/codegen/");
+    const bool Fixture = isFixturePath(Path);
+    if (!ProductionCodegen && !Fixture) return nullptr;
+
+    llvm::StringRef FunctionName = FD->getName();
+    for (const auto &Rule : Rules) {
+        if (!stringRefEqualsAny(CalleeName, Rule.forbidden_callees, Rule.forbidden_callee_count)) {
+            continue;
+        }
+        if (ProductionCodegen &&
+            stringRefContainsAny(FunctionName,
+                                 Rule.production_function_needles,
+                                 Rule.production_function_count)) {
+            return Rule.message;
+        }
+        if (Fixture && FunctionName.contains(Rule.fixture_function_needle)) {
+            return Rule.message;
+        }
+    }
+    return nullptr;
+}
+
+class CodegenTargetSemanticContractQueryCheck : public ClangTidyCheck {
+public:
+    CodegenTargetSemanticContractQueryCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        Finder->addMatcher(callExpr(callee(functionDecl(matchesName(semanticNameRegex(
+                                           "^(bm_query_target_kind|bm_query_target_is_imported|bm_query_target_is_alias|bm_target_kind_is_installable_target|bm_target_kind_link_input_kind|bm_target_build_emission_kind|bm_target_build_emission_metadata|bm_target_install_artifact_kind|bm_target_install_export_metadata|bm_target_cmake_imported_declaration)$")))),
+                                    hasAncestor(functionDecl().bind("codegen-target-semantic-contract-function")))
+                               .bind("codegen-target-semantic-contract-call"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Call = Result.Nodes.getNodeAs<CallExpr>("codegen-target-semantic-contract-call");
+        const auto *FD =
+            Result.Nodes.getNodeAs<FunctionDecl>("codegen-target-semantic-contract-function");
+        const FunctionDecl *Callee = Call ? Call->getDirectCallee() : nullptr;
+        if (!Call || !FD || !Callee) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Call->getExprLoc());
+        const char *Message = codegenTargetSemanticContractMessage(Path, FD, Callee->getName());
+        if (!Message) return;
+
+        diag(Call->getExprLoc(), Message);
+    }
+};
+
+static bool appliesCodegenTypedBuildModelPayloadQuery(llvm::StringRef Path,
+                                                      const FunctionDecl *FD) {
+    if (!FD) return false;
+    if (contains(Path, "src_v2/codegen/")) {
+        return FD->getName().contains("validate_install_rule") ||
+               FD->getName().contains("emit_install_function") ||
+               FD->getName().contains("emit_package") ||
+               FD->getName().contains("genex_target_property");
+    }
+    if (!isFixturePath(Path)) return false;
+    return FD->getName().contains("codegen_typed_build_model_payload_query");
+}
+
+class CodegenTypedBuildModelPayloadQueryCheck : public ClangTidyCheck {
+public:
+    CodegenTypedBuildModelPayloadQueryCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        registerForbiddenCallMatcher(
+            Finder,
+            this,
+            "^(bm_query_install_rule_item_raw|bm_query_install_rule_item_kind|bm_query_cpack_package_generators|bm_query_cpack_package_generator_kind|bm_query_target_property_value)$");
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        static const Semantic_Forbidden_Call_Rule Rule = {
+            appliesCodegenTypedBuildModelPayloadQuery,
+            "codegen must not consume raw build-model payloads for backend semantic decisions; use a typed build-model query view",
+        };
+        checkForbiddenCall(Result, *this, Rule);
+    }
+};
+
 static bool appliesCodegenExportArtifactTargetHeuristic(llvm::StringRef Path, const FunctionDecl *FD) {
     if (!FD) return false;
     if (contains(Path, "src_v2/codegen/")) return FD->getName().contains("export_has_non_interface_targets");
@@ -2867,6 +3063,10 @@ public:
             "nobify-codegen-target-kind-capability-heuristic");
         Factories.registerCheck<CodegenInstallTargetKindHeuristicCheck>(
             "nobify-codegen-install-target-kind-heuristic");
+        Factories.registerCheck<CodegenTargetSemanticContractQueryCheck>(
+            "nobify-codegen-target-semantic-contract-query");
+        Factories.registerCheck<CodegenTypedBuildModelPayloadQueryCheck>(
+            "nobify-codegen-typed-build-model-payload-query");
         Factories.registerCheck<CodegenExportArtifactTargetHeuristicCheck>(
             "nobify-codegen-export-artifact-target-heuristic");
         Factories.registerCheck<CodegenPrecompileHeaderTargetKindHeuristicCheck>(

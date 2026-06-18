@@ -43,6 +43,14 @@ typedef enum {
     BM_CPACK_GENERATOR_UNSUPPORTED,
 } BM_CPack_Generator_Kind;
 
+typedef struct {
+    BM_CPack_Generator_Kind kind;
+    String_View name;
+    String_View default_extension;
+    String_View config_file_name;
+    bool supported;
+} BM_CPack_Generator_View;
+
 typedef enum {
     BM_INSTALL_RULE_ITEM_PATH = 0,
     BM_INSTALL_RULE_ITEM_SCRIPT,
@@ -52,6 +60,11 @@ typedef enum {
     BM_INSTALL_RULE_ITEM_RUNTIME_DEPENDENCY_SET,
     BM_INSTALL_RULE_ITEM_TAGGED_UNKNOWN,
 } BM_Install_Rule_Item_Kind;
+
+typedef struct {
+    BM_Install_Rule_Item_Kind kind;
+    String_View raw;
+} BM_Install_Rule_Item_View;
 
 typedef enum {
     BM_TARGET_SOURCE_LANGUAGE_NONE = 0,
@@ -257,13 +270,24 @@ bool bm_target_kind_has_imported_linkable_artifact(BM_Target_Kind kind);
 bool bm_target_kind_requires_position_independent_code(BM_Target_Kind kind);
 bool bm_target_kind_is_installable_target(BM_Target_Kind kind);
 BM_Target_Link_Input_Kind bm_target_kind_link_input_kind(BM_Target_Kind kind, bool imported);
+BM_Target_Link_Input_Kind bm_query_target_link_input_kind(const Build_Model *model, BM_Target_Id id);
 BM_Target_Build_Emission_Kind bm_target_build_emission_kind(BM_Target_Kind kind, bool imported, bool alias);
 BM_Target_Build_Emission_Metadata bm_target_build_emission_metadata(BM_Target_Build_Emission_Kind kind);
+BM_Target_Build_Emission_View bm_query_target_build_emission_view(const Build_Model *model, BM_Target_Id id);
 BM_Install_Target_Artifact_Kind bm_target_install_artifact_kind(BM_Target_Kind kind,
                                                                 bool windows,
                                                                 bool linker_artifact);
+BM_Install_Target_Artifact_Kind bm_query_target_install_artifact_kind(const Build_Model *model,
+                                                                      BM_Target_Id id,
+                                                                      bool windows,
+                                                                      bool linker_artifact);
 BM_Install_Export_Target_Metadata bm_target_install_export_metadata(BM_Target_Kind kind, bool windows);
+BM_Install_Export_Target_Metadata bm_query_target_install_export_metadata(const Build_Model *model,
+                                                                          BM_Target_Id id,
+                                                                          bool windows);
 BM_CMake_Imported_Target_Declaration bm_target_cmake_imported_declaration(BM_Target_Kind kind);
+BM_CMake_Imported_Target_Declaration bm_query_target_cmake_imported_declaration(const Build_Model *model,
+                                                                                BM_Target_Id id);
 
 BM_String_Item_Span bm_query_global_include_directories_raw(const Build_Model *model);
 BM_String_Item_Span bm_query_global_system_include_directories_raw(const Build_Model *model);
@@ -444,6 +468,12 @@ bool bm_query_resolve_string_with_context(const Build_Model *model,
                                           const BM_Query_Eval_Context *ctx,
                                           Arena *scratch,
                                           String_View raw,
+                                          String_View *out);
+bool bm_query_genex_target_property_value(const Build_Model *model,
+                                          const BM_Query_Eval_Context *ctx,
+                                          Arena *scratch,
+                                          String_View target_name,
+                                          String_View property_name,
                                           String_View *out);
 
 bool bm_query_target_effective_include_directories_items(const Build_Model *model,
@@ -737,6 +767,7 @@ BM_Install_Rule_Kind bm_query_install_rule_kind(const Build_Model *model, BM_Ins
 BM_Directory_Id bm_query_install_rule_owner_directory(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_item_raw(const Build_Model *model, BM_Install_Rule_Id id);
 BM_Install_Rule_Item_Kind bm_query_install_rule_item_kind(const Build_Model *model, BM_Install_Rule_Id id);
+BM_Install_Rule_Item_View bm_query_install_rule_item_view(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_destination(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_rename(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_component(const Build_Model *model, BM_Install_Rule_Id id);
@@ -753,6 +784,8 @@ String_View bm_query_install_rule_runtime_destination(const Build_Model *model, 
 String_View bm_query_install_rule_includes_destination(const Build_Model *model, BM_Install_Rule_Id id);
 String_View bm_query_install_rule_public_header_destination(const Build_Model *model, BM_Install_Rule_Id id);
 BM_Target_Id bm_query_install_rule_target(const Build_Model *model, BM_Install_Rule_Id id);
+BM_Install_Rule_Target_Validation bm_query_install_rule_target_validation(const Build_Model *model,
+                                                                          BM_Install_Rule_Id id);
 BM_Install_Rule_Id bm_query_install_rule_for_export_target(const Build_Model *model,
                                                            BM_Export_Id export_id,
                                                            BM_Target_Id target_id);
@@ -835,7 +868,11 @@ BM_CPack_Components_Grouping bm_query_cpack_package_components_grouping_kind(con
                                                                              BM_CPack_Package_Id id);
 String_View bm_query_cpack_package_project_config_file(const Build_Model *model, BM_CPack_Package_Id id);
 BM_String_Span bm_query_cpack_package_generators(const Build_Model *model, BM_CPack_Package_Id id);
+size_t bm_query_cpack_package_generator_count(const Build_Model *model, BM_CPack_Package_Id id);
 BM_CPack_Generator_Kind bm_query_cpack_package_generator_kind(const Build_Model *model,
+                                                              BM_CPack_Package_Id id,
+                                                              size_t generator_index);
+BM_CPack_Generator_View bm_query_cpack_package_generator_view(const Build_Model *model,
                                                               BM_CPack_Package_Id id,
                                                               size_t generator_index);
 bool bm_query_cpack_package_has_generator_kind(const Build_Model *model,

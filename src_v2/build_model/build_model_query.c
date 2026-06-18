@@ -1301,6 +1301,23 @@ bool bm_query_resolve_string_with_context(const Build_Model *model,
     return true;
 }
 
+bool bm_query_genex_target_property_value(const Build_Model *model,
+                                          const BM_Query_Eval_Context *ctx,
+                                          Arena *scratch,
+                                          String_View target_name,
+                                          String_View property_name,
+                                          String_View *out) {
+    BM_Query_Eval_Context normalized = ctx ? *ctx : (BM_Query_Eval_Context){0};
+    BM_Query_Genex_Data data = {0};
+    if (out) *out = nob_sv_from_cstr("");
+    if (!model || !scratch || !out) return false;
+    data.model = model;
+    data.ctx = &normalized;
+    data.scratch = scratch;
+    *out = bm_query_genex_target_property_cb(&data, target_name, property_name);
+    return true;
+}
+
 #include "build_model_query_imported.c"
 #include "build_model_query_effective.c"
 
@@ -1674,6 +1691,12 @@ BM_Target_Link_Input_Kind bm_target_kind_link_input_kind(BM_Target_Kind kind, bo
     return BM_TARGET_LINK_INPUT_NOT_LINKABLE;
 }
 
+BM_Target_Link_Input_Kind bm_query_target_link_input_kind(const Build_Model *model, BM_Target_Id id) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    if (!target) return BM_TARGET_LINK_INPUT_NOT_LINKABLE;
+    return bm_target_kind_link_input_kind(target->kind, target->imported);
+}
+
 BM_Target_Build_Emission_Kind bm_target_build_emission_kind(BM_Target_Kind kind, bool imported, bool alias) {
     if (alias) return BM_TARGET_BUILD_EMISSION_NONE;
     if (imported || kind == BM_TARGET_INTERFACE_LIBRARY) return BM_TARGET_BUILD_EMISSION_ORDER_ONLY;
@@ -1702,6 +1725,18 @@ BM_Target_Build_Emission_Metadata bm_target_build_emission_metadata(BM_Target_Bu
     return metadata;
 }
 
+BM_Target_Build_Emission_View bm_query_target_build_emission_view(const Build_Model *model, BM_Target_Id id) {
+    BM_Target_Build_Emission_View view = {0};
+    const BM_Target_Record *target = bm_model_target(model, id);
+    if (!target) {
+        view.kind = BM_TARGET_BUILD_EMISSION_UNSUPPORTED;
+        return view;
+    }
+    view.kind = bm_target_build_emission_kind(target->kind, target->imported, target->alias);
+    view.metadata = bm_target_build_emission_metadata(view.kind);
+    return view;
+}
+
 BM_Install_Target_Artifact_Kind bm_target_install_artifact_kind(BM_Target_Kind kind,
                                                                 bool windows,
                                                                 bool linker_artifact) {
@@ -1715,6 +1750,15 @@ BM_Install_Target_Artifact_Kind bm_target_install_artifact_kind(BM_Target_Kind k
     return BM_INSTALL_TARGET_ARTIFACT_NONE;
 }
 
+BM_Install_Target_Artifact_Kind bm_query_target_install_artifact_kind(const Build_Model *model,
+                                                                      BM_Target_Id id,
+                                                                      bool windows,
+                                                                      bool linker_artifact) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    if (!target) return BM_INSTALL_TARGET_ARTIFACT_NONE;
+    return bm_target_install_artifact_kind(target->kind, windows, linker_artifact);
+}
+
 BM_Install_Export_Target_Metadata bm_target_install_export_metadata(BM_Target_Kind kind, bool windows) {
     BM_Install_Export_Target_Metadata metadata = {0};
     metadata.interface_only = kind == BM_TARGET_INTERFACE_LIBRARY;
@@ -1724,6 +1768,14 @@ BM_Install_Export_Target_Metadata bm_target_install_export_metadata(BM_Target_Ki
     metadata.emits_soname = kind == BM_TARGET_SHARED_LIBRARY && !windows;
     metadata.emits_no_soname = kind == BM_TARGET_MODULE_LIBRARY && !windows;
     return metadata;
+}
+
+BM_Install_Export_Target_Metadata bm_query_target_install_export_metadata(const Build_Model *model,
+                                                                          BM_Target_Id id,
+                                                                          bool windows) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    if (!target) return (BM_Install_Export_Target_Metadata){0};
+    return bm_target_install_export_metadata(target->kind, windows);
 }
 
 BM_CMake_Imported_Target_Declaration bm_target_cmake_imported_declaration(BM_Target_Kind kind) {
@@ -1755,6 +1807,13 @@ BM_CMake_Imported_Target_Declaration bm_target_cmake_imported_declaration(BM_Tar
     }
     declaration.kind = BM_CMAKE_IMPORTED_TARGET_DECL_UNSUPPORTED;
     return declaration;
+}
+
+BM_CMake_Imported_Target_Declaration bm_query_target_cmake_imported_declaration(const Build_Model *model,
+                                                                                BM_Target_Id id) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    if (!target) return (BM_CMake_Imported_Target_Declaration){0};
+    return bm_target_cmake_imported_declaration(target->kind);
 }
 
 BM_Test_Id bm_query_test_by_name(const Build_Model *model, String_View name) {
@@ -3464,6 +3523,18 @@ BM_Install_Rule_Item_Kind bm_query_install_rule_item_kind(const Build_Model *mod
     return rule ? bm_install_rule_item_kind_from_string(rule->item) : BM_INSTALL_RULE_ITEM_PATH;
 }
 
+BM_Install_Rule_Item_View bm_query_install_rule_item_view(const Build_Model *model, BM_Install_Rule_Id id) {
+    BM_Install_Rule_Item_View view = {0};
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    if (!rule) {
+        view.kind = BM_INSTALL_RULE_ITEM_PATH;
+        return view;
+    }
+    view.raw = rule->item;
+    view.kind = bm_install_rule_item_kind_from_string(rule->item);
+    return view;
+}
+
 String_View bm_query_install_rule_destination(const Build_Model *model, BM_Install_Rule_Id id) {
     const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
     return rule ? rule->destination : (String_View){0};
@@ -3542,6 +3613,26 @@ String_View bm_query_install_rule_public_header_destination(const Build_Model *m
 BM_Target_Id bm_query_install_rule_target(const Build_Model *model, BM_Install_Rule_Id id) {
     const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
     return rule ? rule->resolved_target_id : BM_TARGET_ID_INVALID;
+}
+
+BM_Install_Rule_Target_Validation bm_query_install_rule_target_validation(const Build_Model *model,
+                                                                          BM_Install_Rule_Id id) {
+    BM_Install_Rule_Target_Validation validation = {0};
+    const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
+    validation.kind = BM_INSTALL_RULE_TARGET_VALIDATION_NOT_TARGET_RULE;
+    validation.target_kind = BM_TARGET_UTILITY;
+
+    if (!rule || rule->kind != BM_INSTALL_RULE_TARGET) return validation;
+    if (!bm_target_id_is_valid(rule->resolved_target_id)) {
+        validation.kind = BM_INSTALL_RULE_TARGET_VALIDATION_MISSING_TARGET;
+        return validation;
+    }
+
+    validation.target_kind = bm_query_target_kind(model, rule->resolved_target_id);
+    validation.kind = bm_target_kind_is_installable_target(validation.target_kind)
+                          ? BM_INSTALL_RULE_TARGET_VALIDATION_SUPPORTED
+                          : BM_INSTALL_RULE_TARGET_VALIDATION_UNSUPPORTED_TARGET_KIND;
+    return validation;
 }
 
 BM_Install_Rule_Id bm_query_install_rule_for_export_target(const Build_Model *model,
@@ -3991,12 +4082,47 @@ BM_String_Span bm_query_cpack_package_generators(const Build_Model *model, BM_CP
     return record ? bm_string_span(record->generators) : (BM_String_Span){0};
 }
 
+size_t bm_query_cpack_package_generator_count(const Build_Model *model, BM_CPack_Package_Id id) {
+    const BM_CPack_Package_Record *record = bm_model_cpack_package(model, id);
+    return record ? arena_arr_len(record->generators) : 0;
+}
+
 BM_CPack_Generator_Kind bm_query_cpack_package_generator_kind(const Build_Model *model,
                                                               BM_CPack_Package_Id id,
                                                               size_t generator_index) {
     BM_String_Span generators = bm_query_cpack_package_generators(model, id);
     if (generator_index >= generators.count) return BM_CPACK_GENERATOR_UNSUPPORTED;
     return bm_cpack_generator_kind_from_string(generators.items[generator_index]);
+}
+
+BM_CPack_Generator_View bm_query_cpack_package_generator_view(const Build_Model *model,
+                                                              BM_CPack_Package_Id id,
+                                                              size_t generator_index) {
+    BM_CPack_Generator_View view = {0};
+    BM_String_Span generators = bm_query_cpack_package_generators(model, id);
+    if (generator_index < generators.count) view.name = generators.items[generator_index];
+    view.kind = bm_cpack_generator_kind_from_string(view.name);
+    switch (view.kind) {
+        case BM_CPACK_GENERATOR_TGZ:
+            view.default_extension = nob_sv_from_cstr(".tar.gz");
+            view.config_file_name = nob_sv_from_cstr("CPackTGZConfig.cmake");
+            view.supported = true;
+            break;
+        case BM_CPACK_GENERATOR_TXZ:
+            view.default_extension = nob_sv_from_cstr(".tar.xz");
+            view.config_file_name = nob_sv_from_cstr("CPackTXZConfig.cmake");
+            view.supported = true;
+            break;
+        case BM_CPACK_GENERATOR_ZIP:
+            view.default_extension = nob_sv_from_cstr(".zip");
+            view.config_file_name = nob_sv_from_cstr("CPackZIPConfig.cmake");
+            view.supported = true;
+            break;
+        case BM_CPACK_GENERATOR_UNSUPPORTED:
+        default:
+            break;
+    }
+    return view;
 }
 
 bool bm_query_cpack_package_has_generator_kind(const Build_Model *model,

@@ -38,7 +38,6 @@ typedef struct {
 typedef struct {
     BM_Target_Id id;
     BM_Target_Id resolved_id;
-    BM_Target_Kind kind;
     BM_Target_Build_Emission_Kind build_emission_kind;
     BM_Target_Build_Emission_Metadata build_emission_metadata;
     bool imported;

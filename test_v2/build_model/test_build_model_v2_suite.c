@@ -4429,7 +4429,11 @@ TEST(build_model_alias_and_unknown_target_identity_queries_are_canonical) {
     ASSERT(imported_unknown_id != BM_TARGET_ID_INVALID);
 
     ASSERT(bm_query_target_kind(model, local_real_id) == BM_TARGET_STATIC_LIBRARY);
+    ASSERT(bm_query_target_link_input_kind(model, local_real_id) == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT);
+    ASSERT(bm_query_target_cmake_imported_declaration(model, local_real_id).kind ==
+           BM_CMAKE_IMPORTED_TARGET_DECL_LIBRARY);
     ASSERT(bm_query_target_kind(model, local_alias_id) == BM_TARGET_STATIC_LIBRARY);
+    ASSERT(bm_query_target_link_input_kind(model, local_alias_id) == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT);
     ASSERT(bm_query_target_is_alias(model, local_alias_id));
     ASSERT(bm_query_target_alias_of(model, local_alias_id) == local_real_id);
     ASSERT(bm_query_target_is_alias_global(model, local_alias_id));
@@ -4437,20 +4441,29 @@ TEST(build_model_alias_and_unknown_target_identity_queries_are_canonical) {
 
     ASSERT(bm_query_target_is_imported(model, imported_local_id));
     ASSERT(!bm_query_target_is_imported_global(model, imported_local_id));
+    ASSERT(bm_query_target_link_input_kind(model, imported_local_id) == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT);
+    ASSERT(nob_sv_eq(bm_query_target_cmake_imported_declaration(model, imported_local_id).library_kind,
+                     nob_sv_from_cstr("STATIC")));
     ASSERT(bm_query_target_kind(model, imported_local_alias_id) == BM_TARGET_STATIC_LIBRARY);
+    ASSERT(bm_query_target_link_input_kind(model, imported_local_alias_id) == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT);
     ASSERT(bm_query_target_is_alias(model, imported_local_alias_id));
     ASSERT(bm_query_target_alias_of(model, imported_local_alias_id) == imported_local_id);
     ASSERT(!bm_query_target_is_alias_global(model, imported_local_alias_id));
 
     ASSERT(bm_query_target_is_imported(model, imported_global_id));
     ASSERT(bm_query_target_is_imported_global(model, imported_global_id));
+    ASSERT(bm_query_target_link_input_kind(model, imported_global_id) == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT);
     ASSERT(bm_query_target_kind(model, imported_global_alias_id) == BM_TARGET_STATIC_LIBRARY);
+    ASSERT(bm_query_target_link_input_kind(model, imported_global_alias_id) == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT);
     ASSERT(bm_query_target_is_alias(model, imported_global_alias_id));
     ASSERT(bm_query_target_alias_of(model, imported_global_alias_id) == imported_global_id);
     ASSERT(bm_query_target_is_alias_global(model, imported_global_alias_id));
 
     ASSERT(bm_query_target_is_imported(model, imported_unknown_id));
     ASSERT(bm_query_target_kind(model, imported_unknown_id) == BM_TARGET_UNKNOWN_LIBRARY);
+    ASSERT(bm_query_target_link_input_kind(model, imported_unknown_id) == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT);
+    ASSERT(bm_query_target_cmake_imported_declaration(model, imported_unknown_id).kind ==
+           BM_CMAKE_IMPORTED_TARGET_DECL_UNSUPPORTED);
 
     test_semantic_pipeline_fixture_destroy(&fixture);
     TEST_PASS();
@@ -6075,6 +6088,10 @@ TEST(build_model_install_queries_cover_supported_target_kinds_and_rule_families)
     ASSERT(nob_sv_eq(bm_query_install_rule_item_raw(model, (BM_Install_Rule_Id)0), nob_sv_from_cstr("app")));
     ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)0) == app_id);
     ASSERT(bm_query_target_kind(model, app_id) == BM_TARGET_EXECUTABLE);
+    ASSERT(bm_query_install_rule_target_validation(model, (BM_Install_Rule_Id)0).kind ==
+           BM_INSTALL_RULE_TARGET_VALIDATION_SUPPORTED);
+    ASSERT(bm_query_target_install_artifact_kind(model, app_id, false, false) ==
+           BM_INSTALL_TARGET_ARTIFACT_RUNTIME);
     ASSERT(nob_sv_eq(bm_query_install_rule_runtime_destination(model, (BM_Install_Rule_Id)0),
                      nob_sv_from_cstr("bin/apps")));
     ASSERT(nob_sv_eq(bm_query_install_rule_runtime_component(model, (BM_Install_Rule_Id)0),
@@ -6086,6 +6103,11 @@ TEST(build_model_install_queries_cover_supported_target_kinds_and_rule_families)
                      nob_sv_from_cstr("core_static")));
     ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)1) == core_static_id);
     ASSERT(bm_query_target_kind(model, core_static_id) == BM_TARGET_STATIC_LIBRARY);
+    ASSERT(bm_query_install_rule_target_validation(model, (BM_Install_Rule_Id)1).kind ==
+           BM_INSTALL_RULE_TARGET_VALIDATION_SUPPORTED);
+    ASSERT(bm_query_target_install_artifact_kind(model, core_static_id, false, false) ==
+           BM_INSTALL_TARGET_ARTIFACT_ARCHIVE);
+    ASSERT(bm_query_target_install_export_metadata(model, core_static_id, false).emits_link_interface_languages);
     ASSERT(nob_sv_eq(bm_query_install_rule_export_name(model, (BM_Install_Rule_Id)1),
                      nob_sv_from_cstr("DemoTargets")));
     ASSERT(nob_sv_eq(bm_query_install_rule_archive_destination(model, (BM_Install_Rule_Id)1),
@@ -6103,6 +6125,13 @@ TEST(build_model_install_queries_cover_supported_target_kinds_and_rule_families)
                      nob_sv_from_cstr("core_shared")));
     ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)2) == core_shared_id);
     ASSERT(bm_query_target_kind(model, core_shared_id) == BM_TARGET_SHARED_LIBRARY);
+    ASSERT(bm_query_install_rule_target_validation(model, (BM_Install_Rule_Id)2).kind ==
+           BM_INSTALL_RULE_TARGET_VALIDATION_SUPPORTED);
+    ASSERT(bm_query_target_install_artifact_kind(model, core_shared_id, false, false) ==
+           BM_INSTALL_TARGET_ARTIFACT_LIBRARY);
+    ASSERT(bm_query_target_install_artifact_kind(model, core_shared_id, true, true) ==
+           BM_INSTALL_TARGET_ARTIFACT_ARCHIVE);
+    ASSERT(bm_query_target_install_export_metadata(model, core_shared_id, false).emits_soname);
     ASSERT(nob_sv_eq(bm_query_install_rule_export_name(model, (BM_Install_Rule_Id)2),
                      nob_sv_from_cstr("DemoTargets")));
     ASSERT(nob_sv_eq(bm_query_install_rule_archive_destination(model, (BM_Install_Rule_Id)2),
@@ -6131,6 +6160,8 @@ TEST(build_model_install_queries_cover_supported_target_kinds_and_rule_families)
     ASSERT(nob_sv_eq(bm_query_install_rule_component(model, (BM_Install_Rule_Id)3),
                      nob_sv_from_cstr("DemoConfig")));
     ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)3) == BM_TARGET_ID_INVALID);
+    ASSERT(bm_query_install_rule_target_validation(model, (BM_Install_Rule_Id)3).kind ==
+           BM_INSTALL_RULE_TARGET_VALIDATION_NOT_TARGET_RULE);
 
     ASSERT(bm_query_install_rule_kind(model, (BM_Install_Rule_Id)4) == BM_INSTALL_RULE_PROGRAM);
     ASSERT(bm_query_install_rule_owner_directory(model, (BM_Install_Rule_Id)4) == root_dir_id);
@@ -6158,6 +6189,9 @@ TEST(build_model_install_queries_cover_supported_target_kinds_and_rule_families)
                      nob_sv_from_cstr("plugin")));
     ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)6) == plugin_id);
     ASSERT(bm_query_target_kind(model, plugin_id) == BM_TARGET_MODULE_LIBRARY);
+    ASSERT(bm_query_install_rule_target_validation(model, (BM_Install_Rule_Id)6).kind ==
+           BM_INSTALL_RULE_TARGET_VALIDATION_SUPPORTED);
+    ASSERT(bm_query_target_install_export_metadata(model, plugin_id, false).emits_no_soname);
     ASSERT(nob_sv_eq(bm_query_install_rule_export_name(model, (BM_Install_Rule_Id)6),
                      nob_sv_from_cstr("PluginTargets")));
     ASSERT(nob_sv_eq(bm_query_install_rule_library_destination(model, (BM_Install_Rule_Id)6),
@@ -6171,6 +6205,9 @@ TEST(build_model_install_queries_cover_supported_target_kinds_and_rule_families)
                      nob_sv_from_cstr("iface")));
     ASSERT(bm_query_install_rule_target(model, (BM_Install_Rule_Id)7) == iface_id);
     ASSERT(bm_query_target_kind(model, iface_id) == BM_TARGET_INTERFACE_LIBRARY);
+    ASSERT(bm_query_install_rule_target_validation(model, (BM_Install_Rule_Id)7).kind ==
+           BM_INSTALL_RULE_TARGET_VALIDATION_SUPPORTED);
+    ASSERT(bm_query_target_install_export_metadata(model, iface_id, false).interface_only);
     ASSERT(nob_sv_eq(bm_query_install_rule_export_name(model, (BM_Install_Rule_Id)7),
                      nob_sv_from_cstr("PluginTargets")));
     ASSERT(nob_sv_eq(bm_query_install_rule_destination(model, (BM_Install_Rule_Id)7),

@@ -537,13 +537,14 @@ static bool cg_init_targets(CG_Context *ctx) {
     for (size_t i = 0; i < ctx->target_count; ++i) {
         BM_Target_Id id = (BM_Target_Id)i;
         CG_Target_Info *info = &ctx->targets[i];
+        BM_Target_Build_Emission_View emission = {0};
         info->id = id;
         info->name = bm_query_target_name(ctx->model, id);
-        info->kind = bm_query_target_kind(ctx->model, id);
         info->imported = bm_query_target_is_imported(ctx->model, id);
         info->alias = bm_query_target_is_alias(ctx->model, id);
-        info->build_emission_kind = bm_target_build_emission_kind(info->kind, info->imported, info->alias);
-        info->build_emission_metadata = bm_target_build_emission_metadata(info->build_emission_kind);
+        emission = bm_query_target_build_emission_view(ctx->model, id);
+        info->build_emission_kind = emission.kind;
+        info->build_emission_metadata = emission.metadata;
         info->exclude_from_all = bm_query_target_exclude_from_all(ctx->model, id);
         info->resolved_id = info->alias ? cg_resolve_alias_target(ctx, id) : id;
         info->ident = cg_make_identifier(ctx->scratch, info->name, i);
@@ -573,7 +574,6 @@ static bool cg_init_targets(CG_Context *ctx) {
         BM_Target_Id resolved = ctx->targets[i].resolved_id;
         if (!bm_target_id_is_valid(resolved) || (size_t)resolved >= ctx->target_count) return false;
         ctx->targets[i].artifact_path = ctx->targets[resolved].artifact_path;
-        ctx->targets[i].kind = ctx->targets[resolved].kind;
         ctx->targets[i].build_emission_kind = ctx->targets[resolved].build_emission_kind;
         ctx->targets[i].build_emission_metadata = ctx->targets[resolved].build_emission_metadata;
         ctx->targets[i].imported = ctx->targets[resolved].imported;
@@ -671,7 +671,7 @@ bool cg_resolve_link_item_ref(CG_Context *ctx,
         out->target_id = target_id;
         out->resolved_target_id = info->resolved_id;
         out->kind = info->imported ? CG_RESOLVED_TARGET_IMPORTED : CG_RESOLVED_TARGET_LOCAL;
-        out->link_input_kind = bm_target_kind_link_input_kind(info->kind, info->imported);
+        out->link_input_kind = bm_query_target_link_input_kind(ctx->model, target_id);
         out->imported = info->imported;
         out->usage_only = out->link_input_kind == BM_TARGET_LINK_INPUT_USAGE_ONLY;
         if (info->imported) {
@@ -868,7 +868,12 @@ static String_View cg_genex_target_property_cb(void *userdata, String_View targe
     if (!data || !data->ctx) return nob_sv_from_cstr("");
     id = bm_query_target_by_name(data->ctx->model, target_name);
     if (!bm_target_id_is_valid(id)) return nob_sv_from_cstr("");
-    if (!bm_query_target_property_value(data->ctx->model, id, property_name, data->ctx->scratch, &out)) {
+    if (!bm_query_genex_target_property_value(data->ctx->model,
+                                              &data->eval_ctx,
+                                              data->ctx->scratch,
+                                              target_name,
+                                              property_name,
+                                              &out)) {
         return nob_sv_from_cstr("");
     }
     return out;

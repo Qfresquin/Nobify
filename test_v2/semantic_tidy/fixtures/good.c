@@ -51,13 +51,26 @@ typedef enum {
     BM_CPACK_GENERATOR_ZIP,
     BM_CPACK_GENERATOR_UNSUPPORTED,
 } BM_CPack_Generator_Kind;
+typedef struct {
+    BM_CPack_Generator_Kind kind;
+    String_View name;
+    String_View default_extension;
+    String_View config_file_name;
+    int supported;
+} BM_CPack_Generator_View;
 typedef enum {
     BM_INSTALL_RULE_ITEM_PATH = 0,
     BM_INSTALL_RULE_ITEM_SCRIPT,
     BM_INSTALL_RULE_ITEM_CODE,
     BM_INSTALL_RULE_ITEM_EXPORT_ANDROID_MK,
+    BM_INSTALL_RULE_ITEM_IMPORTED_RUNTIME_ARTIFACTS,
+    BM_INSTALL_RULE_ITEM_RUNTIME_DEPENDENCY_SET,
     BM_INSTALL_RULE_ITEM_TAGGED_UNKNOWN,
 } BM_Install_Rule_Item_Kind;
+typedef struct {
+    BM_Install_Rule_Item_Kind kind;
+    String_View raw;
+} BM_Install_Rule_Item_View;
 typedef enum {
     BM_TARGET_EXECUTABLE = 0,
     BM_TARGET_STATIC_LIBRARY,
@@ -92,6 +105,10 @@ typedef struct {
     int requires_link_paths;
     int requires_position_independent_code_on_posix;
 } BM_Target_Build_Emission_Metadata;
+typedef struct {
+    BM_Target_Build_Emission_Kind kind;
+    BM_Target_Build_Emission_Metadata metadata;
+} BM_Target_Build_Emission_View;
 typedef enum {
     BM_INSTALL_TARGET_ARTIFACT_NONE = 0,
     BM_INSTALL_TARGET_ARTIFACT_RUNTIME,
@@ -106,6 +123,16 @@ typedef struct {
     int emits_soname;
     int emits_no_soname;
 } BM_Install_Export_Target_Metadata;
+typedef enum {
+    BM_INSTALL_RULE_TARGET_VALIDATION_NOT_TARGET_RULE = 0,
+    BM_INSTALL_RULE_TARGET_VALIDATION_MISSING_TARGET,
+    BM_INSTALL_RULE_TARGET_VALIDATION_UNSUPPORTED_TARGET_KIND,
+    BM_INSTALL_RULE_TARGET_VALIDATION_SUPPORTED,
+} BM_Install_Rule_Target_Validation_Kind;
+typedef struct {
+    BM_Install_Rule_Target_Validation_Kind kind;
+    BM_Target_Kind target_kind;
+} BM_Install_Rule_Target_Validation;
 typedef enum {
     BM_CMAKE_IMPORTED_TARGET_DECL_UNSUPPORTED = 0,
     BM_CMAKE_IMPORTED_TARGET_DECL_EXECUTABLE,
@@ -230,13 +257,39 @@ static int bm_target_kind_has_linkable_artifact(BM_Target_Kind kind);
 static int bm_target_kind_requires_position_independent_code(BM_Target_Kind kind);
 static int bm_target_kind_is_installable_target(BM_Target_Kind kind);
 static BM_Target_Link_Input_Kind bm_target_kind_link_input_kind(BM_Target_Kind kind, int imported);
+static BM_Target_Link_Input_Kind bm_query_target_link_input_kind(const Build_Model *model, BM_Target_Id id);
 static BM_Target_Build_Emission_Kind bm_target_build_emission_kind(BM_Target_Kind kind, int imported, int alias);
 static BM_Target_Build_Emission_Metadata bm_target_build_emission_metadata(BM_Target_Build_Emission_Kind kind);
+static BM_Target_Build_Emission_View bm_query_target_build_emission_view(const Build_Model *model, BM_Target_Id id);
 static BM_Install_Target_Artifact_Kind bm_target_install_artifact_kind(BM_Target_Kind kind,
                                                                        int windows,
                                                                        int linker_artifact);
+static BM_Install_Target_Artifact_Kind bm_query_target_install_artifact_kind(const Build_Model *model,
+                                                                             BM_Target_Id id,
+                                                                             int windows,
+                                                                             int linker_artifact);
 static BM_Install_Export_Target_Metadata bm_target_install_export_metadata(BM_Target_Kind kind, int windows);
+static BM_Install_Export_Target_Metadata bm_query_target_install_export_metadata(const Build_Model *model,
+                                                                                 BM_Target_Id id,
+                                                                                 int windows);
 static BM_CMake_Imported_Target_Declaration bm_target_cmake_imported_declaration(BM_Target_Kind kind);
+static BM_CMake_Imported_Target_Declaration bm_query_target_cmake_imported_declaration(const Build_Model *model,
+                                                                                       BM_Target_Id id);
+static BM_Install_Rule_Target_Validation bm_query_install_rule_target_validation(const Build_Model *model,
+                                                                                 BM_Install_Rule_Id id);
+static BM_Install_Rule_Item_View bm_query_install_rule_item_view(const Build_Model *model,
+                                                                 BM_Install_Rule_Id id);
+static unsigned long bm_query_cpack_package_generator_count(const Build_Model *model,
+                                                            BM_CPack_Package_Id id);
+static BM_CPack_Generator_View bm_query_cpack_package_generator_view(const Build_Model *model,
+                                                                     BM_CPack_Package_Id id,
+                                                                     unsigned long generator_index);
+static int bm_query_genex_target_property_value(const Build_Model *model,
+                                                const BM_Query_Eval_Context *ctx,
+                                                void *scratch,
+                                                String_View target_name,
+                                                String_View property_name,
+                                                String_View *out);
 static String_View bm_query_test_effective_property_kind_first(const Build_Model *model,
                                                                BM_Test_Id id,
                                                                BM_Test_Property_Kind kind,
@@ -443,6 +496,12 @@ static int helper_codegen_install_target_kind_heuristic_good(BM_Target_Kind kind
     return bm_target_kind_is_installable_target(kind);
 }
 
+static int helper_codegen_install_target_validation_target_kind_query_good(const Build_Model *model,
+                                                                           BM_Install_Rule_Id id) {
+    return bm_query_install_rule_target_validation(model, id).kind ==
+           BM_INSTALL_RULE_TARGET_VALIDATION_SUPPORTED;
+}
+
 static int helper_codegen_export_artifact_target_heuristic_good(const Build_Model *model, int export_id) {
     return bm_query_export_has_artifact_targets(model, export_id);
 }
@@ -451,10 +510,14 @@ static int helper_codegen_precompile_header_target_kind_heuristic_good(BM_Target
     return !bm_target_kind_is_artifact_target(kind);
 }
 
-static int helper_codegen_link_input_target_kind_heuristic_good(BM_Target_Kind kind, int imported) {
-    BM_Target_Link_Input_Kind input_kind = bm_target_kind_link_input_kind(kind, imported);
+static int helper_codegen_link_input_target_kind_heuristic_good(const Build_Model *model, BM_Target_Id id) {
+    BM_Target_Link_Input_Kind input_kind = bm_query_target_link_input_kind(model, id);
     return input_kind == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT ||
            input_kind == BM_TARGET_LINK_INPUT_USAGE_ONLY;
+}
+
+static int helper_codegen_link_input_target_kind_query_good(const Build_Model *model, BM_Target_Id id) {
+    return bm_query_target_link_input_kind(model, id) == BM_TARGET_LINK_INPUT_LINKABLE_ARTIFACT;
 }
 
 static int helper_codegen_build_emission_target_kind_heuristic_good(BM_Target_Kind kind, int imported, int alias) {
@@ -468,19 +531,37 @@ static int helper_codegen_build_emission_target_kind_heuristic_good(BM_Target_Ki
            emission_kind == BM_TARGET_BUILD_EMISSION_UTILITY;
 }
 
-static int helper_codegen_install_artifact_target_kind_heuristic_good(BM_Target_Kind kind,
+static int helper_codegen_build_emission_target_kind_query_good(const Build_Model *model,
+                                                                BM_Target_Id id) {
+    BM_Target_Build_Emission_View emission = bm_query_target_build_emission_view(model, id);
+    return emission.metadata.emits_artifact ||
+           emission.metadata.uses_archiver ||
+           emission.metadata.uses_linker ||
+           emission.kind == BM_TARGET_BUILD_EMISSION_UTILITY;
+}
+
+static int helper_codegen_install_artifact_target_kind_heuristic_good(const Build_Model *model,
+                                                                      BM_Target_Id id,
                                                                       int windows,
                                                                       int linker_artifact) {
     BM_Install_Target_Artifact_Kind artifact_kind =
-        bm_target_install_artifact_kind(kind, windows, linker_artifact);
+        bm_query_target_install_artifact_kind(model, id, windows, linker_artifact);
     return artifact_kind == BM_INSTALL_TARGET_ARTIFACT_RUNTIME ||
            artifact_kind == BM_INSTALL_TARGET_ARTIFACT_ARCHIVE ||
            artifact_kind == BM_INSTALL_TARGET_ARTIFACT_LIBRARY;
 }
 
-static int helper_codegen_install_export_metadata_target_kind_heuristic_good(BM_Target_Kind kind,
+static int helper_codegen_install_artifact_target_kind_query_good(const Build_Model *model,
+                                                                  BM_Target_Id id,
+                                                                  int windows) {
+    return bm_query_target_install_artifact_kind(model, id, windows, 0) ==
+           BM_INSTALL_TARGET_ARTIFACT_RUNTIME;
+}
+
+static int helper_codegen_install_export_metadata_target_kind_heuristic_good(const Build_Model *model,
+                                                                             BM_Target_Id id,
                                                                              int windows) {
-    BM_Install_Export_Target_Metadata metadata = bm_target_install_export_metadata(kind, windows);
+    BM_Install_Export_Target_Metadata metadata = bm_query_target_install_export_metadata(model, id, windows);
     return metadata.interface_only ||
            metadata.emits_imported_noconfig ||
            metadata.emits_link_interface_languages ||
@@ -489,11 +570,48 @@ static int helper_codegen_install_export_metadata_target_kind_heuristic_good(BM_
            metadata.emits_no_soname;
 }
 
-static int helper_codegen_cmake_imported_declaration_target_kind_heuristic_good(BM_Target_Kind kind) {
-    BM_CMake_Imported_Target_Declaration declaration = bm_target_cmake_imported_declaration(kind);
+static int helper_codegen_install_export_metadata_target_kind_query_good(const Build_Model *model,
+                                                                         BM_Target_Id id,
+                                                                         int windows) {
+    return bm_query_target_install_export_metadata(model, id, windows).emits_imported_noconfig;
+}
+
+static int helper_codegen_cmake_imported_declaration_target_kind_heuristic_good(const Build_Model *model,
+                                                                                BM_Target_Id id) {
+    BM_CMake_Imported_Target_Declaration declaration =
+        bm_query_target_cmake_imported_declaration(model, id);
     return declaration.kind == BM_CMAKE_IMPORTED_TARGET_DECL_EXECUTABLE ||
            declaration.kind == BM_CMAKE_IMPORTED_TARGET_DECL_LIBRARY ||
            declaration.library_kind.count > 0;
+}
+
+static int helper_codegen_cmake_imported_declaration_target_kind_query_good(const Build_Model *model,
+                                                                            BM_Target_Id id) {
+    return bm_query_target_cmake_imported_declaration(model, id).kind ==
+           BM_CMAKE_IMPORTED_TARGET_DECL_LIBRARY;
+}
+
+static int helper_codegen_typed_build_model_payload_query_install_good(const Build_Model *model,
+                                                                       BM_Install_Rule_Id id) {
+    BM_Install_Rule_Item_View item = bm_query_install_rule_item_view(model, id);
+    return item.kind == BM_INSTALL_RULE_ITEM_PATH && item.raw.count > 0;
+}
+
+static int helper_codegen_typed_build_model_payload_query_package_good(const Build_Model *model,
+                                                                       BM_CPack_Package_Id id) {
+    BM_CPack_Generator_View generator = bm_query_cpack_package_generator_view(model, id, 0);
+    return bm_query_cpack_package_generator_count(model, id) > 0 &&
+           generator.kind == BM_CPACK_GENERATOR_TGZ &&
+           generator.supported;
+}
+
+static int helper_codegen_typed_build_model_payload_query_genex_property_good(const Build_Model *model,
+                                                                              const BM_Query_Eval_Context *ctx,
+                                                                              void *scratch,
+                                                                              String_View target_name,
+                                                                              String_View property_name) {
+    String_View out = {0};
+    return bm_query_genex_target_property_value(model, ctx, scratch, target_name, property_name, &out);
 }
 
 static int helper_codegen_link_language_string_query_good(BM_Query_Session *session,

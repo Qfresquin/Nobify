@@ -136,7 +136,6 @@ static bool cg_install_rule_target_destination_for_kind(CG_Context *ctx,
 static bool cg_resolve_install_rule_target_destination_for_kind(CG_Context *ctx,
                                                                 BM_Install_Rule_Id rule_id,
                                                                 BM_Target_Id target_id,
-                                                                BM_Target_Kind kind,
                                                                 bool linker_artifact,
                                                                 String_View config,
                                                                 String_View *out) {
@@ -144,7 +143,10 @@ static bool cg_resolve_install_rule_target_destination_for_kind(CG_Context *ctx,
     BM_Install_Target_Artifact_Kind artifact_kind = BM_INSTALL_TARGET_ARTIFACT_NONE;
     if (!ctx || !out) return false;
     *out = nob_sv_from_cstr("");
-    artifact_kind = bm_target_install_artifact_kind(kind, cg_policy_is_windows(ctx), linker_artifact);
+    artifact_kind = bm_query_target_install_artifact_kind(ctx->model,
+                                                          target_id,
+                                                          cg_policy_is_windows(ctx),
+                                                          linker_artifact);
     if (!cg_install_rule_target_destination_for_kind(ctx, rule_id, artifact_kind, &raw_destination)) {
         return false;
     }
@@ -165,7 +167,6 @@ static bool cg_target_installed_artifact_relpath(CG_Context *ctx,
     if (!cg_resolve_install_rule_target_destination_for_kind(ctx,
                                                              rule_id,
                                                              info->id,
-                                                             info->kind,
                                                              linker_artifact,
                                                              config,
                                                              &destination)) {
@@ -467,7 +468,7 @@ static bool cg_export_emit_target_properties(CG_Context *ctx,
         : CG_INSTALL_EXPORT_EMIT_MAIN;
     (void)config;
     if (!ctx || !info || !sb) return false;
-    metadata = bm_target_install_export_metadata(info->kind, cg_policy_is_windows(ctx));
+    metadata = bm_query_target_install_export_metadata(ctx->model, target_id, cg_policy_is_windows(ctx));
     rule_id = bm_query_install_rule_for_export_target(ctx->model, export_id, target_id);
 
     if (!cg_export_collect_interface_includes(ctx, export_id, rule_id, target_id, false, &include_items) ||
@@ -728,7 +729,7 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
             if (info->emits_artifact) {
                 String_View runtime_component = {0};
                 BM_Install_Target_Artifact_Kind artifact_kind =
-                    bm_target_install_artifact_kind(info->kind, cg_policy_is_windows(ctx), false);
+                    bm_query_target_install_artifact_kind(ctx->model, target_id, cg_policy_is_windows(ctx), false);
                 runtime_component = cg_install_rule_target_component(ctx, id, artifact_kind);
                 if (!cg_emit_install_component_guard_open(out, runtime_component)) {
                     return false;
@@ -811,18 +812,17 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
         }
         if (kind == BM_INSTALL_RULE_FILE || kind == BM_INSTALL_RULE_PROGRAM) {
             BM_Directory_Id owner_dir = bm_query_install_rule_owner_directory(ctx->model, id);
-            String_View item = bm_query_install_rule_item_raw(ctx->model, id);
-            BM_Install_Rule_Item_Kind item_kind = bm_query_install_rule_item_kind(ctx->model, id);
+            BM_Install_Rule_Item_View item = bm_query_install_rule_item_view(ctx->model, id);
             String_View rename = bm_query_install_rule_rename(ctx->model, id);
-            String_View trimmed_item = nob_sv_trim(item);
+            String_View trimmed_item = nob_sv_trim(item.raw);
 
-            if (item_kind == BM_INSTALL_RULE_ITEM_SCRIPT ||
-                item_kind == BM_INSTALL_RULE_ITEM_CODE ||
-                item_kind == BM_INSTALL_RULE_ITEM_EXPORT_ANDROID_MK) {
+            if (item.kind == BM_INSTALL_RULE_ITEM_SCRIPT ||
+                item.kind == BM_INSTALL_RULE_ITEM_CODE ||
+                item.kind == BM_INSTALL_RULE_ITEM_EXPORT_ANDROID_MK) {
                 nob_log(NOB_ERROR,
                         "codegen: unsupported install(FILES) pseudo-item: %.*s",
-                        (int)item.count,
-                        item.data ? item.data : "");
+                        (int)item.raw.count,
+                        item.raw.data ? item.raw.data : "");
                 return false;
             }
             for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
@@ -833,7 +833,7 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
                 String_View resolved_destination = {0};
                 String_View resolved_rename = {0};
                 String_View *resolved_items = NULL;
-                if (!cg_resolve_install_string_for_config(ctx, BM_TARGET_ID_INVALID, config, item, &resolved_items_joined) ||
+                if (!cg_resolve_install_string_for_config(ctx, BM_TARGET_ID_INVALID, config, item.raw, &resolved_items_joined) ||
                     !cg_resolve_single_install_string_for_config(ctx,
                                                                  BM_TARGET_ID_INVALID,
                                                                  config,
@@ -890,7 +890,7 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
 
         if (kind == BM_INSTALL_RULE_DIRECTORY) {
             BM_Directory_Id owner_dir = bm_query_install_rule_owner_directory(ctx->model, id);
-            String_View item = bm_query_install_rule_item_raw(ctx->model, id);
+            BM_Install_Rule_Item_View item = bm_query_install_rule_item_view(ctx->model, id);
             for (size_t branch = 0; branch <= arena_arr_len(ctx->known_configs); ++branch) {
                 String_View config = branch < arena_arr_len(ctx->known_configs)
                     ? ctx->known_configs[branch]
@@ -898,7 +898,7 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
                 String_View resolved_items_joined = {0};
                 String_View resolved_destination = {0};
                 String_View *resolved_items = NULL;
-                if (!cg_resolve_install_string_for_config(ctx, BM_TARGET_ID_INVALID, config, item, &resolved_items_joined) ||
+                if (!cg_resolve_install_string_for_config(ctx, BM_TARGET_ID_INVALID, config, item.raw, &resolved_items_joined) ||
                     !cg_resolve_single_install_string_for_config(ctx,
                                                                  BM_TARGET_ID_INVALID,
                                                                  config,

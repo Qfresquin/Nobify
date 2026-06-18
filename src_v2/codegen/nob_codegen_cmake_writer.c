@@ -396,7 +396,7 @@ bool cg_build_cmake_targets_file_contents(CG_Context *ctx,
     for (size_t i = 0; i < targets.count; ++i) {
         BM_Target_Id target_id = targets.items[i];
         BM_CMake_Imported_Target_Declaration declaration =
-            bm_target_cmake_imported_declaration(bm_query_target_kind(ctx->model, target_id));
+            bm_query_target_cmake_imported_declaration(ctx->model, target_id);
         String_View exported_name = {0};
         if (!cg_target_exported_name(ctx, target_id, export_namespace, &exported_name)) {
             nob_sb_free(sb);

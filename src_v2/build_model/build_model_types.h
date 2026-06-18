@@ -136,6 +136,11 @@ typedef struct {
     bool requires_position_independent_code_on_posix;
 } BM_Target_Build_Emission_Metadata;
 
+typedef struct {
+    BM_Target_Build_Emission_Kind kind;
+    BM_Target_Build_Emission_Metadata metadata;
+} BM_Target_Build_Emission_View;
+
 typedef enum {
     BM_INSTALL_TARGET_ARTIFACT_NONE = 0,
     BM_INSTALL_TARGET_ARTIFACT_RUNTIME,
@@ -151,6 +156,18 @@ typedef struct {
     bool emits_soname;
     bool emits_no_soname;
 } BM_Install_Export_Target_Metadata;
+
+typedef enum {
+    BM_INSTALL_RULE_TARGET_VALIDATION_NOT_TARGET_RULE = 0,
+    BM_INSTALL_RULE_TARGET_VALIDATION_MISSING_TARGET,
+    BM_INSTALL_RULE_TARGET_VALIDATION_UNSUPPORTED_TARGET_KIND,
+    BM_INSTALL_RULE_TARGET_VALIDATION_SUPPORTED,
+} BM_Install_Rule_Target_Validation_Kind;
+
+typedef struct {
+    BM_Install_Rule_Target_Validation_Kind kind;
+    BM_Target_Kind target_kind;
+} BM_Install_Rule_Target_Validation;
 
 typedef enum {
     BM_CMAKE_IMPORTED_TARGET_DECL_UNSUPPORTED = 0,
