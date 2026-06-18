@@ -814,7 +814,6 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
             BM_Directory_Id owner_dir = bm_query_install_rule_owner_directory(ctx->model, id);
             BM_Install_Rule_Item_View item = bm_query_install_rule_item_view(ctx->model, id);
             String_View rename = bm_query_install_rule_rename(ctx->model, id);
-            String_View trimmed_item = nob_sv_trim(item.raw);
 
             if (item.kind == BM_INSTALL_RULE_ITEM_SCRIPT ||
                 item.kind == BM_INSTALL_RULE_ITEM_CODE ||
@@ -857,10 +856,7 @@ bool cg_emit_install_function(CG_Context *ctx, Nob_String_Builder *out) {
                     String_View src_path = {0};
                     String_View basename = {0};
                     String_View install_rel = {0};
-                    if (trimmed_item.count >= 2 &&
-                        trimmed_item.data[0] == '$' &&
-                        trimmed_item.data[1] == '<' &&
-                        !cg_path_is_abs(resolved_item)) {
+                    if (item.starts_with_generator_expression && !cg_path_is_abs(resolved_item)) {
                         nob_log(NOB_ERROR,
                                 "codegen: install(FILES/PROGRAMS) item starting with genex must resolve to a full path: %.*s",
                                 (int)resolved_item.count,

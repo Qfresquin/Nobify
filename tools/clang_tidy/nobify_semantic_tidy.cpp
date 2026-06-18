@@ -2134,6 +2134,43 @@ public:
     }
 };
 
+static bool appliesCodegenRawPayloadBranch(llvm::StringRef Path, const FunctionDecl *FD) {
+    if (contains(Path, "src_v2/codegen/")) return true;
+    if (!isFixturePath(Path) || !FD) return false;
+    return FD->getName().contains("codegen_raw_payload_branch");
+}
+
+class CodegenRawPayloadBranchCheck : public ClangTidyCheck {
+public:
+    CodegenRawPayloadBranchCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
+
+    void registerMatchers(MatchFinder *Finder) override {
+        auto RawMember = memberExpr(member(fieldDecl(hasName("raw")))).bind("codegen-raw-payload-member");
+        Finder->addMatcher(binaryOperator(anyOf(isComparisonOperator(),
+                                                hasOperatorName("&&"),
+                                                hasOperatorName("||")),
+                                          hasDescendant(RawMember),
+                                          hasAncestor(functionDecl().bind("codegen-raw-payload-function")))
+                               .bind("codegen-raw-payload-branch"),
+                           this);
+    }
+
+    void check(const MatchFinder::MatchResult &Result) override {
+        const auto *Member =
+            Result.Nodes.getNodeAs<MemberExpr>("codegen-raw-payload-member");
+        const auto *FD =
+            Result.Nodes.getNodeAs<FunctionDecl>("codegen-raw-payload-function");
+        if (!Member || !FD) return;
+
+        llvm::StringRef Path = fileName(*Result.SourceManager, Member->getExprLoc());
+        if (!appliesCodegenRawPayloadBranch(Path, FD)) return;
+
+        diag(Member->getExprLoc(),
+             "codegen must not branch on raw build-model payloads; use a typed build-model query fact and keep raw only for literal emission");
+    }
+};
+
 static bool appliesCodegenExportArtifactTargetHeuristic(llvm::StringRef Path, const FunctionDecl *FD) {
     if (!FD) return false;
     if (contains(Path, "src_v2/codegen/")) return FD->getName().contains("export_has_non_interface_targets");
@@ -3067,6 +3104,8 @@ public:
             "nobify-codegen-target-semantic-contract-query");
         Factories.registerCheck<CodegenTypedBuildModelPayloadQueryCheck>(
             "nobify-codegen-typed-build-model-payload-query");
+        Factories.registerCheck<CodegenRawPayloadBranchCheck>(
+            "nobify-codegen-raw-payload-branch");
         Factories.registerCheck<CodegenExportArtifactTargetHeuristicCheck>(
             "nobify-codegen-export-artifact-target-heuristic");
         Factories.registerCheck<CodegenPrecompileHeaderTargetKindHeuristicCheck>(

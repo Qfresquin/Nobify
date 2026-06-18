@@ -3508,6 +3508,11 @@ static BM_Install_Rule_Item_Kind bm_install_rule_item_kind_from_string(String_Vi
                                                        : BM_INSTALL_RULE_ITEM_PATH;
 }
 
+static bool bm_install_rule_item_starts_with_generator_expression(String_View item) {
+    String_View trimmed = nob_sv_trim(item);
+    return trimmed.count >= 2 && trimmed.data[0] == '$' && trimmed.data[1] == '<';
+}
+
 BM_Directory_Id bm_query_install_rule_owner_directory(const Build_Model *model, BM_Install_Rule_Id id) {
     const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
     return rule ? rule->owner_directory_id : BM_DIRECTORY_ID_INVALID;
@@ -3532,6 +3537,8 @@ BM_Install_Rule_Item_View bm_query_install_rule_item_view(const Build_Model *mod
     }
     view.raw = rule->item;
     view.kind = bm_install_rule_item_kind_from_string(rule->item);
+    view.starts_with_generator_expression =
+        bm_install_rule_item_starts_with_generator_expression(rule->item);
     return view;
 }
 

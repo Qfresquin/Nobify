@@ -64,6 +64,7 @@ typedef enum {
 typedef struct {
     BM_Install_Rule_Item_Kind kind;
     String_View raw;
+    bool starts_with_generator_expression;
 } BM_Install_Rule_Item_View;
 
 typedef enum {

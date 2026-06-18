@@ -538,6 +538,12 @@ static int helper_bad_codegen_typed_build_model_payload_query_genex_property(con
     return bm_query_target_property_value(model, id, property_name, scratch, &out);
 }
 
+static int helper_bad_codegen_raw_payload_branch(const Build_Model *model,
+                                                 BM_Install_Rule_Id id) {
+    BM_Install_Rule_Item_View item = bm_query_install_rule_item_view(model, id);
+    return item.raw.count > 0;
+}
+
 static int helper_bad_codegen_public_host_effect(const char *path) {
     return nob_write_entire_file(path, "", 0);
 }

@@ -70,6 +70,7 @@ typedef enum {
 typedef struct {
     BM_Install_Rule_Item_Kind kind;
     String_View raw;
+    int starts_with_generator_expression;
 } BM_Install_Rule_Item_View;
 typedef enum {
     BM_TARGET_EXECUTABLE = 0,
@@ -594,7 +595,15 @@ static int helper_codegen_cmake_imported_declaration_target_kind_query_good(cons
 static int helper_codegen_typed_build_model_payload_query_install_good(const Build_Model *model,
                                                                        BM_Install_Rule_Id id) {
     BM_Install_Rule_Item_View item = bm_query_install_rule_item_view(model, id);
-    return item.kind == BM_INSTALL_RULE_ITEM_PATH && item.raw.count > 0;
+    return item.kind == BM_INSTALL_RULE_ITEM_PATH && !item.starts_with_generator_expression;
+}
+
+static int helper_codegen_raw_payload_literal_good(const Build_Model *model,
+                                                   BM_Install_Rule_Id id,
+                                                   String_View *out) {
+    BM_Install_Rule_Item_View item = bm_query_install_rule_item_view(model, id);
+    *out = item.raw;
+    return item.starts_with_generator_expression;
 }
 
 static int helper_codegen_typed_build_model_payload_query_package_good(const Build_Model *model,
