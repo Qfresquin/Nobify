@@ -2659,6 +2659,7 @@ TEST(evaluator_build_name_and_build_command_follow_policy_gates) {
 
     Ast_Root root = parse_cmake(
         temp_arena,
+        "project(BuildCommandProbe CXX)\n"
         "cmake_policy(SET CMP0036 OLD)\n"
         "build_name(BN_OLD)\n"
         "cmake_policy(SET CMP0036 NEW)\n"

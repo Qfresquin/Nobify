@@ -2835,6 +2835,70 @@ TEST(evaluator_enable_language_updates_enabled_language_state_and_validates_scop
     TEST_PASS();
 }
 
+TEST(evaluator_enable_language_materializes_c_cxx_toolchain_only_when_enabled) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "project(NoLang LANGUAGES NONE)\n"
+        "set(AFTER_NONE \"${CMAKE_C_COMPILER_LOADED}|${CMAKE_CXX_COMPILER_LOADED}|${CMAKE_C_COMPILER_ID}\")\n"
+        "enable_language(C)\n"
+        "set(AFTER_C \"${CMAKE_C_COMPILER_LOADED}|${CMAKE_CXX_COMPILER_LOADED}|${CMAKE_C_COMPILER_ID}\")\n"
+        "enable_language(CXX)\n"
+        "set(AFTER_CXX \"${CMAKE_C_COMPILER_LOADED}|${CMAKE_CXX_COMPILER_LOADED}|${CMAKE_CXX_COMPILER_ID}\")\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("AFTER_NONE")),
+                     nob_sv_from_cstr("||")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID")).count > 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_LOADED")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_LOADED")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("AFTER_C")).count > 2);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("AFTER_CXX")).count > 2);
+
+    const Cmake_Event *first_snapshot = NULL;
+    const Cmake_Event *last_snapshot = NULL;
+    for (size_t i = 0; i < stream->count; i++) {
+        const Cmake_Event *ev = &stream->items[i];
+        if (ev->h.kind != EVENT_TOOLCHAIN_SNAPSHOT) continue;
+        if (!first_snapshot) first_snapshot = ev;
+        last_snapshot = ev;
+    }
+    ASSERT(first_snapshot != NULL);
+    ASSERT(last_snapshot != NULL);
+    ASSERT(!first_snapshot->as.toolchain_snapshot.c.enabled);
+    ASSERT(!first_snapshot->as.toolchain_snapshot.cxx.enabled);
+    ASSERT(last_snapshot->as.toolchain_snapshot.c.enabled);
+    ASSERT(last_snapshot->as.toolchain_snapshot.cxx.enabled);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_target_platform_config_separates_host_and_target_vars) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -2861,6 +2925,7 @@ TEST(evaluator_target_platform_config_separates_host_and_target_vars) {
 
     Ast_Root root = parse_cmake(
         temp_arena,
+        "project(PlatformProbe C)\n"
         "set(PLATFORM_SNAPSHOT \"${CMAKE_HOST_SYSTEM_NAME}|${CMAKE_SYSTEM_NAME}|${CMAKE_CROSSCOMPILING}|${WIN32}|${UNIX}|${APPLE}|${MSVC}|${MINGW}|${CMAKE_SYSROOT}|${CMAKE_C_COMPILER_ID}\")\n");
     ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
@@ -2929,6 +2994,9 @@ TEST(evaluator_windows_gnu_toolchain_models_mingw_not_msvc) {
     Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
 
+    Ast_Root root = parse_cmake(temp_arena, "project(MingwProbe C CXX)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("WIN32")), nob_sv_from_cstr("1")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MSVC")), nob_sv_from_cstr("0")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MINGW")), nob_sv_from_cstr("1")));
@@ -2965,6 +3033,9 @@ TEST(evaluator_compiler_id_infers_from_configured_compiler_names) {
 
     Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(temp_arena, "project(ConfiguredCompilerProbe C CXX)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
 
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER")),
                      nob_sv_from_cstr("/opt/llvm/bin/clang")));
@@ -3003,6 +3074,19 @@ TEST(evaluator_compiler_id_infers_from_env_compiler_names) {
 
     EvalSession *session = eval_session_create(&cfg);
     ASSERT(session != NULL);
+
+    Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+    EvalExec_Request request = {0};
+    request.scratch_arena = temp_arena;
+    request.source_dir = nob_sv_from_cstr(".");
+    request.binary_dir = nob_sv_from_cstr(".");
+    request.list_file = "CMakeLists.txt";
+    request.stream = stream;
+    Ast_Root root = parse_cmake(temp_arena, "project(EnvCompilerProbe C)\n");
+    EvalRunResult run = eval_session_run(session, &request, root);
+    ASSERT(!eval_result_is_fatal(run.result));
+    ASSERT(run.report.error_count == 0);
 
     ASSERT(nob_sv_eq(eval_test_session_var_get(session, nob_sv_from_cstr("CMAKE_C_COMPILER")),
                      nob_sv_from_cstr("/usr/bin/clang")));
@@ -3504,6 +3588,7 @@ void run_evaluator_v2_batch1(int *passed, int *failed, int *skipped) {
     test_evaluator_include_guard_global_scope_persists_across_function_scope(passed, failed, skipped);
     test_evaluator_include_guard_rejects_invalid_arguments(passed, failed, skipped);
     test_evaluator_enable_language_updates_enabled_language_state_and_validates_scope(passed, failed, skipped);
+    test_evaluator_enable_language_materializes_c_cxx_toolchain_only_when_enabled(passed, failed, skipped);
     test_evaluator_target_platform_config_separates_host_and_target_vars(passed, failed, skipped);
     test_evaluator_windows_gnu_toolchain_models_mingw_not_msvc(passed, failed, skipped);
     test_evaluator_compiler_id_infers_from_configured_compiler_names(passed, failed, skipped);

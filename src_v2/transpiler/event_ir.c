@@ -1264,13 +1264,15 @@ static void event_dump_one(const Event *ev) {
                    ev->as.target_compile_features.item.data ? ev->as.target_compile_features.item.data : "");
             break;
         case EVENT_TOOLCHAIN_SNAPSHOT:
-            printf(" target=%.*s c=%.*s cxx=%.*s cc_id=%.*s cxx_id=%.*s",
+            printf(" target=%.*s c=%.*s cxx=%.*s c_enabled=%d cxx_enabled=%d cc_id=%.*s cxx_id=%.*s",
                    (int)ev->as.toolchain_snapshot.target_system_name.count,
                    ev->as.toolchain_snapshot.target_system_name.data ? ev->as.toolchain_snapshot.target_system_name.data : "",
                    (int)ev->as.toolchain_snapshot.c.compiler.count,
                    ev->as.toolchain_snapshot.c.compiler.data ? ev->as.toolchain_snapshot.c.compiler.data : "",
                    (int)ev->as.toolchain_snapshot.cxx.compiler.count,
                    ev->as.toolchain_snapshot.cxx.compiler.data ? ev->as.toolchain_snapshot.cxx.compiler.data : "",
+                   ev->as.toolchain_snapshot.c.enabled ? 1 : 0,
+                   ev->as.toolchain_snapshot.cxx.enabled ? 1 : 0,
                    (int)ev->as.toolchain_snapshot.c.compiler_id.count,
                    ev->as.toolchain_snapshot.c.compiler_id.data ? ev->as.toolchain_snapshot.c.compiler_id.data : "",
                    (int)ev->as.toolchain_snapshot.cxx.compiler_id.count,

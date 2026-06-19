@@ -771,6 +771,10 @@ typedef struct Eval_Toolchain_Language_Model {
     String_View *implicit_include_dirs;
     String_View *implicit_link_dirs;
     String_View *implicit_link_libs;
+    bool enabled;
+    bool probe_attempted;
+    bool compiler_loaded;
+    bool compiler_works;
 } Eval_Toolchain_Language_Model;
 
 typedef struct {
@@ -3426,6 +3430,12 @@ String_View eval_path_resolve_for_cmake_arg(EvalExecContext *ctx,
 const char *eval_getenv_temp(EvalExecContext *ctx, const char *name);
 bool eval_has_env(EvalExecContext *ctx, const char *name);
 const struct Eval_Toolchain_Model *eval_toolchain_current(const EvalExecContext *ctx);
+bool eval_toolchain_enable_language(EvalExecContext *ctx,
+                                    Cmake_Event_Origin origin,
+                                    String_View command_name,
+                                    String_View lang,
+                                    bool *out_changed);
+bool eval_toolchain_emit_snapshot(EvalExecContext *ctx);
 bool eval_toolchain_uses_msvc(const EvalExecContext *ctx);
 String_View eval_toolchain_object_suffix(const EvalExecContext *ctx);
 String_View eval_toolchain_executable_suffix(const EvalExecContext *ctx);

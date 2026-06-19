@@ -1063,6 +1063,10 @@ typedef struct {
     size_t implicit_link_dir_count;
     String_View *implicit_link_libs;
     size_t implicit_link_lib_count;
+    bool enabled;
+    bool probe_attempted;
+    bool compiler_loaded;
+    bool compiler_works;
 } Event_Toolchain_Language_Snapshot;
 
 typedef struct {

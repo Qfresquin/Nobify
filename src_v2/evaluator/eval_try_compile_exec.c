@@ -543,6 +543,30 @@ bool try_compile_execute_source_request(EvalExecContext *ctx,
     size_t compile_units = 0;
     bool any_cxx = false;
     bool any_c = false;
+
+    for (size_t i = 0; i < req->source_items.count; i++) {
+        Try_Compile_Source_Item item = req->source_items.items[i];
+        Try_Compile_Language lang = item.language != TRY_COMPILE_LANG_AUTO
+            ? item.language
+            : try_compile_detect_language(item.path);
+        if (lang != TRY_COMPILE_LANG_C && lang != TRY_COMPILE_LANG_CXX) continue;
+        bool changed = false;
+        Cmake_Event_Origin origin = {0};
+        String_View cmake_lang = lang == TRY_COMPILE_LANG_CXX ? nob_sv_from_cstr("CXX") : nob_sv_from_cstr("C");
+        if (!eval_toolchain_enable_language(ctx,
+                                            origin,
+                                            nob_sv_from_cstr("try_compile"),
+                                            cmake_lang,
+                                            &changed)) {
+            nob_sb_free(log);
+            return false;
+        }
+        if (changed && !eval_toolchain_emit_snapshot(ctx)) {
+            nob_sb_free(log);
+            return false;
+        }
+    }
+
     bool msvc = eval_toolchain_uses_msvc(ctx);
 
     for (size_t i = 0; i < req->source_items.count; i++) {

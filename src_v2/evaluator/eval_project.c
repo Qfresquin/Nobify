@@ -572,9 +572,17 @@ static bool apply_enabled_languages(EvalExecContext *ctx,
             if (!svu_list_push_temp(ctx, &enabled, lang)) return false;
         }
 
-        String_View loaded_var = language_compiler_loaded_var_temp(ctx, lang);
-        if (eval_should_stop(ctx)) return false;
-        if (!eval_var_set_current(ctx, loaded_var, nob_sv_from_cstr("1"))) return false;
+        if (eval_sv_eq_ci_lit(lang, "C") || eval_sv_eq_ci_lit(lang, "CXX")) {
+            bool toolchain_changed = false;
+            if (!eval_toolchain_enable_language(ctx, o, cmd_name, lang, &toolchain_changed)) return false;
+            if (toolchain_changed && !eval_toolchain_emit_snapshot(ctx)) return false;
+        } else {
+            bool ignored_change = false;
+            if (!eval_toolchain_enable_language(ctx, o, cmd_name, lang, &ignored_change)) return false;
+            String_View loaded_var = language_compiler_loaded_var_temp(ctx, lang);
+            if (eval_should_stop(ctx)) return false;
+            if (!eval_var_set_current(ctx, loaded_var, nob_sv_from_cstr("1"))) return false;
+        }
     }
 
     String_View merged = eval_sv_join_semi_temp(ctx, enabled, arena_arr_len(enabled));

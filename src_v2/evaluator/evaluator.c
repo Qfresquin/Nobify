@@ -3193,7 +3193,7 @@ static void toolchain_model_apply_config(EvalExecContext *ctx,
     }
 }
 
-static void toolchain_model_probe_language(EvalExecContext *ctx,
+static bool toolchain_model_probe_language(EvalExecContext *ctx,
                                            String_View compiler,
                                            String_View *io_id,
                                            String_View *io_version,
@@ -3203,8 +3203,10 @@ static void toolchain_model_probe_language(EvalExecContext *ctx,
                                            String_View *io_version_source,
                                            String_View *io_target_source,
                                            const char *language_flag) {
-    if (!ctx || !io_id || !io_version || !io_target || !io_id_source || !io_version_source || !io_target_source || compiler.count == 0) return;
+    if (!ctx || !io_id || !io_version || !io_target || !io_id_source || !io_version_source || !io_target_source || compiler.count == 0) return false;
+    bool got_probe_result = false;
     String_View probe_text = toolchain_probe_text_temp(ctx, compiler);
+    got_probe_result = got_probe_result || probe_text.count > 0;
     if (probe_text.count > 0 && io_id->count == 0) {
         String_View probed_id = toolchain_probe_compiler_id_temp(probe_text);
         if (probed_id.count > 0) {
@@ -3228,6 +3230,7 @@ static void toolchain_model_probe_language(EvalExecContext *ctx,
         nob_sv_from_cstr("-"),
     };
     String_View macros = toolchain_run_probe_temp(ctx, compiler, macro_args, 5, nob_sv_from_cstr("\n"));
+    got_probe_result = got_probe_result || macros.count > 0;
     if (macros.count > 0) {
         if (sv_contains_ascii_ci(macros, "__MINGW32__") || sv_contains_ascii_ci(macros, "__MINGW64__")) {
             /* The target flags are finalized globally after both languages are probed. */
@@ -3259,6 +3262,7 @@ static void toolchain_model_probe_language(EvalExecContext *ctx,
     if (io_target->count == 0) {
         String_View dump_args[1] = {nob_sv_from_cstr("-dumpmachine")};
         String_View dump = toolchain_first_line_trimmed(toolchain_run_probe_temp(ctx, compiler, dump_args, 1, nob_sv_from_cstr("")));
+        got_probe_result = got_probe_result || dump.count > 0;
         if (dump.count > 0) {
             *io_target = toolchain_sv_copy(ctx, dump);
             *io_target_source = nob_sv_from_cstr("probe");
@@ -3268,32 +3272,31 @@ static void toolchain_model_probe_language(EvalExecContext *ctx,
     if (io_implicit_link_dirs) {
         String_View search_args[1] = {nob_sv_from_cstr("-print-search-dirs")};
         String_View search_dirs = toolchain_run_probe_temp(ctx, compiler, search_args, 1, nob_sv_from_cstr(""));
+        got_probe_result = got_probe_result || search_dirs.count > 0;
         toolchain_split_search_dirs(ctx, io_implicit_link_dirs, search_dirs);
     }
+    return got_probe_result;
 }
 
-static void toolchain_model_probe(EvalExecContext *ctx, struct Eval_Toolchain_Model *model) {
+static void toolchain_model_probe_one_language(EvalExecContext *ctx,
+                                               Eval_Toolchain_Language_Model *lang,
+                                               const char *language_flag) {
+    if (!ctx || !lang || lang->compiler.count == 0 || lang->probe_attempted) return;
+    lang->probe_attempted = true;
+    lang->compiler_works = toolchain_model_probe_language(ctx,
+                                                          lang->compiler,
+                                                          &lang->compiler_id,
+                                                          &lang->compiler_version,
+                                                          &lang->target_triple,
+                                                          &lang->implicit_link_dirs,
+                                                          &lang->id_source,
+                                                          &lang->version_source,
+                                                          &lang->target_source,
+                                                          language_flag);
+}
+
+static void toolchain_model_probe_sysroot(EvalExecContext *ctx, struct Eval_Toolchain_Model *model) {
     if (!ctx || !model) return;
-    toolchain_model_probe_language(ctx,
-                                   model->c.compiler,
-                                   &model->c.compiler_id,
-                                   &model->c.compiler_version,
-                                   &model->c.target_triple,
-                                   &model->c.implicit_link_dirs,
-                                   &model->c.id_source,
-                                   &model->c.version_source,
-                                   &model->c.target_source,
-                                   "c");
-    toolchain_model_probe_language(ctx,
-                                   model->cxx.compiler,
-                                   &model->cxx.compiler_id,
-                                   &model->cxx.compiler_version,
-                                   &model->cxx.target_triple,
-                                   &model->cxx.implicit_link_dirs,
-                                   &model->cxx.id_source,
-                                   &model->cxx.version_source,
-                                   &model->cxx.target_source,
-                                   "c++");
     if (model->sysroot.count == 0) {
         String_View args[1] = {nob_sv_from_cstr("--print-sysroot")};
         String_View sysroot = toolchain_first_line_trimmed(toolchain_run_probe_temp(ctx, model->c.compiler, args, 1, nob_sv_from_cstr("")));
@@ -3304,48 +3307,39 @@ static void toolchain_model_probe(EvalExecContext *ctx, struct Eval_Toolchain_Mo
     }
 }
 
-static void toolchain_model_finalize(EvalExecContext *ctx, struct Eval_Toolchain_Model *model) {
+static void toolchain_model_finalize_language(EvalExecContext *ctx, Eval_Toolchain_Language_Model *lang) {
+    if (!ctx || !lang || !lang->enabled) return;
+    String_View detected_compiler_id = detect_compiler_id();
+    if (lang->compiler_id.count == 0) {
+        String_View inferred = infer_compiler_id_from_command(lang->compiler);
+        if (inferred.count > 0) {
+            lang->compiler_id = inferred;
+            lang->id_source = nob_sv_from_cstr("name-fallback");
+        } else {
+            lang->compiler_id = detected_compiler_id;
+            lang->id_source = nob_sv_from_cstr("binary-fallback");
+        }
+    }
+    if (lang->version_source.count == 0 && lang->compiler_version.count > 0) {
+        lang->version_source = nob_sv_from_cstr("probe");
+    }
+    lang->compiler_loaded = true;
+}
+
+static void toolchain_model_finalize_platform(EvalExecContext *ctx, struct Eval_Toolchain_Model *model) {
     if (!ctx || !model) return;
 
-    String_View detected_compiler_id = detect_compiler_id();
-    if (model->c.compiler_id.count == 0) {
-        String_View inferred = infer_compiler_id_from_command(model->c.compiler);
-        if (inferred.count > 0) {
-            model->c.compiler_id = inferred;
-            model->c.id_source = nob_sv_from_cstr("name-fallback");
-        } else {
-            model->c.compiler_id = detected_compiler_id;
-            model->c.id_source = nob_sv_from_cstr("binary-fallback");
-        }
-    }
-    if (model->cxx.compiler_id.count == 0) {
-        String_View inferred = infer_compiler_id_from_command(model->cxx.compiler);
-        if (inferred.count > 0) {
-            model->cxx.compiler_id = inferred;
-            model->cxx.id_source = nob_sv_from_cstr("name-fallback");
-        } else {
-            model->cxx.compiler_id = detected_compiler_id;
-            model->cxx.id_source = nob_sv_from_cstr("binary-fallback");
-        }
-    }
-
-    model->msvc = eval_sv_eq_ci_lit(model->c.compiler_id, "MSVC") ||
-                  eval_sv_eq_ci_lit(model->cxx.compiler_id, "MSVC");
+    model->msvc = (model->c.enabled && eval_sv_eq_ci_lit(model->c.compiler_id, "MSVC")) ||
+                  (model->cxx.enabled && eval_sv_eq_ci_lit(model->cxx.compiler_id, "MSVC"));
     model->mingw = model->target_windows &&
                    !model->msvc &&
-                   (eval_sv_eq_ci_lit(model->c.compiler_id, "GNU") ||
-                    eval_sv_eq_ci_lit(model->cxx.compiler_id, "GNU") ||
-                    sv_contains_ascii_ci(model->c.compiler, "mingw") ||
-                    sv_contains_ascii_ci(model->cxx.compiler, "mingw") ||
-                    sv_contains_ascii_ci(model->c.target_triple, "mingw") ||
-                    sv_contains_ascii_ci(model->cxx.target_triple, "mingw"));
+                   ((model->c.enabled && eval_sv_eq_ci_lit(model->c.compiler_id, "GNU")) ||
+                    (model->cxx.enabled && eval_sv_eq_ci_lit(model->cxx.compiler_id, "GNU")) ||
+                    (model->c.enabled && sv_contains_ascii_ci(model->c.compiler, "mingw")) ||
+                    (model->cxx.enabled && sv_contains_ascii_ci(model->cxx.compiler, "mingw")) ||
+                    (model->c.enabled && sv_contains_ascii_ci(model->c.target_triple, "mingw")) ||
+                    (model->cxx.enabled && sv_contains_ascii_ci(model->cxx.target_triple, "mingw")));
 
-    if (model->c.version_source.count == 0 && model->c.compiler_version.count > 0) {
-        model->c.version_source = nob_sv_from_cstr("probe");
-    }
-    if (model->cxx.version_source.count == 0 && model->cxx.compiler_version.count > 0) {
-        model->cxx.version_source = nob_sv_from_cstr("probe");
-    }
     if (model->sysroot_source.count == 0 && model->sysroot.count > 0) {
         model->sysroot_source = nob_sv_from_cstr("probe");
     }
@@ -3359,15 +3353,15 @@ static void toolchain_model_finalize(EvalExecContext *ctx, struct Eval_Toolchain
         model->shared_library_suffix = nob_sv_from_cstr(".dll");
         model->module_library_prefix = nob_sv_from_cstr("");
         model->module_library_suffix = nob_sv_from_cstr(".dll");
-        if (model->archive_tool.count == 0) {
+        if (model->archive_tool.count == 0 || eval_sv_eq_ci_lit(model->archive_tool_source, "binary-fallback")) {
             model->archive_tool = nob_sv_from_cstr("lib.exe");
             model->archive_tool_source = nob_sv_from_cstr("name-fallback");
         }
-        if (model->link_tool.count == 0) {
+        if (model->link_tool.count == 0 || eval_sv_eq_ci_lit(model->link_tool_source, "binary-fallback")) {
             model->link_tool = nob_sv_from_cstr("link.exe");
             model->link_tool_source = nob_sv_from_cstr("name-fallback");
         }
-        if (model->ranlib_tool.count == 0) {
+        if (model->ranlib_tool.count == 0 || eval_sv_eq_ci_lit(model->ranlib_tool_source, "binary-fallback")) {
             model->ranlib_tool = nob_sv_from_cstr("");
             model->ranlib_tool_source = nob_sv_from_cstr("name-fallback");
         }
@@ -3381,7 +3375,7 @@ static void toolchain_model_finalize(EvalExecContext *ctx, struct Eval_Toolchain
         model->module_library_prefix = nob_sv_from_cstr("lib");
         model->module_library_suffix = nob_sv_from_cstr(".dll");
         String_View prefix = toolchain_compiler_prefix_temp(model->c.compiler);
-        if (model->archive_tool.count == 0) {
+        if (model->archive_tool.count == 0 || eval_sv_eq_ci_lit(model->archive_tool_source, "binary-fallback")) {
             model->archive_tool = prefix.count > 0 ? toolchain_prefixed_tool(ctx, prefix, "ar") : nob_sv_from_cstr("ar");
             model->archive_tool_source = prefix.count > 0 ? nob_sv_from_cstr("name-fallback") : nob_sv_from_cstr("binary-fallback");
         }
@@ -3389,11 +3383,11 @@ static void toolchain_model_finalize(EvalExecContext *ctx, struct Eval_Toolchain
             model->link_tool = nob_sv_from_cstr("");
             model->link_tool_source = nob_sv_from_cstr("binary-fallback");
         }
-        if (model->ranlib_tool.count == 0) {
+        if (model->ranlib_tool.count == 0 || eval_sv_eq_ci_lit(model->ranlib_tool_source, "binary-fallback")) {
             model->ranlib_tool = prefix.count > 0 ? toolchain_prefixed_tool(ctx, prefix, "ranlib") : nob_sv_from_cstr("ranlib");
             model->ranlib_tool_source = prefix.count > 0 ? nob_sv_from_cstr("name-fallback") : nob_sv_from_cstr("binary-fallback");
         }
-        if (model->resource_compiler.count == 0 && model->mingw) {
+        if ((model->resource_compiler.count == 0 || eval_sv_eq_ci_lit(model->resource_compiler_source, "binary-fallback")) && model->mingw) {
             model->resource_compiler = prefix.count > 0 ? toolchain_prefixed_tool(ctx, prefix, "windres") : nob_sv_from_cstr("windres");
             model->resource_compiler_source = prefix.count > 0 ? nob_sv_from_cstr("name-fallback") : nob_sv_from_cstr("binary-fallback");
         }
@@ -3463,7 +3457,7 @@ static String_View toolchain_join_list_temp(EvalExecContext *ctx,
     return nob_sv_from_parts(copy, strlen(copy));
 }
 
-static bool toolchain_model_seed_cmake_vars(EvalExecContext *ctx, const struct Eval_Toolchain_Model *model) {
+static bool toolchain_model_seed_platform_vars(EvalExecContext *ctx, const struct Eval_Toolchain_Model *model) {
     if (!ctx || !model) return false;
 
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("WIN32"), model->target_windows ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return false;
@@ -3487,27 +3481,12 @@ static bool toolchain_model_seed_cmake_vars(EvalExecContext *ctx, const struct E
         !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSROOT"), model->sysroot)) return false;
     if (model->toolchain_file.count > 0 &&
         !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_TOOLCHAIN_FILE"), model->toolchain_file)) return false;
-
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER"), model->c.compiler)) return false;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"), model->cxx.compiler)) return false;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID"), model->c.compiler_id)) return false;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"), model->cxx.compiler_id)) return false;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_VERSION"), model->c.compiler_version)) return false;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_VERSION"), model->cxx.compiler_version)) return false;
-    if (model->c.target_triple.count > 0 &&
-        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_TARGET"), model->c.target_triple)) return false;
-    if (model->cxx.target_triple.count > 0 &&
-        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_TARGET"), model->cxx.target_triple)) return false;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_C_COMPILER_ID_SOURCE"), model->c.id_source)) return false;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_CXX_COMPILER_ID_SOURCE"), model->cxx.id_source)) return false;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_C_COMPILER_VERSION_SOURCE"), model->c.version_source)) return false;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_CXX_COMPILER_VERSION_SOURCE"), model->cxx.version_source)) return false;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_C_COMPILER_TARGET_SOURCE"), model->c.target_source)) return false;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_CXX_COMPILER_TARGET_SOURCE"), model->cxx.target_source)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_SYSROOT_SOURCE"), model->sysroot_source)) return false;
+    return true;
+}
 
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_OUTPUT_EXTENSION"), model->object_suffix)) return false;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_OUTPUT_EXTENSION"), model->object_suffix)) return false;
+static bool toolchain_model_seed_artifact_vars(EvalExecContext *ctx, const struct Eval_Toolchain_Model *model) {
+    if (!ctx || !model) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_EXECUTABLE_SUFFIX"), model->executable_suffix)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_STATIC_LIBRARY_PREFIX"), model->static_library_prefix)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_STATIC_LIBRARY_SUFFIX"), model->static_library_suffix)) return false;
@@ -3521,15 +3500,44 @@ static bool toolchain_model_seed_cmake_vars(EvalExecContext *ctx, const struct E
         !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_LINKER"), model->link_tool)) return false;
     if (model->resource_compiler.count > 0 &&
         !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_RC_COMPILER"), model->resource_compiler)) return false;
-    if (arena_arr_len(model->c.implicit_link_dirs) > 0) {
-        String_View joined = toolchain_join_list_temp(ctx, model->c.implicit_link_dirs, arena_arr_len(model->c.implicit_link_dirs), nob_sv_from_cstr(";"));
-        if (eval_should_stop(ctx) ||
-            !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_IMPLICIT_LINK_DIRECTORIES"), joined)) return false;
-    }
-    if (arena_arr_len(model->cxx.implicit_link_dirs) > 0) {
-        String_View joined = toolchain_join_list_temp(ctx, model->cxx.implicit_link_dirs, arena_arr_len(model->cxx.implicit_link_dirs), nob_sv_from_cstr(";"));
-        if (eval_should_stop(ctx) ||
-            !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES"), joined)) return false;
+    return true;
+}
+
+static bool toolchain_model_seed_language_vars(EvalExecContext *ctx,
+                                               String_View lang_name,
+                                               const Eval_Toolchain_Language_Model *lang,
+                                               String_View object_suffix) {
+    if (!ctx || !lang || !lang->enabled) return true;
+    bool is_c = eval_sv_eq_ci_lit(lang_name, "C");
+    bool is_cxx = eval_sv_eq_ci_lit(lang_name, "CXX");
+    if (!is_c && !is_cxx) return true;
+
+    String_View compiler_key = is_c ? nob_sv_from_cstr("CMAKE_C_COMPILER") : nob_sv_from_cstr("CMAKE_CXX_COMPILER");
+    String_View id_key = is_c ? nob_sv_from_cstr("CMAKE_C_COMPILER_ID") : nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID");
+    String_View version_key = is_c ? nob_sv_from_cstr("CMAKE_C_COMPILER_VERSION") : nob_sv_from_cstr("CMAKE_CXX_COMPILER_VERSION");
+    String_View target_key = is_c ? nob_sv_from_cstr("CMAKE_C_COMPILER_TARGET") : nob_sv_from_cstr("CMAKE_CXX_COMPILER_TARGET");
+    String_View loaded_key = is_c ? nob_sv_from_cstr("CMAKE_C_COMPILER_LOADED") : nob_sv_from_cstr("CMAKE_CXX_COMPILER_LOADED");
+    String_View works_key = is_c ? nob_sv_from_cstr("CMAKE_C_COMPILER_WORKS") : nob_sv_from_cstr("CMAKE_CXX_COMPILER_WORKS");
+    String_View output_key = is_c ? nob_sv_from_cstr("CMAKE_C_OUTPUT_EXTENSION") : nob_sv_from_cstr("CMAKE_CXX_OUTPUT_EXTENSION");
+    String_View id_source_key = is_c ? nob_sv_from_cstr("CMAKE_NOBIFY_C_COMPILER_ID_SOURCE") : nob_sv_from_cstr("CMAKE_NOBIFY_CXX_COMPILER_ID_SOURCE");
+    String_View version_source_key = is_c ? nob_sv_from_cstr("CMAKE_NOBIFY_C_COMPILER_VERSION_SOURCE") : nob_sv_from_cstr("CMAKE_NOBIFY_CXX_COMPILER_VERSION_SOURCE");
+    String_View target_source_key = is_c ? nob_sv_from_cstr("CMAKE_NOBIFY_C_COMPILER_TARGET_SOURCE") : nob_sv_from_cstr("CMAKE_NOBIFY_CXX_COMPILER_TARGET_SOURCE");
+    String_View implicit_link_dirs_key = is_c ? nob_sv_from_cstr("CMAKE_C_IMPLICIT_LINK_DIRECTORIES") : nob_sv_from_cstr("CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES");
+
+    if (!eval_var_set_current(ctx, compiler_key, lang->compiler)) return false;
+    if (!eval_var_set_current(ctx, id_key, lang->compiler_id)) return false;
+    if (!eval_var_set_current(ctx, version_key, lang->compiler_version)) return false;
+    if (lang->target_triple.count > 0 && !eval_var_set_current(ctx, target_key, lang->target_triple)) return false;
+    if (!eval_var_set_current(ctx, loaded_key, lang->compiler_loaded ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return false;
+    if (lang->compiler_works &&
+        !eval_var_set_current(ctx, works_key, nob_sv_from_cstr("TRUE"))) return false;
+    if (!eval_var_set_current(ctx, output_key, object_suffix)) return false;
+    if (!eval_var_set_current(ctx, id_source_key, lang->id_source)) return false;
+    if (!eval_var_set_current(ctx, version_source_key, lang->version_source)) return false;
+    if (!eval_var_set_current(ctx, target_source_key, lang->target_source)) return false;
+    if (arena_arr_len(lang->implicit_link_dirs) > 0) {
+        String_View joined = toolchain_join_list_temp(ctx, lang->implicit_link_dirs, arena_arr_len(lang->implicit_link_dirs), nob_sv_from_cstr(";"));
+        if (eval_should_stop(ctx) || !eval_var_set_current(ctx, implicit_link_dirs_key, joined)) return false;
     }
     return true;
 }
@@ -3543,11 +3551,120 @@ static bool eval_seed_toolchain_model(EvalExecContext *ctx, const EvalSession_Co
     if (eval_should_stop(ctx)) return false;
     toolchain_model_apply_config(ctx, &model, cfg);
     if (eval_should_stop(ctx)) return false;
-    toolchain_model_probe(ctx, &model);
-    if (eval_should_stop(ctx)) return false;
-    toolchain_model_finalize(ctx, &model);
+    toolchain_model_finalize_platform(ctx, &model);
     ctx->toolchain = model;
-    return toolchain_model_seed_cmake_vars(ctx, &ctx->toolchain);
+    return toolchain_model_seed_platform_vars(ctx, &ctx->toolchain) &&
+           toolchain_model_seed_artifact_vars(ctx, &ctx->toolchain);
+}
+
+static Eval_Toolchain_Language_Model *toolchain_model_language_mut(struct Eval_Toolchain_Model *model,
+                                                                   String_View lang) {
+    if (!model) return NULL;
+    if (eval_sv_eq_ci_lit(lang, "C")) return &model->c;
+    if (eval_sv_eq_ci_lit(lang, "CXX")) return &model->cxx;
+    return NULL;
+}
+
+static void toolchain_model_reconcile_language_vars(EvalExecContext *ctx,
+                                                    Eval_Toolchain_Language_Model *lang,
+                                                    String_View lang_name) {
+    if (!ctx || !lang) return;
+    bool is_c = eval_sv_eq_ci_lit(lang_name, "C");
+    bool is_cxx = eval_sv_eq_ci_lit(lang_name, "CXX");
+    if (!is_c && !is_cxx) return;
+
+    String_View compiler_key = is_c ? nob_sv_from_cstr("CMAKE_C_COMPILER") : nob_sv_from_cstr("CMAKE_CXX_COMPILER");
+    String_View target_key = is_c ? nob_sv_from_cstr("CMAKE_C_COMPILER_TARGET") : nob_sv_from_cstr("CMAKE_CXX_COMPILER_TARGET");
+    String_View visible_compiler = eval_var_get_visible(ctx, compiler_key);
+    String_View visible_target = eval_var_get_visible(ctx, target_key);
+    if (visible_compiler.count > 0 && !nob_sv_eq(visible_compiler, lang->compiler)) {
+        lang->compiler = toolchain_sv_copy(ctx, visible_compiler);
+    }
+    if (visible_target.count > 0 && !nob_sv_eq(visible_target, lang->target_triple)) {
+        lang->target_triple = toolchain_sv_copy(ctx, visible_target);
+        lang->target_source = nob_sv_from_cstr("explicit");
+    }
+}
+
+static bool toolchain_emit_low_confidence_diag(EvalExecContext *ctx,
+                                               Cmake_Event_Origin origin,
+                                               String_View command_name,
+                                               String_View lang_name,
+                                               const Eval_Toolchain_Language_Model *lang) {
+    if (!ctx || !lang || !lang->enabled) return true;
+    if (!eval_sv_eq_ci_lit(lang->id_source, "name-fallback") &&
+        !eval_sv_eq_ci_lit(lang->id_source, "binary-fallback")) {
+        return true;
+    }
+    const char *source = eval_sv_eq_ci_lit(lang->id_source, "binary-fallback") ? "binary fallback" : "name fallback";
+    String_View cause = nob_sv_from_cstr(nob_temp_sprintf("enable_language(%.*s) used low-confidence compiler id %s",
+                                                          (int)lang_name.count,
+                                                          lang_name.data ? lang_name.data : "",
+                                                          source));
+    return EVAL_DIAG_EMIT_SEV(ctx,
+                              EV_DIAG_WARNING,
+                              EVAL_DIAG_UNSUPPORTED_OPERATION,
+                              nob_sv_from_cstr("toolchain"),
+                              command_name,
+                              origin,
+                              cause,
+                              nob_sv_from_cstr("Probe failed or was unavailable; Nobify kept permissive fallback behavior"));
+}
+
+bool eval_toolchain_enable_language(EvalExecContext *ctx,
+                                    Cmake_Event_Origin origin,
+                                    String_View command_name,
+                                    String_View lang_name,
+                                    bool *out_changed) {
+    if (out_changed) *out_changed = false;
+    if (!ctx) return false;
+    Eval_Toolchain_Language_Model *lang = toolchain_model_language_mut(&ctx->toolchain, lang_name);
+    if (!lang) {
+        return EVAL_DIAG_EMIT_SEV(ctx,
+                                  EV_DIAG_WARNING,
+                                  EVAL_DIAG_UNSUPPORTED_OPERATION,
+                                  nob_sv_from_cstr("toolchain"),
+                                  command_name,
+                                  origin,
+                                  nob_sv_from_cstr("enable_language() has no real Toolchain_Model backend for this language yet"),
+                                  lang_name);
+    }
+    if (lang->enabled) return true;
+
+    lang->enabled = true;
+    if (out_changed) *out_changed = true;
+    toolchain_model_reconcile_language_vars(ctx, lang, lang_name);
+    if (eval_should_stop(ctx)) return false;
+
+    String_View visible_sysroot = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_SYSROOT"));
+    if (visible_sysroot.count > 0 && !nob_sv_eq(visible_sysroot, ctx->toolchain.sysroot)) {
+        ctx->toolchain.sysroot = toolchain_sv_copy(ctx, visible_sysroot);
+        ctx->toolchain.sysroot_source = nob_sv_from_cstr("explicit");
+    }
+    String_View visible_cross = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING"));
+    bool preserve_forced_cross = !ctx->toolchain.cross_compiling &&
+                                 (eval_sv_eq_ci_lit(visible_cross, "ON") ||
+                                  eval_sv_eq_ci_lit(visible_cross, "TRUE") ||
+                                  eval_sv_eq_ci_lit(visible_cross, "1"));
+
+    toolchain_model_probe_sysroot(ctx, &ctx->toolchain);
+    toolchain_model_probe_one_language(ctx,
+                                       lang,
+                                       eval_sv_eq_ci_lit(lang_name, "CXX") ? "c++" : "c");
+    if (eval_should_stop(ctx)) return false;
+    toolchain_model_finalize_language(ctx, lang);
+    toolchain_model_finalize_platform(ctx, &ctx->toolchain);
+
+    if (!toolchain_model_seed_platform_vars(ctx, &ctx->toolchain) ||
+        !toolchain_model_seed_artifact_vars(ctx, &ctx->toolchain) ||
+        !toolchain_model_seed_language_vars(ctx, lang_name, lang, ctx->toolchain.object_suffix)) {
+        return false;
+    }
+    if (preserve_forced_cross &&
+        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING"), visible_cross)) {
+        return false;
+    }
+    return toolchain_emit_low_confidence_diag(ctx, origin, command_name, lang_name, lang);
 }
 
 const struct Eval_Toolchain_Model *eval_toolchain_current(const EvalExecContext *ctx) {
@@ -3599,10 +3716,14 @@ static Event_Toolchain_Language_Snapshot eval_toolchain_language_snapshot(EvalEx
     out.implicit_link_dir_count = arena_arr_len(src->implicit_link_dirs);
     out.implicit_link_libs = src->implicit_link_libs;
     out.implicit_link_lib_count = arena_arr_len(src->implicit_link_libs);
+    out.enabled = src->enabled;
+    out.probe_attempted = src->probe_attempted;
+    out.compiler_loaded = src->compiler_loaded;
+    out.compiler_works = src->compiler_works;
     return out;
 }
 
-static bool eval_emit_toolchain_snapshot(EvalExecContext *ctx) {
+bool eval_toolchain_emit_snapshot(EvalExecContext *ctx) {
     if (!ctx) return false;
     const struct Eval_Toolchain_Model *model = &ctx->toolchain;
     Event ev = {0};
@@ -3895,7 +4016,7 @@ EvalRunResult eval_session_run(EvalSession *session,
         if (session->state.registry) session->state.registry->mutation_blocked = false;
         return out;
     }
-    if (!eval_emit_toolchain_snapshot(&exec)) {
+    if (!eval_toolchain_emit_snapshot(&exec)) {
         if (session->state.registry) session->state.registry->mutation_blocked = false;
         return out;
     }
