@@ -107,6 +107,7 @@ typedef struct {
 } EvalNativeCommandDef;
 
 typedef struct {
+    String_View toolchain_file;
     String_View system_name;
     String_View system_processor;
     String_View system_version;
@@ -115,6 +116,12 @@ typedef struct {
     String_View cxx_compiler;
     String_View c_compiler_id;
     String_View cxx_compiler_id;
+    String_View c_compiler_target;
+    String_View cxx_compiler_target;
+    String_View archive_tool;
+    String_View ranlib_tool;
+    String_View link_tool;
+    String_View resource_compiler;
 } Eval_Target_Platform_Config;
 
 typedef enum {

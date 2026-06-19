@@ -218,6 +218,8 @@ BM_Query_Session *bm_query_session_create(Arena *arena, const Build_Model *model
 const BM_Query_Session_Stats *bm_query_session_stats(const BM_Query_Session *session);
 
 bool bm_model_has_project(const Build_Model *model);
+bool bm_query_has_toolchain(const Build_Model *model);
+const Event_Toolchain_Snapshot *bm_query_toolchain_snapshot(const Build_Model *model);
 bool bm_target_id_is_valid(BM_Target_Id id);
 bool bm_build_step_id_is_valid(BM_Build_Step_Id id);
 bool bm_replay_action_id_is_valid(BM_Replay_Action_Id id);

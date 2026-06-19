@@ -323,12 +323,19 @@ static const char *nobify_cmake_system_name_for_platform(Nob_Codegen_Platform pl
 static void nobify_configure_eval_target(EvalSession_Config *cfg,
                                          Nob_Codegen_Platform platform,
                                          Nob_Codegen_Backend backend,
+                                         const char *toolchain_file,
                                          const char *target_processor,
                                          const char *sysroot,
                                          const char *cc,
                                          const char *cxx,
                                          const char *c_compiler_id,
-                                         const char *cxx_compiler_id) {
+                                         const char *cxx_compiler_id,
+                                         const char *c_compiler_target,
+                                         const char *cxx_compiler_target,
+                                         const char *ar,
+                                         const char *ranlib,
+                                         const char *linker,
+                                         const char *rc) {
     const char *system_name = nobify_cmake_system_name_for_platform(platform);
     if (!cfg) return;
 
@@ -345,6 +352,9 @@ static void nobify_configure_eval_target(EvalSession_Config *cfg,
     if (target_processor && target_processor[0] != '\0') {
         cfg->target.system_processor = nob_sv_from_cstr(target_processor);
     }
+    if (toolchain_file && toolchain_file[0] != '\0') {
+        cfg->target.toolchain_file = nob_sv_from_cstr(toolchain_file);
+    }
     if (sysroot && sysroot[0] != '\0') {
         cfg->target.sysroot = nob_sv_from_cstr(sysroot);
     }
@@ -360,11 +370,29 @@ static void nobify_configure_eval_target(EvalSession_Config *cfg,
     if (cxx_compiler_id && cxx_compiler_id[0] != '\0') {
         cfg->target.cxx_compiler_id = nob_sv_from_cstr(cxx_compiler_id);
     }
+    if (c_compiler_target && c_compiler_target[0] != '\0') {
+        cfg->target.c_compiler_target = nob_sv_from_cstr(c_compiler_target);
+    }
+    if (cxx_compiler_target && cxx_compiler_target[0] != '\0') {
+        cfg->target.cxx_compiler_target = nob_sv_from_cstr(cxx_compiler_target);
+    }
+    if (ar && ar[0] != '\0') {
+        cfg->target.archive_tool = nob_sv_from_cstr(ar);
+    }
+    if (ranlib && ranlib[0] != '\0') {
+        cfg->target.ranlib_tool = nob_sv_from_cstr(ranlib);
+    }
+    if (linker && linker[0] != '\0') {
+        cfg->target.link_tool = nob_sv_from_cstr(linker);
+    }
+    if (rc && rc[0] != '\0') {
+        cfg->target.resource_compiler = nob_sv_from_cstr(rc);
+    }
 }
 
 static void print_usage(const char *program) {
     nob_log(NOB_INFO,
-            "Usage: %s [--strict] [--tokens] [--ast] [--events] [--platform host|linux|darwin|windows] [--backend auto|posix|win32-msvc] [--target-processor proc] [--sysroot path] [--cc path] [--cxx path] [--compiler-id id|--c-compiler-id id --cxx-compiler-id id] [--source-root path] [--binary-root path] [--out path] [input]",
+            "Usage: %s [--strict] [--tokens] [--ast] [--events] [--platform host|linux|darwin|windows] [--backend auto|posix|win32-msvc] [--toolchain-file path] [--target-processor proc] [--sysroot path] [--cc path] [--cxx path] [--c-target triple] [--cxx-target triple] [--ar tool] [--ranlib tool] [--linker tool] [--rc tool] [--compiler-id id|--c-compiler-id id --cxx-compiler-id id] [--source-root path] [--binary-root path] [--out path] [input]",
             program);
 }
 
@@ -421,11 +449,18 @@ int main(int argc, char **argv) {
     const char *source_root_path = NULL;
     const char *binary_root_path = NULL;
     const char *target_processor = NULL;
+    const char *toolchain_file = NULL;
     const char *sysroot = NULL;
     const char *cc = NULL;
     const char *cxx = NULL;
     const char *c_compiler_id = NULL;
     const char *cxx_compiler_id = NULL;
+    const char *c_compiler_target = NULL;
+    const char *cxx_compiler_target = NULL;
+    const char *ar = NULL;
+    const char *ranlib = NULL;
+    const char *linker = NULL;
+    const char *rc = NULL;
     Nob_Codegen_Platform requested_platform = NOB_CODEGEN_PLATFORM_HOST;
     Nob_Codegen_Backend requested_backend = NOB_CODEGEN_BACKEND_AUTO;
     Nob_Codegen_Platform resolved_platform = NOB_CODEGEN_PLATFORM_HOST;
@@ -487,6 +522,15 @@ int main(int argc, char **argv) {
             target_processor = argv[++i];
             continue;
         }
+        if (strcmp(argv[i], "--toolchain-file") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --toolchain-file");
+                print_usage(argv[0]);
+                return 1;
+            }
+            toolchain_file = argv[++i];
+            continue;
+        }
         if (strcmp(argv[i], "--sysroot") == 0) {
             if (i + 1 >= argc) {
                 nob_log(NOB_ERROR, "Missing value for --sysroot");
@@ -512,6 +556,60 @@ int main(int argc, char **argv) {
                 return 1;
             }
             cxx = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--c-target") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --c-target");
+                print_usage(argv[0]);
+                return 1;
+            }
+            c_compiler_target = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--cxx-target") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --cxx-target");
+                print_usage(argv[0]);
+                return 1;
+            }
+            cxx_compiler_target = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--ar") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --ar");
+                print_usage(argv[0]);
+                return 1;
+            }
+            ar = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--ranlib") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --ranlib");
+                print_usage(argv[0]);
+                return 1;
+            }
+            ranlib = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--linker") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --linker");
+                print_usage(argv[0]);
+                return 1;
+            }
+            linker = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--rc") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --rc");
+                print_usage(argv[0]);
+                return 1;
+            }
+            rc = argv[++i];
             continue;
         }
         if (strcmp(argv[i], "--compiler-id") == 0) {
@@ -714,12 +812,19 @@ int main(int argc, char **argv) {
     nobify_configure_eval_target(&session_cfg,
                                  resolved_platform,
                                  resolved_backend,
+                                 toolchain_file,
                                  target_processor,
                                  sysroot,
                                  cc,
                                  cxx,
                                  c_compiler_id,
-                                 cxx_compiler_id);
+                                 cxx_compiler_id,
+                                 c_compiler_target,
+                                 cxx_compiler_target,
+                                 ar,
+                                 ranlib,
+                                 linker,
+                                 rc);
 
     EvalSession *session = eval_session_create(&session_cfg);
     if (!session) {

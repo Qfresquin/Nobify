@@ -93,6 +93,7 @@ static bool bm_is_supported_build_event(Event_Kind kind) {
         case EVENT_CPACK_PACKAGE_ADD_GENERATOR:
         case EVENT_CPACK_PACKAGE_ARCHIVE_NAME_OVERRIDE:
         case EVENT_PACKAGE_FIND_RESULT:
+        case EVENT_TOOLCHAIN_SNAPSHOT:
             return true;
         case EVENT_KIND_COUNT:
             return false;
@@ -741,9 +742,20 @@ bool bm_builder_apply_event(BM_Builder *builder, const Event *ev) {
                                 "extend src_v2/build_model handlers for this event");
     }
 
-    builder->draft->has_semantic_entities = true;
+    if (ev->h.kind != EVENT_TOOLCHAIN_SNAPSHOT) {
+        builder->draft->has_semantic_entities = true;
+    }
 
     switch (ev->h.kind) {
+        case EVENT_TOOLCHAIN_SNAPSHOT: {
+            Event copy = *ev;
+            if (!event_copy_into_arena(builder->arena, &copy)) return false;
+            builder->draft->toolchain = copy.as.toolchain_snapshot;
+            builder->draft->has_toolchain = true;
+            builder->draft->toolchain_provenance = bm_provenance_from_event(builder->arena, ev);
+            return true;
+        }
+
         case EVENT_PROJECT_DECLARE:
         case EVENT_PROJECT_MINIMUM_REQUIRED:
             return bm_builder_handle_project_event(builder, ev);

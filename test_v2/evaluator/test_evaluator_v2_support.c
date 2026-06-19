@@ -239,11 +239,18 @@ Eval_Test_Fixture *eval_test_fixture_create(size_t temp_arena_size,
         if (overrides->target.system_name.count > 0) fixture->init.target.system_name = overrides->target.system_name;
         if (overrides->target.system_processor.count > 0) fixture->init.target.system_processor = overrides->target.system_processor;
         if (overrides->target.system_version.count > 0) fixture->init.target.system_version = overrides->target.system_version;
+        if (overrides->target.toolchain_file.count > 0) fixture->init.target.toolchain_file = overrides->target.toolchain_file;
         if (overrides->target.sysroot.count > 0) fixture->init.target.sysroot = overrides->target.sysroot;
         if (overrides->target.c_compiler.count > 0) fixture->init.target.c_compiler = overrides->target.c_compiler;
         if (overrides->target.cxx_compiler.count > 0) fixture->init.target.cxx_compiler = overrides->target.cxx_compiler;
         if (overrides->target.c_compiler_id.count > 0) fixture->init.target.c_compiler_id = overrides->target.c_compiler_id;
         if (overrides->target.cxx_compiler_id.count > 0) fixture->init.target.cxx_compiler_id = overrides->target.cxx_compiler_id;
+        if (overrides->target.c_compiler_target.count > 0) fixture->init.target.c_compiler_target = overrides->target.c_compiler_target;
+        if (overrides->target.cxx_compiler_target.count > 0) fixture->init.target.cxx_compiler_target = overrides->target.cxx_compiler_target;
+        if (overrides->target.archive_tool.count > 0) fixture->init.target.archive_tool = overrides->target.archive_tool;
+        if (overrides->target.ranlib_tool.count > 0) fixture->init.target.ranlib_tool = overrides->target.ranlib_tool;
+        if (overrides->target.link_tool.count > 0) fixture->init.target.link_tool = overrides->target.link_tool;
+        if (overrides->target.resource_compiler.count > 0) fixture->init.target.resource_compiler = overrides->target.resource_compiler;
     }
 
     fixture->ctx = eval_test_create(&fixture->init);

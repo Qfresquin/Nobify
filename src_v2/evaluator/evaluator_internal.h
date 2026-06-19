@@ -758,6 +758,21 @@ typedef struct Eval_Command_Transaction {
     bool fetchcontent_module_loaded;
 } Eval_Command_Transaction;
 
+typedef struct Eval_Toolchain_Language_Model {
+    String_View compiler;
+    String_View compiler_id;
+    String_View compiler_version;
+    String_View target_triple;
+    String_View compiler_abi;
+    String_View object_format;
+    String_View id_source;
+    String_View version_source;
+    String_View target_source;
+    String_View *implicit_include_dirs;
+    String_View *implicit_link_dirs;
+    String_View *implicit_link_libs;
+} Eval_Toolchain_Language_Model;
+
 typedef struct {
     EvalRegistry *registry;
     const EvalServices *services;
@@ -769,6 +784,8 @@ typedef struct {
         String_View target_system_processor;
         String_View target_system_version;
         String_View sysroot;
+        String_View sysroot_source;
+        String_View toolchain_file;
         bool explicit_target_platform;
         bool cross_compiling;
         bool target_windows;
@@ -776,13 +793,7 @@ typedef struct {
         bool target_apple;
         bool msvc;
         bool mingw;
-        struct {
-            String_View compiler;
-            String_View compiler_id;
-            String_View compiler_version;
-            String_View target_triple;
-            String_View id_source;
-        } c, cxx;
+        Eval_Toolchain_Language_Model c, cxx;
         String_View object_suffix;
         String_View executable_suffix;
         String_View static_library_prefix;
@@ -792,8 +803,13 @@ typedef struct {
         String_View module_library_prefix;
         String_View module_library_suffix;
         String_View archive_tool;
+        String_View archive_tool_source;
         String_View link_tool;
+        String_View link_tool_source;
         String_View ranlib_tool;
+        String_View ranlib_tool_source;
+        String_View resource_compiler;
+        String_View resource_compiler_source;
     } toolchain;
     Eval_Scope_State scope_state;
     Eval_Semantic_State semantic_state;

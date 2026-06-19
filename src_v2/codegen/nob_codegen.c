@@ -1166,7 +1166,7 @@ static bool cg_collect_compile_definition_arg(CG_Context *ctx, String_View item,
     char *arg = NULL;
     if (!ctx || !out) return false;
     spelling = bm_query_compile_definition_spelling(item);
-    prefix = cg_policy_is_windows(ctx) ? "/D" : "-D";
+    prefix = cg_policy_uses_msvc_command_line(ctx) ? "/D" : "-D";
     arg = cg_arena_sprintf(ctx->scratch,
                            "%s%.*s",
                            prefix,
@@ -1179,7 +1179,7 @@ static bool cg_collect_compile_option_arg(CG_Context *ctx, String_View item, Str
     BM_Compile_Option_Spelling spelling = {0};
     if (!ctx || !out) return false;
     spelling = bm_query_compile_option_spelling(item);
-    if (cg_policy_is_windows(ctx) && spelling.kind == BM_COMPILE_OPTION_SPELLING_STANDARD_FLAG) return true;
+    if (cg_policy_uses_msvc_command_line(ctx) && spelling.kind == BM_COMPILE_OPTION_SPELLING_STANDARD_FLAG) return true;
     return cg_collect_unique_path(ctx->scratch, out, spelling.argument);
 }
 
@@ -1210,7 +1210,7 @@ static bool cg_collect_source_compile_args(CG_Context *ctx,
         String_View path = {0};
         char *arg = NULL;
         if (!cg_rebase_from_provenance(ctx, source_includes[i].value, source_includes[i].provenance, &path)) return false;
-        if (cg_policy_is_windows(ctx)) {
+        if (cg_policy_uses_msvc_command_line(ctx)) {
             arg = cg_arena_sprintf(ctx->scratch, "/I%.*s", (int)path.count, path.data ? path.data : "");
         } else {
             arg = cg_arena_sprintf(ctx->scratch, "-I%.*s", (int)path.count, path.data ? path.data : "");
@@ -1250,7 +1250,7 @@ static bool cg_collect_compile_args(CG_Context *ctx,
     for (size_t i = 0; i < includes.count; ++i) {
         String_View path = {0};
         if (!cg_rebase_from_provenance(ctx, includes.items[i].value, includes.items[i].provenance, &path)) return false;
-        if (cg_policy_is_windows(ctx)) {
+        if (cg_policy_uses_msvc_command_line(ctx)) {
             char *arg = cg_arena_sprintf(ctx->scratch, "/I%.*s", (int)path.count, path.data ? path.data : "");
             if (!arg || !cg_collect_unique_path(ctx->scratch, out, nob_sv_from_cstr(arg))) return false;
         } else if (includes.items[i].flags & BM_ITEM_FLAG_SYSTEM) {
@@ -1290,7 +1290,7 @@ static bool cg_collect_link_dir_args(CG_Context *ctx,
         char *arg = NULL;
         path_item.value = spelling.path;
         if (!cg_rebase_from_provenance(ctx, path_item.value, path_item.provenance, &path)) return false;
-        arg = cg_policy_is_windows(ctx)
+        arg = cg_policy_uses_msvc_command_line(ctx)
             ? cg_arena_sprintf(ctx->scratch, "/LIBPATH:%.*s", (int)path.count, path.data ? path.data : "")
             : cg_arena_sprintf(ctx->scratch, "-L%.*s", (int)path.count, path.data ? path.data : "");
         if (!arg || !cg_collect_unique_path(ctx->scratch, out, nob_sv_from_cstr(arg))) return false;
@@ -1388,7 +1388,7 @@ static bool cg_collect_link_library_args(CG_Context *ctx,
                 if (out_args && !cg_collect_unique_path(ctx->scratch, out_args, item)) return false;
                 continue;
             case BM_LINK_ITEM_SPELLING_BARE_LIBRARY: {
-                char *arg = cg_policy_is_windows(ctx)
+                char *arg = cg_policy_uses_msvc_command_line(ctx)
                     ? cg_arena_sprintf(ctx->scratch, "%.*s.lib", (int)item.count, item.data ? item.data : "")
                     : cg_arena_sprintf(ctx->scratch, "-l%.*s", (int)item.count, item.data ? item.data : "");
                 if (!arg || (out_args && !cg_collect_unique_path(ctx->scratch, out_args, nob_sv_from_cstr(arg)))) return false;
@@ -1433,6 +1433,35 @@ static bool cg_emit_cmd_append_toolchain(Nob_String_Builder *out, const char *cm
     nob_sb_append_cstr(out, ", ");
     nob_sb_append_cstr(out, use_cxx ? "true" : "false");
     nob_sb_append_cstr(out, ");\n");
+    return true;
+}
+
+static bool cg_compiler_id_is_clang(String_View id) {
+    return nob_sv_eq(id, nob_sv_from_cstr("Clang")) || nob_sv_eq(id, nob_sv_from_cstr("AppleClang"));
+}
+
+static bool cg_emit_cmd_append_toolchain_flags(CG_Context *ctx,
+                                               Nob_String_Builder *out,
+                                               const char *cmd_var,
+                                               bool use_cxx) {
+    if (!ctx || !out || !cmd_var || !ctx->toolchain) return true;
+    if (!cg_policy_uses_msvc_command_line(ctx)) {
+        const Event_Toolchain_Language_Snapshot *lang = use_cxx ? &ctx->toolchain->cxx : &ctx->toolchain->c;
+        if (ctx->toolchain->sysroot.count > 0) {
+            char *arg = cg_arena_sprintf(ctx->scratch,
+                                         "--sysroot=%.*s",
+                                         (int)ctx->toolchain->sysroot.count,
+                                         ctx->toolchain->sysroot.data ? ctx->toolchain->sysroot.data : "");
+            if (!arg || !cg_emit_cmd_append_sv(out, cmd_var, nob_sv_from_cstr(arg))) return false;
+        }
+        if (lang->compiler_target.count > 0 && cg_compiler_id_is_clang(lang->compiler_id)) {
+            char *arg = cg_arena_sprintf(ctx->scratch,
+                                         "--target=%.*s",
+                                         (int)lang->compiler_target.count,
+                                         lang->compiler_target.data ? lang->compiler_target.data : "");
+            if (!arg || !cg_emit_cmd_append_sv(out, cmd_var, nob_sv_from_cstr(arg))) return false;
+        }
+    }
     return true;
 }
 
@@ -1625,7 +1654,8 @@ static bool cg_emit_link_args_runtime(CG_Context *ctx,
 
         nob_sb_append_cstr(out, "        Nob_Cmd link_cmd = {0};\n");
         if (!cg_emit_cmd_append_link_tool(ctx, out, "link_cmd", needs_cxx_linker)) return false;
-        if (cg_policy_is_windows(ctx)) {
+        if (!cg_emit_cmd_append_toolchain_flags(ctx, out, "link_cmd", needs_cxx_linker)) return false;
+        if (cg_policy_uses_msvc_command_line(ctx)) {
             char *out_arg = cg_arena_sprintf(ctx->scratch,
                                              "/OUT:%.*s",
                                              (int)artifact.path.count,
@@ -1858,8 +1888,9 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
         nob_sb_append_cstr(out, "}, 2)) {\n");
         nob_sb_append_cstr(out, "        Nob_Cmd cc_cmd = {0};\n");
         if (!cg_emit_cmd_append_toolchain(out, "cc_cmd", sources[i].lang == CG_SOURCE_LANG_CXX)) return false;
+        if (!cg_emit_cmd_append_toolchain_flags(ctx, out, "cc_cmd", sources[i].lang == CG_SOURCE_LANG_CXX)) return false;
         if (!cg_emit_compile_args_runtime(ctx, info->id, &sources[i], "cc_cmd", out)) return false;
-        if (cg_policy_is_windows(ctx)) {
+        if (cg_policy_uses_msvc_command_line(ctx)) {
             char *fo_arg = cg_arena_sprintf(ctx->scratch,
                                             "/Fo:%.*s",
                                             (int)obj_path.count,
@@ -1903,7 +1934,7 @@ static bool cg_emit_target_function(CG_Context *ctx, const CG_Target_Info *info,
             }
             nob_sb_append_cstr(out, "        Nob_Cmd ar_cmd = {0};\n");
             if (!cg_emit_cmd_append_archive_tool(out, "ar_cmd")) return false;
-            if (cg_policy_is_windows(ctx)) {
+            if (cg_policy_uses_msvc_command_line(ctx)) {
                 char *out_arg = cg_arena_sprintf(ctx->scratch,
                                                  "/OUT:%.*s",
                                                  (int)artifact.path.count,
@@ -2315,6 +2346,8 @@ static bool cg_init_context(CG_Context *ctx,
         .target_platform = opts->target_platform,
         .backend = opts->backend,
     };
+    ctx->toolchain = bm_query_toolchain_snapshot(model);
+    cg_apply_toolchain_snapshot_to_opts(ctx);
     if (!cg_init_backend_policy(ctx)) return false;
 
     cwd = nob_get_current_dir_temp();

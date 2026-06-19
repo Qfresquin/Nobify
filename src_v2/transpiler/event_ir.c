@@ -87,6 +87,60 @@ static bool event_copy_property_mutate_inplace(Arena *arena, Event_Directory_Pro
     return true;
 }
 
+static bool event_copy_toolchain_language_inplace(Arena *arena, Event_Toolchain_Language_Snapshot *lang) {
+    if (!arena || !lang) return false;
+    if (!event_copy_sv_inplace(arena, &lang->language) ||
+        !event_copy_sv_inplace(arena, &lang->compiler) ||
+        !event_copy_sv_inplace(arena, &lang->compiler_id) ||
+        !event_copy_sv_inplace(arena, &lang->compiler_version) ||
+        !event_copy_sv_inplace(arena, &lang->compiler_target) ||
+        !event_copy_sv_inplace(arena, &lang->compiler_abi) ||
+        !event_copy_sv_inplace(arena, &lang->object_format) ||
+        !event_copy_sv_inplace(arena, &lang->id_source) ||
+        !event_copy_sv_inplace(arena, &lang->version_source) ||
+        !event_copy_sv_inplace(arena, &lang->target_source) ||
+        !event_copy_sv_array_inplace(arena, &lang->implicit_include_dirs, lang->implicit_include_dir_count) ||
+        !event_copy_sv_array_inplace(arena, &lang->implicit_link_dirs, lang->implicit_link_dir_count) ||
+        !event_copy_sv_array_inplace(arena, &lang->implicit_link_libs, lang->implicit_link_lib_count)) {
+        return false;
+    }
+    return true;
+}
+
+static bool event_copy_toolchain_snapshot_inplace(Arena *arena, Event_Toolchain_Snapshot *snapshot) {
+    if (!arena || !snapshot) return false;
+    if (!event_copy_sv_inplace(arena, &snapshot->host_system_name) ||
+        !event_copy_sv_inplace(arena, &snapshot->host_system_processor) ||
+        !event_copy_sv_inplace(arena, &snapshot->host_system_version) ||
+        !event_copy_sv_inplace(arena, &snapshot->target_system_name) ||
+        !event_copy_sv_inplace(arena, &snapshot->target_system_processor) ||
+        !event_copy_sv_inplace(arena, &snapshot->target_system_version) ||
+        !event_copy_sv_inplace(arena, &snapshot->sysroot) ||
+        !event_copy_sv_inplace(arena, &snapshot->sysroot_source) ||
+        !event_copy_toolchain_language_inplace(arena, &snapshot->c) ||
+        !event_copy_toolchain_language_inplace(arena, &snapshot->cxx) ||
+        !event_copy_sv_inplace(arena, &snapshot->object_suffix) ||
+        !event_copy_sv_inplace(arena, &snapshot->executable_suffix) ||
+        !event_copy_sv_inplace(arena, &snapshot->static_library_prefix) ||
+        !event_copy_sv_inplace(arena, &snapshot->static_library_suffix) ||
+        !event_copy_sv_inplace(arena, &snapshot->shared_library_prefix) ||
+        !event_copy_sv_inplace(arena, &snapshot->shared_library_suffix) ||
+        !event_copy_sv_inplace(arena, &snapshot->module_library_prefix) ||
+        !event_copy_sv_inplace(arena, &snapshot->module_library_suffix) ||
+        !event_copy_sv_inplace(arena, &snapshot->archive_tool) ||
+        !event_copy_sv_inplace(arena, &snapshot->archive_tool_source) ||
+        !event_copy_sv_inplace(arena, &snapshot->link_tool) ||
+        !event_copy_sv_inplace(arena, &snapshot->link_tool_source) ||
+        !event_copy_sv_inplace(arena, &snapshot->ranlib_tool) ||
+        !event_copy_sv_inplace(arena, &snapshot->ranlib_tool_source) ||
+        !event_copy_sv_inplace(arena, &snapshot->resource_compiler) ||
+        !event_copy_sv_inplace(arena, &snapshot->resource_compiler_source) ||
+        !event_copy_sv_inplace(arena, &snapshot->toolchain_file)) {
+        return false;
+    }
+    return true;
+}
+
 static const char *event_var_target_name(Event_Var_Target_Kind target_kind) {
     switch (target_kind) {
         case EVENT_VAR_TARGET_CURRENT: return "current";
@@ -724,6 +778,9 @@ static bool event_deep_copy_payload(Arena *arena, Event *ev) {
             if (!event_copy_sv_inplace(arena, &ev->as.target_compile_features.item)) return false;
             if (!event_copy_link_item_metadata_inplace(arena, &ev->as.target_compile_features.semantic)) return false;
             break;
+        case EVENT_TOOLCHAIN_SNAPSHOT:
+            if (!event_copy_toolchain_snapshot_inplace(arena, &ev->as.toolchain_snapshot)) return false;
+            break;
         case EVENT_KIND_COUNT:
             return false;
     }
@@ -1205,6 +1262,19 @@ static void event_dump_one(const Event *ev) {
                    ev->as.target_compile_features.target_name.data ? ev->as.target_compile_features.target_name.data : "",
                    (int)ev->as.target_compile_features.item.count,
                    ev->as.target_compile_features.item.data ? ev->as.target_compile_features.item.data : "");
+            break;
+        case EVENT_TOOLCHAIN_SNAPSHOT:
+            printf(" target=%.*s c=%.*s cxx=%.*s cc_id=%.*s cxx_id=%.*s",
+                   (int)ev->as.toolchain_snapshot.target_system_name.count,
+                   ev->as.toolchain_snapshot.target_system_name.data ? ev->as.toolchain_snapshot.target_system_name.data : "",
+                   (int)ev->as.toolchain_snapshot.c.compiler.count,
+                   ev->as.toolchain_snapshot.c.compiler.data ? ev->as.toolchain_snapshot.c.compiler.data : "",
+                   (int)ev->as.toolchain_snapshot.cxx.compiler.count,
+                   ev->as.toolchain_snapshot.cxx.compiler.data ? ev->as.toolchain_snapshot.cxx.compiler.data : "",
+                   (int)ev->as.toolchain_snapshot.c.compiler_id.count,
+                   ev->as.toolchain_snapshot.c.compiler_id.data ? ev->as.toolchain_snapshot.c.compiler_id.data : "",
+                   (int)ev->as.toolchain_snapshot.cxx.compiler_id.count,
+                   ev->as.toolchain_snapshot.cxx.compiler_id.data ? ev->as.toolchain_snapshot.cxx.compiler_id.data : "");
             break;
 
         default:

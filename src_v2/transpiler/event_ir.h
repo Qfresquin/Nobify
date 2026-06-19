@@ -39,7 +39,8 @@ typedef enum {
     X(EVENT_FAMILY_INSTALL, "install") \
     X(EVENT_FAMILY_CPACK, "cpack") \
     X(EVENT_FAMILY_PACKAGE, "package") \
-    X(EVENT_FAMILY_EXPORT, "export")
+    X(EVENT_FAMILY_EXPORT, "export") \
+    X(EVENT_FAMILY_TOOLCHAIN, "toolchain")
 
 typedef enum {
 #define DECLARE_EVENT_FAMILY(kind, label) kind,
@@ -159,6 +160,7 @@ typedef enum {
     X(EVENT_REPLAY_ACTION_ADD_OUTPUT, EVENT_FAMILY_BUILD_GRAPH, "replay_action_add_output", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_REPLAY_ACTION_ADD_ARGV, EVENT_FAMILY_BUILD_GRAPH, "replay_action_add_argv", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_REPLAY_ACTION_ADD_ENV, EVENT_FAMILY_BUILD_GRAPH, "replay_action_add_env", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC) \
+    X(EVENT_TOOLCHAIN_SNAPSHOT, EVENT_FAMILY_TOOLCHAIN, "toolchain_snapshot", EVENT_ROLE_STATE | EVENT_ROLE_BUILD_SEMANTIC) \
     X(EVENT_LIST_REVERSE, EVENT_FAMILY_LIST, "list_reverse", EVENT_ROLE_RUNTIME_EFFECT)
 
 typedef enum {
@@ -1045,6 +1047,61 @@ typedef struct {
 } Event_Target_Compile_Features;
 
 typedef struct {
+    String_View language;
+    String_View compiler;
+    String_View compiler_id;
+    String_View compiler_version;
+    String_View compiler_target;
+    String_View compiler_abi;
+    String_View object_format;
+    String_View id_source;
+    String_View version_source;
+    String_View target_source;
+    String_View *implicit_include_dirs;
+    size_t implicit_include_dir_count;
+    String_View *implicit_link_dirs;
+    size_t implicit_link_dir_count;
+    String_View *implicit_link_libs;
+    size_t implicit_link_lib_count;
+} Event_Toolchain_Language_Snapshot;
+
+typedef struct {
+    String_View host_system_name;
+    String_View host_system_processor;
+    String_View host_system_version;
+    String_View target_system_name;
+    String_View target_system_processor;
+    String_View target_system_version;
+    String_View sysroot;
+    String_View sysroot_source;
+    bool cross_compiling;
+    bool target_windows;
+    bool target_unix;
+    bool target_apple;
+    bool msvc;
+    bool mingw;
+    Event_Toolchain_Language_Snapshot c;
+    Event_Toolchain_Language_Snapshot cxx;
+    String_View object_suffix;
+    String_View executable_suffix;
+    String_View static_library_prefix;
+    String_View static_library_suffix;
+    String_View shared_library_prefix;
+    String_View shared_library_suffix;
+    String_View module_library_prefix;
+    String_View module_library_suffix;
+    String_View archive_tool;
+    String_View archive_tool_source;
+    String_View link_tool;
+    String_View link_tool_source;
+    String_View ranlib_tool;
+    String_View ranlib_tool_source;
+    String_View resource_compiler;
+    String_View resource_compiler_source;
+    String_View toolchain_file;
+} Event_Toolchain_Snapshot;
+
+typedef struct {
     String_View path;
     bool no_policy_scope;
 } Event_Include_Begin;
@@ -1205,6 +1262,7 @@ typedef struct {
         Event_Target_Compile_Definitions target_compile_definitions;
         Event_Target_Compile_Options target_compile_options;
         Event_Target_Compile_Features target_compile_features;
+        Event_Toolchain_Snapshot toolchain_snapshot;
         Event_Export_Install export_install;
         Event_Export_Build_Declare export_build_declare;
         Event_Export_Build_Add_Target export_build_add_target;

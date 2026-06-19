@@ -410,6 +410,9 @@ struct Build_Model_Draft {
     Diag_Sink *sink;
     bool has_semantic_entities;
     bool testing_enabled;
+    bool has_toolchain;
+    Event_Toolchain_Snapshot toolchain;
+    BM_Provenance toolchain_provenance;
     BM_Project_Record project;
     BM_Global_Property_State global_properties;
     BM_Directory_Record *directories;
@@ -435,6 +438,9 @@ struct Build_Model_Draft {
 struct Build_Model {
     Arena *arena;
     bool testing_enabled;
+    bool has_toolchain;
+    Event_Toolchain_Snapshot toolchain;
+    BM_Provenance toolchain_provenance;
     BM_Project_Record project;
     String_View *known_configurations;
     BM_Global_Property_State global_properties;

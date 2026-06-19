@@ -1597,6 +1597,10 @@ bool bm_query_target_effective_link_language_kind(const Build_Model *model,
 #include "build_model_query_session.c"
 
 bool bm_model_has_project(const Build_Model *model) { return model ? model->project.present : false; }
+bool bm_query_has_toolchain(const Build_Model *model) { return model ? model->has_toolchain : false; }
+const Event_Toolchain_Snapshot *bm_query_toolchain_snapshot(const Build_Model *model) {
+    return (model && model->has_toolchain) ? &model->toolchain : NULL;
+}
 bool bm_target_id_is_valid(BM_Target_Id id) { return id != BM_TARGET_ID_INVALID; }
 bool bm_build_step_id_is_valid(BM_Build_Step_Id id) { return id != BM_BUILD_STEP_ID_INVALID; }
 bool bm_replay_action_id_is_valid(BM_Replay_Action_Id id) { return id != BM_REPLAY_ACTION_ID_INVALID; }

@@ -1603,6 +1603,20 @@ static bool bm_collect_known_configurations(Build_Model *model, Arena *arena) {
     return true;
 }
 
+static bool bm_clone_toolchain_snapshot(const Build_Model_Draft *draft, Build_Model *model, Arena *arena) {
+    if (!draft || !model || !arena) return false;
+    model->has_toolchain = draft->has_toolchain;
+    if (!bm_clone_provenance(arena, &model->toolchain_provenance, draft->toolchain_provenance)) return false;
+    if (!draft->has_toolchain) return true;
+
+    Event ev = {0};
+    ev.h.kind = EVENT_TOOLCHAIN_SNAPSHOT;
+    ev.as.toolchain_snapshot = draft->toolchain;
+    if (!event_copy_into_arena(arena, &ev)) return false;
+    model->toolchain = ev.as.toolchain_snapshot;
+    return true;
+}
+
 const Build_Model *bm_freeze_draft(const Build_Model_Draft *draft,
                                    Arena *out_arena,
                                    Diag_Sink *sink) {
@@ -1619,7 +1633,8 @@ const Build_Model *bm_freeze_draft(const Build_Model_Draft *draft,
     model->testing_enabled = draft->testing_enabled;
     model->root_directory_id = draft->root_directory_id;
 
-    if (!bm_clone_project(out_arena, &model->project, &draft->project) ||
+    if (!bm_clone_toolchain_snapshot(draft, model, out_arena) ||
+        !bm_clone_project(out_arena, &model->project, &draft->project) ||
         !bm_clone_global_state(out_arena, &model->global_properties, &draft->global_properties) ||
         !bm_clone_directories(draft, model, out_arena) ||
         !bm_clone_targets(draft, model, out_arena, sink) ||

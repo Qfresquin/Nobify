@@ -156,6 +156,7 @@ typedef struct CG_Context {
     Arena *scratch;
     Nob_Codegen_Options opts;
     CG_Backend_Policy policy;
+    const Event_Toolchain_Snapshot *toolchain;
     String_View cwd_abs;
     String_View source_root_abs;
     String_View binary_root_abs;

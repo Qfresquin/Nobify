@@ -158,6 +158,33 @@ static bool try_compile_append_tokenized_flags(EvalExecContext *ctx,
     return true;
 }
 
+static bool try_compile_compiler_id_is_clang(String_View id) {
+    return eval_sv_eq_ci_lit(id, "Clang") || eval_sv_eq_ci_lit(id, "AppleClang");
+}
+
+static bool try_compile_append_toolchain_flags(EvalExecContext *ctx,
+                                               Nob_Cmd *cmd,
+                                               Try_Compile_Language lang,
+                                               bool msvc) {
+    if (!ctx || !cmd || msvc) return true;
+    const struct Eval_Toolchain_Model *model = eval_toolchain_current(ctx);
+    if (!model) return true;
+    const Eval_Toolchain_Language_Model *language = (lang == TRY_COMPILE_LANG_CXX) ? &model->cxx : &model->c;
+    if (model->sysroot.count > 0) {
+        String_View arg = try_compile_concat_prefix_temp(ctx, "--sysroot=", model->sysroot);
+        char *arg_c = eval_sv_to_cstr_temp(ctx, arg);
+        EVAL_OOM_RETURN_IF_NULL(ctx, arg_c, false);
+        nob_cmd_append(cmd, arg_c);
+    }
+    if (language->target_triple.count > 0 && try_compile_compiler_id_is_clang(language->compiler_id)) {
+        String_View arg = try_compile_concat_prefix_temp(ctx, "--target=", language->target_triple);
+        char *arg_c = eval_sv_to_cstr_temp(ctx, arg);
+        EVAL_OOM_RETURN_IF_NULL(ctx, arg_c, false);
+        nob_cmd_append(cmd, arg_c);
+    }
+    return true;
+}
+
 static bool try_compile_append_required_compile_settings(EvalExecContext *ctx,
                                                          Nob_Cmd *cmd,
                                                          const Try_Compile_Request *req,
@@ -566,6 +593,11 @@ bool try_compile_execute_source_request(EvalExecContext *ctx,
 
         Nob_Cmd cmd = {0};
         nob_cmd_append(&cmd, compiler_c);
+        if (!try_compile_append_toolchain_flags(ctx, &cmd, lang, msvc)) {
+            nob_cmd_free(cmd);
+            nob_sb_free(log);
+            return false;
+        }
         if (msvc) {
             String_View fo_arg = sv_copy_to_arena(eval_temp_arena(ctx),
                                                   nob_sv_from_cstr(nob_temp_sprintf("/Fo:%s", obj_c)));
@@ -698,6 +730,11 @@ bool try_compile_execute_source_request(EvalExecContext *ctx,
 
     Nob_Cmd link_cmd = {0};
     nob_cmd_append(&link_cmd, linker_c);
+    if (!try_compile_append_toolchain_flags(ctx, &link_cmd, link_lang, msvc)) {
+        nob_cmd_free(link_cmd);
+        nob_sb_free(log);
+        return false;
+    }
     if (msvc) {
         String_View fe_arg = sv_copy_to_arena(eval_temp_arena(ctx),
                                               nob_sv_from_cstr(nob_temp_sprintf("/Fe:%s", out_c)));
@@ -790,6 +827,26 @@ bool try_compile_execute_project_request(EvalExecContext *ctx,
         nob_cmd_free(configure_cmd);
         nob_sb_free(log);
         return false;
+    }
+
+    const char *toolchain_keys[] = {
+        "CMAKE_TOOLCHAIN_FILE",
+        "CMAKE_SYSROOT",
+        "CMAKE_C_COMPILER_TARGET",
+        "CMAKE_CXX_COMPILER_TARGET",
+        "CMAKE_AR",
+        "CMAKE_RANLIB",
+        "CMAKE_LINKER",
+        "CMAKE_RC_COMPILER",
+    };
+    for (size_t i = 0; i < NOB_ARRAY_LEN(toolchain_keys); ++i) {
+        String_View value = eval_var_get_visible(ctx, nob_sv_from_cstr(toolchain_keys[i]));
+        if (value.count > 0 &&
+            !try_compile_append_cmake_cache_arg(ctx, &configure_cmd, toolchain_keys[i], value)) {
+            nob_cmd_free(configure_cmd);
+            nob_sb_free(log);
+            return false;
+        }
     }
 
     for (size_t i = 0; i < arena_arr_len(req->cmake_flags); i++) {

@@ -2575,6 +2575,7 @@ TEST(evaluator_event_ir_taxonomy_is_frozen) {
         {EVENT_FAMILY_CPACK, "cpack"},
         {EVENT_FAMILY_PACKAGE, "package"},
         {EVENT_FAMILY_EXPORT, "export"},
+        {EVENT_FAMILY_TOOLCHAIN, "toolchain"},
     };
     static const Event_Kind_Contract_Row expected_kinds[] = {
         {EVENT_DIAG, EVENT_FAMILY_DIAG, "diag", EVENT_ROLE_DIAGNOSTIC},
@@ -2686,6 +2687,7 @@ TEST(evaluator_event_ir_taxonomy_is_frozen) {
         {EVENT_REPLAY_ACTION_ADD_OUTPUT, EVENT_FAMILY_BUILD_GRAPH, "replay_action_add_output", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC},
         {EVENT_REPLAY_ACTION_ADD_ARGV, EVENT_FAMILY_BUILD_GRAPH, "replay_action_add_argv", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC},
         {EVENT_REPLAY_ACTION_ADD_ENV, EVENT_FAMILY_BUILD_GRAPH, "replay_action_add_env", EVENT_ROLE_RUNTIME_EFFECT | EVENT_ROLE_BUILD_SEMANTIC},
+        {EVENT_TOOLCHAIN_SNAPSHOT, EVENT_FAMILY_TOOLCHAIN, "toolchain_snapshot", EVENT_ROLE_STATE | EVENT_ROLE_BUILD_SEMANTIC},
         {EVENT_LIST_REVERSE, EVENT_FAMILY_LIST, "list_reverse", EVENT_ROLE_RUNTIME_EFFECT},
     };
 

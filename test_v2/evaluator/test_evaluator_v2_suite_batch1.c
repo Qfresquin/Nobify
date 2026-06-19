@@ -2937,7 +2937,7 @@ TEST(evaluator_windows_gnu_toolchain_models_mingw_not_msvc) {
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_EXECUTABLE_SUFFIX")), nob_sv_from_cstr(".exe")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_STATIC_LIBRARY_PREFIX")), nob_sv_from_cstr("lib")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_STATIC_LIBRARY_SUFFIX")), nob_sv_from_cstr(".a")));
-    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_AR")), nob_sv_from_cstr("ar")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_AR")), nob_sv_from_cstr("x86_64-w64-mingw32-ar")));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
