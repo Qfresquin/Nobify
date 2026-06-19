@@ -998,14 +998,20 @@ TEST(codegen_explicit_toolchain_bins_are_embedded_in_generated_runtime) {
     Nob_String_Builder generated = {0};
     const char *script =
         "project(Test C CXX)\n"
-        "add_executable(app main.c helper.cpp)\n";
+        "add_library(core STATIC core.c)\n"
+        "add_executable(app main.c helper.cpp)\n"
+        "target_link_libraries(app PRIVATE core)\n";
     Codegen_Test_Config config = {
         .input_path = "explicit_toolchain_src/CMakeLists.txt",
         .output_path = "explicit_toolchain_nob.c",
         .source_dir = "explicit_toolchain_src",
         .binary_dir = "explicit_toolchain_build",
+        .platform = NOB_CODEGEN_PLATFORM_WINDOWS,
+        .backend = NOB_CODEGEN_BACKEND_WIN32_MSVC,
         .c_compiler = "/opt/nobify-toolchain/bin/nob-cc",
         .cxx_compiler = "/opt/nobify-toolchain/bin/nob-cxx",
+        .archive_tool = "/opt/nobify-toolchain/bin/nob-lib",
+        .link_tool = "/opt/nobify-toolchain/bin/nob-link",
     };
     ASSERT(arena != NULL);
 
@@ -1013,6 +1019,8 @@ TEST(codegen_explicit_toolchain_bins_are_embedded_in_generated_runtime) {
     String_View text = nob_sv_from_parts(generated.items ? generated.items : "", generated.count);
     ASSERT(codegen_sv_contains(text, "return \"/opt/nobify-toolchain/bin/nob-cc\";"));
     ASSERT(codegen_sv_contains(text, "return \"/opt/nobify-toolchain/bin/nob-cxx\";"));
+    ASSERT(codegen_sv_contains(text, "return \"/opt/nobify-toolchain/bin/nob-lib\";"));
+    ASSERT(codegen_sv_contains(text, "return \"/opt/nobify-toolchain/bin/nob-link\";"));
     ASSERT(!codegen_sv_contains(text, "getenv(\"CC\")"));
     ASSERT(!codegen_sv_contains(text, "getenv(\"CXX\")"));
 

@@ -27,6 +27,8 @@ typedef struct Nob_Codegen_Options {
     String_View embedded_xz_bin;
     String_View c_compiler;
     String_View cxx_compiler;
+    String_View archive_tool;
+    String_View link_tool;
     Nob_Codegen_Platform target_platform;
     Nob_Codegen_Backend backend;
 } Nob_Codegen_Options;

@@ -516,7 +516,7 @@ bool try_compile_execute_source_request(EvalExecContext *ctx,
     size_t compile_units = 0;
     bool any_cxx = false;
     bool any_c = false;
-    bool msvc = false;
+    bool msvc = eval_toolchain_uses_msvc(ctx);
 
     for (size_t i = 0; i < req->source_items.count; i++) {
         Try_Compile_Source_Item item = req->source_items.items[i];
@@ -546,10 +546,12 @@ bool try_compile_execute_source_request(EvalExecContext *ctx,
         any_cxx = any_cxx || (lang == TRY_COMPILE_LANG_CXX);
         any_c = any_c || (lang == TRY_COMPILE_LANG_C);
 
+        String_View object_suffix = eval_toolchain_object_suffix(ctx);
         String_View obj_name = sv_copy_to_arena(eval_temp_arena(ctx),
-                                                nob_sv_from_cstr(nob_temp_sprintf("obj_%zu%s",
+                                                nob_sv_from_cstr(nob_temp_sprintf("obj_%zu%.*s",
                                                                                  i,
-                                                                                 msvc ? ".obj" : ".o")));
+                                                                                 (int)object_suffix.count,
+                                                                                 object_suffix.data ? object_suffix.data : "")));
         String_View obj_path = eval_sv_path_join(eval_temp_arena(ctx), req->binary_dir, obj_name);
         char *compiler_c = eval_sv_to_cstr_temp(
             ctx,
@@ -564,14 +566,11 @@ bool try_compile_execute_source_request(EvalExecContext *ctx,
 
         Nob_Cmd cmd = {0};
         nob_cmd_append(&cmd, compiler_c);
-#if defined(_WIN32)
-        msvc = eval_sv_eq_ci_lit(eval_var_get_visible(ctx, nob_sv_from_cstr("MSVC")), "1");
         if (msvc) {
             String_View fo_arg = sv_copy_to_arena(eval_temp_arena(ctx),
                                                   nob_sv_from_cstr(nob_temp_sprintf("/Fo:%s", obj_c)));
             nob_cmd_append(&cmd, "/nologo", "/c", src_c, fo_arg.data);
         } else
-#endif
         {
             nob_cmd_append(&cmd, "-c", src_c, "-o", obj_c);
         }
@@ -617,37 +616,45 @@ bool try_compile_execute_source_request(EvalExecContext *ctx,
 
     String_View output_path = nob_sv_from_cstr("");
     if (build_kind == TRY_COMPILE_BUILD_STATIC_LIBRARY) {
-#if defined(_WIN32)
-        if (!try_compile_materialize_output_path(ctx, req->binary_dir, nob_sv_from_cstr("cmk2nob_try_compile"), ".lib", &output_path)) {
+        String_View static_prefix = eval_toolchain_static_library_prefix(ctx);
+        String_View static_suffix = eval_toolchain_static_library_suffix(ctx);
+        String_View static_base = nob_sv_from_cstr("cmk2nob_try_compile");
+        char *static_suffix_c = eval_sv_to_cstr_temp(ctx, static_suffix);
+        EVAL_OOM_RETURN_IF_NULL(ctx, static_suffix_c, false);
+        if (static_prefix.count > 0) {
+            char *static_base_c = eval_sv_to_cstr_temp(ctx, static_base);
+            EVAL_OOM_RETURN_IF_NULL(ctx, static_base_c, false);
+            char *static_name_c = nob_temp_sprintf("%.*s%s",
+                                                   (int)static_prefix.count,
+                                                   static_prefix.data ? static_prefix.data : "",
+                                                   static_base_c);
+            static_base = nob_sv_from_cstr(static_name_c);
+        }
+        if (!try_compile_materialize_output_path(ctx,
+                                                 req->binary_dir,
+                                                 static_base,
+                                                 static_suffix_c,
+                                                 &output_path)) {
             nob_sb_free(log);
             return false;
         }
         char *out_c = eval_sv_to_cstr_temp(ctx, output_path);
         EVAL_OOM_RETURN_IF_NULL(ctx, out_c, false);
         Nob_Cmd cmd = {0};
-        String_View out_arg = sv_copy_to_arena(eval_temp_arena(ctx),
-                                               nob_sv_from_cstr(nob_temp_sprintf("/OUT:%s", out_c)));
-        nob_cmd_append(&cmd, "lib.exe", "/NOLOGO", out_arg.data);
+        char *archive_tool_c = eval_sv_to_cstr_temp(ctx, eval_toolchain_archive_tool(ctx));
+        EVAL_OOM_RETURN_IF_NULL(ctx, archive_tool_c, false);
+        if (msvc) {
+            String_View out_arg = sv_copy_to_arena(eval_temp_arena(ctx),
+                                                   nob_sv_from_cstr(nob_temp_sprintf("/OUT:%s", out_c)));
+            nob_cmd_append(&cmd, archive_tool_c, "/NOLOGO", out_arg.data);
+        } else {
+            nob_cmd_append(&cmd, archive_tool_c, "rcs", out_c);
+        }
         for (size_t i = 0; i < arena_arr_len(object_paths); i++) {
             char *obj_c = eval_sv_to_cstr_temp(ctx, object_paths[i]);
             EVAL_OOM_RETURN_IF_NULL(ctx, obj_c, false);
             nob_cmd_append(&cmd, obj_c);
         }
-#else
-        if (!try_compile_materialize_output_path(ctx, req->binary_dir, nob_sv_from_cstr("libcmk2nob_try_compile"), ".a", &output_path)) {
-            nob_sb_free(log);
-            return false;
-        }
-        char *out_c = eval_sv_to_cstr_temp(ctx, output_path);
-        EVAL_OOM_RETURN_IF_NULL(ctx, out_c, false);
-        Nob_Cmd cmd = {0};
-        nob_cmd_append(&cmd, "ar", "rcs", out_c);
-        for (size_t i = 0; i < arena_arr_len(object_paths); i++) {
-            char *obj_c = eval_sv_to_cstr_temp(ctx, object_paths[i]);
-            EVAL_OOM_RETURN_IF_NULL(ctx, obj_c, false);
-            nob_cmd_append(&cmd, obj_c);
-        }
-#endif
         bool cmd_ok = false;
         if (!try_compile_run_command_captured(ctx, &cmd, req->binary_dir, &log, &cmd_ok)) {
             nob_cmd_free(cmd);
@@ -661,9 +668,6 @@ bool try_compile_execute_source_request(EvalExecContext *ctx,
         return true;
     }
 
-#if defined(_WIN32)
-    msvc = eval_sv_eq_ci_lit(eval_var_get_visible(ctx, nob_sv_from_cstr("MSVC")), "1");
-#endif
     Try_Compile_Language link_lang = TRY_COMPILE_LANG_C;
     if (req->linker_language.count > 0) {
         if (eval_sv_eq_ci_lit(req->linker_language, "CXX")) link_lang = TRY_COMPILE_LANG_CXX;
@@ -677,11 +681,7 @@ bool try_compile_execute_source_request(EvalExecContext *ctx,
     if (!try_compile_materialize_output_path(ctx,
                                              req->binary_dir,
                                              nob_sv_from_cstr("cmk2nob_try_compile"),
-#if defined(_WIN32)
-                                             ".exe",
-#else
-                                             "",
-#endif
+                                             eval_sv_to_cstr_temp(ctx, eval_toolchain_executable_suffix(ctx)),
                                              &output_path)) {
         nob_sb_free(log);
         return false;
@@ -698,13 +698,11 @@ bool try_compile_execute_source_request(EvalExecContext *ctx,
 
     Nob_Cmd link_cmd = {0};
     nob_cmd_append(&link_cmd, linker_c);
-#if defined(_WIN32)
     if (msvc) {
         String_View fe_arg = sv_copy_to_arena(eval_temp_arena(ctx),
                                               nob_sv_from_cstr(nob_temp_sprintf("/Fe:%s", out_c)));
         nob_cmd_append(&link_cmd, "/nologo", fe_arg.data);
     } else
-#endif
     {
         nob_cmd_append(&link_cmd, "-o", out_c);
     }

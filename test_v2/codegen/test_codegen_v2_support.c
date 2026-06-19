@@ -298,6 +298,8 @@ static bool codegen_render_or_write_script(const char *script,
             .backend = config ? config->backend : NOB_CODEGEN_BACKEND_AUTO,
             .c_compiler = nob_sv_from_cstr((config && config->c_compiler) ? config->c_compiler : ""),
             .cxx_compiler = nob_sv_from_cstr((config && config->cxx_compiler) ? config->cxx_compiler : ""),
+            .archive_tool = nob_sv_from_cstr((config && config->archive_tool) ? config->archive_tool : ""),
+            .link_tool = nob_sv_from_cstr((config && config->link_tool) ? config->link_tool : ""),
         };
         if (!codegen_fill_host_tool_paths(codegen_arena, &opts)) {
             nob_log(NOB_ERROR,

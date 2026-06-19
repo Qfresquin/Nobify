@@ -200,7 +200,10 @@ bool cg_emit_support_helpers(CG_Context *ctx, Nob_String_Builder *out) {
         nob_sb_append_cstr(out,
             "static const char *resolve_archive_bin(void) {\n"
             "    return ");
-        if (!cg_sb_append_c_string(out, ctx->policy.archive_tool_default)) return false;
+        if (!cg_sb_append_c_string(out,
+                                   ctx->opts.archive_tool.count > 0
+                                       ? ctx->opts.archive_tool
+                                       : ctx->policy.archive_tool_default)) return false;
         nob_sb_append_cstr(out,
             ";\n"
             "}\n\n"
@@ -213,7 +216,10 @@ bool cg_emit_support_helpers(CG_Context *ctx, Nob_String_Builder *out) {
         nob_sb_append_cstr(out,
             "static const char *resolve_link_bin(void) {\n"
             "    return ");
-        if (!cg_sb_append_c_string(out, ctx->policy.link_tool_default)) return false;
+        if (!cg_sb_append_c_string(out,
+                                   ctx->opts.link_tool.count > 0
+                                       ? ctx->opts.link_tool
+                                       : ctx->policy.link_tool_default)) return false;
         nob_sb_append_cstr(out,
             ";\n"
             "}\n\n"

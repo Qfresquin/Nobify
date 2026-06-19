@@ -3562,6 +3562,12 @@ TEST(evaluator_batch6_metadata_commands_cover_documented_subset) {
     ASSERT(evaluator_load_text_file_to_arena(temp_arena, ".cmake/api/v1/reply/cache-v2.0.json", &cache_reply));
     ASSERT(sv_contains_sv(cache_reply, nob_sv_from_cstr("\"kind\": \"cache\"")));
 
+    String_View toolchains_reply = {0};
+    ASSERT(evaluator_load_text_file_to_arena(temp_arena, ".cmake/api/v1/reply/toolchains-v1.json", &toolchains_reply));
+    ASSERT(sv_contains_sv(toolchains_reply, nob_sv_from_cstr("\"kind\": \"toolchains\"")));
+    ASSERT(sv_contains_sv(toolchains_reply, nob_sv_from_cstr("\"id\": \"")));
+    ASSERT(sv_contains_sv(toolchains_reply, nob_sv_from_cstr("\"version\": \"")));
+
     bool saw_malformed_cache_warning = false;
     for (size_t i = 0; i < stream->count; i++) {
         const Cmake_Event *ev = &stream->items[i];

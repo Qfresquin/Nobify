@@ -2891,7 +2891,53 @@ TEST(evaluator_target_platform_config_separates_host_and_target_vars) {
                      nob_sv_from_cstr("cl.exe")));
     ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID")),
                      nob_sv_from_cstr("MSVC")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_C_OUTPUT_EXTENSION")),
+                     nob_sv_from_cstr(".obj")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_EXECUTABLE_SUFFIX")),
+                     nob_sv_from_cstr(".exe")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_STATIC_LIBRARY_SUFFIX")),
+                     nob_sv_from_cstr(".lib")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_AR")),
+                     nob_sv_from_cstr("lib.exe")));
     ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("PLATFORM_SNAPSHOT")).count > 0);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_windows_gnu_toolchain_models_mingw_not_msvc) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.target.system_name = nob_sv_from_cstr("Windows");
+    init.target.c_compiler = nob_sv_from_cstr("x86_64-w64-mingw32-gcc");
+    init.target.cxx_compiler = nob_sv_from_cstr("x86_64-w64-mingw32-g++");
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("WIN32")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MSVC")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MINGW")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID")), nob_sv_from_cstr("GNU")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_C_OUTPUT_EXTENSION")), nob_sv_from_cstr(".o")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_EXECUTABLE_SUFFIX")), nob_sv_from_cstr(".exe")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_STATIC_LIBRARY_PREFIX")), nob_sv_from_cstr("lib")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_STATIC_LIBRARY_SUFFIX")), nob_sv_from_cstr(".a")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_AR")), nob_sv_from_cstr("ar")));
 
     eval_test_destroy(ctx);
     arena_destroy(temp_arena);
@@ -3459,6 +3505,7 @@ void run_evaluator_v2_batch1(int *passed, int *failed, int *skipped) {
     test_evaluator_include_guard_rejects_invalid_arguments(passed, failed, skipped);
     test_evaluator_enable_language_updates_enabled_language_state_and_validates_scope(passed, failed, skipped);
     test_evaluator_target_platform_config_separates_host_and_target_vars(passed, failed, skipped);
+    test_evaluator_windows_gnu_toolchain_models_mingw_not_msvc(passed, failed, skipped);
     test_evaluator_compiler_id_infers_from_configured_compiler_names(passed, failed, skipped);
     test_evaluator_compiler_id_infers_from_env_compiler_names(passed, failed, skipped);
     test_evaluator_add_test_name_signature_parses_supported_options(passed, failed, skipped);

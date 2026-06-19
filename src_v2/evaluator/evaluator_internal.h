@@ -761,6 +761,40 @@ typedef struct Eval_Command_Transaction {
 typedef struct {
     EvalRegistry *registry;
     const EvalServices *services;
+    struct Eval_Toolchain_Model {
+        String_View host_system_name;
+        String_View host_system_processor;
+        String_View host_system_version;
+        String_View target_system_name;
+        String_View target_system_processor;
+        String_View target_system_version;
+        String_View sysroot;
+        bool explicit_target_platform;
+        bool cross_compiling;
+        bool target_windows;
+        bool target_unix;
+        bool target_apple;
+        bool msvc;
+        bool mingw;
+        struct {
+            String_View compiler;
+            String_View compiler_id;
+            String_View compiler_version;
+            String_View target_triple;
+            String_View id_source;
+        } c, cxx;
+        String_View object_suffix;
+        String_View executable_suffix;
+        String_View static_library_prefix;
+        String_View static_library_suffix;
+        String_View shared_library_prefix;
+        String_View shared_library_suffix;
+        String_View module_library_prefix;
+        String_View module_library_suffix;
+        String_View archive_tool;
+        String_View link_tool;
+        String_View ranlib_tool;
+    } toolchain;
     Eval_Scope_State scope_state;
     Eval_Semantic_State semantic_state;
     Eval_Command_State command_state;
@@ -784,6 +818,7 @@ struct EvalExecContext {
     Cmake_Event_Stream *stream;
     EvalRegistry *registry;
     const EvalServices *services;
+    struct Eval_Toolchain_Model toolchain;
 
     String_View source_dir;
     String_View binary_dir;
@@ -3374,6 +3409,13 @@ String_View eval_path_resolve_for_cmake_arg(EvalExecContext *ctx,
                                             bool preserve_generator_expressions);
 const char *eval_getenv_temp(EvalExecContext *ctx, const char *name);
 bool eval_has_env(EvalExecContext *ctx, const char *name);
+const struct Eval_Toolchain_Model *eval_toolchain_current(const EvalExecContext *ctx);
+bool eval_toolchain_uses_msvc(const EvalExecContext *ctx);
+String_View eval_toolchain_object_suffix(const EvalExecContext *ctx);
+String_View eval_toolchain_executable_suffix(const EvalExecContext *ctx);
+String_View eval_toolchain_archive_tool(const EvalExecContext *ctx);
+String_View eval_toolchain_static_library_prefix(const EvalExecContext *ctx);
+String_View eval_toolchain_static_library_suffix(const EvalExecContext *ctx);
 bool eval_real_path_resolve_temp(EvalExecContext *ctx,
                                  String_View path,
                                  bool cmp0152_new,

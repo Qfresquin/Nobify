@@ -1981,12 +1981,25 @@ static bool meta_file_api_write_object_file(EvalExecContext *ctx,
         nob_sb_append_cstr(&sb, "\"}\n  ]\n");
     } else if (eval_sv_eq_ci_lit(object->kind_json, "toolchains")) {
         nob_sb_append_cstr(&sb, "  \"toolchains\": [");
-        String_View c_compiler = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER"));
-        String_View cxx_compiler = eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"));
+        const struct Eval_Toolchain_Model *tc = eval_toolchain_current(ctx);
+        String_View c_compiler = tc ? tc->c.compiler : eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER"));
+        String_View cxx_compiler = tc ? tc->cxx.compiler : eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"));
+        String_View c_id = tc ? tc->c.compiler_id : eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID"));
+        String_View cxx_id = tc ? tc->cxx.compiler_id : eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"));
+        String_View c_version = tc ? tc->c.compiler_version : eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_VERSION"));
+        String_View cxx_version = tc ? tc->cxx.compiler_version : eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_VERSION"));
         nob_sb_append_cstr(&sb, "{\"language\": \"C\", \"compiler\": {\"path\": \"");
         nob_sb_append_buf(&sb, c_compiler.data, c_compiler.count);
+        nob_sb_append_cstr(&sb, "\", \"id\": \"");
+        nob_sb_append_buf(&sb, c_id.data, c_id.count);
+        nob_sb_append_cstr(&sb, "\", \"version\": \"");
+        nob_sb_append_buf(&sb, c_version.data, c_version.count);
         nob_sb_append_cstr(&sb, "\"}}, {\"language\": \"CXX\", \"compiler\": {\"path\": \"");
         nob_sb_append_buf(&sb, cxx_compiler.data, cxx_compiler.count);
+        nob_sb_append_cstr(&sb, "\", \"id\": \"");
+        nob_sb_append_buf(&sb, cxx_id.data, cxx_id.count);
+        nob_sb_append_cstr(&sb, "\", \"version\": \"");
+        nob_sb_append_buf(&sb, cxx_version.data, cxx_version.count);
         nob_sb_append_cstr(&sb, "\"}}]\n");
     } else {
         nob_sb_append_cstr(&sb, "  \"reply\": true\n");
