@@ -1,5 +1,33 @@
 #include "build_model_internal.h"
 
+static bool bm_install_item_has_tag_separator(String_View item) {
+    for (size_t i = 0; i + 1 < item.count; ++i) {
+        if (item.data[i] == ':' && item.data[i + 1] == ':') return true;
+    }
+    return false;
+}
+
+static BM_Install_Rule_Item_Kind bm_install_item_kind_from_string(String_View item) {
+    if (nob_sv_starts_with(item, nob_sv_from_cstr("SCRIPT::"))) return BM_INSTALL_RULE_ITEM_SCRIPT;
+    if (nob_sv_starts_with(item, nob_sv_from_cstr("CODE::"))) return BM_INSTALL_RULE_ITEM_CODE;
+    if (nob_sv_starts_with(item, nob_sv_from_cstr("EXPORT_ANDROID_MK::"))) {
+        return BM_INSTALL_RULE_ITEM_EXPORT_ANDROID_MK;
+    }
+    if (nob_sv_starts_with(item, nob_sv_from_cstr("IMPORTED_RUNTIME_ARTIFACTS::"))) {
+        return BM_INSTALL_RULE_ITEM_IMPORTED_RUNTIME_ARTIFACTS;
+    }
+    if (nob_sv_starts_with(item, nob_sv_from_cstr("RUNTIME_DEPENDENCY_SET::"))) {
+        return BM_INSTALL_RULE_ITEM_RUNTIME_DEPENDENCY_SET;
+    }
+    return bm_install_item_has_tag_separator(item) ? BM_INSTALL_RULE_ITEM_TAGGED_UNKNOWN
+                                                  : BM_INSTALL_RULE_ITEM_PATH;
+}
+
+static bool bm_install_item_starts_with_generator_expression(String_View item) {
+    String_View trimmed = nob_sv_trim(item);
+    return trimmed.count >= 2 && trimmed.data[0] == '$' && trimmed.data[1] == '<';
+}
+
 bool bm_builder_handle_install_event(BM_Builder *builder, const Event *ev) {
     Build_Model_Draft *draft = builder ? builder->draft : NULL;
     if (!builder || !draft || !ev) return false;
@@ -36,6 +64,11 @@ bool bm_builder_handle_install_event(BM_Builder *builder, const Event *ev) {
                 !arena_arr_push(builder->arena, draft->install_rules, rule)) {
                 return bm_builder_error(builder, ev, "failed to append install rule", "increase arena capacity");
             }
+            arena_arr_last(draft->install_rules).item_view.raw = arena_arr_last(draft->install_rules).item;
+            arena_arr_last(draft->install_rules).item_view.kind =
+                bm_install_item_kind_from_string(arena_arr_last(draft->install_rules).item);
+            arena_arr_last(draft->install_rules).item_view.starts_with_generator_expression =
+                bm_install_item_starts_with_generator_expression(arena_arr_last(draft->install_rules).item);
             return true;
         }
 

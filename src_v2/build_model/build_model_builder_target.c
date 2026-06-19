@@ -22,6 +22,8 @@ static bool bm_sv_eq_ci_view(String_View lhs, String_View rhs) {
     return true;
 }
 
+static Event_Property_Mutate_Op bm_target_property_op_from_event(Cmake_Target_Property_Op op);
+
 static bool bm_target_artifact_property_is_supported(String_View key) {
     static const char *const exact_keys[] = {
         "OUTPUT_NAME",
@@ -109,6 +111,234 @@ static bool bm_target_record_artifact_property(BM_Builder *builder,
 
     bm_target_sync_artifact_scalar(target, &record);
 
+    if (promoted) *promoted = true;
+    return true;
+}
+
+static bool bm_target_copy_string_items(BM_Builder *builder,
+                                        const Event *ev,
+                                        const String_View *src,
+                                        size_t count,
+                                        String_View **out) {
+    if (!builder || !out) return false;
+    *out = NULL;
+    for (size_t i = 0; i < count; ++i) {
+        String_View owned = {0};
+        if (!bm_copy_string(builder->arena, src[i], &owned) ||
+            !arena_arr_push(builder->arena, *out, owned)) {
+            return bm_builder_error(builder, ev, "failed to copy promoted target property item", "increase arena capacity");
+        }
+    }
+    return true;
+}
+
+static bool bm_target_mutate_string_property(BM_Builder *builder,
+                                             const Event *ev,
+                                             String_View **dest,
+                                             String_View value,
+                                             Event_Property_Mutate_Op op) {
+    String_View owned = {0};
+    String_View items[1];
+    if (!bm_copy_string(builder->arena, value, &owned)) {
+        return bm_builder_error(builder, ev, "failed to copy promoted target property", "increase arena capacity");
+    }
+    items[0] = owned;
+    if (!bm_apply_string_mutation(builder->arena, dest, items, 1, op)) {
+        return bm_builder_error(builder, ev, "failed to mutate promoted target property", "increase arena capacity");
+    }
+    return true;
+}
+
+static BM_Imported_Config_Record *bm_target_imported_config_ensure(BM_Builder *builder,
+                                                                   BM_Target_Record *target,
+                                                                   String_View config,
+                                                                   const Event *ev) {
+    BM_Imported_Config_Record record = {0};
+    if (!builder || !target) return NULL;
+    for (size_t i = 0; i < arena_arr_len(target->imported_configs); ++i) {
+        if (bm_sv_eq_ci_view(target->imported_configs[i].config, config)) return &target->imported_configs[i];
+    }
+    if (!bm_copy_string(builder->arena, config, &record.config) ||
+        !arena_arr_push(builder->arena, target->imported_configs, record)) {
+        bm_builder_error(builder, ev, "failed to append imported target config", "increase arena capacity");
+        return NULL;
+    }
+    return &arena_arr_last(target->imported_configs);
+}
+
+static BM_Imported_Config_Map_Record *bm_target_imported_config_map_ensure(BM_Builder *builder,
+                                                                           BM_Target_Record *target,
+                                                                           String_View config,
+                                                                           const Event *ev) {
+    BM_Imported_Config_Map_Record record = {0};
+    if (!builder || !target) return NULL;
+    for (size_t i = 0; i < arena_arr_len(target->imported_config_maps); ++i) {
+        if (bm_sv_eq_ci_view(target->imported_config_maps[i].config, config)) return &target->imported_config_maps[i];
+    }
+    if (!bm_copy_string(builder->arena, config, &record.config) ||
+        !arena_arr_push(builder->arena, target->imported_config_maps, record)) {
+        bm_builder_error(builder, ev, "failed to append imported target config map", "increase arena capacity");
+        return NULL;
+    }
+    return &arena_arr_last(target->imported_config_maps);
+}
+
+static bool bm_target_property_suffix(String_View key, const char *prefix, String_View *out_suffix) {
+    size_t prefix_len = prefix ? strlen(prefix) : 0;
+    if (!prefix || key.count <= prefix_len) return false;
+    if (!bm_sv_eq_ci_lit(nob_sv_from_parts(key.data, prefix_len), prefix)) return false;
+    if (out_suffix) *out_suffix = nob_sv_from_parts(key.data + prefix_len, key.count - prefix_len);
+    return true;
+}
+
+static bool bm_target_promote_imported_property(BM_Builder *builder,
+                                                BM_Target_Record *target,
+                                                const Event *ev,
+                                                bool *promoted) {
+    const Event_Target_Prop_Set *prop = ev ? &ev->as.target_prop_set : NULL;
+    String_View config = nob_sv_from_cstr("");
+    BM_Imported_Config_Record *config_record = NULL;
+    BM_Imported_Config_Map_Record *map_record = NULL;
+    String_View *split_items = NULL;
+    String_View *owned_items = NULL;
+    Event_Property_Mutate_Op op = EVENT_PROPERTY_MUTATE_SET;
+    if (promoted) *promoted = false;
+    if (!builder || !target || !ev || ev->h.kind != EVENT_TARGET_PROP_SET) return false;
+    prop = &ev->as.target_prop_set;
+    op = bm_target_property_op_from_event(prop->op);
+
+    if (bm_sv_eq_ci_lit(prop->key, "IMPORTED_LOCATION") ||
+        bm_target_property_suffix(prop->key, "IMPORTED_LOCATION_", &config)) {
+        config_record = bm_target_imported_config_ensure(builder, target, config, ev);
+        if (!config_record ||
+            !bm_assign_target_string(builder, ev, &config_record->raw_file, prop->value)) {
+            return false;
+        }
+        if (promoted) *promoted = true;
+        return true;
+    }
+
+    if (bm_sv_eq_ci_lit(prop->key, "IMPORTED_IMPLIB") ||
+        bm_target_property_suffix(prop->key, "IMPORTED_IMPLIB_", &config)) {
+        config_record = bm_target_imported_config_ensure(builder, target, config, ev);
+        if (!config_record ||
+            !bm_assign_target_string(builder, ev, &config_record->raw_linker_file, prop->value)) {
+            return false;
+        }
+        if (promoted) *promoted = true;
+        return true;
+    }
+
+    if (bm_sv_eq_ci_lit(prop->key, "IMPORTED_LINK_INTERFACE_LANGUAGES") ||
+        bm_target_property_suffix(prop->key, "IMPORTED_LINK_INTERFACE_LANGUAGES_", &config)) {
+        config_record = bm_target_imported_config_ensure(builder, target, config, ev);
+        if (!config_record ||
+            !bm_split_cmake_list(builder->arena, prop->value, &split_items) ||
+            !bm_apply_string_mutation(builder->arena,
+                                      &config_record->link_languages,
+                                      split_items,
+                                      arena_arr_len(split_items),
+                                      op)) {
+            return bm_builder_error(builder, ev, "failed to mutate imported link languages", "increase arena capacity");
+        }
+        if (promoted) *promoted = true;
+        return true;
+    }
+
+    if (bm_target_property_suffix(prop->key, "MAP_IMPORTED_CONFIG_", &config)) {
+        map_record = bm_target_imported_config_map_ensure(builder, target, config, ev);
+        if (!map_record ||
+            !bm_split_cmake_list(builder->arena, prop->value, &split_items) ||
+            !bm_target_copy_string_items(builder, ev, split_items, arena_arr_len(split_items), &owned_items) ||
+            !bm_apply_string_mutation(builder->arena,
+                                      &map_record->mapped_configs,
+                                      owned_items,
+                                      arena_arr_len(owned_items),
+                                      op)) {
+            return bm_builder_error(builder, ev, "failed to mutate imported config map", "increase arena capacity");
+        }
+        if (promoted) *promoted = true;
+        return true;
+    }
+
+    return true;
+}
+
+static bool bm_target_promote_scalar_property(BM_Builder *builder,
+                                              BM_Target_Record *target,
+                                              const Event *ev,
+                                              bool *promoted) {
+    const Event_Target_Prop_Set *prop = ev ? &ev->as.target_prop_set : NULL;
+    if (promoted) *promoted = false;
+    if (!builder || !target || !ev || ev->h.kind != EVENT_TARGET_PROP_SET) return false;
+    prop = &ev->as.target_prop_set;
+
+    if (bm_sv_eq_ci_lit(prop->key, "EXPORT_NAME")) {
+        if (!bm_assign_target_string(builder, ev, &target->export_name, prop->value)) return false;
+        if (promoted) *promoted = true;
+        return true;
+    }
+    if (bm_sv_eq_ci_lit(prop->key, "C_STANDARD")) {
+        if (!bm_assign_target_string(builder, ev, &target->language_properties.c_standard, prop->value)) return false;
+        if (promoted) *promoted = true;
+        return true;
+    }
+    if (bm_sv_eq_ci_lit(prop->key, "C_STANDARD_REQUIRED")) {
+        target->language_properties.c_standard_required = bm_sv_truthy(prop->value);
+        target->language_properties.c_standard_required_set = true;
+        if (promoted) *promoted = true;
+        return true;
+    }
+    if (bm_sv_eq_ci_lit(prop->key, "C_EXTENSIONS")) {
+        target->language_properties.c_extensions = bm_sv_truthy(prop->value);
+        target->language_properties.c_extensions_set = true;
+        if (promoted) *promoted = true;
+        return true;
+    }
+    if (bm_sv_eq_ci_lit(prop->key, "CXX_STANDARD")) {
+        if (!bm_assign_target_string(builder, ev, &target->language_properties.cxx_standard, prop->value)) return false;
+        if (promoted) *promoted = true;
+        return true;
+    }
+    if (bm_sv_eq_ci_lit(prop->key, "CXX_STANDARD_REQUIRED")) {
+        target->language_properties.cxx_standard_required = bm_sv_truthy(prop->value);
+        target->language_properties.cxx_standard_required_set = true;
+        if (promoted) *promoted = true;
+        return true;
+    }
+    if (bm_sv_eq_ci_lit(prop->key, "CXX_EXTENSIONS")) {
+        target->language_properties.cxx_extensions = bm_sv_truthy(prop->value);
+        target->language_properties.cxx_extensions_set = true;
+        if (promoted) *promoted = true;
+        return true;
+    }
+
+    return true;
+}
+
+static bool bm_target_promote_list_property(BM_Builder *builder,
+                                            BM_Target_Record *target,
+                                            const Event *ev,
+                                            bool *promoted) {
+    const Event_Target_Prop_Set *prop = ev ? &ev->as.target_prop_set : NULL;
+    String_View **dest = NULL;
+    if (promoted) *promoted = false;
+    if (!builder || !target || !ev || ev->h.kind != EVENT_TARGET_PROP_SET) return false;
+    prop = &ev->as.target_prop_set;
+
+    if (bm_sv_eq_ci_lit(prop->key, "PUBLIC_HEADER")) dest = &target->public_headers;
+    if (bm_sv_eq_ci_lit(prop->key, "PRECOMPILE_HEADERS")) dest = &target->precompile_headers;
+    if (bm_sv_eq_ci_lit(prop->key, "PRECOMPILE_HEADERS_REUSE_FROM")) dest = &target->precompile_headers_reuse_from;
+    if (bm_sv_eq_ci_lit(prop->key, "INTERFACE_PRECOMPILE_HEADERS")) dest = &target->interface_precompile_headers;
+    if (!dest) return true;
+
+    if (!bm_target_mutate_string_property(builder,
+                                          ev,
+                                          dest,
+                                          prop->value,
+                                          bm_target_property_op_from_event(prop->op))) {
+        return false;
+    }
     if (promoted) *promoted = true;
     return true;
 }
@@ -617,6 +847,21 @@ bool bm_builder_handle_target_event(BM_Builder *builder, const Event *ev) {
             }
             if (promoted) return true;
 
+            if (!bm_target_promote_scalar_property(builder, target, ev, &promoted)) {
+                return false;
+            }
+            if (promoted) return true;
+
+            if (!bm_target_promote_list_property(builder, target, ev, &promoted)) {
+                return false;
+            }
+            if (promoted) return true;
+
+            if (!bm_target_promote_imported_property(builder, target, ev, &promoted)) {
+                return false;
+            }
+            if (promoted) return true;
+
             if (bm_sv_eq_ci_lit(ev->as.target_prop_set.key, "FOLDER")) return bm_assign_target_string(builder, ev, &target->folder, ev->as.target_prop_set.value);
             if (bm_sv_eq_ci_lit(ev->as.target_prop_set.key, "EXCLUDE_FROM_ALL")) {
                 target->exclude_from_all = bm_sv_truthy(ev->as.target_prop_set.value);
@@ -852,8 +1097,7 @@ bool bm_builder_handle_build_graph_event(BM_Builder *builder, const Event *ev) {
                     : BM_BUILD_STEP_DEP_PATH_TOKEN;
                 dep.target_id = BM_TARGET_ID_INVALID;
                 dep.producer_step_id = BM_BUILD_STEP_ID_INVALID;
-                if (!bm_build_step_append_string(builder, ev, &step->raw_dependency_tokens, ev->as.build_step_add_dependency.item) ||
-                    !bm_copy_string(builder->arena, ev->as.build_step_add_dependency.item, &dep.raw_token) ||
+                if (!bm_copy_string(builder->arena, ev->as.build_step_add_dependency.item, &dep.token) ||
                     !bm_copy_string(builder->arena, ev->as.build_step_add_dependency.target_name, &dep.target_name) ||
                     !arena_arr_push(builder->arena, step->dependencies, dep)) {
                     return bm_builder_error(builder, ev, "failed to append build step dependency", "increase arena capacity");

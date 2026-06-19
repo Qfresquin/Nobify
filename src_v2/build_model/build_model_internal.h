@@ -57,7 +57,7 @@ typedef enum {
 
 typedef struct {
     BM_Build_Step_Dependency_Kind kind;
-    String_View raw_token;
+    String_View token;
     String_View target_name;
     BM_Target_Id target_id;
     BM_Build_Step_Id producer_step_id;
@@ -71,6 +71,8 @@ typedef struct {
 
 typedef struct {
     String_View config;
+    String_View raw_file;
+    String_View raw_linker_file;
     String_View effective_file;
     String_View effective_linker_file;
     String_View *link_languages;
@@ -81,6 +83,26 @@ typedef struct {
     String_View value;
     BM_Provenance provenance;
 } BM_Target_Artifact_Property_Record;
+
+typedef struct {
+    String_View c_standard;
+    bool c_standard_required;
+    bool c_standard_required_set;
+    bool c_extensions;
+    bool c_extensions_set;
+    String_View cxx_standard;
+    bool cxx_standard_required;
+    bool cxx_standard_required_set;
+    bool cxx_extensions;
+    bool cxx_extensions_set;
+} BM_Target_Language_Properties;
+
+typedef struct {
+    BM_Test_Property_Kind kind;
+    uint32_t flags;
+    String_View *items;
+    BM_Provenance provenance;
+} BM_Test_Property_Record;
 
 typedef struct {
     BM_Build_Step_Id id;
@@ -106,7 +128,6 @@ typedef struct {
     String_View *effective_outputs;
     String_View *raw_byproducts;
     String_View *effective_byproducts;
-    String_View *raw_dependency_tokens;
     BM_Build_Step_Dependency_Record *dependencies;
     BM_Target_Id *resolved_target_dependencies;
     BM_Build_Step_Id *resolved_producer_dependencies;
@@ -225,11 +246,17 @@ typedef struct {
     BM_String_Item_View *compile_options;
     BM_String_Item_View *compile_features;
     String_View output_name;
+    String_View export_name;
     String_View prefix;
     String_View suffix;
     String_View archive_output_directory;
     String_View library_output_directory;
     String_View runtime_output_directory;
+    BM_Target_Language_Properties language_properties;
+    String_View *public_headers;
+    String_View *precompile_headers;
+    String_View *precompile_headers_reuse_from;
+    String_View *interface_precompile_headers;
     BM_Target_Artifact_Property_Record *artifact_properties;
     String_View folder;
     BM_Imported_Config_Map_Record *imported_config_maps;
@@ -249,6 +276,7 @@ typedef struct {
     bool uses_name_signature;
     BM_Target_Id resolved_command_target_id;
     String_View *configurations;
+    BM_Test_Property_Record *properties;
     BM_Raw_Property_Record *raw_properties;
 } BM_Test_Record;
 
@@ -258,6 +286,7 @@ typedef struct {
     BM_Directory_Id owner_directory_id;
     BM_Provenance provenance;
     String_View item;
+    BM_Install_Rule_Item_View item_view;
     String_View destination;
     String_View rename;
     String_View component;
@@ -485,6 +514,11 @@ void bm_diag_warn(Diag_Sink *sink,
                   const char *cause,
                   const char *hint);
 bool bm_append_string(Arena *arena, String_View **items, String_View item);
+bool bm_apply_string_mutation(Arena *arena,
+                              String_View **dest,
+                              const String_View *items,
+                              size_t count,
+                              Event_Property_Mutate_Op op);
 bool bm_append_item(Arena *arena, BM_String_Item_View **items, BM_String_Item_View item);
 bool bm_append_link_item(Arena *arena, BM_Link_Item_View **items, BM_Link_Item_View item);
 bool bm_apply_item_mutation(Arena *arena,

@@ -53,9 +53,7 @@ static bool cg_export_collect_build_direct_property_values(CG_Context *ctx,
                                                            BM_Query_Usage_Mode usage_mode,
                                                            BM_Target_Interface_Requirement_Kind kind,
                                                            String_View **out) {
-    String_View raw = {0};
-    String_View resolved = {0};
-    String_View *values = NULL;
+    BM_String_Item_Span items = {0};
     BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx,
                                                    target_id,
                                                    usage_mode,
@@ -64,21 +62,20 @@ static bool cg_export_collect_build_direct_property_values(CG_Context *ctx,
     qctx.build_interface_active = true;
     qctx.build_local_interface_active = false;
     qctx.install_interface_active = false;
-    if (!bm_query_target_interface_requirement_value(ctx->model,
-                                                     target_id,
-                                                     kind,
-                                                     ctx->scratch,
-                                                     &raw) ||
-        raw.count == 0) {
-        return true;
-    }
-    if (!cg_resolve_model_string_with_query_ctx(ctx, &qctx, raw, &resolved) ||
-        !cg_split_top_level_list(ctx->scratch, resolved, &values)) {
+    if (!bm_query_target_interface_requirement_items(ctx->model, target_id, kind, ctx->scratch, &items)) {
         return false;
     }
-    for (size_t i = 0; i < arena_arr_len(values); ++i) {
-        if (values[i].count == 0) continue;
-        if (!cg_collect_unique_path(ctx->scratch, out, values[i])) return false;
+    for (size_t i = 0; i < items.count; ++i) {
+        String_View resolved = {0};
+        String_View *values = NULL;
+        if (!cg_resolve_model_string_with_query_ctx(ctx, &qctx, items.items[i].value, &resolved) ||
+            !cg_split_top_level_list(ctx->scratch, resolved, &values)) {
+            return false;
+        }
+        for (size_t value_index = 0; value_index < arena_arr_len(values); ++value_index) {
+            if (values[value_index].count == 0) continue;
+            if (!cg_collect_unique_path(ctx->scratch, out, values[value_index])) return false;
+        }
     }
     return true;
 }
@@ -88,9 +85,7 @@ static bool cg_export_collect_build_interface_includes(CG_Context *ctx,
                                                        String_View config,
                                                        bool want_system,
                                                        String_View **out) {
-    String_View raw = {0};
-    String_View resolved = {0};
-    String_View *includes = NULL;
+    BM_String_Item_Span includes = {0};
     BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx,
                                                    target_id,
                                                    BM_QUERY_USAGE_COMPILE,
@@ -104,24 +99,22 @@ static bool cg_export_collect_build_interface_includes(CG_Context *ctx,
     qctx.build_local_interface_active = false;
     qctx.install_interface_active = false;
     owner_dir = bm_query_target_owner_directory(ctx->model, target_id);
-    if (!bm_query_target_interface_requirement_value(ctx->model,
-                                                     target_id,
-                                                     kind,
-                                                     ctx->scratch,
-                                                     &raw) ||
-        raw.count == 0) {
-        return true;
-    }
-    if (!cg_resolve_model_string_with_query_ctx(ctx, &qctx, raw, &resolved) ||
-        !cg_split_top_level_list(ctx->scratch, resolved, &includes)) {
+    if (!bm_query_target_interface_requirement_items(ctx->model, target_id, kind, ctx->scratch, &includes)) {
         return false;
     }
-    for (size_t i = 0; i < arena_arr_len(includes); ++i) {
-        String_View item = includes[i];
-        String_View absolute = {0};
-        if (item.count == 0) continue;
-        if (!cg_build_tree_resolve_owner_path_abs(ctx, owner_dir, item, &absolute)) return false;
-        if (!cg_collect_unique_path(ctx->scratch, out, absolute)) return false;
+    for (size_t i = 0; i < includes.count; ++i) {
+        String_View resolved = {0};
+        String_View *pieces = NULL;
+        if (!cg_resolve_model_string_with_query_ctx(ctx, &qctx, includes.items[i].value, &resolved) ||
+            !cg_split_top_level_list(ctx->scratch, resolved, &pieces)) {
+            return false;
+        }
+        for (size_t piece = 0; piece < arena_arr_len(pieces); ++piece) {
+            String_View absolute = {0};
+            if (pieces[piece].count == 0) continue;
+            if (!cg_build_tree_resolve_owner_path_abs(ctx, owner_dir, pieces[piece], &absolute)) return false;
+            if (!cg_collect_unique_path(ctx->scratch, out, absolute)) return false;
+        }
     }
     return true;
 }
@@ -132,9 +125,7 @@ static bool cg_export_collect_build_link_libraries(CG_Context *ctx,
                                                    String_View export_namespace,
                                                    String_View config,
                                                    String_View **out) {
-    String_View raw = {0};
-    String_View resolved = {0};
-    String_View *libs = NULL;
+    BM_Link_Item_Span libs = {0};
     BM_Target_Id_Span exported_targets = bm_query_export_targets(ctx->model, export_id);
     BM_Query_Eval_Context qctx = cg_make_query_ctx(ctx,
                                                    target_id,
@@ -144,34 +135,33 @@ static bool cg_export_collect_build_link_libraries(CG_Context *ctx,
     qctx.build_interface_active = true;
     qctx.build_local_interface_active = false;
     qctx.install_interface_active = false;
-    if (!bm_query_target_interface_requirement_value(ctx->model,
-                                                     target_id,
-                                                     BM_TARGET_INTERFACE_REQUIREMENT_LINK_LIBRARIES,
-                                                     ctx->scratch,
-                                                     &raw) ||
-        raw.count == 0) {
-        return true;
-    }
-    if (!cg_resolve_model_string_with_query_ctx(ctx, &qctx, raw, &resolved) ||
-        !cg_split_top_level_list(ctx->scratch, resolved, &libs)) {
+    if (!bm_query_target_interface_requirement_link_items(ctx->model, target_id, ctx->scratch, &libs)) {
         return false;
     }
 
-    for (size_t i = 0; i < arena_arr_len(libs); ++i) {
-        CG_Resolved_Target_Ref dep = {0};
-        String_View value = libs[i];
-        if (value.count == 0) continue;
-        if (cg_resolve_target_ref(ctx, &qctx, value, &dep)) {
-            String_View exported_name = {0};
-            if (cg_export_target_in_span(exported_targets, dep.target_id)) {
-                if (!cg_target_exported_name(ctx, dep.target_id, export_namespace, &exported_name) ||
-                    !cg_collect_unique_path(ctx->scratch, out, exported_name)) {
-                    return false;
-                }
-                continue;
-            }
+    for (size_t i = 0; i < libs.count; ++i) {
+        String_View resolved = {0};
+        String_View *pieces = NULL;
+        if (!cg_resolve_model_string_with_query_ctx(ctx, &qctx, libs.items[i].value, &resolved) ||
+            !cg_split_top_level_list(ctx->scratch, resolved, &pieces)) {
+            return false;
         }
-        if (!cg_collect_unique_path(ctx->scratch, out, value)) return false;
+        for (size_t piece = 0; piece < arena_arr_len(pieces); ++piece) {
+            CG_Resolved_Target_Ref dep = {0};
+            String_View value = pieces[piece];
+            if (value.count == 0) continue;
+            if (cg_resolve_target_ref(ctx, &qctx, value, &dep)) {
+                String_View exported_name = {0};
+                if (cg_export_target_in_span(exported_targets, dep.target_id)) {
+                    if (!cg_target_exported_name(ctx, dep.target_id, export_namespace, &exported_name) ||
+                        !cg_collect_unique_path(ctx->scratch, out, exported_name)) {
+                        return false;
+                    }
+                    continue;
+                }
+            }
+            if (!cg_collect_unique_path(ctx->scratch, out, value)) return false;
+        }
     }
     return true;
 }

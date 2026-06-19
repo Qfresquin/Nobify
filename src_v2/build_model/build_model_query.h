@@ -377,6 +377,15 @@ bool bm_query_target_interface_requirement_value(const Build_Model *model,
                                                  BM_Target_Interface_Requirement_Kind kind,
                                                  Arena *scratch,
                                                  String_View *out);
+bool bm_query_target_interface_requirement_items(const Build_Model *model,
+                                                 BM_Target_Id id,
+                                                 BM_Target_Interface_Requirement_Kind kind,
+                                                 Arena *scratch,
+                                                 BM_String_Item_Span *out);
+bool bm_query_target_interface_requirement_link_items(const Build_Model *model,
+                                                      BM_Target_Id id,
+                                                      Arena *scratch,
+                                                      BM_Link_Item_Span *out);
 bool bm_query_target_property_value(const Build_Model *model,
                                     BM_Target_Id id,
                                     String_View property_name,
@@ -426,7 +435,6 @@ BM_String_Span bm_query_build_step_outputs_raw(const Build_Model *model, BM_Buil
 BM_String_Span bm_query_build_step_outputs(const Build_Model *model, BM_Build_Step_Id id);
 BM_String_Span bm_query_build_step_byproducts_raw(const Build_Model *model, BM_Build_Step_Id id);
 BM_String_Span bm_query_build_step_byproducts(const Build_Model *model, BM_Build_Step_Id id);
-BM_String_Span bm_query_build_step_dependency_tokens_raw(const Build_Model *model, BM_Build_Step_Id id);
 BM_Target_Id_Span bm_query_build_step_target_dependencies(const Build_Model *model, BM_Build_Step_Id id);
 BM_Build_Step_Id_Span bm_query_build_step_producer_dependencies(const Build_Model *model, BM_Build_Step_Id id);
 BM_String_Span bm_query_build_step_file_dependencies(const Build_Model *model, BM_Build_Step_Id id);
@@ -740,6 +748,8 @@ typedef enum {
     BM_TEST_PROPERTY_FIXTURES_REQUIRED,
     BM_TEST_PROPERTY_FIXTURES_CLEANUP,
     BM_TEST_PROPERTY_LABELS,
+    BM_TEST_PROPERTY_WORKING_DIRECTORY,
+    BM_TEST_PROPERTY_CROSSCOMPILING_EMULATOR,
 } BM_Test_Property_Kind;
 
 bool bm_query_test_effective_property_items(const Build_Model *model,

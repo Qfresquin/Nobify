@@ -231,17 +231,6 @@ static bool bm_query_platform_is_darwin(const BM_Query_Eval_Context *ctx) {
 #endif
 }
 
-static bool bm_sv_truthy_query(String_View value) {
-    String_View trimmed = nob_sv_trim(value);
-    if (trimmed.count == 0) return false;
-    if (nob_sv_eq(trimmed, nob_sv_from_cstr("0"))) return false;
-    if (bm_sv_eq_ci_query(trimmed, nob_sv_from_cstr("FALSE"))) return false;
-    if (bm_sv_eq_ci_query(trimmed, nob_sv_from_cstr("OFF"))) return false;
-    if (bm_sv_eq_ci_query(trimmed, nob_sv_from_cstr("NO"))) return false;
-    if (bm_sv_eq_ci_query(trimmed, nob_sv_from_cstr("N"))) return false;
-    return true;
-}
-
 static bool bm_sv_is_abs_path_query(String_View path) {
     if (path.count == 0 || !path.data) return false;
     if (path.data[0] == '/' || path.data[0] == '\\') return true;
@@ -800,6 +789,28 @@ static bool bm_query_append_joined_raw_record(Arena *scratch,
     return true;
 }
 
+static bool bm_query_append_joined_string_array(Arena *scratch,
+                                                String_View *out,
+                                                const String_View *items) {
+    Nob_String_Builder sb = {0};
+    char *copy = NULL;
+    if (!scratch || !out) return false;
+    *out = nob_sv_from_cstr("");
+    for (size_t i = 0; i < arena_arr_len(items); ++i) {
+        if (i > 0) nob_sb_append(&sb, ';');
+        nob_sb_append_buf(&sb, items[i].data ? items[i].data : "", items[i].count);
+    }
+    if (sb.count == 0) {
+        nob_sb_free(sb);
+        return true;
+    }
+    copy = arena_strndup(scratch, sb.items ? sb.items : "", sb.count);
+    nob_sb_free(sb);
+    if (!copy) return false;
+    *out = nob_sv_from_parts(copy, sb.count);
+    return true;
+}
+
 static void bm_query_join_push_sv(Nob_String_Builder *sb, bool *first, String_View value) {
     if (!sb || !first || value.count == 0) return;
     if (!*first) nob_sb_append(sb, ';');
@@ -1094,9 +1105,44 @@ bool bm_query_target_modeled_property_value(const Build_Model *model,
         return true;
     }
     if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("EXPORT_NAME"))) {
-        return bm_query_append_joined_raw_record(scratch,
-                                                 out,
-                                                 bm_find_raw_property(target->raw_properties, property_name));
+        *out = target->export_name;
+        return true;
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("PUBLIC_HEADER"))) {
+        return bm_query_append_joined_string_array(scratch, out, target->public_headers);
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("PRECOMPILE_HEADERS"))) {
+        return bm_query_append_joined_string_array(scratch, out, target->precompile_headers);
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("PRECOMPILE_HEADERS_REUSE_FROM"))) {
+        return bm_query_append_joined_string_array(scratch, out, target->precompile_headers_reuse_from);
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("INTERFACE_PRECOMPILE_HEADERS"))) {
+        return bm_query_append_joined_string_array(scratch, out, target->interface_precompile_headers);
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("C_STANDARD"))) {
+        *out = target->language_properties.c_standard;
+        return true;
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("C_STANDARD_REQUIRED"))) {
+        *out = target->language_properties.c_standard_required ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0");
+        return true;
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("C_EXTENSIONS"))) {
+        *out = target->language_properties.c_extensions ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0");
+        return true;
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("CXX_STANDARD"))) {
+        *out = target->language_properties.cxx_standard;
+        return true;
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("CXX_STANDARD_REQUIRED"))) {
+        *out = target->language_properties.cxx_standard_required ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0");
+        return true;
+    }
+    if (bm_sv_eq_ci_query(property_name, nob_sv_from_cstr("CXX_EXTENSIONS"))) {
+        *out = target->language_properties.cxx_extensions ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0");
+        return true;
     }
     for (size_t i = 0; i < arena_arr_len(target->artifact_properties); ++i) {
         if (bm_sv_eq_ci_query(property_name, target->artifact_properties[i].name)) {
@@ -1169,6 +1215,79 @@ bool bm_query_target_interface_requirement_value(const Build_Model *model,
                                                      BM_VISIBILITY_PUBLIC,
                                                      BM_VISIBILITY_INTERFACE);
     }
+    return true;
+}
+
+bool bm_query_target_interface_requirement_items(const Build_Model *model,
+                                                 BM_Target_Id id,
+                                                 BM_Target_Interface_Requirement_Kind kind,
+                                                 Arena *scratch,
+                                                 BM_String_Item_Span *out) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    const BM_String_Item_View *src = NULL;
+    BM_String_Item_View *items = NULL;
+    uint32_t required_flags = 0;
+    uint32_t forbidden_flags = 0;
+    if (!scratch || !out) return false;
+    *out = (BM_String_Item_Span){0};
+    if (!target) return true;
+
+    switch (kind) {
+        case BM_TARGET_INTERFACE_REQUIREMENT_INCLUDE_DIRECTORIES:
+            src = target->include_directories;
+            break;
+        case BM_TARGET_INTERFACE_REQUIREMENT_SYSTEM_INCLUDE_DIRECTORIES:
+            src = target->include_directories;
+            required_flags = BM_ITEM_FLAG_SYSTEM;
+            break;
+        case BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_DEFINITIONS:
+            src = target->compile_definitions;
+            break;
+        case BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_OPTIONS:
+            src = target->compile_options;
+            break;
+        case BM_TARGET_INTERFACE_REQUIREMENT_COMPILE_FEATURES:
+            src = target->compile_features;
+            break;
+        case BM_TARGET_INTERFACE_REQUIREMENT_LINK_OPTIONS:
+            src = target->link_options;
+            break;
+        case BM_TARGET_INTERFACE_REQUIREMENT_LINK_DIRECTORIES:
+            src = target->link_directories;
+            break;
+        case BM_TARGET_INTERFACE_REQUIREMENT_LINK_LIBRARIES:
+            return true;
+    }
+
+    for (size_t i = 0; i < arena_arr_len(src); ++i) {
+        if (src[i].visibility < BM_VISIBILITY_PUBLIC || src[i].visibility > BM_VISIBILITY_INTERFACE) continue;
+        if ((src[i].flags & required_flags) != required_flags) continue;
+        if ((src[i].flags & forbidden_flags) != 0) continue;
+        if (!arena_arr_push(scratch, items, src[i])) return false;
+    }
+    out->items = items;
+    out->count = arena_arr_len(items);
+    return true;
+}
+
+bool bm_query_target_interface_requirement_link_items(const Build_Model *model,
+                                                      BM_Target_Id id,
+                                                      Arena *scratch,
+                                                      BM_Link_Item_Span *out) {
+    const BM_Target_Record *target = bm_model_target(model, id);
+    BM_Link_Item_View *items = NULL;
+    if (!scratch || !out) return false;
+    *out = (BM_Link_Item_Span){0};
+    if (!target) return true;
+    for (size_t i = 0; i < arena_arr_len(target->link_libraries); ++i) {
+        if (target->link_libraries[i].visibility < BM_VISIBILITY_PUBLIC ||
+            target->link_libraries[i].visibility > BM_VISIBILITY_INTERFACE) {
+            continue;
+        }
+        if (!arena_arr_push(scratch, items, target->link_libraries[i])) return false;
+    }
+    out->items = items;
+    out->count = arena_arr_len(items);
     return true;
 }
 
@@ -1846,12 +1965,7 @@ bool bm_query_target_effective_export_name(const Build_Model *model,
     if (!scratch || !out) return false;
     *out = target ? target->name : nob_sv_from_cstr("");
     if (!target) return true;
-    if (!bm_query_append_joined_raw_record(scratch,
-                                           &export_name,
-                                           bm_find_raw_property(target->raw_properties,
-                                                                nob_sv_from_cstr("EXPORT_NAME")))) {
-        return false;
-    }
+    export_name = target->export_name;
     if (export_name.count > 0) *out = export_name;
     return true;
 }
@@ -2115,7 +2229,8 @@ BM_String_Span bm_query_target_raw_property_items(const Build_Model *model, BM_T
 }
 
 BM_String_Span bm_query_target_public_headers(const Build_Model *model, BM_Target_Id id) {
-    return bm_query_target_raw_property_items(model, id, nob_sv_from_cstr("PUBLIC_HEADER"));
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? bm_string_span(target->public_headers) : (BM_String_Span){0};
 }
 
 static bool bm_query_link_item_has_suffix(String_View value, const char *suffix) {
@@ -2206,22 +2321,18 @@ BM_Link_Directory_Spelling bm_query_link_directory_spelling(String_View value) {
 }
 
 BM_String_Span bm_query_target_precompile_headers(const Build_Model *model, BM_Target_Id id) {
-    return bm_query_target_raw_property_items(model, id, nob_sv_from_cstr("PRECOMPILE_HEADERS"));
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? bm_string_span(target->precompile_headers) : (BM_String_Span){0};
 }
 
 BM_String_Span bm_query_target_precompile_headers_reuse_from(const Build_Model *model, BM_Target_Id id) {
-    return bm_query_target_raw_property_items(model, id, nob_sv_from_cstr("PRECOMPILE_HEADERS_REUSE_FROM"));
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? bm_string_span(target->precompile_headers_reuse_from) : (BM_String_Span){0};
 }
 
 BM_String_Span bm_query_target_interface_precompile_headers(const Build_Model *model, BM_Target_Id id) {
-    return bm_query_target_raw_property_items(model, id, nob_sv_from_cstr("INTERFACE_PRECOMPILE_HEADERS"));
-}
-
-static String_View bm_query_target_raw_property_first_string(const Build_Model *model,
-                                                             BM_Target_Id id,
-                                                             String_View property_name) {
-    BM_String_Span span = bm_query_target_raw_property_items(model, id, property_name);
-    return span.count > 0 ? span.items[0] : nob_sv_from_cstr("");
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? bm_string_span(target->interface_precompile_headers) : (BM_String_Span){0};
 }
 
 String_View bm_query_target_output_name(const Build_Model *model, BM_Target_Id id) {
@@ -2260,43 +2371,56 @@ String_View bm_query_target_folder(const Build_Model *model, BM_Target_Id id) {
 }
 
 String_View bm_query_target_c_standard(const Build_Model *model, BM_Target_Id id) {
-    return bm_query_target_raw_property_first_string(model, id, nob_sv_from_cstr("C_STANDARD"));
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? target->language_properties.c_standard : nob_sv_from_cstr("");
 }
 
 bool bm_query_target_c_standard_required(const Build_Model *model, BM_Target_Id id) {
-    return bm_sv_truthy_query(bm_query_target_raw_property_first_string(model, id, nob_sv_from_cstr("C_STANDARD_REQUIRED")));
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? target->language_properties.c_standard_required : false;
 }
 
 bool bm_query_target_c_extensions(const Build_Model *model, BM_Target_Id id) {
-    return bm_sv_truthy_query(bm_query_target_raw_property_first_string(model, id, nob_sv_from_cstr("C_EXTENSIONS")));
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? target->language_properties.c_extensions : false;
 }
 
 String_View bm_query_target_cxx_standard(const Build_Model *model, BM_Target_Id id) {
-    return bm_query_target_raw_property_first_string(model, id, nob_sv_from_cstr("CXX_STANDARD"));
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? target->language_properties.cxx_standard : nob_sv_from_cstr("");
 }
 
 bool bm_query_target_cxx_standard_required(const Build_Model *model, BM_Target_Id id) {
-    return bm_sv_truthy_query(bm_query_target_raw_property_first_string(model, id, nob_sv_from_cstr("CXX_STANDARD_REQUIRED")));
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? target->language_properties.cxx_standard_required : false;
 }
 
 bool bm_query_target_cxx_extensions(const Build_Model *model, BM_Target_Id id) {
-    return bm_sv_truthy_query(bm_query_target_raw_property_first_string(model, id, nob_sv_from_cstr("CXX_EXTENSIONS")));
+    const BM_Target_Record *target = bm_model_target(model, id);
+    return target ? target->language_properties.cxx_extensions : false;
 }
 
 bool bm_query_target_language_extensions_override(const Build_Model *model,
                                                   BM_Target_Id id,
                                                   BM_Compile_Feature_Lang lang,
                                                   bool *out_extensions) {
-    String_View property_name = bm_compile_feature_lang_extensions_prop(lang);
-    BM_String_Span values = {0};
+    const BM_Target_Record *target = bm_model_target(model, id);
     if (out_extensions) *out_extensions = true;
-    if (property_name.count == 0) return false;
-    values = bm_query_target_raw_property_items(model, id, property_name);
-    if (values.count == 0) return false;
-    if (out_extensions) {
-        *out_extensions = bm_sv_truthy_query(bm_query_target_raw_property_first_string(model, id, property_name));
+    if (!target) return false;
+    switch (lang) {
+        case BM_COMPILE_FEATURE_LANG_C:
+            if (!target->language_properties.c_extensions_set) return false;
+            if (out_extensions) *out_extensions = target->language_properties.c_extensions;
+            return true;
+        case BM_COMPILE_FEATURE_LANG_CXX:
+            if (!target->language_properties.cxx_extensions_set) return false;
+            if (out_extensions) *out_extensions = target->language_properties.cxx_extensions;
+            return true;
+        case BM_COMPILE_FEATURE_LANG_UNKNOWN:
+        case BM_COMPILE_FEATURE_LANG_CUDA:
+            return false;
     }
-    return true;
+    return false;
 }
 
 bool bm_query_target_win32_executable(const Build_Model *model, BM_Target_Id id) {
@@ -2402,11 +2526,6 @@ BM_String_Span bm_query_build_step_byproducts_raw(const Build_Model *model, BM_B
 BM_String_Span bm_query_build_step_byproducts(const Build_Model *model, BM_Build_Step_Id id) {
     const BM_Build_Step_Record *step = bm_model_build_step(model, id);
     return step ? bm_string_span(step->effective_byproducts) : (BM_String_Span){0};
-}
-
-BM_String_Span bm_query_build_step_dependency_tokens_raw(const Build_Model *model, BM_Build_Step_Id id) {
-    const BM_Build_Step_Record *step = bm_model_build_step(model, id);
-    return step ? bm_string_span(step->raw_dependency_tokens) : (BM_String_Span){0};
 }
 
 BM_Target_Id_Span bm_query_build_step_target_dependencies(const Build_Model *model, BM_Build_Step_Id id) {
@@ -2824,7 +2943,7 @@ static bool bm_query_resolve_build_step_dependency_token(const Build_Model *mode
                                                          const BM_Build_Step_Record *step,
                                                          const BM_Query_Eval_Context *ctx,
                                                          Arena *scratch,
-                                                         String_View raw_token,
+                                                         String_View token,
                                                          String_View *out) {
     const BM_Directory_Record *owner = NULL;
     String_View resolved = {0};
@@ -2832,7 +2951,7 @@ static bool bm_query_resolve_build_step_dependency_token(const Build_Model *mode
     if (!model || !step || !scratch || !out) return false;
     owner = bm_model_directory(model, step->owner_directory_id);
     if (!owner) return false;
-    if (!bm_query_resolve_string_with_context(model, ctx, scratch, raw_token, &resolved)) return false;
+    if (!bm_query_resolve_string_with_context(model, ctx, scratch, token, &resolved)) return false;
     if (resolved.count == 0) return true;
     if (bm_sv_is_abs_path_query(resolved)) return bm_normalize_path(scratch, resolved, out);
     return bm_path_rebase(scratch, owner->source_dir, resolved, out);
@@ -2883,7 +3002,7 @@ static bool bm_query_build_step_dependency_match_candidates(const Build_Model *m
                                                            const BM_Build_Step_Record *step,
                                                            const BM_Query_Eval_Context *ctx,
                                                            Arena *scratch,
-                                                           String_View raw_token,
+                                                           String_View token,
                                                            BM_Build_Step_Id **producer_deps,
                                                            bool *matched) {
     const BM_Directory_Record *owner = NULL;
@@ -2893,7 +3012,7 @@ static bool bm_query_build_step_dependency_match_candidates(const Build_Model *m
     if (!model || !step || !scratch || !producer_deps || !matched) return false;
     owner = bm_model_directory(model, step->owner_directory_id);
     if (!owner) return false;
-    if (!bm_query_resolve_string_with_context(model, ctx, scratch, raw_token, &resolved)) return false;
+    if (!bm_query_resolve_string_with_context(model, ctx, scratch, token, &resolved)) return false;
     if (resolved.count == 0) return true;
     if (bm_sv_is_abs_path_query(resolved)) {
         if (!bm_normalize_path(scratch, resolved, &candidate)) return false;
@@ -2983,13 +3102,13 @@ bool bm_query_build_step_effective_view(const Build_Model *model,
                                                             step,
                                                             ctx,
                                                             scratch,
-                                                            record->raw_token,
+                                                            record->token,
                                                             &producer_deps,
                                                             &matched_producer)) {
             return false;
         }
         if (matched_producer) continue;
-        if (!bm_query_resolve_build_step_dependency_token(model, step, ctx, scratch, record->raw_token, &resolved)) return false;
+        if (!bm_query_resolve_build_step_dependency_token(model, step, ctx, scratch, record->token, &resolved)) return false;
         if (resolved.count == 0) continue;
         for (size_t candidate = 0; candidate < arena_arr_len(model->build_steps); ++candidate) {
             BM_Build_Step_Id candidate_id = (BM_Build_Step_Id)candidate;
@@ -3254,6 +3373,28 @@ BM_String_Span bm_query_test_raw_property_items(const Build_Model *model,
     return record ? bm_string_span(record->items) : (BM_String_Span){0};
 }
 
+static bool bm_test_property_kind_from_name_query(String_View name, BM_Test_Property_Kind *out) {
+    for (BM_Test_Property_Kind kind = BM_TEST_PROPERTY_DISABLED;
+         kind <= BM_TEST_PROPERTY_CROSSCOMPILING_EMULATOR;
+         kind = (BM_Test_Property_Kind)(kind + 1)) {
+        String_View kind_name = bm_test_property_kind_name(kind);
+        if (kind_name.count > 0 && bm_sv_eq_ci_query(name, kind_name)) {
+            if (out) *out = kind;
+            return true;
+        }
+    }
+    return false;
+}
+
+static const BM_Test_Property_Record *bm_find_test_property(const BM_Test_Record *test,
+                                                            BM_Test_Property_Kind kind) {
+    if (!test) return NULL;
+    for (size_t i = 0; i < arena_arr_len(test->properties); ++i) {
+        if (test->properties[i].kind == kind) return &test->properties[i];
+    }
+    return NULL;
+}
+
 static bool bm_query_push_test_property_item(Arena *scratch,
                                              String_View **items,
                                              String_View value) {
@@ -3285,10 +3426,20 @@ bool bm_query_test_effective_property_items(const Build_Model *model,
                                             Arena *scratch,
                                             BM_String_Span *out) {
     const BM_Test_Record *test = bm_model_test(model, id);
+    BM_Test_Property_Kind kind = BM_TEST_PROPERTY_DISABLED;
+    const BM_Test_Property_Record *typed = NULL;
     String_View *items = NULL;
     if (!scratch || !out) return false;
     *out = (BM_String_Span){0};
     if (!test) return true;
+    if (bm_test_property_kind_from_name_query(property_name, &kind)) {
+        typed = bm_find_test_property(test, kind);
+        if (typed) {
+            out->items = typed->items;
+            out->count = arena_arr_len(typed->items);
+        }
+        return true;
+    }
     for (size_t i = 0; i < arena_arr_len(test->raw_properties); ++i) {
         const BM_Raw_Property_Record *record = &test->raw_properties[i];
         if (!bm_sv_eq_ci_query(record->name, property_name)) continue;
@@ -3326,6 +3477,8 @@ String_View bm_test_property_kind_name(BM_Test_Property_Kind kind) {
         case BM_TEST_PROPERTY_FIXTURES_REQUIRED: return nob_sv_from_cstr("FIXTURES_REQUIRED");
         case BM_TEST_PROPERTY_FIXTURES_CLEANUP: return nob_sv_from_cstr("FIXTURES_CLEANUP");
         case BM_TEST_PROPERTY_LABELS: return nob_sv_from_cstr("LABELS");
+        case BM_TEST_PROPERTY_WORKING_DIRECTORY: return nob_sv_from_cstr("WORKING_DIRECTORY");
+        case BM_TEST_PROPERTY_CROSSCOMPILING_EMULATOR: return nob_sv_from_cstr("CROSSCOMPILING_EMULATOR");
     }
     return nob_sv_from_cstr("");
 }
@@ -3448,7 +3601,7 @@ bool bm_query_test_effective_command(const Build_Model *model,
             if (artifact.emits && artifact.path.count > 0) value = artifact.path;
             if (!bm_query_test_effective_property_items(model,
                                                         id,
-                                                        nob_sv_from_cstr("CROSSCOMPILING_EMULATOR"),
+                                                        bm_test_property_kind_name(BM_TEST_PROPERTY_CROSSCOMPILING_EMULATOR),
                                                         scratch,
                                                         &emulator)) {
                 return false;
@@ -3485,34 +3638,6 @@ BM_Install_Rule_Kind bm_query_install_rule_kind(const Build_Model *model, BM_Ins
     return rule ? rule->kind : BM_INSTALL_RULE_FILE;
 }
 
-static bool bm_install_rule_item_has_tag_separator(String_View item) {
-    for (size_t i = 0; i + 1 < item.count; ++i) {
-        if (item.data[i] == ':' && item.data[i + 1] == ':') return true;
-    }
-    return false;
-}
-
-static BM_Install_Rule_Item_Kind bm_install_rule_item_kind_from_string(String_View item) {
-    if (nob_sv_starts_with(item, nob_sv_from_cstr("SCRIPT::"))) return BM_INSTALL_RULE_ITEM_SCRIPT;
-    if (nob_sv_starts_with(item, nob_sv_from_cstr("CODE::"))) return BM_INSTALL_RULE_ITEM_CODE;
-    if (nob_sv_starts_with(item, nob_sv_from_cstr("EXPORT_ANDROID_MK::"))) {
-        return BM_INSTALL_RULE_ITEM_EXPORT_ANDROID_MK;
-    }
-    if (nob_sv_starts_with(item, nob_sv_from_cstr("IMPORTED_RUNTIME_ARTIFACTS::"))) {
-        return BM_INSTALL_RULE_ITEM_IMPORTED_RUNTIME_ARTIFACTS;
-    }
-    if (nob_sv_starts_with(item, nob_sv_from_cstr("RUNTIME_DEPENDENCY_SET::"))) {
-        return BM_INSTALL_RULE_ITEM_RUNTIME_DEPENDENCY_SET;
-    }
-    return bm_install_rule_item_has_tag_separator(item) ? BM_INSTALL_RULE_ITEM_TAGGED_UNKNOWN
-                                                       : BM_INSTALL_RULE_ITEM_PATH;
-}
-
-static bool bm_install_rule_item_starts_with_generator_expression(String_View item) {
-    String_View trimmed = nob_sv_trim(item);
-    return trimmed.count >= 2 && trimmed.data[0] == '$' && trimmed.data[1] == '<';
-}
-
 BM_Directory_Id bm_query_install_rule_owner_directory(const Build_Model *model, BM_Install_Rule_Id id) {
     const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
     return rule ? rule->owner_directory_id : BM_DIRECTORY_ID_INVALID;
@@ -3525,7 +3650,7 @@ String_View bm_query_install_rule_item_raw(const Build_Model *model, BM_Install_
 
 BM_Install_Rule_Item_Kind bm_query_install_rule_item_kind(const Build_Model *model, BM_Install_Rule_Id id) {
     const BM_Install_Rule_Record *rule = bm_model_install_rule(model, id);
-    return rule ? bm_install_rule_item_kind_from_string(rule->item) : BM_INSTALL_RULE_ITEM_PATH;
+    return rule ? rule->item_view.kind : BM_INSTALL_RULE_ITEM_PATH;
 }
 
 BM_Install_Rule_Item_View bm_query_install_rule_item_view(const Build_Model *model, BM_Install_Rule_Id id) {
@@ -3535,11 +3660,7 @@ BM_Install_Rule_Item_View bm_query_install_rule_item_view(const Build_Model *mod
         view.kind = BM_INSTALL_RULE_ITEM_PATH;
         return view;
     }
-    view.raw = rule->item;
-    view.kind = bm_install_rule_item_kind_from_string(rule->item);
-    view.starts_with_generator_expression =
-        bm_install_rule_item_starts_with_generator_expression(rule->item);
-    return view;
+    return rule->item_view;
 }
 
 String_View bm_query_install_rule_destination(const Build_Model *model, BM_Install_Rule_Id id) {

@@ -544,6 +544,63 @@ bool bm_append_string(Arena *arena, String_View **items, String_View item) {
     return arena_arr_push(arena, *items, item);
 }
 
+bool bm_apply_string_mutation(Arena *arena,
+                              String_View **dest,
+                              const String_View *items,
+                              size_t count,
+                              Event_Property_Mutate_Op op) {
+    if (!arena || !dest) return false;
+
+    switch (op) {
+        case EVENT_PROPERTY_MUTATE_SET: {
+            String_View *replaced = NULL;
+            for (size_t i = 0; i < count; ++i) {
+                if (!arena_arr_push(arena, replaced, items[i])) return false;
+            }
+            *dest = replaced;
+            return true;
+        }
+
+        case EVENT_PROPERTY_MUTATE_PREPEND_LIST: {
+            String_View *merged = NULL;
+            for (size_t i = 0; i < count; ++i) {
+                if (!arena_arr_push(arena, merged, items[i])) return false;
+            }
+            for (size_t i = 0; i < arena_arr_len(*dest); ++i) {
+                if (!arena_arr_push(arena, merged, (*dest)[i])) return false;
+            }
+            *dest = merged;
+            return true;
+        }
+
+        case EVENT_PROPERTY_MUTATE_APPEND_LIST:
+            for (size_t i = 0; i < count; ++i) {
+                if (!arena_arr_push(arena, *dest, items[i])) return false;
+            }
+            return true;
+
+        case EVENT_PROPERTY_MUTATE_APPEND_STRING:
+            for (size_t i = 0; i < count; ++i) {
+                size_t len = arena_arr_len(*dest);
+                if (len == 0) {
+                    if (!arena_arr_push(arena, *dest, items[i])) return false;
+                    continue;
+                }
+                String_View last = (*dest)[len - 1];
+                String_View next = items[i];
+                char *joined = arena_alloc(arena, last.count + next.count + 1);
+                if (!joined) return false;
+                if (last.count > 0 && last.data) memcpy(joined, last.data, last.count);
+                if (next.count > 0 && next.data) memcpy(joined + last.count, next.data, next.count);
+                joined[last.count + next.count] = '\0';
+                (*dest)[len - 1] = nob_sv_from_parts(joined, last.count + next.count);
+            }
+            return true;
+    }
+
+    return false;
+}
+
 bool bm_append_item(Arena *arena, BM_String_Item_View **items, BM_String_Item_View item) {
     if (!arena || !items) return false;
     return arena_arr_push(arena, *items, item);

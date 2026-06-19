@@ -2123,9 +2123,7 @@ TEST(build_model_tests_preserve_argv_properties_scope_and_target_resolution) {
     ASSERT(bm_query_test_resolved_command_target(model, legacy_test) == BM_TARGET_ID_INVALID);
 
     raw_labels = bm_query_test_raw_property_items(model, target_test, nob_sv_from_cstr("LABELS"));
-    ASSERT(raw_labels.count == 2);
-    ASSERT(build_model_string_equals_at(raw_labels, 0, "fast"));
-    ASSERT(build_model_string_equals_at(raw_labels, 1, "unit"));
+    ASSERT(raw_labels.count == 0);
     ASSERT(bm_query_test_effective_property_items(model,
                                                   target_test,
                                                   nob_sv_from_cstr("LABELS"),
@@ -3793,9 +3791,8 @@ TEST(build_model_imported_target_queries_resolve_configs_and_mapped_locations) {
     ASSERT(build_model_string_span_contains(link_langs, "CXX"));
     ASSERT(build_model_string_span_contains(link_langs, "C"));
 
-    ASSERT(build_model_string_span_contains(
-        bm_query_target_raw_property_items(model, ext_id, nob_sv_from_cstr("MAP_IMPORTED_CONFIG_RELWITHDEBINFO")),
-        "Debug"));
+    ASSERT(bm_query_target_imported_known_configurations(model, ext_id, query_arena, &link_langs));
+    ASSERT(build_model_string_span_contains(link_langs, "RELWITHDEBINFO"));
 
     ASSERT(bm_query_target_effective_file(model, missing_id, &default_ctx, query_arena, &effective_file));
     ASSERT(effective_file.count == 0);
@@ -4557,11 +4554,10 @@ TEST(build_model_source_membership_file_sets_and_source_properties_are_canonical
                                                  "local/include"));
     ASSERT(build_model_string_item_span_contains(bm_query_target_source_include_directories(model, core_id, main_index),
                                                  "local/extra"));
-    ASSERT(build_model_string_span_contains(bm_query_target_source_raw_property_items(model,
-                                                                                      core_id,
-                                                                                      main_index,
-                                                                                      nob_sv_from_cstr("COMPILE_DEFINITIONS")),
-                                            "MAIN_LANG_CXX=1"));
+    ASSERT(bm_query_target_source_raw_property_items(model,
+                                                     core_id,
+                                                     main_index,
+                                                     nob_sv_from_cstr("COMPILE_DEFINITIONS")).count == 0);
     ASSERT(build_model_string_span_contains(bm_query_target_source_raw_property_items(model,
                                                                                       core_id,
                                                                                       main_index,
