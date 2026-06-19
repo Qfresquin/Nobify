@@ -2308,6 +2308,8 @@ static bool cg_init_context(CG_Context *ctx,
         .embedded_cpack_bin = opts->embedded_cpack_bin,
         .embedded_gzip_bin = opts->embedded_gzip_bin,
         .embedded_xz_bin = opts->embedded_xz_bin,
+        .c_compiler = opts->c_compiler,
+        .cxx_compiler = opts->cxx_compiler,
         .target_platform = opts->target_platform,
         .backend = opts->backend,
     };

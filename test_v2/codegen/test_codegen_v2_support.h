@@ -24,6 +24,8 @@ typedef struct {
     bool disable_export_host_effects;
     Nob_Codegen_Platform platform;
     Nob_Codegen_Backend backend;
+    const char *c_compiler;
+    const char *cxx_compiler;
 } Codegen_Test_Config;
 
 void codegen_test_set_repo_root(const char *repo_root);

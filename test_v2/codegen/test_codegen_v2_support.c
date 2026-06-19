@@ -296,6 +296,8 @@ static bool codegen_render_or_write_script(const char *script,
             .binary_root = nob_sv_from_cstr(effective_binary_dir),
             .target_platform = config ? config->platform : NOB_CODEGEN_PLATFORM_HOST,
             .backend = config ? config->backend : NOB_CODEGEN_BACKEND_AUTO,
+            .c_compiler = nob_sv_from_cstr((config && config->c_compiler) ? config->c_compiler : ""),
+            .cxx_compiler = nob_sv_from_cstr((config && config->cxx_compiler) ? config->cxx_compiler : ""),
         };
         if (!codegen_fill_host_tool_paths(codegen_arena, &opts)) {
             nob_log(NOB_ERROR,

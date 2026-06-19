@@ -322,11 +322,19 @@ static const char *nobify_cmake_system_name_for_platform(Nob_Codegen_Platform pl
 
 static void nobify_configure_eval_target(EvalSession_Config *cfg,
                                          Nob_Codegen_Platform platform,
-                                         Nob_Codegen_Backend backend) {
+                                         Nob_Codegen_Backend backend,
+                                         const char *target_processor,
+                                         const char *sysroot,
+                                         const char *cc,
+                                         const char *cxx,
+                                         const char *c_compiler_id,
+                                         const char *cxx_compiler_id) {
     const char *system_name = nobify_cmake_system_name_for_platform(platform);
-    if (!cfg || !system_name || system_name[0] == '\0') return;
+    if (!cfg) return;
 
-    cfg->target.system_name = nob_sv_from_cstr(system_name);
+    if (system_name && system_name[0] != '\0') {
+        cfg->target.system_name = nob_sv_from_cstr(system_name);
+    }
     if (platform == NOB_CODEGEN_PLATFORM_WINDOWS &&
         backend == NOB_CODEGEN_BACKEND_WIN32_MSVC) {
         cfg->target.c_compiler = nob_sv_from_cstr("cl.exe");
@@ -334,11 +342,29 @@ static void nobify_configure_eval_target(EvalSession_Config *cfg,
         cfg->target.c_compiler_id = nob_sv_from_cstr("MSVC");
         cfg->target.cxx_compiler_id = nob_sv_from_cstr("MSVC");
     }
+    if (target_processor && target_processor[0] != '\0') {
+        cfg->target.system_processor = nob_sv_from_cstr(target_processor);
+    }
+    if (sysroot && sysroot[0] != '\0') {
+        cfg->target.sysroot = nob_sv_from_cstr(sysroot);
+    }
+    if (cc && cc[0] != '\0') {
+        cfg->target.c_compiler = nob_sv_from_cstr(cc);
+    }
+    if (cxx && cxx[0] != '\0') {
+        cfg->target.cxx_compiler = nob_sv_from_cstr(cxx);
+    }
+    if (c_compiler_id && c_compiler_id[0] != '\0') {
+        cfg->target.c_compiler_id = nob_sv_from_cstr(c_compiler_id);
+    }
+    if (cxx_compiler_id && cxx_compiler_id[0] != '\0') {
+        cfg->target.cxx_compiler_id = nob_sv_from_cstr(cxx_compiler_id);
+    }
 }
 
 static void print_usage(const char *program) {
     nob_log(NOB_INFO,
-            "Usage: %s [--strict] [--tokens] [--ast] [--events] [--platform host|linux|darwin|windows] [--backend auto|posix|win32-msvc] [--source-root path] [--binary-root path] [--out path] [input]",
+            "Usage: %s [--strict] [--tokens] [--ast] [--events] [--platform host|linux|darwin|windows] [--backend auto|posix|win32-msvc] [--target-processor proc] [--sysroot path] [--cc path] [--cxx path] [--compiler-id id|--c-compiler-id id --cxx-compiler-id id] [--source-root path] [--binary-root path] [--out path] [input]",
             program);
 }
 
@@ -394,6 +420,12 @@ int main(int argc, char **argv) {
     const char *output_path = NULL;
     const char *source_root_path = NULL;
     const char *binary_root_path = NULL;
+    const char *target_processor = NULL;
+    const char *sysroot = NULL;
+    const char *cc = NULL;
+    const char *cxx = NULL;
+    const char *c_compiler_id = NULL;
+    const char *cxx_compiler_id = NULL;
     Nob_Codegen_Platform requested_platform = NOB_CODEGEN_PLATFORM_HOST;
     Nob_Codegen_Backend requested_backend = NOB_CODEGEN_BACKEND_AUTO;
     Nob_Codegen_Platform resolved_platform = NOB_CODEGEN_PLATFORM_HOST;
@@ -444,6 +476,70 @@ int main(int argc, char **argv) {
                 print_usage(argv[0]);
                 return 1;
             }
+            continue;
+        }
+        if (strcmp(argv[i], "--target-processor") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --target-processor");
+                print_usage(argv[0]);
+                return 1;
+            }
+            target_processor = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--sysroot") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --sysroot");
+                print_usage(argv[0]);
+                return 1;
+            }
+            sysroot = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--cc") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --cc");
+                print_usage(argv[0]);
+                return 1;
+            }
+            cc = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--cxx") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --cxx");
+                print_usage(argv[0]);
+                return 1;
+            }
+            cxx = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--compiler-id") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --compiler-id");
+                print_usage(argv[0]);
+                return 1;
+            }
+            c_compiler_id = argv[++i];
+            cxx_compiler_id = c_compiler_id;
+            continue;
+        }
+        if (strcmp(argv[i], "--c-compiler-id") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --c-compiler-id");
+                print_usage(argv[0]);
+                return 1;
+            }
+            c_compiler_id = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--cxx-compiler-id") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --cxx-compiler-id");
+                print_usage(argv[0]);
+                return 1;
+            }
+            cxx_compiler_id = argv[++i];
             continue;
         }
         if (strcmp(argv[i], "--out") == 0) {
@@ -615,7 +711,15 @@ int main(int argc, char **argv) {
     session_cfg.source_root = sv_from_cstr(source_root);
     session_cfg.binary_root = sv_from_cstr(binary_root);
     session_cfg.enable_export_host_effects = false;
-    nobify_configure_eval_target(&session_cfg, resolved_platform, resolved_backend);
+    nobify_configure_eval_target(&session_cfg,
+                                 resolved_platform,
+                                 resolved_backend,
+                                 target_processor,
+                                 sysroot,
+                                 cc,
+                                 cxx,
+                                 c_compiler_id,
+                                 cxx_compiler_id);
 
     EvalSession *session = eval_session_create(&session_cfg);
     if (!session) {
@@ -786,6 +890,8 @@ int main(int argc, char **argv) {
         .embedded_cpack_bin = nob_sv_from_cstr(cpack_bin),
         .embedded_gzip_bin = nob_sv_from_cstr(gzip_bin),
         .embedded_xz_bin = nob_sv_from_cstr(xz_bin),
+        .c_compiler = nob_sv_from_cstr(cc ? cc : ""),
+        .cxx_compiler = nob_sv_from_cstr(cxx ? cxx : ""),
         .target_platform = resolved_platform,
         .backend = resolved_backend,
     };

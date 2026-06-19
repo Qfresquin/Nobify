@@ -993,6 +993,34 @@ TEST(codegen_cxx_static_dependency_uses_cxx_driver_for_link_out_of_source) {
     TEST_PASS();
 }
 
+TEST(codegen_explicit_toolchain_bins_are_embedded_in_generated_runtime) {
+    Arena *arena = arena_create(512 * 1024);
+    Nob_String_Builder generated = {0};
+    const char *script =
+        "project(Test C CXX)\n"
+        "add_executable(app main.c helper.cpp)\n";
+    Codegen_Test_Config config = {
+        .input_path = "explicit_toolchain_src/CMakeLists.txt",
+        .output_path = "explicit_toolchain_nob.c",
+        .source_dir = "explicit_toolchain_src",
+        .binary_dir = "explicit_toolchain_build",
+        .c_compiler = "/opt/nobify-toolchain/bin/nob-cc",
+        .cxx_compiler = "/opt/nobify-toolchain/bin/nob-cxx",
+    };
+    ASSERT(arena != NULL);
+
+    ASSERT(codegen_render_script_with_config(script, &config, &generated));
+    String_View text = nob_sv_from_parts(generated.items ? generated.items : "", generated.count);
+    ASSERT(codegen_sv_contains(text, "return \"/opt/nobify-toolchain/bin/nob-cc\";"));
+    ASSERT(codegen_sv_contains(text, "return \"/opt/nobify-toolchain/bin/nob-cxx\";"));
+    ASSERT(!codegen_sv_contains(text, "getenv(\"CC\")"));
+    ASSERT(!codegen_sv_contains(text, "getenv(\"CXX\")"));
+
+    nob_sb_free(generated);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(codegen_clean_removes_out_of_source_outputs_but_preserves_binary_root) {
     const char *script =
         "project(Test C)\n"
@@ -3524,6 +3552,7 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_explicit_output_directories_shape_out_of_source_artifacts(passed, failed, skipped);
     test_codegen_config_sensitive_artifact_paths_follow_build_model_query(passed, failed, skipped);
     test_codegen_cxx_static_dependency_uses_cxx_driver_for_link_out_of_source(passed, failed, skipped);
+    test_codegen_explicit_toolchain_bins_are_embedded_in_generated_runtime(passed, failed, skipped);
     test_codegen_clean_removes_out_of_source_outputs_but_preserves_binary_root(passed, failed, skipped);
     test_codegen_configure_replay_supported_effects_and_phase_cli_work(passed, failed, skipped);
     test_codegen_configure_replay_resolves_genex_per_runtime_config(passed, failed, skipped);

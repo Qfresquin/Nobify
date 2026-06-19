@@ -2436,6 +2436,64 @@ static String_View detect_compiler_id(void) {
 #endif
 }
 
+static bool sv_contains_ascii_ci(String_View value, const char *needle) {
+    if (!needle) return false;
+    size_t needle_len = strlen(needle);
+    if (needle_len == 0) return true;
+    if (value.count < needle_len) return false;
+
+    for (size_t i = 0; i + needle_len <= value.count; i++) {
+        bool match = true;
+        for (size_t j = 0; j < needle_len; j++) {
+            unsigned char a = (unsigned char)value.data[i + j];
+            unsigned char b = (unsigned char)needle[j];
+            if (a >= 'A' && a <= 'Z') a = (unsigned char)(a - 'A' + 'a');
+            if (b >= 'A' && b <= 'Z') b = (unsigned char)(b - 'A' + 'a');
+            if (a != b) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return true;
+    }
+    return false;
+}
+
+static bool sv_ends_with_ascii_ci(String_View value, const char *suffix) {
+    if (!suffix) return false;
+    size_t suffix_len = strlen(suffix);
+    if (suffix_len == 0) return true;
+    if (value.count < suffix_len) return false;
+    return sv_contains_ascii_ci(nob_sv_from_parts(value.data + value.count - suffix_len, suffix_len), suffix);
+}
+
+static String_View compiler_basename(String_View compiler) {
+    size_t start = 0;
+    for (size_t i = 0; i < compiler.count; i++) {
+        if (compiler.data[i] == '/' || compiler.data[i] == '\\') start = i + 1;
+    }
+    return nob_sv_from_parts(compiler.data + start, compiler.count - start);
+}
+
+static String_View infer_compiler_id_from_command(String_View compiler) {
+    String_View base = compiler_basename(compiler);
+    if (base.count == 0) return nob_sv_from_cstr("");
+
+    if (sv_contains_ascii_ci(base, "clang")) return nob_sv_from_cstr("Clang");
+    if (sv_contains_ascii_ci(base, "gcc") ||
+        sv_contains_ascii_ci(base, "g++")) {
+        return nob_sv_from_cstr("GNU");
+    }
+    if (eval_sv_eq_ci_lit(base, "cl") ||
+        eval_sv_eq_ci_lit(base, "cl.exe") ||
+        sv_ends_with_ascii_ci(base, "-cl") ||
+        sv_ends_with_ascii_ci(base, "-cl.exe")) {
+        return nob_sv_from_cstr("MSVC");
+    }
+
+    return nob_sv_from_cstr("");
+}
+
 // -----------------------------------------------------------------------------
 // Public API
 // -----------------------------------------------------------------------------
@@ -2803,12 +2861,16 @@ static bool eval_seed_compiler_vars(EvalExecContext *ctx, const EvalSession_Conf
     }
 
     String_View detected_compiler_id = detect_compiler_id();
+    String_View inferred_c_compiler_id = infer_compiler_id_from_command(c_compiler);
+    String_View inferred_cxx_compiler_id = infer_compiler_id_from_command(cxx_compiler);
     String_View c_compiler_id = cfg->target.c_compiler_id.count > 0
         ? cfg->target.c_compiler_id
-        : detected_compiler_id;
+        : (inferred_c_compiler_id.count > 0 ? inferred_c_compiler_id : detected_compiler_id);
     String_View cxx_compiler_id = cfg->target.cxx_compiler_id.count > 0
         ? cfg->target.cxx_compiler_id
-        : (cfg->target.c_compiler_id.count > 0 ? cfg->target.c_compiler_id : detected_compiler_id);
+        : (cfg->target.c_compiler_id.count > 0
+            ? cfg->target.c_compiler_id
+            : (inferred_cxx_compiler_id.count > 0 ? inferred_cxx_compiler_id : detected_compiler_id));
 
     bool target_windows = eval_target_system_is_windows(eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME")));
     bool msvc = eval_sv_eq_ci_lit(c_compiler_id, "MSVC") || eval_sv_eq_ci_lit(cxx_compiler_id, "MSVC");

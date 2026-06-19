@@ -2855,8 +2855,6 @@ TEST(evaluator_target_platform_config_separates_host_and_target_vars) {
     init.target.sysroot = nob_sv_from_cstr("target-sysroot");
     init.target.c_compiler = nob_sv_from_cstr("cl.exe");
     init.target.cxx_compiler = nob_sv_from_cstr("cl.exe");
-    init.target.c_compiler_id = nob_sv_from_cstr("MSVC");
-    init.target.cxx_compiler_id = nob_sv_from_cstr("MSVC");
 
     Eval_Test_Runtime *ctx = eval_test_create(&init);
     ASSERT(ctx != NULL);
@@ -2896,6 +2894,76 @@ TEST(evaluator_target_platform_config_separates_host_and_target_vars) {
     ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("PLATFORM_SNAPSHOT")).count > 0);
 
     eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_compiler_id_infers_from_configured_compiler_names) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.target.c_compiler = nob_sv_from_cstr("/opt/llvm/bin/clang");
+    init.target.cxx_compiler = nob_sv_from_cstr("x86_64-linux-gnu-g++");
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER")),
+                     nob_sv_from_cstr("/opt/llvm/bin/clang")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER")),
+                     nob_sv_from_cstr("x86_64-linux-gnu-g++")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID")),
+                     nob_sv_from_cstr("Clang")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID")),
+                     nob_sv_from_cstr("GNU")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_compiler_id_infers_from_env_compiler_names) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Eval_Test_Env_Service_Data env_data = {
+        .name = "CC",
+        .value = "/usr/bin/clang",
+    };
+    EvalServices services = {
+        .user_data = &env_data,
+        .env_get = evaluator_test_env_service_get,
+    };
+
+    EvalSession_Config cfg = {0};
+    cfg.persistent_arena = event_arena;
+    cfg.services = &services;
+    cfg.source_root = nob_sv_from_cstr(".");
+    cfg.binary_root = nob_sv_from_cstr(".");
+
+    EvalSession *session = eval_session_create(&cfg);
+    ASSERT(session != NULL);
+
+    ASSERT(nob_sv_eq(eval_test_session_var_get(session, nob_sv_from_cstr("CMAKE_C_COMPILER")),
+                     nob_sv_from_cstr("/usr/bin/clang")));
+    ASSERT(nob_sv_eq(eval_test_session_var_get(session, nob_sv_from_cstr("CMAKE_C_COMPILER_ID")),
+                     nob_sv_from_cstr("Clang")));
+
+    eval_session_destroy(session);
     arena_destroy(temp_arena);
     arena_destroy(event_arena);
     TEST_PASS();
@@ -3391,6 +3459,8 @@ void run_evaluator_v2_batch1(int *passed, int *failed, int *skipped) {
     test_evaluator_include_guard_rejects_invalid_arguments(passed, failed, skipped);
     test_evaluator_enable_language_updates_enabled_language_state_and_validates_scope(passed, failed, skipped);
     test_evaluator_target_platform_config_separates_host_and_target_vars(passed, failed, skipped);
+    test_evaluator_compiler_id_infers_from_configured_compiler_names(passed, failed, skipped);
+    test_evaluator_compiler_id_infers_from_env_compiler_names(passed, failed, skipped);
     test_evaluator_add_test_name_signature_parses_supported_options(passed, failed, skipped);
     test_evaluator_add_test_name_signature_rejects_unexpected_arguments(passed, failed, skipped);
     test_evaluator_add_definitions_routes_d_flags_to_compile_definitions(passed, failed, skipped);

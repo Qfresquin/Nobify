@@ -161,21 +161,35 @@ bool cg_emit_support_helpers(CG_Context *ctx, Nob_String_Builder *out) {
                             CG_HELPER_ARCHIVE_TOOL |
                             CG_HELPER_LINK_TOOL)) {
         nob_sb_append_cstr(out,
-            "static const char *resolve_cc_bin(void) {\n"
-            "    const char *tool = getenv(\"CC\");\n"
-            "    if (tool && tool[0] != '\\0') return tool;\n"
-            "    return ");
-        if (!cg_sb_append_c_string(out, ctx->policy.c_compiler_default)) return false;
+            "static const char *resolve_cc_bin(void) {\n");
+        if (ctx->opts.c_compiler.count > 0) {
+            nob_sb_append_cstr(out, "    return ");
+            if (!cg_sb_append_c_string(out, ctx->opts.c_compiler)) return false;
+            nob_sb_append_cstr(out, ";\n");
+        } else {
+            nob_sb_append_cstr(out,
+                "    const char *tool = getenv(\"CC\");\n"
+                "    if (tool && tool[0] != '\\0') return tool;\n"
+                "    return ");
+            if (!cg_sb_append_c_string(out, ctx->policy.c_compiler_default)) return false;
+            nob_sb_append_cstr(out, ";\n");
+        }
         nob_sb_append_cstr(out,
-            ";\n"
             "}\n\n"
-            "static const char *resolve_cxx_bin(void) {\n"
-            "    const char *tool = getenv(\"CXX\");\n"
-            "    if (tool && tool[0] != '\\0') return tool;\n"
-            "    return ");
-        if (!cg_sb_append_c_string(out, ctx->policy.cxx_compiler_default)) return false;
+            "static const char *resolve_cxx_bin(void) {\n");
+        if (ctx->opts.cxx_compiler.count > 0) {
+            nob_sb_append_cstr(out, "    return ");
+            if (!cg_sb_append_c_string(out, ctx->opts.cxx_compiler)) return false;
+            nob_sb_append_cstr(out, ";\n");
+        } else {
+            nob_sb_append_cstr(out,
+                "    const char *tool = getenv(\"CXX\");\n"
+                "    if (tool && tool[0] != '\\0') return tool;\n"
+                "    return ");
+            if (!cg_sb_append_c_string(out, ctx->policy.cxx_compiler_default)) return false;
+            nob_sb_append_cstr(out, ";\n");
+        }
         nob_sb_append_cstr(out,
-            ";\n"
             "}\n\n"
             "static void append_toolchain_cmd(Nob_Cmd *cmd, bool use_cxx) {\n"
             "    nob_cmd_append(cmd, use_cxx ? resolve_cxx_bin() : resolve_cc_bin());\n"
