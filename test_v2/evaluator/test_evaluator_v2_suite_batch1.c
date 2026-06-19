@@ -2835,6 +2835,72 @@ TEST(evaluator_enable_language_updates_enabled_language_state_and_validates_scop
     TEST_PASS();
 }
 
+TEST(evaluator_target_platform_config_separates_host_and_target_vars) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.target.system_name = nob_sv_from_cstr("Windows");
+    init.target.system_processor = nob_sv_from_cstr("nobify-test-proc");
+    init.target.sysroot = nob_sv_from_cstr("target-sysroot");
+    init.target.c_compiler = nob_sv_from_cstr("cl.exe");
+    init.target.cxx_compiler = nob_sv_from_cstr("cl.exe");
+    init.target.c_compiler_id = nob_sv_from_cstr("MSVC");
+    init.target.cxx_compiler_id = nob_sv_from_cstr("MSVC");
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(PLATFORM_SNAPSHOT \"${CMAKE_HOST_SYSTEM_NAME}|${CMAKE_SYSTEM_NAME}|${CMAKE_CROSSCOMPILING}|${WIN32}|${UNIX}|${APPLE}|${MSVC}|${MINGW}|${CMAKE_SYSROOT}|${CMAKE_C_COMPILER_ID}\")\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME")).count > 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME")),
+                     nob_sv_from_cstr("Windows")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_PROCESSOR")),
+                     nob_sv_from_cstr("nobify-test-proc")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING")),
+                     nob_sv_from_cstr("TRUE")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("WIN32")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("UNIX")),
+                     nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("APPLE")),
+                     nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MSVC")),
+                     nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MINGW")),
+                     nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_SYSROOT")),
+                     nob_sv_from_cstr("target-sysroot")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER")),
+                     nob_sv_from_cstr("cl.exe")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID")),
+                     nob_sv_from_cstr("MSVC")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("PLATFORM_SNAPSHOT")).count > 0);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_add_test_name_signature_parses_supported_options) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3324,6 +3390,7 @@ void run_evaluator_v2_batch1(int *passed, int *failed, int *skipped) {
     test_evaluator_include_guard_global_scope_persists_across_function_scope(passed, failed, skipped);
     test_evaluator_include_guard_rejects_invalid_arguments(passed, failed, skipped);
     test_evaluator_enable_language_updates_enabled_language_state_and_validates_scope(passed, failed, skipped);
+    test_evaluator_target_platform_config_separates_host_and_target_vars(passed, failed, skipped);
     test_evaluator_add_test_name_signature_parses_supported_options(passed, failed, skipped);
     test_evaluator_add_test_name_signature_rejects_unexpected_arguments(passed, failed, skipped);
     test_evaluator_add_definitions_routes_d_flags_to_compile_definitions(passed, failed, skipped);

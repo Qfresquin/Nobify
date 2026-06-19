@@ -310,6 +310,32 @@ static bool nobify_resolve_codegen_contract(Nob_Codegen_Platform requested_platf
     return true;
 }
 
+static const char *nobify_cmake_system_name_for_platform(Nob_Codegen_Platform platform) {
+    switch (platform) {
+        case NOB_CODEGEN_PLATFORM_LINUX: return "Linux";
+        case NOB_CODEGEN_PLATFORM_DARWIN: return "Darwin";
+        case NOB_CODEGEN_PLATFORM_WINDOWS: return "Windows";
+        case NOB_CODEGEN_PLATFORM_HOST: break;
+    }
+    return "";
+}
+
+static void nobify_configure_eval_target(EvalSession_Config *cfg,
+                                         Nob_Codegen_Platform platform,
+                                         Nob_Codegen_Backend backend) {
+    const char *system_name = nobify_cmake_system_name_for_platform(platform);
+    if (!cfg || !system_name || system_name[0] == '\0') return;
+
+    cfg->target.system_name = nob_sv_from_cstr(system_name);
+    if (platform == NOB_CODEGEN_PLATFORM_WINDOWS &&
+        backend == NOB_CODEGEN_BACKEND_WIN32_MSVC) {
+        cfg->target.c_compiler = nob_sv_from_cstr("cl.exe");
+        cfg->target.cxx_compiler = nob_sv_from_cstr("cl.exe");
+        cfg->target.c_compiler_id = nob_sv_from_cstr("MSVC");
+        cfg->target.cxx_compiler_id = nob_sv_from_cstr("MSVC");
+    }
+}
+
 static void print_usage(const char *program) {
     nob_log(NOB_INFO,
             "Usage: %s [--strict] [--tokens] [--ast] [--events] [--platform host|linux|darwin|windows] [--backend auto|posix|win32-msvc] [--source-root path] [--binary-root path] [--out path] [input]",
@@ -589,6 +615,7 @@ int main(int argc, char **argv) {
     session_cfg.source_root = sv_from_cstr(source_root);
     session_cfg.binary_root = sv_from_cstr(binary_root);
     session_cfg.enable_export_host_effects = false;
+    nobify_configure_eval_target(&session_cfg, resolved_platform, resolved_backend);
 
     EvalSession *session = eval_session_create(&session_cfg);
     if (!session) {

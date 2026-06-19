@@ -50,6 +50,7 @@ typedef struct {
     Eval_Compat_Profile compat_profile;
     EvalRegistry *registry;
     bool disable_export_host_effects;
+    Eval_Target_Platform_Config target;
 } Eval_Test_Init;
 
 typedef struct {
@@ -202,6 +203,7 @@ static Eval_Test_Runtime *eval_test_create(const Eval_Test_Init *init) {
     cfg.source_root = init->source_dir;
     cfg.binary_root = init->binary_dir;
     cfg.enable_export_host_effects = !init->disable_export_host_effects;
+    cfg.target = init->target;
 
     ctx->session = eval_session_create(&cfg);
     if (!ctx->session) {

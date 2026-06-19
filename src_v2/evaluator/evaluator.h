@@ -106,6 +106,17 @@ typedef struct {
     Eval_Command_Fallback fallback_behavior;
 } EvalNativeCommandDef;
 
+typedef struct {
+    String_View system_name;
+    String_View system_processor;
+    String_View system_version;
+    String_View sysroot;
+    String_View c_compiler;
+    String_View cxx_compiler;
+    String_View c_compiler_id;
+    String_View cxx_compiler_id;
+} Eval_Target_Platform_Config;
+
 typedef enum {
     EVAL_RUN_OK = 0,
     EVAL_RUN_OK_WITH_WARNINGS,
@@ -425,6 +436,7 @@ typedef struct {
     String_View source_root;
     String_View binary_root;
     bool enable_export_host_effects;
+    Eval_Target_Platform_Config target;
 } EvalSession_Config;
 
 typedef struct {

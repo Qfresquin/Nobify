@@ -2690,6 +2690,139 @@ static bool eval_seed_compile_feature_vars(EvalExecContext *ctx) {
            eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CUDA_COMPILE_FEATURES"), nob_sv_from_cstr(cuda_known));
 }
 
+static bool eval_target_system_is_windows(String_View system_name) {
+    return eval_sv_eq_ci_lit(system_name, "Windows");
+}
+
+static bool eval_target_system_is_apple(String_View system_name) {
+    return eval_sv_eq_ci_lit(system_name, "Darwin") ||
+           eval_sv_eq_ci_lit(system_name, "iOS") ||
+           eval_sv_eq_ci_lit(system_name, "tvOS") ||
+           eval_sv_eq_ci_lit(system_name, "watchOS");
+}
+
+static bool eval_target_system_is_unix(String_View system_name) {
+    if (eval_target_system_is_windows(system_name) ||
+        eval_sv_eq_ci_lit(system_name, "Generic")) {
+        return false;
+    }
+    return eval_sv_eq_ci_lit(system_name, "Linux") ||
+           eval_target_system_is_apple(system_name) ||
+           eval_sv_eq_ci_lit(system_name, "Android") ||
+           eval_sv_eq_ci_lit(system_name, "FreeBSD") ||
+           eval_sv_eq_ci_lit(system_name, "OpenBSD") ||
+           eval_sv_eq_ci_lit(system_name, "NetBSD");
+}
+
+static bool eval_seed_platform_vars(EvalExecContext *ctx, const EvalSession_Config *cfg) {
+    if (!ctx || !cfg) return false;
+
+    String_View host_system_name = eval_detect_host_system_name();
+    String_View host_processor = eval_detect_host_processor();
+    String_View host_system_version = eval_host_os_version_temp(ctx);
+    if (eval_should_stop(ctx)) return false;
+
+    bool explicit_target_system = cfg->target.system_name.count > 0;
+    bool explicit_target_processor = cfg->target.system_processor.count > 0;
+    bool explicit_target_platform = explicit_target_system || explicit_target_processor ||
+                                    cfg->target.system_version.count > 0 ||
+                                    cfg->target.sysroot.count > 0;
+    String_View target_system_name = cfg->target.system_name.count > 0
+        ? cfg->target.system_name
+        : host_system_name;
+    String_View target_processor = cfg->target.system_processor.count > 0
+        ? cfg->target.system_processor
+        : host_processor;
+    String_View target_system_version = cfg->target.system_version.count > 0
+        ? cfg->target.system_version
+        : (nob_sv_eq(target_system_name, host_system_name) ? host_system_version : nob_sv_from_cstr(""));
+
+    bool cross_compiling = explicit_target_platform &&
+                           (!nob_sv_eq(target_system_name, host_system_name) ||
+                            !nob_sv_eq(target_processor, host_processor));
+    bool target_windows = false;
+    bool target_apple = false;
+    bool target_unix = false;
+
+    if (explicit_target_platform) {
+        target_windows = eval_target_system_is_windows(target_system_name);
+        target_apple = eval_target_system_is_apple(target_system_name);
+        target_unix = eval_target_system_is_unix(target_system_name);
+    } else {
+#if defined(_WIN32)
+        target_windows = true;
+        target_unix = false;
+#else
+        target_windows = false;
+        target_unix = true;
+#endif
+#if defined(__APPLE__)
+        target_apple = true;
+#else
+        target_apple = false;
+#endif
+    }
+
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("WIN32"), target_windows ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("UNIX"), target_unix ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("APPLE"), target_apple ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return false;
+
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME"), target_system_name)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"), host_system_name)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_PROCESSOR"), target_processor)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_PROCESSOR"), host_processor)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM"), target_system_name)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM"), host_system_name)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_VERSION"), target_system_version)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_VERSION"), host_system_version)) return false;
+    if (!eval_var_set_current(ctx,
+                              nob_sv_from_cstr("CMAKE_CROSSCOMPILING"),
+                              cross_compiling ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE"))) {
+        return false;
+    }
+    if (cfg->target.sysroot.count > 0 &&
+        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSROOT"), cfg->target.sysroot)) {
+        return false;
+    }
+
+    return true;
+}
+
+static bool eval_seed_compiler_vars(EvalExecContext *ctx, const EvalSession_Config *cfg) {
+    if (!ctx || !cfg) return false;
+
+    String_View c_compiler = cfg->target.c_compiler;
+    String_View cxx_compiler = cfg->target.cxx_compiler;
+    if (c_compiler.count == 0) {
+        const char *cc = eval_getenv_temp(ctx, "CC");
+        c_compiler = nob_sv_from_cstr((cc && cc[0] != '\0') ? cc : "cc");
+    }
+    if (cxx_compiler.count == 0) {
+        const char *cxx = eval_getenv_temp(ctx, "CXX");
+        cxx_compiler = nob_sv_from_cstr((cxx && cxx[0] != '\0') ? cxx : "c++");
+    }
+
+    String_View detected_compiler_id = detect_compiler_id();
+    String_View c_compiler_id = cfg->target.c_compiler_id.count > 0
+        ? cfg->target.c_compiler_id
+        : detected_compiler_id;
+    String_View cxx_compiler_id = cfg->target.cxx_compiler_id.count > 0
+        ? cfg->target.cxx_compiler_id
+        : (cfg->target.c_compiler_id.count > 0 ? cfg->target.c_compiler_id : detected_compiler_id);
+
+    bool target_windows = eval_target_system_is_windows(eval_var_get_visible(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME")));
+    bool msvc = eval_sv_eq_ci_lit(c_compiler_id, "MSVC") || eval_sv_eq_ci_lit(cxx_compiler_id, "MSVC");
+    bool mingw = target_windows &&
+                 (eval_sv_eq_ci_lit(c_compiler_id, "GNU") || eval_sv_eq_ci_lit(cxx_compiler_id, "GNU"));
+
+    return eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER"), c_compiler) &&
+           eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"), cxx_compiler) &&
+           eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID"), c_compiler_id) &&
+           eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"), cxx_compiler_id) &&
+           eval_var_set_current(ctx, nob_sv_from_cstr("MSVC"), msvc ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0")) &&
+           eval_var_set_current(ctx, nob_sv_from_cstr("MINGW"), mingw ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"));
+}
+
 static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg) {
     if (!cfg || !cfg->persistent_arena) return NULL;
 
@@ -2781,49 +2914,11 @@ static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg) {
     EVAL_SESSION_CREATE_REQUIRE(eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_POLICY_VERSION"), nob_sv_from_cstr("")),
                                 "set CMAKE_POLICY_VERSION");
 
-#if defined(_WIN32)
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("WIN32"), nob_sv_from_cstr("1"))) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("UNIX"), nob_sv_from_cstr("0"))) return NULL;
-#else
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("WIN32"), nob_sv_from_cstr("0"))) return NULL;
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("UNIX"), nob_sv_from_cstr("1"))) return NULL;
-#endif
-
-#if defined(__APPLE__)
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("APPLE"), nob_sv_from_cstr("1"))) return NULL;
-#else
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("APPLE"), nob_sv_from_cstr("0"))) return NULL;
-#endif
-
-#if defined(_MSC_VER) && !defined(__clang__)
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("MSVC"), nob_sv_from_cstr("1"))) return NULL;
-#else
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("MSVC"), nob_sv_from_cstr("0"))) return NULL;
-#endif
-
-#if defined(__MINGW32__) || defined(__MINGW64__)
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("MINGW"), nob_sv_from_cstr("1"))) return NULL;
-#else
-    if (!eval_var_set_current(ctx, nob_sv_from_cstr("MINGW"), nob_sv_from_cstr("0"))) return NULL;
-#endif
-
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_VERSION"), nob_sv_from_cstr("3.28.0"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_MAJOR_VERSION"), nob_sv_from_cstr("3"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_MINOR_VERSION"), nob_sv_from_cstr("28"))) return NULL;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_PATCH_VERSION"), nob_sv_from_cstr("0"))) return NULL;
-    {
-        String_View host_system_name = eval_detect_host_system_name();
-        String_View host_processor = eval_detect_host_processor();
-        String_View host_system_version = eval_host_os_version_temp(ctx);
-        if (eval_should_stop(ctx)) return NULL;
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME"), host_system_name)) return NULL;
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"), host_system_name)) return NULL;
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_PROCESSOR"), host_processor)) return NULL;
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_PROCESSOR"), host_processor)) return NULL;
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM"), host_system_name)) return NULL;
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM"), host_system_name)) return NULL;
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_VERSION"), host_system_version)) return NULL;
-    }
+    if (!eval_seed_platform_vars(ctx, cfg)) return NULL;
     EVAL_SESSION_CREATE_REQUIRE(eval_var_set_current(ctx,
                                                      nob_sv_from_cstr("CMAKE_COMMAND"),
                                                      eval_default_cmake_command_temp(ctx)),
@@ -2869,20 +2964,7 @@ static EvalSession *eval_session_create_impl(const EvalSession_Config *cfg) {
         return NULL;
     }
 
-    {
-        const char *cc = eval_getenv_temp(ctx, "CC");
-        const char *cxx = eval_getenv_temp(ctx, "CXX");
-        if (!cc || cc[0] == '\0') cc = "cc";
-        if (!cxx || cxx[0] == '\0') cxx = "c++";
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER"), nob_sv_from_cstr(cc))) return NULL;
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"), nob_sv_from_cstr(cxx))) return NULL;
-    }
-
-    {
-        String_View compiler_id = detect_compiler_id();
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID"), compiler_id)) return NULL;
-        if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_ID"), compiler_id)) return NULL;
-    }
+    if (!eval_seed_compiler_vars(ctx, cfg)) return NULL;
     if (!eval_seed_compile_feature_vars(ctx)) return NULL;
 
     eval_session_commit_state_from_exec(session, ctx);

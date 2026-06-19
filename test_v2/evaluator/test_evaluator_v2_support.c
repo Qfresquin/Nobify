@@ -236,6 +236,14 @@ Eval_Test_Fixture *eval_test_fixture_create(size_t temp_arena_size,
             fixture->init.compat_profile = overrides->compat_profile;
         }
         if (overrides->registry) fixture->init.registry = overrides->registry;
+        if (overrides->target.system_name.count > 0) fixture->init.target.system_name = overrides->target.system_name;
+        if (overrides->target.system_processor.count > 0) fixture->init.target.system_processor = overrides->target.system_processor;
+        if (overrides->target.system_version.count > 0) fixture->init.target.system_version = overrides->target.system_version;
+        if (overrides->target.sysroot.count > 0) fixture->init.target.sysroot = overrides->target.sysroot;
+        if (overrides->target.c_compiler.count > 0) fixture->init.target.c_compiler = overrides->target.c_compiler;
+        if (overrides->target.cxx_compiler.count > 0) fixture->init.target.cxx_compiler = overrides->target.cxx_compiler;
+        if (overrides->target.c_compiler_id.count > 0) fixture->init.target.c_compiler_id = overrides->target.c_compiler_id;
+        if (overrides->target.cxx_compiler_id.count > 0) fixture->init.target.cxx_compiler_id = overrides->target.cxx_compiler_id;
     }
 
     fixture->ctx = eval_test_create(&fixture->init);
