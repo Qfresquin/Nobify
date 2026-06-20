@@ -71,12 +71,18 @@ typedef struct {
     String_View target_name;
     String_View linker_language;
     SV_List compile_definitions;
+    SV_List compile_options;
+    SV_List include_directories;
     SV_List link_options;
+    SV_List link_directories;
     SV_List link_libraries;
     SV_List cmake_flags;
     Try_Compile_Source_List source_items;
     Try_Compile_Lang_Props c_lang;
     Try_Compile_Lang_Props cxx_lang;
+    String_View output_name;
+    bool has_build_kind;
+    Try_Compile_Build_Kind build_kind;
     bool no_cache;
     bool no_log;
 } Try_Compile_Request;

@@ -3470,6 +3470,140 @@ TEST(evaluator_try_compile_failure_populates_output_variable) {
     TEST_PASS();
 }
 
+TEST(evaluator_try_compile_project_uses_internal_mini_configure_not_cmake_command) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("tc_project_mini"));
+    ASSERT(nob_mkdir_if_not_exists("tc_project_mini/include"));
+    const char *cmake_lists =
+        "cmake_minimum_required(VERSION 3.20)\n"
+        "project(Mini C)\n"
+        "add_library(tc_dep STATIC dep.c)\n"
+        "target_compile_definitions(tc_dep PRIVATE DEP_OK=1)\n"
+        "add_executable(tc_app main.c)\n"
+        "target_include_directories(tc_app PRIVATE include)\n"
+        "target_compile_definitions(tc_app PRIVATE NEED_OK=1)\n"
+        "target_link_options(tc_app PRIVATE -Wl,--as-needed)\n"
+        "target_link_libraries(tc_app PRIVATE tc_dep)\n";
+    ASSERT(nob_write_entire_file("tc_project_mini/CMakeLists.txt", cmake_lists, strlen(cmake_lists)));
+    const char *header = "#define HEADER_OK 1\n";
+    ASSERT(nob_write_entire_file("tc_project_mini/include/ok.h", header, strlen(header)));
+    const char *dep_source =
+        "#ifndef DEP_OK\n"
+        "#error DEP_OK missing\n"
+        "#endif\n"
+        "int dep_value(void){return 0;}\n";
+    ASSERT(nob_write_entire_file("tc_project_mini/dep.c", dep_source, strlen(dep_source)));
+    const char *main_source =
+        "#include \"ok.h\"\n"
+        "#ifndef NEED_OK\n"
+        "#error NEED_OK missing\n"
+        "#endif\n"
+        "#if HEADER_OK != 1\n"
+        "#error HEADER_OK missing\n"
+        "#endif\n"
+        "int dep_value(void);\n"
+        "int main(void){return dep_value();}\n";
+    ASSERT(nob_write_entire_file("tc_project_mini/main.c", main_source, strlen(main_source)));
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "set(CMAKE_COMMAND /definitely/not/cmake)\n"
+        "try_compile(TC_PROJECT PROJECT Mini\n"
+        "  SOURCE_DIR tc_project_mini\n"
+        "  BINARY_DIR tc_project_build\n"
+        "  TARGET tc_app\n"
+        "  OUTPUT_VARIABLE TC_PROJECT_LOG\n"
+        "  NO_CACHE)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TC_PROJECT")), nob_sv_from_cstr("TRUE")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_try_compile_project_reports_target_selection_failures) {
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    ASSERT(nob_mkdir_if_not_exists("tc_project_targets"));
+    const char *cmake_lists =
+        "cmake_minimum_required(VERSION 3.20)\n"
+        "project(Targets C)\n"
+        "add_executable(first main.c)\n"
+        "add_executable(second main.c)\n";
+    ASSERT(nob_write_entire_file("tc_project_targets/CMakeLists.txt", cmake_lists, strlen(cmake_lists)));
+    const char *main_source = "int main(void){return 0;}\n";
+    ASSERT(nob_write_entire_file("tc_project_targets/main.c", main_source, strlen(main_source)));
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(
+        temp_arena,
+        "try_compile(TC_MISSING PROJECT Targets\n"
+        "  SOURCE_DIR tc_project_targets\n"
+        "  BINARY_DIR tc_project_missing_build\n"
+        "  TARGET no_such_target\n"
+        "  OUTPUT_VARIABLE TC_MISSING_LOG\n"
+        "  NO_CACHE)\n"
+        "try_compile(TC_AMBIG PROJECT Targets\n"
+        "  SOURCE_DIR tc_project_targets\n"
+        "  BINARY_DIR tc_project_ambig_build\n"
+        "  OUTPUT_VARIABLE TC_AMBIG_LOG\n"
+        "  NO_CACHE)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TC_MISSING")), nob_sv_from_cstr("FALSE")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TC_AMBIG")), nob_sv_from_cstr("FALSE")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("TC_MISSING_LOG")),
+                          nob_sv_from_cstr("target not found")));
+    ASSERT(sv_contains_sv(eval_test_var_get(ctx, nob_sv_from_cstr("TC_AMBIG_LOG")),
+                          nob_sv_from_cstr("ambiguous")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
 TEST(evaluator_try_compile_empty_capture_file_is_silent) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3718,6 +3852,8 @@ void run_evaluator_v2_batch5(int *passed, int *failed, int *skipped) {
     test_evaluator_file_events_are_emitted_from_parsed_semantics_not_dispatcher_positions(passed, failed, skipped);
     test_evaluator_try_compile_no_cache_and_cmake_flags_do_not_leak(passed, failed, skipped);
     test_evaluator_try_compile_failure_populates_output_variable(passed, failed, skipped);
+    test_evaluator_try_compile_project_uses_internal_mini_configure_not_cmake_command(passed, failed, skipped);
+    test_evaluator_try_compile_project_reports_target_selection_failures(passed, failed, skipped);
     test_evaluator_try_compile_empty_capture_file_is_silent(passed, failed, skipped);
     test_evaluator_cleanup_stack_restores_log_env_and_workspace_after_assert_failure(passed, failed, skipped);
     test_evaluator_include_cpack_materializes_package_snapshot_events(passed, failed, skipped);
