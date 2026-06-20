@@ -1,3 +1,4 @@
 $tmpdir/
 Temp_tests/
 build/
+.git.backup/
