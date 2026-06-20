@@ -112,6 +112,12 @@ typedef struct {
     String_View system_processor;
     String_View system_version;
     String_View sysroot;
+    String_View sdkroot;
+    String_View osx_architectures;
+    String_View osx_deployment_target;
+    String_View android_abi;
+    String_View android_api;
+    String_View android_ndk;
     String_View c_compiler;
     String_View cxx_compiler;
     String_View c_compiler_id;

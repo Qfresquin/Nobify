@@ -7,6 +7,28 @@ typedef struct {
     bool saw_pipeline_input;
 } Execute_Process_Mock_Data;
 
+typedef enum {
+    TOOLCHAIN_PROBE_MOCK_GNU = 0,
+    TOOLCHAIN_PROBE_MOCK_CLANG,
+    TOOLCHAIN_PROBE_MOCK_APPLECLANG,
+    TOOLCHAIN_PROBE_MOCK_MINGW,
+    TOOLCHAIN_PROBE_MOCK_MSVC,
+} Toolchain_Probe_Mock_Kind;
+
+typedef struct {
+    Toolchain_Probe_Mock_Kind kind;
+    size_t call_count;
+    bool saw_macro_dump;
+    bool saw_include_probe;
+    bool saw_link_probe;
+    bool saw_search_dirs;
+} Toolchain_Probe_Mock_Data;
+
+typedef struct {
+    const char *cc;
+    const char *cxx;
+} Toolchain_File_Env_Data;
+
 typedef struct {
     size_t read_count;
     size_t write_count;
@@ -70,6 +92,23 @@ typedef struct {
     bool saw_append_two;
 } File_Service_Mock_Data;
 
+static bool evaluator_write_text_file(const char *path, const char *text) {
+    if (!path || !text) return false;
+    return nob_write_entire_file(path, text, strlen(text));
+}
+
+static const char *evaluator_toolchain_file_env_get(void *user_data,
+                                                    Arena *scratch_arena,
+                                                    const char *name) {
+    Toolchain_File_Env_Data *data = (Toolchain_File_Env_Data*)user_data;
+    const char *value = NULL;
+    if (data && name && strcmp(name, "CC") == 0) value = data->cc;
+    if (data && name && strcmp(name, "CXX") == 0) value = data->cxx;
+    if (!value) return NULL;
+    if (!scratch_arena) return value;
+    return arena_strndup(scratch_arena, value, strlen(value));
+}
+
 typedef struct {
     const char *family_label;
     const char *case_pack_path;
@@ -127,6 +166,163 @@ static const Evaluator_Parity_Diff_Pack_Row *evaluator_parity_diff_pack_find(con
         }
     }
     return NULL;
+}
+
+static bool toolchain_probe_request_has_arg(const Eval_Process_Run_Request *request, const char *arg) {
+    if (!request || !arg) return false;
+    String_View wanted = nob_sv_from_cstr(arg);
+    for (size_t i = 0; i < request->argc; i++) {
+        if (nob_sv_eq(request->argv[i], wanted)) return true;
+    }
+    return false;
+}
+
+static bool toolchain_probe_request_argv0_contains(const Eval_Process_Run_Request *request, const char *needle) {
+    if (!request || request->argc == 0 || !needle) return false;
+    return sv_contains_sv(request->argv[0], nob_sv_from_cstr(needle));
+}
+
+static bool evaluator_toolchain_probe_mock_run(void *user_data,
+                                               Arena *scratch_arena,
+                                               const Eval_Process_Run_Request *request,
+                                               Eval_Process_Run_Result *out_result) {
+    (void)scratch_arena;
+    Toolchain_Probe_Mock_Data *data = (Toolchain_Probe_Mock_Data*)user_data;
+    if (!data || !request || !out_result || request->argc == 0) return false;
+
+    data->call_count++;
+    *out_result = (Eval_Process_Run_Result){
+        .started = true,
+        .exit_code = 0,
+    };
+
+    if (!toolchain_probe_request_argv0_contains(request, "nobify-probe-")) {
+        out_result->started = false;
+        out_result->exit_code = 127;
+        return true;
+    }
+
+    if (toolchain_probe_request_has_arg(request, "--version")) {
+        switch (data->kind) {
+            case TOOLCHAIN_PROBE_MOCK_GNU:
+                out_result->stdout_text = nob_sv_from_cstr("gcc (GCC) 13.2.1\n");
+                break;
+            case TOOLCHAIN_PROBE_MOCK_CLANG:
+                out_result->stdout_text = nob_sv_from_cstr("clang version 17.0.6\n");
+                break;
+            case TOOLCHAIN_PROBE_MOCK_APPLECLANG:
+                out_result->stdout_text = nob_sv_from_cstr("Apple clang version 15.0.0\n");
+                break;
+            case TOOLCHAIN_PROBE_MOCK_MINGW:
+                out_result->stdout_text = nob_sv_from_cstr("x86_64-w64-mingw32-gcc (GCC) 13.2.0\n");
+                break;
+            case TOOLCHAIN_PROBE_MOCK_MSVC:
+                out_result->stdout_text = nob_sv_from_cstr("Microsoft (R) C/C++ Optimizing Compiler Version 19.38.33135 for x64\n");
+                break;
+        }
+    } else if (toolchain_probe_request_has_arg(request, "-dM")) {
+        data->saw_macro_dump = true;
+        switch (data->kind) {
+            case TOOLCHAIN_PROBE_MOCK_GNU:
+                out_result->stdout_text = nob_sv_from_cstr(
+                    "#define __GNUC__ 13\n"
+                    "#define __GNUC_MINOR__ 2\n"
+                    "#define __GNUC_PATCHLEVEL__ 1\n"
+                    "#define __ELF__ 1\n");
+                break;
+            case TOOLCHAIN_PROBE_MOCK_CLANG:
+                out_result->stdout_text = nob_sv_from_cstr(
+                    "#define __clang__ 1\n"
+                    "#define __clang_major__ 17\n"
+                    "#define __clang_minor__ 0\n"
+                    "#define __clang_patchlevel__ 6\n"
+                    "#define __GNUC__ 4\n"
+                    "#define __ELF__ 1\n");
+                break;
+            case TOOLCHAIN_PROBE_MOCK_APPLECLANG:
+                out_result->stdout_text = nob_sv_from_cstr(
+                    "#define __clang__ 1\n"
+                    "#define __apple_build_version__ 15000040\n"
+                    "#define __clang_major__ 15\n"
+                    "#define __clang_minor__ 0\n"
+                    "#define __clang_patchlevel__ 0\n"
+                    "#define __MACH__ 1\n");
+                break;
+            case TOOLCHAIN_PROBE_MOCK_MINGW:
+                out_result->stdout_text = nob_sv_from_cstr(
+                    "#define __GNUC__ 13\n"
+                    "#define __GNUC_MINOR__ 2\n"
+                    "#define __GNUC_PATCHLEVEL__ 0\n"
+                    "#define __MINGW64__ 1\n"
+                    "#define _WIN32 1\n");
+                break;
+            case TOOLCHAIN_PROBE_MOCK_MSVC:
+                out_result->stdout_text = nob_sv_from_cstr(
+                    "#define _MSC_VER 1938\n"
+                    "#define _WIN32 1\n"
+                    "#define _M_X64 100\n");
+                break;
+        }
+    } else if (toolchain_probe_request_has_arg(request, "-dumpmachine")) {
+        switch (data->kind) {
+            case TOOLCHAIN_PROBE_MOCK_GNU:
+                out_result->stdout_text = nob_sv_from_cstr("x86_64-linux-gnu\n");
+                break;
+            case TOOLCHAIN_PROBE_MOCK_CLANG:
+                out_result->stdout_text = nob_sv_from_cstr("x86_64-unknown-linux-gnu\n");
+                break;
+            case TOOLCHAIN_PROBE_MOCK_APPLECLANG:
+                out_result->stdout_text = nob_sv_from_cstr("arm64-apple-darwin23\n");
+                break;
+            case TOOLCHAIN_PROBE_MOCK_MINGW:
+                out_result->stdout_text = nob_sv_from_cstr("x86_64-w64-mingw32\n");
+                break;
+            case TOOLCHAIN_PROBE_MOCK_MSVC:
+                out_result->started = false;
+                out_result->exit_code = 1;
+                break;
+        }
+    } else if (toolchain_probe_request_has_arg(request, "--print-sysroot")) {
+        out_result->stdout_text = nob_sv_from_cstr("/mock/sysroot\n");
+    } else if (toolchain_probe_request_has_arg(request, "-E") &&
+               toolchain_probe_request_has_arg(request, "-v")) {
+        data->saw_include_probe = true;
+        out_result->stderr_text = nob_sv_from_cstr(
+            "#include <...> search starts here:\n"
+            " /mock/include\n"
+            " /mock/include2\n"
+            "End of search list.\n");
+    } else if (toolchain_probe_request_has_arg(request, "-print-search-dirs")) {
+        data->saw_search_dirs = true;
+        out_result->stdout_text = nob_sv_from_cstr("libraries: =/mock/lib:/mock/lib2\n");
+    } else if (toolchain_probe_request_has_arg(request, "-###")) {
+        data->saw_link_probe = true;
+        out_result->stderr_text = nob_sv_from_cstr(
+            "LIBRARY_PATH=/mock/lib:/mock/lib2\n"
+            "\"/usr/bin/ld\" \"-L/mock/lib3\" \"-lc\" \"-lm\"\n");
+    } else if (toolchain_probe_request_has_arg(request, "/Bv")) {
+        out_result->stdout_text = nob_sv_from_cstr(
+            "Microsoft (R) C/C++ Optimizing Compiler Version 19.38.33135 for x64\n");
+    } else {
+        out_result->started = false;
+        out_result->exit_code = 1;
+    }
+    return true;
+}
+
+static const char *evaluator_toolchain_probe_env_get(void *user_data,
+                                                     Arena *scratch_arena,
+                                                     const char *name) {
+    Toolchain_Probe_Mock_Data *data = (Toolchain_Probe_Mock_Data*)user_data;
+    if (!data || data->kind != TOOLCHAIN_PROBE_MOCK_MSVC || !name) return NULL;
+    const char *value = NULL;
+    if (strcmp(name, "INCLUDE") == 0) {
+        value = "C:\\MockInclude;C:\\MockInclude2";
+    } else if (strcmp(name, "LIB") == 0) {
+        value = "C:\\MockLib;C:\\MockLib2";
+    }
+    if (!value || !scratch_arena) return value;
+    return arena_strndup(scratch_arena, value, strlen(value));
 }
 
 static bool evaluator_parity_diff_pack_load(Arena *arena,
@@ -3013,6 +3209,573 @@ TEST(evaluator_windows_gnu_toolchain_models_mingw_not_msvc) {
     TEST_PASS();
 }
 
+TEST(evaluator_platform_rules_android_toolchain_file_models_sdk_fields) {
+    ASSERT(nob_mkdir_if_not_exists("tc_platform_android"));
+    ASSERT(evaluator_write_text_file("tc_platform_android/toolchain.cmake",
+                                     "set(CMAKE_SYSTEM_NAME Android)\n"
+                                     "set(CMAKE_SYSTEM_PROCESSOR aarch64)\n"
+                                     "set(CMAKE_SYSROOT /mock/android-ndk/sysroot)\n"
+                                     "set(CMAKE_ANDROID_NDK /mock/android-ndk)\n"
+                                     "set(CMAKE_ANDROID_ARCH_ABI arm64-v8a)\n"
+                                     "set(CMAKE_ANDROID_API 24)\n"
+                                     "set(CMAKE_C_COMPILER /mock/android-ndk/bin/clang)\n"
+                                     "set(CMAKE_C_COMPILER_TARGET aarch64-linux-android24)\n"));
+
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.target.toolchain_file = nob_sv_from_cstr("tc_platform_android/toolchain.cmake");
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(temp_arena, "project(AndroidRules LANGUAGES NONE)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+    ASSERT(eval_test_report(ctx)->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME")),
+                     nob_sv_from_cstr("Android")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_PLATFORM_ID")),
+                     nob_sv_from_cstr("Android")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_OBJECT_FORMAT")),
+                     nob_sv_from_cstr("ELF")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING")),
+                     nob_sv_from_cstr("TRUE")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("UNIX")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("WIN32")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("APPLE")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_ANDROID_NDK")),
+                     nob_sv_from_cstr("/mock/android-ndk")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_ANDROID_ARCH_ABI")),
+                     nob_sv_from_cstr("arm64-v8a")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_ANDROID_API")),
+                     nob_sv_from_cstr("24")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_SYSROOT")),
+                     nob_sv_from_cstr("/mock/android-ndk/sysroot")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_EXECUTABLE_SUFFIX")),
+                     nob_sv_from_cstr("")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_SHARED_LIBRARY_SUFFIX")),
+                     nob_sv_from_cstr(".so")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_SHARED_MODULE_SUFFIX")),
+                     nob_sv_from_cstr(".so")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_SHARED_LINK_FLAG")),
+                     nob_sv_from_cstr("-shared")));
+
+    const Cmake_Event *last_snapshot = NULL;
+    for (size_t i = 0; i < stream->count; i++) {
+        if (stream->items[i].h.kind == EVENT_TOOLCHAIN_SNAPSHOT) last_snapshot = &stream->items[i];
+    }
+    ASSERT(last_snapshot != NULL);
+    ASSERT(nob_sv_eq(last_snapshot->as.toolchain_snapshot.platform_id,
+                     nob_sv_from_cstr("Android")));
+    ASSERT(nob_sv_eq(last_snapshot->as.toolchain_snapshot.platform_object_format,
+                     nob_sv_from_cstr("ELF")));
+    ASSERT(nob_sv_eq(last_snapshot->as.toolchain_snapshot.android_abi,
+                     nob_sv_from_cstr("arm64-v8a")));
+    ASSERT(last_snapshot->as.toolchain_snapshot.shared_has_soname);
+    ASSERT(last_snapshot->as.toolchain_snapshot.module_has_no_soname);
+    ASSERT(!last_snapshot->as.toolchain_snapshot.c.enabled);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_platform_rules_ios_toolchain_file_models_sdk_fields) {
+    ASSERT(nob_mkdir_if_not_exists("tc_platform_ios"));
+    ASSERT(evaluator_write_text_file("tc_platform_ios/toolchain.cmake",
+                                     "set(CMAKE_SYSTEM_NAME iOS)\n"
+                                     "set(CMAKE_SYSTEM_PROCESSOR arm64)\n"
+                                     "set(CMAKE_OSX_SYSROOT iphoneos)\n"
+                                     "set(CMAKE_OSX_ARCHITECTURES \"arm64;arm64e\")\n"
+                                     "set(CMAKE_OSX_DEPLOYMENT_TARGET 15.0)\n"
+                                     "set(CMAKE_C_COMPILER xcrun-clang)\n"
+                                     "set(CMAKE_C_COMPILER_TARGET arm64-apple-ios15.0)\n"));
+
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.target.toolchain_file = nob_sv_from_cstr("tc_platform_ios/toolchain.cmake");
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(temp_arena, "project(IOSRules LANGUAGES NONE)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+    ASSERT(eval_test_report(ctx)->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME")),
+                     nob_sv_from_cstr("iOS")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_PLATFORM_ID")),
+                     nob_sv_from_cstr("iOS")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_OBJECT_FORMAT")),
+                     nob_sv_from_cstr("Mach-O")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("UNIX")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("APPLE")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("WIN32")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_OSX_SYSROOT")),
+                     nob_sv_from_cstr("iphoneos")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_OSX_ARCHITECTURES")),
+                     nob_sv_from_cstr("arm64;arm64e")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_OSX_DEPLOYMENT_TARGET")),
+                     nob_sv_from_cstr("15.0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_SHARED_LIBRARY_SUFFIX")),
+                     nob_sv_from_cstr(".dylib")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_SHARED_MODULE_SUFFIX")),
+                     nob_sv_from_cstr(".so")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_SHARED_LINK_FLAG")),
+                     nob_sv_from_cstr("-dynamiclib")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_MODULE_LINK_FLAG")),
+                     nob_sv_from_cstr("-bundle")));
+
+    const Cmake_Event *last_snapshot = NULL;
+    for (size_t i = 0; i < stream->count; i++) {
+        if (stream->items[i].h.kind == EVENT_TOOLCHAIN_SNAPSHOT) last_snapshot = &stream->items[i];
+    }
+    ASSERT(last_snapshot != NULL);
+    ASSERT(nob_sv_eq(last_snapshot->as.toolchain_snapshot.platform_id,
+                     nob_sv_from_cstr("iOS")));
+    ASSERT(nob_sv_eq(last_snapshot->as.toolchain_snapshot.platform_object_format,
+                     nob_sv_from_cstr("Mach-O")));
+    ASSERT(nob_sv_eq(last_snapshot->as.toolchain_snapshot.sdkroot,
+                     nob_sv_from_cstr("iphoneos")));
+    ASSERT(nob_sv_eq(last_snapshot->as.toolchain_snapshot.osx_architectures,
+                     nob_sv_from_cstr("arm64;arm64e")));
+    ASSERT(last_snapshot->as.toolchain_snapshot.shared_has_install_name);
+    ASSERT(last_snapshot->as.toolchain_snapshot.module_has_no_soname);
+    ASSERT(!last_snapshot->as.toolchain_snapshot.c.enabled);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_toolchain_file_v2_executes_restricted_script_and_include) {
+    ASSERT(nob_mkdir_if_not_exists("tc_v2_exec"));
+    ASSERT(nob_mkdir_if_not_exists("tc_v2_exec/sysroot"));
+    ASSERT(evaluator_write_text_file("tc_v2_exec/extra.cmake",
+                                     "set(EXTRA_TARGET \"x86_64-w64-mingw32\")\n"
+                                     "set(EXTRA_CC \"x86_64-w64-mingw32-gcc\")\n"
+                                     "set(EXTRA_CXX \"x86_64-w64-mingw32-g++\")\n"));
+    ASSERT(evaluator_write_text_file("tc_v2_exec/toolchain.cmake",
+                                     "set(_tc_dir \"${CMAKE_CURRENT_LIST_DIR}\")\n"
+                                     "include(\"${_tc_dir}/extra.cmake\")\n"
+                                     "set(_modes)\n"
+                                     "if(EXTRA_TARGET)\n"
+                                     "  list(APPEND _modes ONLY)\n"
+                                     "  string(REPLACE \";\" \",\" TC_MODES \"${_modes}\")\n"
+                                     "  cmake_path(SET _norm NORMALIZE \"${_tc_dir}/../tc_v2_exec\")\n"
+                                     "  get_filename_component(_abs \"${_norm}\" ABSOLUTE)\n"
+                                     "  set(CMAKE_SYSTEM_NAME Windows)\n"
+                                     "  set(CMAKE_SYSTEM_PROCESSOR x86_64)\n"
+                                     "  set(CMAKE_SYSROOT \"${_abs}/sysroot\")\n"
+                                     "  set(CMAKE_STAGING_PREFIX \"${_abs}/stage\")\n"
+                                     "  set(CMAKE_C_COMPILER \"${EXTRA_CC}\")\n"
+                                     "  set(CMAKE_CXX_COMPILER \"${EXTRA_CXX}\")\n"
+                                     "  set(CMAKE_C_COMPILER_TARGET \"${EXTRA_TARGET}\")\n"
+                                     "  set(CMAKE_CXX_COMPILER_TARGET \"${EXTRA_TARGET}\")\n"
+                                     "  set(CMAKE_FIND_ROOT_PATH \"${CMAKE_SYSROOT}\")\n"
+                                     "  set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)\n"
+                                     "endif()\n"));
+
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Cmake_Event_Stream *stream = event_stream_create(event_arena);
+    ASSERT(stream != NULL);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.stream = stream;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.target.toolchain_file = nob_sv_from_cstr("tc_v2_exec/toolchain.cmake");
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(temp_arena, "project(ToolchainFileV2 C CXX)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME")),
+                     nob_sv_from_cstr("Windows")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_PROCESSOR")),
+                     nob_sv_from_cstr("x86_64")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING")),
+                     nob_sv_from_cstr("TRUE")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("WIN32")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("MINGW")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER")),
+                     nob_sv_from_cstr("x86_64-w64-mingw32-gcc")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER")),
+                     nob_sv_from_cstr("x86_64-w64-mingw32-g++")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_TARGET")),
+                     nob_sv_from_cstr("x86_64-w64-mingw32")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_TARGET")),
+                     nob_sv_from_cstr("x86_64-w64-mingw32")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("TC_MODES")),
+                     nob_sv_from_cstr("ONLY")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_FIND_ROOT_PATH_MODE_PROGRAM")),
+                     nob_sv_from_cstr("NEVER")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_AR")),
+                     nob_sv_from_cstr("x86_64-w64-mingw32-ar")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_SYSROOT_SOURCE")),
+                     nob_sv_from_cstr("toolchain-file")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_STAGING_PREFIX_SOURCE")),
+                     nob_sv_from_cstr("toolchain-file")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_SYSROOT")).count > 0);
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_STAGING_PREFIX")).count > 0);
+
+    const Cmake_Event *last_snapshot = NULL;
+    for (size_t i = 0; i < stream->count; i++) {
+        if (stream->items[i].h.kind == EVENT_TOOLCHAIN_SNAPSHOT) last_snapshot = &stream->items[i];
+    }
+    ASSERT(last_snapshot != NULL);
+    ASSERT(last_snapshot->as.toolchain_snapshot.toolchain_file.count > 0);
+    ASSERT(nob_sv_eq(last_snapshot->as.toolchain_snapshot.target_system_name,
+                     nob_sv_from_cstr("Windows")));
+    ASSERT(last_snapshot->as.toolchain_snapshot.staging_prefix.count > 0);
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_toolchain_file_v2_precedence_cli_over_file_over_env) {
+    ASSERT(nob_mkdir_if_not_exists("tc_v2_precedence"));
+    ASSERT(evaluator_write_text_file("tc_v2_precedence/toolchain.cmake",
+                                     "set(CMAKE_SYSTEM_NAME Windows)\n"
+                                     "set(CMAKE_SYSTEM_PROCESSOR arm64)\n"
+                                     "set(CMAKE_SYSROOT file-sysroot)\n"
+                                     "set(CMAKE_C_COMPILER file-cc)\n"
+                                     "set(CMAKE_CXX_COMPILER file-cxx)\n"
+                                     "set(CMAKE_C_COMPILER_TARGET file-target)\n"
+                                     "set(CMAKE_CXX_COMPILER_TARGET file-cxx-target)\n"));
+
+    Toolchain_File_Env_Data env_data = {
+        .cc = "env-cc",
+        .cxx = "env-cxx",
+    };
+    EvalServices services = {
+        .user_data = &env_data,
+        .env_get = evaluator_toolchain_file_env_get,
+    };
+
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.services = &services;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.target.toolchain_file = nob_sv_from_cstr("tc_v2_precedence/toolchain.cmake");
+    init.target.system_name = nob_sv_from_cstr("Linux");
+    init.target.sysroot = nob_sv_from_cstr("cli-sysroot");
+    init.target.c_compiler = nob_sv_from_cstr("cli-cc");
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+
+    Ast_Root root = parse_cmake(temp_arena, "project(ToolchainPrecedence C CXX)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+
+    const Eval_Run_Report *report = eval_test_report(ctx);
+    ASSERT(report != NULL);
+    ASSERT(report->error_count == 0);
+
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME")),
+                     nob_sv_from_cstr("Linux")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_SYSROOT")),
+                     nob_sv_from_cstr("cli-sysroot")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER")),
+                     nob_sv_from_cstr("cli-cc")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER")),
+                     nob_sv_from_cstr("file-cxx")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_TARGET")),
+                     nob_sv_from_cstr("file-target")));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_TARGET")),
+                     nob_sv_from_cstr("file-cxx-target")));
+
+    eval_test_destroy(ctx);
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_toolchain_file_v2_blocks_side_effect_commands_by_profile) {
+    ASSERT(nob_mkdir_if_not_exists("tc_v2_block"));
+    ASSERT(evaluator_write_text_file("tc_v2_block/toolchain.cmake",
+                                     "execute_process(COMMAND should-not-run OUTPUT_VARIABLE BAD)\n"
+                                     "set(AFTER_BLOCK ok)\n"));
+
+    Arena *temp_arena = arena_create(2 * 1024 * 1024);
+    Arena *event_arena = arena_create(2 * 1024 * 1024);
+    ASSERT(temp_arena && event_arena);
+
+    Eval_Test_Init init = {0};
+    init.arena = temp_arena;
+    init.event_arena = event_arena;
+    init.source_dir = nob_sv_from_cstr(".");
+    init.binary_dir = nob_sv_from_cstr(".");
+    init.current_file = "CMakeLists.txt";
+    init.target.toolchain_file = nob_sv_from_cstr("tc_v2_block/toolchain.cmake");
+
+    Eval_Test_Runtime *ctx = eval_test_create(&init);
+    ASSERT(ctx != NULL);
+    Ast_Root root = parse_cmake(temp_arena, "project(BlockedPermissive LANGUAGES NONE)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(ctx, root)));
+    ASSERT(nob_sv_eq(eval_test_var_get(ctx, nob_sv_from_cstr("AFTER_BLOCK")),
+                     nob_sv_from_cstr("ok")));
+    ASSERT(eval_test_var_get(ctx, nob_sv_from_cstr("BAD")).count == 0);
+    eval_test_destroy(ctx);
+
+    EvalSession_Config cfg = {0};
+    cfg.persistent_arena = event_arena;
+    cfg.compat_profile = EVAL_PROFILE_STRICT;
+    cfg.source_root = nob_sv_from_cstr(".");
+    cfg.binary_root = nob_sv_from_cstr(".");
+    cfg.enable_export_host_effects = true;
+    cfg.target.toolchain_file = nob_sv_from_cstr("tc_v2_block/toolchain.cmake");
+    EvalSession *session = eval_session_create(&cfg);
+    ASSERT(session == NULL);
+
+    arena_destroy(temp_arena);
+    arena_destroy(event_arena);
+    TEST_PASS();
+}
+
+TEST(evaluator_toolchain_probe_gnu_populates_macro_abi_and_implicit_dirs) {
+    Toolchain_Probe_Mock_Data probe = {
+        .kind = TOOLCHAIN_PROBE_MOCK_GNU,
+    };
+    EvalServices services = {
+        .user_data = &probe,
+        .process_run_capture = evaluator_toolchain_probe_mock_run,
+    };
+    Eval_Test_Init init = {
+        .services = &services,
+    };
+    init.target.c_compiler = nob_sv_from_cstr("nobify-probe-gcc");
+
+    Eval_Test_Fixture *fixture = eval_test_fixture_create(2 * 1024 * 1024,
+                                                          2 * 1024 * 1024,
+                                                          &init);
+    ASSERT(fixture != NULL);
+    ASSERT(fixture->ctx != NULL);
+
+    Ast_Root root = parse_cmake(fixture->temp_arena, "project(ProbeGNU C)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(fixture->ctx, root)));
+    ASSERT(eval_test_report(fixture->ctx)->error_count == 0);
+
+    ASSERT(probe.saw_macro_dump);
+    ASSERT(probe.saw_include_probe);
+    ASSERT(probe.saw_search_dirs);
+    ASSERT(probe.saw_link_probe);
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID")),
+                     nob_sv_from_cstr("GNU")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_VERSION")),
+                     nob_sv_from_cstr("13.2.1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_TARGET")),
+                     nob_sv_from_cstr("x86_64-linux-gnu")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ABI")),
+                     nob_sv_from_cstr("ELF")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("CMAKE_C_OBJECT_FORMAT")),
+                     nob_sv_from_cstr("ELF")));
+    ASSERT(sv_contains_sv(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES")),
+                          nob_sv_from_cstr("/mock/include")));
+    ASSERT(sv_contains_sv(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("CMAKE_C_IMPLICIT_LINK_DIRECTORIES")),
+                          nob_sv_from_cstr("/mock/lib")));
+    ASSERT(sv_contains_sv(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("CMAKE_C_IMPLICIT_LINK_LIBRARIES")),
+                          nob_sv_from_cstr("c")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("CMAKE_NOBIFY_C_COMPILER_ID_SOURCE")),
+                     nob_sv_from_cstr("probe")));
+    ASSERT(nob_sv_eq(eval_test_var_get(fixture->ctx, nob_sv_from_cstr("CMAKE_NOBIFY_C_OBJECT_FORMAT_SOURCE")),
+                     nob_sv_from_cstr("probe")));
+
+    const Cmake_Event *last_snapshot = NULL;
+    for (size_t i = 0; i < fixture->stream->count; i++) {
+        const Cmake_Event *ev = &fixture->stream->items[i];
+        if (ev->h.kind == EVENT_TOOLCHAIN_SNAPSHOT) last_snapshot = ev;
+    }
+    ASSERT(last_snapshot != NULL);
+    ASSERT(last_snapshot->as.toolchain_snapshot.c.enabled);
+    ASSERT(nob_sv_eq(last_snapshot->as.toolchain_snapshot.c.compiler_id, nob_sv_from_cstr("GNU")));
+    ASSERT(last_snapshot->as.toolchain_snapshot.c.implicit_include_dir_count >= 2);
+    ASSERT(last_snapshot->as.toolchain_snapshot.c.implicit_link_dir_count >= 2);
+    ASSERT(last_snapshot->as.toolchain_snapshot.c.implicit_link_lib_count >= 2);
+
+    TEST_PASS();
+}
+
+TEST(evaluator_toolchain_probe_macros_prefer_clang_and_appleclang_identity) {
+    Toolchain_Probe_Mock_Data clang_probe = {
+        .kind = TOOLCHAIN_PROBE_MOCK_CLANG,
+    };
+    EvalServices clang_services = {
+        .user_data = &clang_probe,
+        .process_run_capture = evaluator_toolchain_probe_mock_run,
+    };
+    Eval_Test_Init clang_init = {
+        .services = &clang_services,
+    };
+    clang_init.target.c_compiler = nob_sv_from_cstr("nobify-probe-clang");
+
+    Eval_Test_Fixture *clang_fixture = eval_test_fixture_create(2 * 1024 * 1024,
+                                                                2 * 1024 * 1024,
+                                                                &clang_init);
+    ASSERT(clang_fixture != NULL);
+    Ast_Root clang_root = parse_cmake(clang_fixture->temp_arena, "project(ProbeClang C)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(clang_fixture->ctx, clang_root)));
+    ASSERT(eval_test_report(clang_fixture->ctx)->error_count == 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(clang_fixture->ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID")),
+                     nob_sv_from_cstr("Clang")));
+    ASSERT(nob_sv_eq(eval_test_var_get(clang_fixture->ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_VERSION")),
+                     nob_sv_from_cstr("17.0.6")));
+    ASSERT(nob_sv_eq(eval_test_var_get(clang_fixture->ctx, nob_sv_from_cstr("CMAKE_C_OBJECT_FORMAT")),
+                     nob_sv_from_cstr("ELF")));
+
+    Toolchain_Probe_Mock_Data apple_probe = {
+        .kind = TOOLCHAIN_PROBE_MOCK_APPLECLANG,
+    };
+    EvalServices apple_services = {
+        .user_data = &apple_probe,
+        .process_run_capture = evaluator_toolchain_probe_mock_run,
+    };
+    Eval_Test_Init apple_init = {
+        .services = &apple_services,
+    };
+    apple_init.target.c_compiler = nob_sv_from_cstr("nobify-probe-appleclang");
+
+    Eval_Test_Fixture *apple_fixture = eval_test_fixture_create(2 * 1024 * 1024,
+                                                                2 * 1024 * 1024,
+                                                                &apple_init);
+    ASSERT(apple_fixture != NULL);
+    Ast_Root apple_root = parse_cmake(apple_fixture->temp_arena, "project(ProbeAppleClang C)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(apple_fixture->ctx, apple_root)));
+    ASSERT(eval_test_report(apple_fixture->ctx)->error_count == 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(apple_fixture->ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID")),
+                     nob_sv_from_cstr("AppleClang")));
+    ASSERT(nob_sv_eq(eval_test_var_get(apple_fixture->ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_VERSION")),
+                     nob_sv_from_cstr("15.0.0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(apple_fixture->ctx, nob_sv_from_cstr("CMAKE_C_OBJECT_FORMAT")),
+                     nob_sv_from_cstr("Mach-O")));
+
+    TEST_PASS();
+}
+
+TEST(evaluator_toolchain_probe_mingw_and_msvc_set_windows_abi_and_suffixes) {
+    Toolchain_Probe_Mock_Data mingw_probe = {
+        .kind = TOOLCHAIN_PROBE_MOCK_MINGW,
+    };
+    EvalServices mingw_services = {
+        .user_data = &mingw_probe,
+        .process_run_capture = evaluator_toolchain_probe_mock_run,
+    };
+    Eval_Test_Init mingw_init = {
+        .services = &mingw_services,
+    };
+    mingw_init.target.c_compiler = nob_sv_from_cstr("nobify-probe-x86_64-w64-mingw32-gcc");
+
+    Eval_Test_Fixture *mingw_fixture = eval_test_fixture_create(2 * 1024 * 1024,
+                                                                2 * 1024 * 1024,
+                                                                &mingw_init);
+    ASSERT(mingw_fixture != NULL);
+    Ast_Root mingw_root = parse_cmake(mingw_fixture->temp_arena, "project(ProbeMingw C)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(mingw_fixture->ctx, mingw_root)));
+    ASSERT(eval_test_report(mingw_fixture->ctx)->error_count == 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(mingw_fixture->ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME")),
+                     nob_sv_from_cstr("Windows")));
+    ASSERT(nob_sv_eq(eval_test_var_get(mingw_fixture->ctx, nob_sv_from_cstr("WIN32")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(mingw_fixture->ctx, nob_sv_from_cstr("MINGW")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(mingw_fixture->ctx, nob_sv_from_cstr("MSVC")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(mingw_fixture->ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ABI")),
+                     nob_sv_from_cstr("MinGW")));
+    ASSERT(nob_sv_eq(eval_test_var_get(mingw_fixture->ctx, nob_sv_from_cstr("CMAKE_C_OBJECT_FORMAT")),
+                     nob_sv_from_cstr("COFF")));
+    ASSERT(nob_sv_eq(eval_test_var_get(mingw_fixture->ctx, nob_sv_from_cstr("CMAKE_EXECUTABLE_SUFFIX")),
+                     nob_sv_from_cstr(".exe")));
+    ASSERT(nob_sv_eq(eval_test_var_get(mingw_fixture->ctx, nob_sv_from_cstr("CMAKE_STATIC_LIBRARY_SUFFIX")),
+                     nob_sv_from_cstr(".a")));
+    ASSERT(sv_contains_sv(eval_test_var_get(mingw_fixture->ctx, nob_sv_from_cstr("CMAKE_AR")),
+                          nob_sv_from_cstr("x86_64-w64-mingw32-ar")));
+
+    Toolchain_Probe_Mock_Data msvc_probe = {
+        .kind = TOOLCHAIN_PROBE_MOCK_MSVC,
+    };
+    EvalServices msvc_services = {
+        .user_data = &msvc_probe,
+        .process_run_capture = evaluator_toolchain_probe_mock_run,
+        .env_get = evaluator_toolchain_probe_env_get,
+    };
+    Eval_Test_Init msvc_init = {
+        .services = &msvc_services,
+    };
+    msvc_init.target.system_name = nob_sv_from_cstr("Windows");
+    msvc_init.target.c_compiler = nob_sv_from_cstr("nobify-probe-cl.exe");
+
+    Eval_Test_Fixture *msvc_fixture = eval_test_fixture_create(2 * 1024 * 1024,
+                                                               2 * 1024 * 1024,
+                                                               &msvc_init);
+    ASSERT(msvc_fixture != NULL);
+    Ast_Root msvc_root = parse_cmake(msvc_fixture->temp_arena, "project(ProbeMSVC C)\n");
+    ASSERT(!eval_result_is_fatal(eval_test_run(msvc_fixture->ctx, msvc_root)));
+    ASSERT(eval_test_report(msvc_fixture->ctx)->error_count == 0);
+    ASSERT(nob_sv_eq(eval_test_var_get(msvc_fixture->ctx, nob_sv_from_cstr("MSVC")), nob_sv_from_cstr("1")));
+    ASSERT(nob_sv_eq(eval_test_var_get(msvc_fixture->ctx, nob_sv_from_cstr("MINGW")), nob_sv_from_cstr("0")));
+    ASSERT(nob_sv_eq(eval_test_var_get(msvc_fixture->ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ID")),
+                     nob_sv_from_cstr("MSVC")));
+    ASSERT(nob_sv_eq(eval_test_var_get(msvc_fixture->ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_ABI")),
+                     nob_sv_from_cstr("MSVC")));
+    ASSERT(nob_sv_eq(eval_test_var_get(msvc_fixture->ctx, nob_sv_from_cstr("CMAKE_C_OBJECT_FORMAT")),
+                     nob_sv_from_cstr("COFF")));
+    ASSERT(nob_sv_eq(eval_test_var_get(msvc_fixture->ctx, nob_sv_from_cstr("CMAKE_C_OUTPUT_EXTENSION")),
+                     nob_sv_from_cstr(".obj")));
+    ASSERT(nob_sv_eq(eval_test_var_get(msvc_fixture->ctx, nob_sv_from_cstr("CMAKE_STATIC_LIBRARY_SUFFIX")),
+                     nob_sv_from_cstr(".lib")));
+    ASSERT(sv_contains_sv(eval_test_var_get(msvc_fixture->ctx, nob_sv_from_cstr("CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES")),
+                          nob_sv_from_cstr("C:\\MockInclude")));
+    ASSERT(sv_contains_sv(eval_test_var_get(msvc_fixture->ctx, nob_sv_from_cstr("CMAKE_C_IMPLICIT_LINK_DIRECTORIES")),
+                          nob_sv_from_cstr("C:\\MockLib")));
+
+    TEST_PASS();
+}
+
 TEST(evaluator_compiler_id_infers_from_configured_compiler_names) {
     Arena *temp_arena = arena_create(2 * 1024 * 1024);
     Arena *event_arena = arena_create(2 * 1024 * 1024);
@@ -3591,6 +4354,14 @@ void run_evaluator_v2_batch1(int *passed, int *failed, int *skipped) {
     test_evaluator_enable_language_materializes_c_cxx_toolchain_only_when_enabled(passed, failed, skipped);
     test_evaluator_target_platform_config_separates_host_and_target_vars(passed, failed, skipped);
     test_evaluator_windows_gnu_toolchain_models_mingw_not_msvc(passed, failed, skipped);
+    test_evaluator_platform_rules_android_toolchain_file_models_sdk_fields(passed, failed, skipped);
+    test_evaluator_platform_rules_ios_toolchain_file_models_sdk_fields(passed, failed, skipped);
+    test_evaluator_toolchain_file_v2_executes_restricted_script_and_include(passed, failed, skipped);
+    test_evaluator_toolchain_file_v2_precedence_cli_over_file_over_env(passed, failed, skipped);
+    test_evaluator_toolchain_file_v2_blocks_side_effect_commands_by_profile(passed, failed, skipped);
+    test_evaluator_toolchain_probe_gnu_populates_macro_abi_and_implicit_dirs(passed, failed, skipped);
+    test_evaluator_toolchain_probe_macros_prefer_clang_and_appleclang_identity(passed, failed, skipped);
+    test_evaluator_toolchain_probe_mingw_and_msvc_set_windows_abi_and_suffixes(passed, failed, skipped);
     test_evaluator_compiler_id_infers_from_configured_compiler_names(passed, failed, skipped);
     test_evaluator_compiler_id_infers_from_env_compiler_names(passed, failed, skipped);
     test_evaluator_add_test_name_signature_parses_supported_options(passed, failed, skipped);

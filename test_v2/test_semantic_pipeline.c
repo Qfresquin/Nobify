@@ -40,6 +40,7 @@ static Test_Semantic_Pipeline_Config test_semantic_pipeline_normalize_config(
     if (config->builder_arena_size) effective.builder_arena_size = config->builder_arena_size;
     if (config->validate_arena_size) effective.validate_arena_size = config->validate_arena_size;
     if (config->model_arena_size) effective.model_arena_size = config->model_arena_size;
+    effective.target = config->target;
     return effective;
 }
 
@@ -166,6 +167,7 @@ bool test_semantic_pipeline_fixture_from_script(Test_Semantic_Pipeline_Fixture *
     eval_cfg.source_root = out->source_dir;
     eval_cfg.binary_root = out->binary_dir;
     eval_cfg.enable_export_host_effects = effective.enable_export_host_effects;
+    eval_cfg.target = effective.target;
 
     eval_request.scratch_arena = out->scratch_arena;
     eval_request.source_dir = out->source_dir;

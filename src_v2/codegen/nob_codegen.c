@@ -1440,6 +1440,26 @@ static bool cg_compiler_id_is_clang(String_View id) {
     return nob_sv_eq(id, nob_sv_from_cstr("Clang")) || nob_sv_eq(id, nob_sv_from_cstr("AppleClang"));
 }
 
+static bool cg_emit_cmd_append_semicolon_items_with_prefix(CG_Context *ctx,
+                                                           Nob_String_Builder *out,
+                                                           const char *cmd_var,
+                                                           String_View items,
+                                                           String_View prefix) {
+    if (!ctx || !out || !cmd_var || items.count == 0) return true;
+    size_t start = 0;
+    for (size_t i = 0; i <= items.count; ++i) {
+        if (i == items.count || items.data[i] == ';') {
+            String_View item = nob_sv_trim(nob_sv_from_parts(items.data + start, i - start));
+            if (item.count > 0) {
+                if (prefix.count > 0 && !cg_emit_cmd_append_sv(out, cmd_var, prefix)) return false;
+                if (!cg_emit_cmd_append_sv(out, cmd_var, item)) return false;
+            }
+            start = i + 1;
+        }
+    }
+    return true;
+}
+
 static bool cg_emit_cmd_append_toolchain_flags(CG_Context *ctx,
                                                Nob_String_Builder *out,
                                                const char *cmd_var,
@@ -1460,6 +1480,35 @@ static bool cg_emit_cmd_append_toolchain_flags(CG_Context *ctx,
                                          (int)lang->compiler_target.count,
                                          lang->compiler_target.data ? lang->compiler_target.data : "");
             if (!arg || !cg_emit_cmd_append_sv(out, cmd_var, nob_sv_from_cstr(arg))) return false;
+        }
+        if (ctx->policy.sdkroot.count > 0 &&
+            (ctx->policy.platform == NOB_CODEGEN_PLATFORM_DARWIN ||
+             ctx->policy.platform == NOB_CODEGEN_PLATFORM_IOS)) {
+            if (!cg_emit_cmd_append_sv(out, cmd_var, nob_sv_from_cstr("-isysroot")) ||
+                !cg_emit_cmd_append_sv(out, cmd_var, ctx->policy.sdkroot)) return false;
+        }
+        if ((ctx->policy.platform == NOB_CODEGEN_PLATFORM_DARWIN ||
+             ctx->policy.platform == NOB_CODEGEN_PLATFORM_IOS) &&
+            ctx->policy.osx_architectures.count > 0 &&
+            !cg_emit_cmd_append_semicolon_items_with_prefix(ctx,
+                                                            out,
+                                                            cmd_var,
+                                                            ctx->policy.osx_architectures,
+                                                            nob_sv_from_cstr("-arch"))) {
+            return false;
+        }
+        if (ctx->policy.osx_deployment_target.count > 0) {
+            const char *flag = ctx->policy.platform == NOB_CODEGEN_PLATFORM_IOS
+                ? "-miphoneos-version-min="
+                : (ctx->policy.platform == NOB_CODEGEN_PLATFORM_DARWIN ? "-mmacosx-version-min=" : NULL);
+            if (flag) {
+                char *arg = cg_arena_sprintf(ctx->scratch,
+                                             "%s%.*s",
+                                             flag,
+                                             (int)ctx->policy.osx_deployment_target.count,
+                                             ctx->policy.osx_deployment_target.data ? ctx->policy.osx_deployment_target.data : "");
+                if (!arg || !cg_emit_cmd_append_sv(out, cmd_var, nob_sv_from_cstr(arg))) return false;
+            }
         }
     }
     return true;

@@ -273,6 +273,24 @@ static bool codegen_render_or_write_script(const char *script,
      */
     pipeline_config.override_enable_export_host_effects = true;
     pipeline_config.enable_export_host_effects = false;
+    if (config) {
+        pipeline_config.target.toolchain_file = nob_sv_from_cstr(config->toolchain_file ? config->toolchain_file : "");
+        pipeline_config.target.system_name = nob_sv_from_cstr(config->target_system_name ? config->target_system_name : "");
+        pipeline_config.target.system_processor = nob_sv_from_cstr(config->target_processor ? config->target_processor : "");
+        pipeline_config.target.sysroot = nob_sv_from_cstr(config->sysroot ? config->sysroot : "");
+        pipeline_config.target.sdkroot = nob_sv_from_cstr(config->sdkroot ? config->sdkroot : "");
+        pipeline_config.target.osx_architectures = nob_sv_from_cstr(config->osx_architectures ? config->osx_architectures : "");
+        pipeline_config.target.osx_deployment_target = nob_sv_from_cstr(config->osx_deployment_target ? config->osx_deployment_target : "");
+        pipeline_config.target.android_abi = nob_sv_from_cstr(config->android_abi ? config->android_abi : "");
+        pipeline_config.target.android_api = nob_sv_from_cstr(config->android_api ? config->android_api : "");
+        pipeline_config.target.android_ndk = nob_sv_from_cstr(config->android_ndk ? config->android_ndk : "");
+        pipeline_config.target.c_compiler = nob_sv_from_cstr(config->c_compiler ? config->c_compiler : "");
+        pipeline_config.target.cxx_compiler = nob_sv_from_cstr(config->cxx_compiler ? config->cxx_compiler : "");
+        pipeline_config.target.c_compiler_target = nob_sv_from_cstr(config->c_compiler_target ? config->c_compiler_target : "");
+        pipeline_config.target.cxx_compiler_target = nob_sv_from_cstr(config->cxx_compiler_target ? config->cxx_compiler_target : "");
+        pipeline_config.target.archive_tool = nob_sv_from_cstr(config->archive_tool ? config->archive_tool : "");
+        pipeline_config.target.link_tool = nob_sv_from_cstr(config->link_tool ? config->link_tool : "");
+    }
 
     ok = test_semantic_pipeline_fixture_from_script(&fixture, script, &pipeline_config);
     if (!ok || !fixture.build.freeze_ok || !fixture.build.model || diag_has_errors()) {

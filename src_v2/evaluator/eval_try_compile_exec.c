@@ -190,6 +190,27 @@ static bool try_compile_compiler_id_is_clang(String_View id) {
     return eval_sv_eq_ci_lit(id, "Clang") || eval_sv_eq_ci_lit(id, "AppleClang");
 }
 
+static bool try_compile_append_prefixed_semicolon_items(EvalExecContext *ctx,
+                                                        Nob_Cmd *cmd,
+                                                        String_View items,
+                                                        const char *prefix) {
+    if (!ctx || !cmd || items.count == 0) return true;
+    size_t start = 0;
+    for (size_t i = 0; i <= items.count; ++i) {
+        if (i == items.count || items.data[i] == ';') {
+            String_View item = nob_sv_trim(nob_sv_from_parts(items.data + start, i - start));
+            if (item.count > 0) {
+                char *item_c = eval_sv_to_cstr_temp(ctx, item);
+                EVAL_OOM_RETURN_IF_NULL(ctx, item_c, false);
+                if (prefix && prefix[0] != '\0') nob_cmd_append(cmd, prefix);
+                nob_cmd_append(cmd, item_c);
+            }
+            start = i + 1;
+        }
+    }
+    return true;
+}
+
 static bool try_compile_append_toolchain_flags(EvalExecContext *ctx,
                                                Nob_Cmd *cmd,
                                                Try_Compile_Language lang,
@@ -209,6 +230,29 @@ static bool try_compile_append_toolchain_flags(EvalExecContext *ctx,
         char *arg_c = eval_sv_to_cstr_temp(ctx, arg);
         EVAL_OOM_RETURN_IF_NULL(ctx, arg_c, false);
         nob_cmd_append(cmd, arg_c);
+    }
+    if (model->sdkroot.count > 0 &&
+        (eval_sv_eq_ci_lit(model->platform_id, "Darwin") ||
+         eval_sv_eq_ci_lit(model->platform_id, "iOS"))) {
+        char *sdkroot_c = eval_sv_to_cstr_temp(ctx, model->sdkroot);
+        EVAL_OOM_RETURN_IF_NULL(ctx, sdkroot_c, false);
+        nob_cmd_append(cmd, "-isysroot", sdkroot_c);
+    }
+    if ((eval_sv_eq_ci_lit(model->platform_id, "Darwin") ||
+         eval_sv_eq_ci_lit(model->platform_id, "iOS")) &&
+        !try_compile_append_prefixed_semicolon_items(ctx, cmd, model->osx_architectures, "-arch")) {
+        return false;
+    }
+    if (model->osx_deployment_target.count > 0) {
+        const char *flag = eval_sv_eq_ci_lit(model->platform_id, "iOS")
+            ? "-miphoneos-version-min="
+            : (eval_sv_eq_ci_lit(model->platform_id, "Darwin") ? "-mmacosx-version-min=" : NULL);
+        if (flag) {
+            String_View arg = try_compile_concat_prefix_temp(ctx, flag, model->osx_deployment_target);
+            char *arg_c = eval_sv_to_cstr_temp(ctx, arg);
+            EVAL_OOM_RETURN_IF_NULL(ctx, arg_c, false);
+            nob_cmd_append(cmd, arg_c);
+        }
     }
     return true;
 }

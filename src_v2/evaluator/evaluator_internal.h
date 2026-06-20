@@ -760,6 +760,7 @@ typedef struct Eval_Command_Transaction {
 
 typedef struct Eval_Toolchain_Language_Model {
     String_View compiler;
+    String_View compiler_source;
     String_View compiler_id;
     String_View compiler_version;
     String_View target_triple;
@@ -768,6 +769,8 @@ typedef struct Eval_Toolchain_Language_Model {
     String_View id_source;
     String_View version_source;
     String_View target_source;
+    String_View abi_source;
+    String_View object_format_source;
     String_View *implicit_include_dirs;
     String_View *implicit_link_dirs;
     String_View *implicit_link_libs;
@@ -787,8 +790,19 @@ typedef struct {
         String_View target_system_name;
         String_View target_system_processor;
         String_View target_system_version;
+        String_View platform_id;
+        String_View platform_object_format;
         String_View sysroot;
         String_View sysroot_source;
+        String_View sdkroot;
+        String_View sdkroot_source;
+        String_View osx_architectures;
+        String_View osx_deployment_target;
+        String_View android_abi;
+        String_View android_api;
+        String_View android_ndk;
+        String_View staging_prefix;
+        String_View staging_prefix_source;
         String_View toolchain_file;
         bool explicit_target_platform;
         bool cross_compiling;
@@ -804,8 +818,21 @@ typedef struct {
         String_View static_library_suffix;
         String_View shared_library_prefix;
         String_View shared_library_suffix;
+        String_View shared_linker_prefix;
+        String_View shared_linker_suffix;
         String_View module_library_prefix;
         String_View module_library_suffix;
+        String_View module_linker_prefix;
+        String_View module_linker_suffix;
+        String_View shared_link_flag;
+        String_View module_link_flag;
+        bool shared_uses_compiler_driver;
+        bool module_uses_compiler_driver;
+        bool shared_has_distinct_linker_artifact;
+        bool module_has_distinct_linker_artifact;
+        bool shared_has_soname;
+        bool shared_has_install_name;
+        bool module_has_no_soname;
         String_View archive_tool;
         String_View archive_tool_source;
         String_View link_tool;
@@ -869,6 +896,7 @@ struct EvalExecContext {
     Eval_Runtime_State runtime_state;
     Eval_Command_Transaction *active_transaction;
     String_View dependency_provider_context_file;
+    size_t toolchain_file_eval_depth;
 
     bool oom;
     bool stop_requested;

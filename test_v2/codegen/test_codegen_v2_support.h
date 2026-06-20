@@ -28,6 +28,18 @@ typedef struct {
     const char *cxx_compiler;
     const char *archive_tool;
     const char *link_tool;
+    const char *toolchain_file;
+    const char *target_system_name;
+    const char *target_processor;
+    const char *sysroot;
+    const char *sdkroot;
+    const char *osx_architectures;
+    const char *osx_deployment_target;
+    const char *android_abi;
+    const char *android_api;
+    const char *android_ndk;
+    const char *c_compiler_target;
+    const char *cxx_compiler_target;
 } Codegen_Test_Config;
 
 void codegen_test_set_repo_root(const char *repo_root);

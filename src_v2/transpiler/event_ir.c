@@ -115,8 +115,19 @@ static bool event_copy_toolchain_snapshot_inplace(Arena *arena, Event_Toolchain_
         !event_copy_sv_inplace(arena, &snapshot->target_system_name) ||
         !event_copy_sv_inplace(arena, &snapshot->target_system_processor) ||
         !event_copy_sv_inplace(arena, &snapshot->target_system_version) ||
+        !event_copy_sv_inplace(arena, &snapshot->platform_id) ||
+        !event_copy_sv_inplace(arena, &snapshot->platform_object_format) ||
         !event_copy_sv_inplace(arena, &snapshot->sysroot) ||
         !event_copy_sv_inplace(arena, &snapshot->sysroot_source) ||
+        !event_copy_sv_inplace(arena, &snapshot->sdkroot) ||
+        !event_copy_sv_inplace(arena, &snapshot->sdkroot_source) ||
+        !event_copy_sv_inplace(arena, &snapshot->osx_architectures) ||
+        !event_copy_sv_inplace(arena, &snapshot->osx_deployment_target) ||
+        !event_copy_sv_inplace(arena, &snapshot->android_abi) ||
+        !event_copy_sv_inplace(arena, &snapshot->android_api) ||
+        !event_copy_sv_inplace(arena, &snapshot->android_ndk) ||
+        !event_copy_sv_inplace(arena, &snapshot->staging_prefix) ||
+        !event_copy_sv_inplace(arena, &snapshot->staging_prefix_source) ||
         !event_copy_toolchain_language_inplace(arena, &snapshot->c) ||
         !event_copy_toolchain_language_inplace(arena, &snapshot->cxx) ||
         !event_copy_sv_inplace(arena, &snapshot->object_suffix) ||
@@ -125,8 +136,14 @@ static bool event_copy_toolchain_snapshot_inplace(Arena *arena, Event_Toolchain_
         !event_copy_sv_inplace(arena, &snapshot->static_library_suffix) ||
         !event_copy_sv_inplace(arena, &snapshot->shared_library_prefix) ||
         !event_copy_sv_inplace(arena, &snapshot->shared_library_suffix) ||
+        !event_copy_sv_inplace(arena, &snapshot->shared_linker_prefix) ||
+        !event_copy_sv_inplace(arena, &snapshot->shared_linker_suffix) ||
         !event_copy_sv_inplace(arena, &snapshot->module_library_prefix) ||
         !event_copy_sv_inplace(arena, &snapshot->module_library_suffix) ||
+        !event_copy_sv_inplace(arena, &snapshot->module_linker_prefix) ||
+        !event_copy_sv_inplace(arena, &snapshot->module_linker_suffix) ||
+        !event_copy_sv_inplace(arena, &snapshot->shared_link_flag) ||
+        !event_copy_sv_inplace(arena, &snapshot->module_link_flag) ||
         !event_copy_sv_inplace(arena, &snapshot->archive_tool) ||
         !event_copy_sv_inplace(arena, &snapshot->archive_tool_source) ||
         !event_copy_sv_inplace(arena, &snapshot->link_tool) ||
@@ -1264,7 +1281,9 @@ static void event_dump_one(const Event *ev) {
                    ev->as.target_compile_features.item.data ? ev->as.target_compile_features.item.data : "");
             break;
         case EVENT_TOOLCHAIN_SNAPSHOT:
-            printf(" target=%.*s c=%.*s cxx=%.*s c_enabled=%d cxx_enabled=%d cc_id=%.*s cxx_id=%.*s",
+            printf(" platform=%.*s target=%.*s c=%.*s cxx=%.*s c_enabled=%d cxx_enabled=%d cc_id=%.*s cxx_id=%.*s",
+                   (int)ev->as.toolchain_snapshot.platform_id.count,
+                   ev->as.toolchain_snapshot.platform_id.data ? ev->as.toolchain_snapshot.platform_id.data : "",
                    (int)ev->as.toolchain_snapshot.target_system_name.count,
                    ev->as.toolchain_snapshot.target_system_name.data ? ev->as.toolchain_snapshot.target_system_name.data : "",
                    (int)ev->as.toolchain_snapshot.c.compiler.count,

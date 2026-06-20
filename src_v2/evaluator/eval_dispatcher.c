@@ -53,11 +53,47 @@ bool eval_dispatcher_is_known_command(const EvalExecContext *ctx, String_View na
     return eval_native_cmd_find_const(ctx, name) != NULL;
 }
 
+static bool eval_toolchain_file_command_allowed(String_View name) {
+    return eval_sv_eq_ci_lit(name, "set") ||
+           eval_sv_eq_ci_lit(name, "unset") ||
+           eval_sv_eq_ci_lit(name, "include") ||
+           eval_sv_eq_ci_lit(name, "include_guard") ||
+           eval_sv_eq_ci_lit(name, "list") ||
+           eval_sv_eq_ci_lit(name, "string") ||
+           eval_sv_eq_ci_lit(name, "cmake_path") ||
+           eval_sv_eq_ci_lit(name, "get_filename_component") ||
+           eval_sv_eq_ci_lit(name, "find_program") ||
+           eval_sv_eq_ci_lit(name, "find_file") ||
+           eval_sv_eq_ci_lit(name, "find_path") ||
+           eval_sv_eq_ci_lit(name, "message") ||
+           eval_sv_eq_ci_lit(name, "math") ||
+           eval_sv_eq_ci_lit(name, "separate_arguments") ||
+           eval_sv_eq_ci_lit(name, "cmake_host_system_information") ||
+           eval_sv_eq_ci_lit(name, "break") ||
+           eval_sv_eq_ci_lit(name, "continue");
+}
+
 Eval_Result eval_dispatch_command(EvalExecContext *ctx, const Node *node) {
     if (!ctx || eval_should_stop(ctx) || !node || node->kind != NODE_COMMAND) return eval_result_fatal();
     Eval_Runtime_State *runtime = eval_runtime_slice(ctx);
     Event_Origin o = eval_origin_from_node(ctx, node);
     uint32_t argc = (uint32_t) arena_arr_len(node->as.cmd.args);
+
+    if (ctx->toolchain_file_eval_depth > 0 &&
+        !eval_toolchain_file_command_allowed(node->as.cmd.name)) {
+        Event_Diag_Severity severity =
+            ctx->runtime_state.compat_profile == EVAL_PROFILE_PERMISSIVE
+                ? EV_DIAG_WARNING
+                : EV_DIAG_ERROR;
+        return EVAL_DIAG_RESULT_SEV(ctx,
+                                    severity,
+                                    EVAL_DIAG_UNSUPPORTED_OPERATION,
+                                    nob_sv_from_cstr("toolchain-file"),
+                                    node->as.cmd.name,
+                                    o,
+                                    nob_sv_from_cstr("Command is not allowed while evaluating CMAKE_TOOLCHAIN_FILE"),
+                                    nob_sv_from_cstr("Nobify evaluates toolchain files in a side-effect-limited script subset"));
+    }
 
     const Eval_Native_Command *native = eval_native_cmd_find_const(ctx, node->as.cmd.name);
     if (native) {

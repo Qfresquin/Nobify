@@ -171,12 +171,65 @@ static bool bm_query_resolve_artifact_string(const Build_Model *model,
 
 static bool bm_query_artifact_default_naming(BM_Target_Kind kind,
                                              BM_Query_Artifact_Category category,
+                                             BM_Target_Artifact_Role role,
+                                             const Build_Model *model,
+                                             String_View query_platform_id,
                                              bool is_windows,
                                              bool is_darwin,
                                              String_View *out_prefix,
                                              String_View *out_suffix) {
     if (out_prefix) *out_prefix = nob_sv_from_cstr("");
     if (out_suffix) *out_suffix = nob_sv_from_cstr("");
+    if (model && model->has_toolchain) {
+        const Event_Toolchain_Snapshot *tc = &model->toolchain;
+        bool has_toolchain_naming = tc->platform_id.count > 0 ||
+                                    tc->object_suffix.count > 0 ||
+                                    tc->executable_suffix.count > 0 ||
+                                    tc->static_library_prefix.count > 0 ||
+                                    tc->static_library_suffix.count > 0 ||
+                                    tc->shared_library_prefix.count > 0 ||
+                                    tc->shared_library_suffix.count > 0 ||
+                                    tc->module_library_prefix.count > 0 ||
+                                    tc->module_library_suffix.count > 0;
+        bool toolchain_matches_query = true;
+        if (query_platform_id.count > 0) {
+            if (tc->platform_id.count > 0) {
+                toolchain_matches_query = bm_sv_eq_ci_query(tc->platform_id, query_platform_id);
+            } else if (tc->target_system_name.count > 0) {
+                toolchain_matches_query = bm_sv_eq_ci_query(tc->target_system_name, query_platform_id);
+            }
+        }
+        has_toolchain_naming = has_toolchain_naming && toolchain_matches_query;
+        if (has_toolchain_naming && kind == BM_TARGET_EXECUTABLE && category == BM_QUERY_ARTIFACT_RUNTIME) {
+            if (out_suffix) *out_suffix = tc->executable_suffix;
+            return true;
+        }
+        if (has_toolchain_naming && kind == BM_TARGET_STATIC_LIBRARY && category == BM_QUERY_ARTIFACT_ARCHIVE) {
+            if (out_prefix) *out_prefix = tc->static_library_prefix;
+            if (out_suffix) *out_suffix = tc->static_library_suffix;
+            return true;
+        }
+        if (has_toolchain_naming && kind == BM_TARGET_SHARED_LIBRARY) {
+            if (role == BM_TARGET_ARTIFACT_LINKER && tc->shared_has_distinct_linker_artifact) {
+                if (out_prefix) *out_prefix = tc->shared_linker_prefix;
+                if (out_suffix) *out_suffix = tc->shared_linker_suffix;
+                return true;
+            }
+            if (out_prefix) *out_prefix = tc->shared_library_prefix;
+            if (out_suffix) *out_suffix = tc->shared_library_suffix;
+            return true;
+        }
+        if (has_toolchain_naming && kind == BM_TARGET_MODULE_LIBRARY) {
+            if (role == BM_TARGET_ARTIFACT_LINKER && tc->module_has_distinct_linker_artifact) {
+                if (out_prefix) *out_prefix = tc->module_linker_prefix;
+                if (out_suffix) *out_suffix = tc->module_linker_suffix;
+                return true;
+            }
+            if (out_prefix) *out_prefix = tc->module_library_prefix;
+            if (out_suffix) *out_suffix = tc->module_library_suffix;
+            return true;
+        }
+    }
     switch (category) {
         case BM_QUERY_ARTIFACT_ARCHIVE:
             if (out_prefix) *out_prefix = is_windows ? nob_sv_from_cstr("") : nob_sv_from_cstr("lib");
@@ -260,7 +313,15 @@ static bool bm_query_target_local_artifact_internal(const Build_Model *model,
     has_prefix = bm_query_find_artifact_property_lit(target, "PREFIX", &raw_prefix);
     has_suffix = bm_query_find_artifact_property_lit(target, "SUFFIX", &raw_suffix);
 
-    if (!bm_query_artifact_default_naming(kind, category, is_windows, is_darwin, &default_prefix, &default_suffix)) {
+    if (!bm_query_artifact_default_naming(kind,
+                                          category,
+                                          role,
+                                          model,
+                                          ctx ? ctx->platform_id : nob_sv_from_cstr(""),
+                                          is_windows,
+                                          is_darwin,
+                                          &default_prefix,
+                                          &default_suffix)) {
         return false;
     }
     if (!has_prefix) raw_prefix = default_prefix;

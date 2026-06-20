@@ -211,6 +211,8 @@ static const char *nobify_platform_name(Nob_Codegen_Platform platform) {
         case NOB_CODEGEN_PLATFORM_LINUX: return "linux";
         case NOB_CODEGEN_PLATFORM_DARWIN: return "darwin";
         case NOB_CODEGEN_PLATFORM_WINDOWS: return "windows";
+        case NOB_CODEGEN_PLATFORM_ANDROID: return "android";
+        case NOB_CODEGEN_PLATFORM_IOS: return "ios";
     }
     return "unknown";
 }
@@ -231,6 +233,8 @@ static bool nobify_parse_platform(const char *value, Nob_Codegen_Platform *out) 
     else if (strcmp(value, "linux") == 0) *out = NOB_CODEGEN_PLATFORM_LINUX;
     else if (strcmp(value, "darwin") == 0) *out = NOB_CODEGEN_PLATFORM_DARWIN;
     else if (strcmp(value, "windows") == 0) *out = NOB_CODEGEN_PLATFORM_WINDOWS;
+    else if (strcmp(value, "android") == 0) *out = NOB_CODEGEN_PLATFORM_ANDROID;
+    else if (strcmp(value, "ios") == 0) *out = NOB_CODEGEN_PLATFORM_IOS;
     else return false;
     return true;
 }
@@ -271,6 +275,8 @@ static bool nobify_resolve_codegen_contract(Nob_Codegen_Platform requested_platf
         switch (platform) {
             case NOB_CODEGEN_PLATFORM_LINUX:
             case NOB_CODEGEN_PLATFORM_DARWIN:
+            case NOB_CODEGEN_PLATFORM_ANDROID:
+            case NOB_CODEGEN_PLATFORM_IOS:
                 backend = NOB_CODEGEN_BACKEND_POSIX;
                 break;
 
@@ -284,7 +290,10 @@ static bool nobify_resolve_codegen_contract(Nob_Codegen_Platform requested_platf
         }
     }
 
-    if ((platform == NOB_CODEGEN_PLATFORM_LINUX || platform == NOB_CODEGEN_PLATFORM_DARWIN) &&
+    if ((platform == NOB_CODEGEN_PLATFORM_LINUX ||
+         platform == NOB_CODEGEN_PLATFORM_DARWIN ||
+         platform == NOB_CODEGEN_PLATFORM_ANDROID ||
+         platform == NOB_CODEGEN_PLATFORM_IOS) &&
         backend != NOB_CODEGEN_BACKEND_POSIX) {
         nob_log(NOB_ERROR,
                 "Invalid codegen pair: platform=%s backend=%s",
@@ -315,6 +324,8 @@ static const char *nobify_cmake_system_name_for_platform(Nob_Codegen_Platform pl
         case NOB_CODEGEN_PLATFORM_LINUX: return "Linux";
         case NOB_CODEGEN_PLATFORM_DARWIN: return "Darwin";
         case NOB_CODEGEN_PLATFORM_WINDOWS: return "Windows";
+        case NOB_CODEGEN_PLATFORM_ANDROID: return "Android";
+        case NOB_CODEGEN_PLATFORM_IOS: return "iOS";
         case NOB_CODEGEN_PLATFORM_HOST: break;
     }
     return "";
@@ -326,6 +337,12 @@ static void nobify_configure_eval_target(EvalSession_Config *cfg,
                                          const char *toolchain_file,
                                          const char *target_processor,
                                          const char *sysroot,
+                                         const char *sdkroot,
+                                         const char *osx_arch,
+                                         const char *osx_deployment_target,
+                                         const char *android_abi,
+                                         const char *android_api,
+                                         const char *android_ndk,
                                          const char *cc,
                                          const char *cxx,
                                          const char *c_compiler_id,
@@ -357,6 +374,24 @@ static void nobify_configure_eval_target(EvalSession_Config *cfg,
     }
     if (sysroot && sysroot[0] != '\0') {
         cfg->target.sysroot = nob_sv_from_cstr(sysroot);
+    }
+    if (sdkroot && sdkroot[0] != '\0') {
+        cfg->target.sdkroot = nob_sv_from_cstr(sdkroot);
+    }
+    if (osx_arch && osx_arch[0] != '\0') {
+        cfg->target.osx_architectures = nob_sv_from_cstr(osx_arch);
+    }
+    if (osx_deployment_target && osx_deployment_target[0] != '\0') {
+        cfg->target.osx_deployment_target = nob_sv_from_cstr(osx_deployment_target);
+    }
+    if (android_abi && android_abi[0] != '\0') {
+        cfg->target.android_abi = nob_sv_from_cstr(android_abi);
+    }
+    if (android_api && android_api[0] != '\0') {
+        cfg->target.android_api = nob_sv_from_cstr(android_api);
+    }
+    if (android_ndk && android_ndk[0] != '\0') {
+        cfg->target.android_ndk = nob_sv_from_cstr(android_ndk);
     }
     if (cc && cc[0] != '\0') {
         cfg->target.c_compiler = nob_sv_from_cstr(cc);
@@ -392,7 +427,7 @@ static void nobify_configure_eval_target(EvalSession_Config *cfg,
 
 static void print_usage(const char *program) {
     nob_log(NOB_INFO,
-            "Usage: %s [--strict] [--tokens] [--ast] [--events] [--platform host|linux|darwin|windows] [--backend auto|posix|win32-msvc] [--toolchain-file path] [--target-processor proc] [--sysroot path] [--cc path] [--cxx path] [--c-target triple] [--cxx-target triple] [--ar tool] [--ranlib tool] [--linker tool] [--rc tool] [--compiler-id id|--c-compiler-id id --cxx-compiler-id id] [--source-root path] [--binary-root path] [--out path] [input]",
+            "Usage: %s [--strict] [--tokens] [--ast] [--events] [--platform host|linux|darwin|windows|android|ios] [--backend auto|posix|win32-msvc] [--toolchain-file path] [--target-processor proc] [--sysroot path] [--sdkroot path] [--osx-arch arch-list] [--osx-deployment-target version] [--android-abi abi] [--android-api api] [--android-ndk path] [--cc path] [--cxx path] [--c-target triple] [--cxx-target triple] [--ar tool] [--ranlib tool] [--linker tool] [--rc tool] [--compiler-id id|--c-compiler-id id --cxx-compiler-id id] [--source-root path] [--binary-root path] [--out path] [input]",
             program);
 }
 
@@ -451,6 +486,12 @@ int main(int argc, char **argv) {
     const char *target_processor = NULL;
     const char *toolchain_file = NULL;
     const char *sysroot = NULL;
+    const char *sdkroot = NULL;
+    const char *osx_arch = NULL;
+    const char *osx_deployment_target = NULL;
+    const char *android_abi = NULL;
+    const char *android_api = NULL;
+    const char *android_ndk = NULL;
     const char *cc = NULL;
     const char *cxx = NULL;
     const char *c_compiler_id = NULL;
@@ -538,6 +579,60 @@ int main(int argc, char **argv) {
                 return 1;
             }
             sysroot = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--sdkroot") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --sdkroot");
+                print_usage(argv[0]);
+                return 1;
+            }
+            sdkroot = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--osx-arch") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --osx-arch");
+                print_usage(argv[0]);
+                return 1;
+            }
+            osx_arch = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--osx-deployment-target") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --osx-deployment-target");
+                print_usage(argv[0]);
+                return 1;
+            }
+            osx_deployment_target = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--android-abi") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --android-abi");
+                print_usage(argv[0]);
+                return 1;
+            }
+            android_abi = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--android-api") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --android-api");
+                print_usage(argv[0]);
+                return 1;
+            }
+            android_api = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--android-ndk") == 0) {
+            if (i + 1 >= argc) {
+                nob_log(NOB_ERROR, "Missing value for --android-ndk");
+                print_usage(argv[0]);
+                return 1;
+            }
+            android_ndk = argv[++i];
             continue;
         }
         if (strcmp(argv[i], "--cc") == 0) {
@@ -815,6 +910,12 @@ int main(int argc, char **argv) {
                                  toolchain_file,
                                  target_processor,
                                  sysroot,
+                                 sdkroot,
+                                 osx_arch,
+                                 osx_deployment_target,
+                                 android_abi,
+                                 android_api,
+                                 android_ndk,
                                  cc,
                                  cxx,
                                  c_compiler_id,

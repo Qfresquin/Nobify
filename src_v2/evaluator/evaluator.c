@@ -2785,6 +2785,10 @@ static bool toolchain_has_custom_process_runner(EvalExecContext *ctx) {
     return ctx && ctx->services && ctx->services->process_run_capture;
 }
 
+static bool toolchain_custom_runner_accepts_probe(String_View compiler) {
+    return nob_sv_starts_with(compiler, nob_sv_from_cstr("nobify-probe-"));
+}
+
 static String_View toolchain_join_stdout_stderr_temp(EvalExecContext *ctx, const Eval_Process_Run_Result *res) {
     if (!ctx || !res) return nob_sv_from_cstr("");
     if (res->stdout_text.count == 0) return res->stderr_text;
@@ -2804,7 +2808,10 @@ static String_View toolchain_run_probe_temp(EvalExecContext *ctx,
                                             const String_View *args,
                                             size_t arg_count,
                                             String_View stdin_data) {
-    if (!ctx || compiler.count == 0 || toolchain_has_custom_process_runner(ctx)) {
+    if (!ctx || compiler.count == 0) {
+        return nob_sv_from_cstr("");
+    }
+    if (toolchain_has_custom_process_runner(ctx) && !toolchain_custom_runner_accepts_probe(compiler)) {
         return nob_sv_from_cstr("");
     }
 
@@ -2898,11 +2905,77 @@ static String_View toolchain_macro_value_temp(String_View macros, const char *ma
     return nob_sv_from_cstr("");
 }
 
+static String_View toolchain_macro_version_temp(EvalExecContext *ctx,
+                                                String_View macros,
+                                                const char *major_macro,
+                                                const char *minor_macro,
+                                                const char *patch_macro) {
+    if (!ctx || macros.count == 0 || !major_macro) return nob_sv_from_cstr("");
+    String_View major = toolchain_macro_value_temp(macros, major_macro);
+    if (major.count == 0) return nob_sv_from_cstr("");
+    String_View minor = minor_macro ? toolchain_macro_value_temp(macros, minor_macro) : nob_sv_from_cstr("");
+    String_View patch = patch_macro ? toolchain_macro_value_temp(macros, patch_macro) : nob_sv_from_cstr("");
+    if (minor.count == 0) return major;
+    if (patch.count == 0) {
+        return sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(nob_temp_sprintf("%.*s.%.*s",
+                                                                           (int)major.count,
+                                                                           major.data ? major.data : "",
+                                                                           (int)minor.count,
+                                                                           minor.data ? minor.data : "")));
+    }
+    return sv_copy_to_temp_arena(ctx, nob_sv_from_cstr(nob_temp_sprintf("%.*s.%.*s.%.*s",
+                                                                       (int)major.count,
+                                                                       major.data ? major.data : "",
+                                                                       (int)minor.count,
+                                                                       minor.data ? minor.data : "",
+                                                                       (int)patch.count,
+                                                                       patch.data ? patch.data : "")));
+}
+
+static bool toolchain_list_contains(String_View *items, String_View value) {
+    if (value.count == 0) return true;
+    for (size_t i = 0; i < arena_arr_len(items); i++) {
+        if (nob_sv_eq(items[i], value)) return true;
+    }
+    return false;
+}
+
 static bool toolchain_push_owned_sv(EvalExecContext *ctx, String_View **items, String_View value) {
     if (!ctx || !items || value.count == 0) return true;
+    if (toolchain_list_contains(*items, value)) return true;
     String_View owned = toolchain_sv_copy(ctx, value);
     if (eval_should_stop(ctx)) return false;
     return arena_arr_push(ctx->event_arena, *items, owned);
+}
+
+static String_View toolchain_strip_framework_suffix(String_View value) {
+    String_View suffix = nob_sv_from_cstr(" (framework directory)");
+    value = nob_sv_trim(value);
+    if (value.count >= suffix.count &&
+        memcmp(value.data + value.count - suffix.count, suffix.data, suffix.count) == 0) {
+        value.count -= suffix.count;
+        value = nob_sv_trim(value);
+    }
+    return value;
+}
+
+static void toolchain_split_path_list(EvalExecContext *ctx, String_View **out, String_View rest) {
+    if (!ctx || !out || rest.count == 0) return;
+    size_t begin = 0;
+    for (size_t i = 0; i <= rest.count; ++i) {
+        if (i == rest.count || rest.data[i] == ':' || rest.data[i] == ';') {
+            if (i < rest.count && rest.data[i] == ':' &&
+                i == begin + 1 &&
+                isalpha((unsigned char)rest.data[begin]) &&
+                i + 1 < rest.count &&
+                (rest.data[i + 1] == '\\' || rest.data[i + 1] == '/')) {
+                continue;
+            }
+            String_View item = nob_sv_trim(nob_sv_from_parts(rest.data + begin, i - begin));
+            if (item.count > 0) (void)toolchain_push_owned_sv(ctx, out, item);
+            begin = i + 1;
+        }
+    }
 }
 
 static void toolchain_split_search_dirs(EvalExecContext *ctx, String_View **out, String_View text) {
@@ -2915,18 +2988,170 @@ static void toolchain_split_search_dirs(EvalExecContext *ctx, String_View **out,
         String_View key = nob_sv_from_cstr("libraries: =");
         if (nob_sv_starts_with(line, key)) {
             String_View rest = nob_sv_from_parts(line.data + key.count, line.count - key.count);
-            size_t begin = 0;
-            for (size_t i = 0; i <= rest.count; ++i) {
-                if (i == rest.count || rest.data[i] == ':' || rest.data[i] == ';') {
-                    String_View item = nob_sv_trim(nob_sv_from_parts(rest.data + begin, i - begin));
-                    if (item.count > 0) (void)toolchain_push_owned_sv(ctx, out, item);
-                    begin = i + 1;
-                }
-            }
+            toolchain_split_path_list(ctx, out, rest);
             return;
         }
         line_start = line_end + 1;
         while (line_start < text.count && (text.data[line_start] == '\n' || text.data[line_start] == '\r')) line_start++;
+    }
+}
+
+static void toolchain_parse_include_search_dirs(EvalExecContext *ctx,
+                                                String_View **out,
+                                                String_View text) {
+    if (!ctx || !out || text.count == 0) return;
+    bool in_search = false;
+    size_t line_start = 0;
+    while (line_start < text.count) {
+        size_t line_end = line_start;
+        while (line_end < text.count && text.data[line_end] != '\n' && text.data[line_end] != '\r') line_end++;
+        String_View line = nob_sv_trim(nob_sv_from_parts(text.data + line_start, line_end - line_start));
+        if (sv_contains_ascii_ci(line, "#include <...> search starts here:") ||
+            sv_contains_ascii_ci(line, "#include \"...\" search starts here:")) {
+            in_search = true;
+        } else if (in_search && sv_contains_ascii_ci(line, "End of search list.")) {
+            in_search = false;
+        } else if (in_search && line.count > 0 && line.data[0] != '(') {
+            (void)toolchain_push_owned_sv(ctx, out, toolchain_strip_framework_suffix(line));
+        }
+        line_start = line_end + 1;
+        while (line_start < text.count && (text.data[line_start] == '\n' || text.data[line_start] == '\r')) line_start++;
+    }
+}
+
+static bool toolchain_link_token_at(String_View text, size_t *io, String_View *out_token) {
+    if (!io || !out_token) return false;
+    size_t i = *io;
+    while (i < text.count && isspace((unsigned char)text.data[i])) i++;
+    if (i >= text.count) {
+        *io = i;
+        return false;
+    }
+    char quote = 0;
+    if (text.data[i] == '"' || text.data[i] == '\'') quote = text.data[i++];
+    size_t start = i;
+    while (i < text.count) {
+        char ch = text.data[i];
+        if (quote) {
+            if (ch == quote) break;
+        } else if (isspace((unsigned char)ch)) {
+            break;
+        }
+        i++;
+    }
+    *out_token = nob_sv_from_parts(text.data + start, i - start);
+    if (quote && i < text.count && text.data[i] == quote) i++;
+    *io = i;
+    return true;
+}
+
+static void toolchain_parse_link_verbose(EvalExecContext *ctx,
+                                         String_View text,
+                                         String_View **io_link_dirs,
+                                         String_View **io_link_libs) {
+    if (!ctx || text.count == 0) return;
+    size_t line_start = 0;
+    while (line_start < text.count) {
+        size_t line_end = line_start;
+        while (line_end < text.count && text.data[line_end] != '\n' && text.data[line_end] != '\r') line_end++;
+        String_View line = nob_sv_trim(nob_sv_from_parts(text.data + line_start, line_end - line_start));
+        String_View lib_path_key = nob_sv_from_cstr("LIBRARY_PATH=");
+        if (nob_sv_starts_with(line, lib_path_key)) {
+            String_View rest = nob_sv_from_parts(line.data + lib_path_key.count, line.count - lib_path_key.count);
+            toolchain_split_path_list(ctx, io_link_dirs, rest);
+        }
+        line_start = line_end + 1;
+        while (line_start < text.count && (text.data[line_start] == '\n' || text.data[line_start] == '\r')) line_start++;
+    }
+
+    size_t i = 0;
+    String_View prev = {0};
+    for (;;) {
+        String_View tok = {0};
+        if (!toolchain_link_token_at(text, &i, &tok)) break;
+        if (tok.count == 0) continue;
+        if (nob_sv_eq(prev, nob_sv_from_cstr("-L")) && io_link_dirs) {
+            (void)toolchain_push_owned_sv(ctx, io_link_dirs, tok);
+        } else if (tok.count > 2 && tok.data[0] == '-' && tok.data[1] == 'L' && io_link_dirs) {
+            (void)toolchain_push_owned_sv(ctx, io_link_dirs, nob_sv_from_parts(tok.data + 2, tok.count - 2));
+        } else if (tok.count > 2 && tok.data[0] == '-' && tok.data[1] == 'l' && io_link_libs) {
+            (void)toolchain_push_owned_sv(ctx, io_link_libs, nob_sv_from_parts(tok.data + 2, tok.count - 2));
+        } else if (tok.count > 9 && sv_contains_ascii_ci(nob_sv_from_parts(tok.data, 9), "/LIBPATH:") && io_link_dirs) {
+            (void)toolchain_push_owned_sv(ctx, io_link_dirs, nob_sv_from_parts(tok.data + 9, tok.count - 9));
+        }
+        prev = tok;
+    }
+}
+
+static void toolchain_apply_macro_identity(EvalExecContext *ctx,
+                                           String_View macros,
+                                           String_View *io_id,
+                                           String_View *io_version,
+                                           String_View *io_abi,
+                                           String_View *io_object_format,
+                                           String_View *io_id_source,
+                                           String_View *io_version_source,
+                                           String_View *io_abi_source,
+                                           String_View *io_object_format_source) {
+    if (!ctx || macros.count == 0 || !io_id || !io_version || !io_abi || !io_object_format) return;
+    bool is_mingw = sv_contains_ascii_ci(macros, "__MINGW32__") || sv_contains_ascii_ci(macros, "__MINGW64__");
+    bool is_msvc = sv_contains_ascii_ci(macros, "_MSC_VER");
+    bool is_clang = sv_contains_ascii_ci(macros, "__clang__");
+    bool is_apple_clang = is_clang && sv_contains_ascii_ci(macros, "__apple_build_version__");
+    bool is_gnu = sv_contains_ascii_ci(macros, "__GNUC__");
+
+    if (io_id->count == 0 || eval_sv_eq_ci_lit(*io_id, "GNU") || eval_sv_eq_ci_lit(*io_id, "Clang")) {
+        if (is_apple_clang) {
+            *io_id = nob_sv_from_cstr("AppleClang");
+            if (io_id_source) *io_id_source = nob_sv_from_cstr("probe");
+        } else if (is_clang) {
+            *io_id = nob_sv_from_cstr("Clang");
+            if (io_id_source) *io_id_source = nob_sv_from_cstr("probe");
+        } else if (is_gnu) {
+            *io_id = nob_sv_from_cstr("GNU");
+            if (io_id_source) *io_id_source = nob_sv_from_cstr("probe");
+        } else if (is_msvc) {
+            *io_id = nob_sv_from_cstr("MSVC");
+            if (io_id_source) *io_id_source = nob_sv_from_cstr("probe");
+        }
+    }
+
+    if (io_version->count == 0) {
+        String_View version = {0};
+        if (is_clang) {
+            version = toolchain_macro_version_temp(ctx, macros, "__clang_major__", "__clang_minor__", "__clang_patchlevel__");
+        } else if (is_gnu) {
+            version = toolchain_macro_version_temp(ctx, macros, "__GNUC__", "__GNUC_MINOR__", "__GNUC_PATCHLEVEL__");
+        } else if (is_msvc) {
+            version = toolchain_macro_value_temp(macros, "_MSC_VER");
+        }
+        if (version.count == 0) version = toolchain_macro_value_temp(macros, "__VERSION__");
+        if (version.count > 0) {
+            *io_version = toolchain_sv_copy(ctx, version);
+            if (io_version_source) *io_version_source = nob_sv_from_cstr("probe");
+        }
+    }
+
+    if (io_object_format->count == 0) {
+        if (is_msvc || is_mingw || sv_contains_ascii_ci(macros, "_WIN32")) {
+            *io_object_format = nob_sv_from_cstr("COFF");
+        } else if (sv_contains_ascii_ci(macros, "__MACH__")) {
+            *io_object_format = nob_sv_from_cstr("Mach-O");
+        } else if (sv_contains_ascii_ci(macros, "__ELF__")) {
+            *io_object_format = nob_sv_from_cstr("ELF");
+        }
+        if (io_object_format->count > 0 && io_object_format_source) *io_object_format_source = nob_sv_from_cstr("probe");
+    }
+
+    if (io_abi->count == 0) {
+        if (is_mingw) {
+            *io_abi = nob_sv_from_cstr("MinGW");
+        } else if (is_msvc) {
+            *io_abi = nob_sv_from_cstr("MSVC");
+        } else if (io_object_format->count > 0) {
+            *io_abi = *io_object_format;
+        }
+        if (io_abi->count > 0 && io_abi_source) *io_abi_source = nob_sv_from_cstr("probe");
     }
 }
 
@@ -2955,49 +3180,12 @@ static String_View toolchain_prefixed_tool(EvalExecContext *ctx, String_View pre
     return nob_sv_from_parts(buf, prefix.count + tool_len);
 }
 
-static bool toolchain_file_tokenize_line(EvalExecContext *ctx, String_View body, String_View **out_tokens) {
-    if (!ctx || !out_tokens) return false;
-    *out_tokens = NULL;
-    size_t i = 0;
-    while (i < body.count) {
-        while (i < body.count && isspace((unsigned char)body.data[i])) i++;
-        if (i >= body.count) break;
-        if (body.data[i] == '#') break;
-
-        char quote = 0;
-        if (body.data[i] == '"' || body.data[i] == '\'') quote = body.data[i++];
-        size_t start = i;
-        Nob_String_Builder sb = {0};
-        bool used_builder = false;
-        while (i < body.count) {
-            char ch = body.data[i];
-            if (quote) {
-                if (ch == quote) break;
-            } else if (isspace((unsigned char)ch)) {
-                break;
-            }
-            if (ch == '\\' && i + 1 < body.count) {
-                if (!used_builder) {
-                    nob_sb_append_buf(&sb, body.data + start, i - start);
-                    used_builder = true;
-                }
-                i++;
-                nob_sb_append_buf(&sb, body.data + i, 1);
-                i++;
-                continue;
-            }
-            if (used_builder) nob_sb_append_buf(&sb, &body.data[i], 1);
-            i++;
-        }
-        String_View token = used_builder
-            ? sv_copy_to_temp_arena(ctx, nob_sv_from_parts(sb.items ? sb.items : "", sb.count))
-            : nob_sv_from_parts(body.data + start, i - start);
-        nob_sb_free(sb);
-        if (eval_should_stop(ctx)) return false;
-        if (!arena_arr_push(eval_temp_arena(ctx), *out_tokens, token)) return ctx_oom(ctx);
-        if (quote && i < body.count && body.data[i] == quote) i++;
-    }
-    return true;
+static bool toolchain_compiler_name_is_msvc(String_View compiler) {
+    String_View base = compiler_basename(compiler);
+    if (sv_ends_with_ascii_ci(base, ".exe")) base.count -= 4;
+    return eval_sv_eq_ci_lit(base, "cl") ||
+           eval_sv_eq_ci_lit(base, "cl.exe") ||
+           eval_sv_eq_ci_lit(base, "clang-cl");
 }
 
 static void toolchain_model_apply_toolchain_var(EvalExecContext *ctx,
@@ -3020,10 +3208,30 @@ static void toolchain_model_apply_toolchain_var(EvalExecContext *ctx,
         model->sysroot = owned;
         model->sysroot_source = nob_sv_from_cstr("toolchain-file");
         model->explicit_target_platform = true;
+    } else if (eval_sv_eq_ci_lit(key, "CMAKE_OSX_SYSROOT")) {
+        model->sdkroot = owned;
+        model->sdkroot_source = nob_sv_from_cstr("toolchain-file");
+        model->explicit_target_platform = true;
+    } else if (eval_sv_eq_ci_lit(key, "CMAKE_OSX_ARCHITECTURES")) {
+        model->osx_architectures = owned;
+    } else if (eval_sv_eq_ci_lit(key, "CMAKE_OSX_DEPLOYMENT_TARGET")) {
+        model->osx_deployment_target = owned;
+    } else if (eval_sv_eq_ci_lit(key, "CMAKE_ANDROID_ARCH_ABI")) {
+        model->android_abi = owned;
+    } else if (eval_sv_eq_ci_lit(key, "CMAKE_ANDROID_API") ||
+               eval_sv_eq_ci_lit(key, "ANDROID_PLATFORM")) {
+        model->android_api = owned;
+    } else if (eval_sv_eq_ci_lit(key, "CMAKE_ANDROID_NDK")) {
+        model->android_ndk = owned;
+    } else if (eval_sv_eq_ci_lit(key, "CMAKE_STAGING_PREFIX")) {
+        model->staging_prefix = owned;
+        model->staging_prefix_source = nob_sv_from_cstr("toolchain-file");
     } else if (eval_sv_eq_ci_lit(key, "CMAKE_C_COMPILER")) {
         model->c.compiler = owned;
+        model->c.compiler_source = nob_sv_from_cstr("toolchain-file");
     } else if (eval_sv_eq_ci_lit(key, "CMAKE_CXX_COMPILER")) {
         model->cxx.compiler = owned;
+        model->cxx.compiler_source = nob_sv_from_cstr("toolchain-file");
     } else if (eval_sv_eq_ci_lit(key, "CMAKE_C_COMPILER_TARGET")) {
         model->c.target_triple = owned;
         model->c.target_source = nob_sv_from_cstr("toolchain-file");
@@ -3045,41 +3253,142 @@ static void toolchain_model_apply_toolchain_var(EvalExecContext *ctx,
     }
 }
 
-static void toolchain_model_apply_toolchain_file(EvalExecContext *ctx,
+static bool toolchain_model_seed_pre_toolchain_file_vars(EvalExecContext *ctx,
+                                                         const struct Eval_Toolchain_Model *model) {
+    if (!ctx || !model) return false;
+    if (model->toolchain_file.count > 0 &&
+        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_TOOLCHAIN_FILE"), model->toolchain_file)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"), model->host_system_name)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_PROCESSOR"), model->host_system_processor)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_VERSION"), model->host_system_version)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME"), model->target_system_name)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_PROCESSOR"), model->target_system_processor)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_VERSION"), model->target_system_version)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CROSSCOMPILING"), nob_sv_from_cstr("FALSE"))) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("WIN32"), model->target_windows ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("UNIX"), model->target_unix ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("APPLE"), model->target_apple ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return false;
+    return true;
+}
+
+static bool toolchain_model_extract_var(EvalExecContext *ctx,
+                                        struct Eval_Toolchain_Model *model,
+                                        const char *key) {
+    if (!ctx || !model || !key) return false;
+    String_View key_sv = nob_sv_from_cstr(key);
+    String_View value = eval_var_get_visible(ctx, key_sv);
+    if (value.count > 0) toolchain_model_apply_toolchain_var(ctx, model, key_sv, value);
+    return !eval_should_stop(ctx);
+}
+
+static bool toolchain_model_extract_toolchain_vars(EvalExecContext *ctx,
+                                                   struct Eval_Toolchain_Model *model) {
+    if (!ctx || !model) return false;
+    static const char *const keys[] = {
+        "CMAKE_SYSTEM_NAME",
+        "CMAKE_SYSTEM_PROCESSOR",
+        "CMAKE_SYSTEM_VERSION",
+        "CMAKE_SYSROOT",
+        "CMAKE_OSX_SYSROOT",
+        "CMAKE_OSX_ARCHITECTURES",
+        "CMAKE_OSX_DEPLOYMENT_TARGET",
+        "CMAKE_ANDROID_NDK",
+        "CMAKE_ANDROID_ARCH_ABI",
+        "CMAKE_ANDROID_API",
+        "ANDROID_PLATFORM",
+        "CMAKE_STAGING_PREFIX",
+        "CMAKE_C_COMPILER",
+        "CMAKE_CXX_COMPILER",
+        "CMAKE_C_COMPILER_TARGET",
+        "CMAKE_CXX_COMPILER_TARGET",
+        "CMAKE_AR",
+        "CMAKE_RANLIB",
+        "CMAKE_LINKER",
+        "CMAKE_RC_COMPILER",
+    };
+    for (size_t i = 0; i < NOB_ARRAY_LEN(keys); i++) {
+        if (!toolchain_model_extract_var(ctx, model, keys[i])) return false;
+    }
+    return true;
+}
+
+static bool toolchain_model_emit_toolchain_file_diag(EvalExecContext *ctx,
+                                                     Event_Diag_Severity permissive_severity,
+                                                     String_View command,
+                                                     String_View file_path,
+                                                     String_View cause,
+                                                     String_View hint) {
+    if (!ctx) return false;
+    Event_Diag_Severity severity = ctx->runtime_state.compat_profile == EVAL_PROFILE_PERMISSIVE
+        ? permissive_severity
+        : EV_DIAG_ERROR;
+    Cmake_Event_Origin origin = {0};
+    origin.file_path = file_path;
+    return EVAL_DIAG_EMIT_SEV(ctx,
+                              severity,
+                              EVAL_DIAG_IO_FAILURE,
+                              nob_sv_from_cstr("toolchain-file"),
+                              command,
+                              origin,
+                              cause,
+                              hint);
+}
+
+static bool toolchain_model_apply_toolchain_file(EvalExecContext *ctx,
                                                  struct Eval_Toolchain_Model *model,
                                                  const EvalSession_Config *cfg) {
-    if (!ctx || !model || !cfg || cfg->target.toolchain_file.count == 0) return;
+    if (!ctx || !model || !cfg || cfg->target.toolchain_file.count == 0) return true;
     String_View path = eval_path_resolve_for_cmake_arg(ctx, cfg->target.toolchain_file, ctx->source_dir, false);
-    if (eval_should_stop(ctx)) return;
+    if (eval_should_stop(ctx)) return false;
     model->toolchain_file = toolchain_sv_copy(ctx, path);
+    if (eval_should_stop(ctx)) return false;
+
+    Arena *toolchain_arena = arena_create(512 * 1024);
+    if (!toolchain_arena) return ctx_oom(ctx);
+    Arena *saved_arena = ctx->arena;
+    Cmake_Event_Stream *saved_stream = ctx->stream;
+    size_t saved_toolchain_file_eval_depth = ctx->toolchain_file_eval_depth;
+    Cmake_Event_Stream *internal_stream = saved_stream ? saved_stream : event_stream_create(ctx->event_arena);
+    if (!internal_stream) {
+        arena_destroy(toolchain_arena);
+        return ctx_oom(ctx);
+    }
+    ctx->arena = toolchain_arena;
+    ctx->stream = internal_stream;
+
+    bool ok = false;
+    if (!toolchain_model_seed_pre_toolchain_file_vars(ctx, model)) goto cleanup;
 
     String_View contents = {0};
     bool found = false;
-    if (!eval_service_read_file(ctx, path, &contents, &found) || !found) return;
-
-    size_t line_start = 0;
-    while (line_start < contents.count) {
-        size_t line_end = line_start;
-        while (line_end < contents.count && contents.data[line_end] != '\n' && contents.data[line_end] != '\r') line_end++;
-        String_View line = nob_sv_trim(nob_sv_from_parts(contents.data + line_start, line_end - line_start));
-        if (line.count >= 5 && sv_contains_ascii_ci(nob_sv_from_parts(line.data, 3), "set")) {
-            size_t open = 0;
-            while (open < line.count && line.data[open] != '(') open++;
-            if (open < line.count) {
-                size_t close = line.count;
-                while (close > open && line.data[close - 1] != ')') close--;
-                if (close > open + 1) {
-                    String_View body = nob_sv_from_parts(line.data + open + 1, close - open - 2);
-                    String_View *tokens = NULL;
-                    if (toolchain_file_tokenize_line(ctx, body, &tokens) && arena_arr_len(tokens) >= 2) {
-                        toolchain_model_apply_toolchain_var(ctx, model, tokens[0], tokens[1]);
-                    }
-                }
-            }
-        }
-        line_start = line_end + 1;
-        while (line_start < contents.count && (contents.data[line_start] == '\n' || contents.data[line_start] == '\r')) line_start++;
+    if (!eval_service_read_file(ctx, path, &contents, &found) || !found) {
+        (void)toolchain_model_emit_toolchain_file_diag(ctx,
+                                                       EV_DIAG_WARNING,
+                                                       nob_sv_from_cstr("CMAKE_TOOLCHAIN_FILE"),
+                                                       path,
+                                                       nob_sv_from_cstr("CMAKE_TOOLCHAIN_FILE could not be read"),
+                                                       path);
+        ok = ctx->runtime_state.compat_profile == EVAL_PROFILE_PERMISSIVE && !eval_should_stop(ctx);
+        goto cleanup;
     }
+
+    ctx->toolchain_file_eval_depth = saved_toolchain_file_eval_depth + 1;
+    Eval_Result run = eval_execute_file(ctx, path, false, nob_sv_from_cstr(""));
+    ctx->toolchain_file_eval_depth = saved_toolchain_file_eval_depth;
+    if (eval_result_is_fatal(run)) goto cleanup;
+    if (ctx->runtime_state.compat_profile != EVAL_PROFILE_PERMISSIVE &&
+        eval_pending_error_count(ctx) > 0) {
+        goto cleanup;
+    }
+    if (!toolchain_model_extract_toolchain_vars(ctx, model)) goto cleanup;
+    ok = true;
+
+cleanup:
+    ctx->toolchain_file_eval_depth = saved_toolchain_file_eval_depth;
+    ctx->arena = saved_arena;
+    ctx->stream = saved_stream;
+    arena_destroy(toolchain_arena);
+    return ok;
 }
 
 static void toolchain_model_init_defaults(EvalExecContext *ctx, struct Eval_Toolchain_Model *model) {
@@ -3105,7 +3414,9 @@ static void toolchain_model_init_defaults(EvalExecContext *ctx, struct Eval_Tool
     model->target_apple = false;
 #endif
     model->c.compiler = nob_sv_from_cstr("cc");
+    model->c.compiler_source = nob_sv_from_cstr("default");
     model->cxx.compiler = nob_sv_from_cstr("c++");
+    model->cxx.compiler_source = nob_sv_from_cstr("default");
 }
 
 static void toolchain_model_apply_config(EvalExecContext *ctx,
@@ -3119,7 +3430,13 @@ static void toolchain_model_apply_config(EvalExecContext *ctx,
                                       explicit_target_system ||
                                       explicit_target_processor ||
                                       cfg->target.system_version.count > 0 ||
-                                      cfg->target.sysroot.count > 0;
+                                      cfg->target.sysroot.count > 0 ||
+                                      cfg->target.sdkroot.count > 0 ||
+                                      cfg->target.osx_architectures.count > 0 ||
+                                      cfg->target.osx_deployment_target.count > 0 ||
+                                      cfg->target.android_abi.count > 0 ||
+                                      cfg->target.android_api.count > 0 ||
+                                      cfg->target.android_ndk.count > 0;
 
     if (cfg->target.system_name.count > 0) {
         model->target_system_name = toolchain_sv_copy(ctx, cfg->target.system_name);
@@ -3136,6 +3453,25 @@ static void toolchain_model_apply_config(EvalExecContext *ctx,
         model->sysroot = toolchain_sv_copy(ctx, cfg->target.sysroot);
         model->sysroot_source = nob_sv_from_cstr("explicit");
     }
+    if (cfg->target.sdkroot.count > 0) {
+        model->sdkroot = toolchain_sv_copy(ctx, cfg->target.sdkroot);
+        model->sdkroot_source = nob_sv_from_cstr("explicit");
+    }
+    if (cfg->target.osx_architectures.count > 0) {
+        model->osx_architectures = toolchain_sv_copy(ctx, cfg->target.osx_architectures);
+    }
+    if (cfg->target.osx_deployment_target.count > 0) {
+        model->osx_deployment_target = toolchain_sv_copy(ctx, cfg->target.osx_deployment_target);
+    }
+    if (cfg->target.android_abi.count > 0) {
+        model->android_abi = toolchain_sv_copy(ctx, cfg->target.android_abi);
+    }
+    if (cfg->target.android_api.count > 0) {
+        model->android_api = toolchain_sv_copy(ctx, cfg->target.android_api);
+    }
+    if (cfg->target.android_ndk.count > 0) {
+        model->android_ndk = toolchain_sv_copy(ctx, cfg->target.android_ndk);
+    }
 
     if (model->explicit_target_platform) {
         model->target_windows = eval_target_system_is_windows(model->target_system_name);
@@ -3148,15 +3484,23 @@ static void toolchain_model_apply_config(EvalExecContext *ctx,
 
     if (cfg->target.c_compiler.count > 0) {
         model->c.compiler = toolchain_sv_copy(ctx, cfg->target.c_compiler);
-    } else {
+        model->c.compiler_source = nob_sv_from_cstr("explicit");
+    } else if (eval_sv_eq_ci_lit(model->c.compiler_source, "default")) {
         const char *cc = eval_getenv_temp(ctx, "CC");
-        if (cc && cc[0] != '\0') model->c.compiler = toolchain_sv_copy(ctx, nob_sv_from_cstr(cc));
+        if (cc && cc[0] != '\0') {
+            model->c.compiler = toolchain_sv_copy(ctx, nob_sv_from_cstr(cc));
+            model->c.compiler_source = nob_sv_from_cstr("env");
+        }
     }
     if (cfg->target.cxx_compiler.count > 0) {
         model->cxx.compiler = toolchain_sv_copy(ctx, cfg->target.cxx_compiler);
-    } else {
+        model->cxx.compiler_source = nob_sv_from_cstr("explicit");
+    } else if (eval_sv_eq_ci_lit(model->cxx.compiler_source, "default")) {
         const char *cxx = eval_getenv_temp(ctx, "CXX");
-        if (cxx && cxx[0] != '\0') model->cxx.compiler = toolchain_sv_copy(ctx, nob_sv_from_cstr(cxx));
+        if (cxx && cxx[0] != '\0') {
+            model->cxx.compiler = toolchain_sv_copy(ctx, nob_sv_from_cstr(cxx));
+            model->cxx.compiler_source = nob_sv_from_cstr("env");
+        }
     }
 
     if (cfg->target.c_compiler_id.count > 0) {
@@ -3198,12 +3542,20 @@ static bool toolchain_model_probe_language(EvalExecContext *ctx,
                                            String_View *io_id,
                                            String_View *io_version,
                                            String_View *io_target,
+                                           String_View *io_abi,
+                                           String_View *io_object_format,
+                                           String_View **io_implicit_include_dirs,
                                            String_View **io_implicit_link_dirs,
+                                           String_View **io_implicit_link_libs,
                                            String_View *io_id_source,
                                            String_View *io_version_source,
                                            String_View *io_target_source,
+                                           String_View *io_abi_source,
+                                           String_View *io_object_format_source,
                                            const char *language_flag) {
-    if (!ctx || !io_id || !io_version || !io_target || !io_id_source || !io_version_source || !io_target_source || compiler.count == 0) return false;
+    if (!ctx || !io_id || !io_version || !io_target || !io_abi || !io_object_format ||
+        !io_id_source || !io_version_source || !io_target_source ||
+        !io_abi_source || !io_object_format_source || compiler.count == 0) return false;
     bool got_probe_result = false;
     String_View probe_text = toolchain_probe_text_temp(ctx, compiler);
     got_probe_result = got_probe_result || probe_text.count > 0;
@@ -3232,31 +3584,16 @@ static bool toolchain_model_probe_language(EvalExecContext *ctx,
     String_View macros = toolchain_run_probe_temp(ctx, compiler, macro_args, 5, nob_sv_from_cstr("\n"));
     got_probe_result = got_probe_result || macros.count > 0;
     if (macros.count > 0) {
-        if (sv_contains_ascii_ci(macros, "__MINGW32__") || sv_contains_ascii_ci(macros, "__MINGW64__")) {
-            /* The target flags are finalized globally after both languages are probed. */
-        }
-        if (io_id->count == 0 || eval_sv_eq_ci_lit(*io_id, "GNU") || eval_sv_eq_ci_lit(*io_id, "Clang")) {
-            if (sv_contains_ascii_ci(macros, "__apple_build_version__") && sv_contains_ascii_ci(macros, "__clang__")) {
-                *io_id = nob_sv_from_cstr("AppleClang");
-                *io_id_source = nob_sv_from_cstr("probe");
-            } else if (sv_contains_ascii_ci(macros, "__clang__")) {
-                *io_id = nob_sv_from_cstr("Clang");
-                *io_id_source = nob_sv_from_cstr("probe");
-            } else if (sv_contains_ascii_ci(macros, "__GNUC__")) {
-                *io_id = nob_sv_from_cstr("GNU");
-                *io_id_source = nob_sv_from_cstr("probe");
-            } else if (sv_contains_ascii_ci(macros, "_MSC_VER")) {
-                *io_id = nob_sv_from_cstr("MSVC");
-                *io_id_source = nob_sv_from_cstr("probe");
-            }
-        }
-        if (io_version->count == 0) {
-            String_View version = toolchain_macro_value_temp(macros, "__VERSION__");
-            if (version.count > 0) {
-                *io_version = toolchain_sv_copy(ctx, version);
-                *io_version_source = nob_sv_from_cstr("probe");
-            }
-        }
+        toolchain_apply_macro_identity(ctx,
+                                       macros,
+                                       io_id,
+                                       io_version,
+                                       io_abi,
+                                       io_object_format,
+                                       io_id_source,
+                                       io_version_source,
+                                       io_abi_source,
+                                       io_object_format_source);
     }
 
     if (io_target->count == 0) {
@@ -3269,11 +3606,71 @@ static bool toolchain_model_probe_language(EvalExecContext *ctx,
         }
     }
 
+    if (io_implicit_include_dirs) {
+        String_View include_args[5] = {
+            nob_sv_from_cstr("-E"),
+            nob_sv_from_cstr("-v"),
+            nob_sv_from_cstr("-x"),
+            nob_sv_from_cstr(language_flag ? language_flag : "c"),
+            nob_sv_from_cstr("-"),
+        };
+        String_View include_text = toolchain_run_probe_temp(ctx, compiler, include_args, 5, nob_sv_from_cstr("\n"));
+        got_probe_result = got_probe_result || include_text.count > 0;
+        toolchain_parse_include_search_dirs(ctx, io_implicit_include_dirs, include_text);
+    }
+
     if (io_implicit_link_dirs) {
         String_View search_args[1] = {nob_sv_from_cstr("-print-search-dirs")};
         String_View search_dirs = toolchain_run_probe_temp(ctx, compiler, search_args, 1, nob_sv_from_cstr(""));
         got_probe_result = got_probe_result || search_dirs.count > 0;
         toolchain_split_search_dirs(ctx, io_implicit_link_dirs, search_dirs);
+    }
+
+    if (io_implicit_link_dirs || io_implicit_link_libs) {
+        String_View link_args[6] = {
+            nob_sv_from_cstr("-###"),
+            nob_sv_from_cstr("-x"),
+            nob_sv_from_cstr(language_flag ? language_flag : "c"),
+            nob_sv_from_cstr("-"),
+            nob_sv_from_cstr("-o"),
+            nob_sv_from_cstr("/dev/null"),
+        };
+        String_View link_text = toolchain_run_probe_temp(ctx, compiler, link_args, 6, nob_sv_from_cstr("int main(void){return 0;}\n"));
+        got_probe_result = got_probe_result || link_text.count > 0;
+        toolchain_parse_link_verbose(ctx, link_text, io_implicit_link_dirs, io_implicit_link_libs);
+    }
+
+    if (eval_sv_eq_ci_lit(*io_id, "MSVC") || toolchain_compiler_name_is_msvc(compiler)) {
+        String_View bv_args[1] = {nob_sv_from_cstr("/Bv")};
+        String_View bv = toolchain_run_probe_temp(ctx, compiler, bv_args, 1, nob_sv_from_cstr(""));
+        got_probe_result = got_probe_result || bv.count > 0;
+        if (io_id->count == 0 && bv.count > 0) {
+            *io_id = nob_sv_from_cstr("MSVC");
+            *io_id_source = nob_sv_from_cstr("probe");
+        }
+        if (io_version->count == 0 && bv.count > 0) {
+            String_View version = toolchain_version_token_temp(ctx, bv);
+            if (version.count > 0) {
+                *io_version = toolchain_sv_copy(ctx, version);
+                *io_version_source = nob_sv_from_cstr("probe");
+            }
+        }
+        if (io_object_format->count == 0) {
+            *io_object_format = nob_sv_from_cstr("COFF");
+            *io_object_format_source = nob_sv_from_cstr("probe");
+        }
+        if (io_abi->count == 0) {
+            *io_abi = nob_sv_from_cstr("MSVC");
+            *io_abi_source = nob_sv_from_cstr("probe");
+        }
+        const char *include_env = eval_getenv_temp(ctx, "INCLUDE");
+        if (include_env && include_env[0] != '\0') {
+            toolchain_split_path_list(ctx, io_implicit_include_dirs, nob_sv_from_cstr(include_env));
+        }
+        const char *lib_env = eval_getenv_temp(ctx, "LIB");
+        if (lib_env && lib_env[0] != '\0') {
+            toolchain_split_path_list(ctx, io_implicit_link_dirs, nob_sv_from_cstr(lib_env));
+        }
     }
     return got_probe_result;
 }
@@ -3288,10 +3685,16 @@ static void toolchain_model_probe_one_language(EvalExecContext *ctx,
                                                           &lang->compiler_id,
                                                           &lang->compiler_version,
                                                           &lang->target_triple,
+                                                          &lang->compiler_abi,
+                                                          &lang->object_format,
+                                                          &lang->implicit_include_dirs,
                                                           &lang->implicit_link_dirs,
+                                                          &lang->implicit_link_libs,
                                                           &lang->id_source,
                                                           &lang->version_source,
                                                           &lang->target_source,
+                                                          &lang->abi_source,
+                                                          &lang->object_format_source,
                                                           language_flag);
 }
 
@@ -3326,33 +3729,230 @@ static void toolchain_model_finalize_language(EvalExecContext *ctx, Eval_Toolcha
     lang->compiler_loaded = true;
 }
 
+typedef struct {
+    String_View platform_id;
+    String_View object_format;
+    String_View object_suffix;
+    String_View executable_suffix;
+    String_View static_prefix;
+    String_View static_suffix;
+    String_View shared_runtime_prefix;
+    String_View shared_runtime_suffix;
+    String_View shared_linker_prefix;
+    String_View shared_linker_suffix;
+    String_View module_runtime_prefix;
+    String_View module_runtime_suffix;
+    String_View module_linker_prefix;
+    String_View module_linker_suffix;
+    String_View shared_link_flag;
+    String_View module_link_flag;
+    bool shared_uses_compiler_driver;
+    bool module_uses_compiler_driver;
+    bool shared_has_distinct_linker_artifact;
+    bool module_has_distinct_linker_artifact;
+    bool shared_has_soname;
+    bool shared_has_install_name;
+    bool module_has_no_soname;
+} Toolchain_Platform_Rules;
+
+static Toolchain_Platform_Rules toolchain_platform_rules_for(const struct Eval_Toolchain_Model *model) {
+    Toolchain_Platform_Rules rules = {0};
+    rules.shared_uses_compiler_driver = true;
+    rules.module_uses_compiler_driver = true;
+
+    if (model && model->msvc) {
+        rules.platform_id = nob_sv_from_cstr("Windows");
+        rules.object_format = nob_sv_from_cstr("COFF");
+        rules.object_suffix = nob_sv_from_cstr(".obj");
+        rules.executable_suffix = nob_sv_from_cstr(".exe");
+        rules.static_prefix = nob_sv_from_cstr("");
+        rules.static_suffix = nob_sv_from_cstr(".lib");
+        rules.shared_runtime_prefix = nob_sv_from_cstr("");
+        rules.shared_runtime_suffix = nob_sv_from_cstr(".dll");
+        rules.shared_linker_prefix = nob_sv_from_cstr("");
+        rules.shared_linker_suffix = nob_sv_from_cstr(".lib");
+        rules.module_runtime_prefix = nob_sv_from_cstr("");
+        rules.module_runtime_suffix = nob_sv_from_cstr(".dll");
+        rules.module_linker_prefix = nob_sv_from_cstr("");
+        rules.module_linker_suffix = nob_sv_from_cstr(".lib");
+        rules.shared_link_flag = nob_sv_from_cstr("/DLL");
+        rules.module_link_flag = nob_sv_from_cstr("/DLL");
+        rules.shared_uses_compiler_driver = false;
+        rules.module_uses_compiler_driver = false;
+        rules.shared_has_distinct_linker_artifact = true;
+        rules.module_has_distinct_linker_artifact = true;
+        return rules;
+    }
+
+    if (model && model->target_windows) {
+        rules.platform_id = nob_sv_from_cstr("Windows");
+        rules.object_format = nob_sv_from_cstr("COFF");
+        rules.object_suffix = nob_sv_from_cstr(".o");
+        rules.executable_suffix = nob_sv_from_cstr(".exe");
+        rules.static_prefix = nob_sv_from_cstr("lib");
+        rules.static_suffix = nob_sv_from_cstr(".a");
+        rules.shared_runtime_prefix = nob_sv_from_cstr("lib");
+        rules.shared_runtime_suffix = nob_sv_from_cstr(".dll");
+        rules.shared_linker_prefix = nob_sv_from_cstr("lib");
+        rules.shared_linker_suffix = nob_sv_from_cstr(".dll.a");
+        rules.module_runtime_prefix = nob_sv_from_cstr("lib");
+        rules.module_runtime_suffix = nob_sv_from_cstr(".dll");
+        rules.module_linker_prefix = nob_sv_from_cstr("lib");
+        rules.module_linker_suffix = nob_sv_from_cstr(".dll.a");
+        rules.shared_link_flag = nob_sv_from_cstr("-shared");
+        rules.module_link_flag = nob_sv_from_cstr("-shared");
+        rules.shared_has_distinct_linker_artifact = model->mingw;
+        rules.module_has_distinct_linker_artifact = model->mingw;
+        return rules;
+    }
+
+    if (model && eval_sv_eq_ci_lit(model->target_system_name, "Android")) {
+        rules.platform_id = nob_sv_from_cstr("Android");
+        rules.object_format = nob_sv_from_cstr("ELF");
+        rules.object_suffix = nob_sv_from_cstr(".o");
+        rules.executable_suffix = nob_sv_from_cstr("");
+        rules.static_prefix = nob_sv_from_cstr("lib");
+        rules.static_suffix = nob_sv_from_cstr(".a");
+        rules.shared_runtime_prefix = nob_sv_from_cstr("lib");
+        rules.shared_runtime_suffix = nob_sv_from_cstr(".so");
+        rules.shared_linker_prefix = nob_sv_from_cstr("lib");
+        rules.shared_linker_suffix = nob_sv_from_cstr(".so");
+        rules.module_runtime_prefix = nob_sv_from_cstr("lib");
+        rules.module_runtime_suffix = nob_sv_from_cstr(".so");
+        rules.module_linker_prefix = nob_sv_from_cstr("lib");
+        rules.module_linker_suffix = nob_sv_from_cstr(".so");
+        rules.shared_link_flag = nob_sv_from_cstr("-shared");
+        rules.module_link_flag = nob_sv_from_cstr("-shared");
+        rules.shared_has_soname = true;
+        rules.module_has_no_soname = true;
+        return rules;
+    }
+
+    if (model && eval_sv_eq_ci_lit(model->target_system_name, "iOS")) {
+        rules.platform_id = nob_sv_from_cstr("iOS");
+        rules.object_format = nob_sv_from_cstr("Mach-O");
+        rules.object_suffix = nob_sv_from_cstr(".o");
+        rules.executable_suffix = nob_sv_from_cstr("");
+        rules.static_prefix = nob_sv_from_cstr("lib");
+        rules.static_suffix = nob_sv_from_cstr(".a");
+        rules.shared_runtime_prefix = nob_sv_from_cstr("lib");
+        rules.shared_runtime_suffix = nob_sv_from_cstr(".dylib");
+        rules.shared_linker_prefix = nob_sv_from_cstr("lib");
+        rules.shared_linker_suffix = nob_sv_from_cstr(".dylib");
+        rules.module_runtime_prefix = nob_sv_from_cstr("lib");
+        rules.module_runtime_suffix = nob_sv_from_cstr(".so");
+        rules.module_linker_prefix = nob_sv_from_cstr("lib");
+        rules.module_linker_suffix = nob_sv_from_cstr(".so");
+        rules.shared_link_flag = nob_sv_from_cstr("-dynamiclib");
+        rules.module_link_flag = nob_sv_from_cstr("-bundle");
+        rules.shared_has_install_name = true;
+        rules.module_has_no_soname = true;
+        return rules;
+    }
+
+    if (model && model->target_apple) {
+        rules.platform_id = nob_sv_from_cstr("Darwin");
+        rules.object_format = nob_sv_from_cstr("Mach-O");
+        rules.object_suffix = nob_sv_from_cstr(".o");
+        rules.executable_suffix = nob_sv_from_cstr("");
+        rules.static_prefix = nob_sv_from_cstr("lib");
+        rules.static_suffix = nob_sv_from_cstr(".a");
+        rules.shared_runtime_prefix = nob_sv_from_cstr("lib");
+        rules.shared_runtime_suffix = nob_sv_from_cstr(".dylib");
+        rules.shared_linker_prefix = nob_sv_from_cstr("lib");
+        rules.shared_linker_suffix = nob_sv_from_cstr(".dylib");
+        rules.module_runtime_prefix = nob_sv_from_cstr("lib");
+        rules.module_runtime_suffix = nob_sv_from_cstr(".so");
+        rules.module_linker_prefix = nob_sv_from_cstr("lib");
+        rules.module_linker_suffix = nob_sv_from_cstr(".so");
+        rules.shared_link_flag = nob_sv_from_cstr("-dynamiclib");
+        rules.module_link_flag = nob_sv_from_cstr("-bundle");
+        rules.shared_has_install_name = true;
+        rules.module_has_no_soname = true;
+        return rules;
+    }
+
+    rules.platform_id = nob_sv_from_cstr("Linux");
+    rules.object_format = nob_sv_from_cstr("ELF");
+    rules.object_suffix = nob_sv_from_cstr(".o");
+    rules.executable_suffix = nob_sv_from_cstr("");
+    rules.static_prefix = nob_sv_from_cstr("lib");
+    rules.static_suffix = nob_sv_from_cstr(".a");
+    rules.shared_runtime_prefix = nob_sv_from_cstr("lib");
+    rules.shared_runtime_suffix = nob_sv_from_cstr(".so");
+    rules.shared_linker_prefix = nob_sv_from_cstr("lib");
+    rules.shared_linker_suffix = nob_sv_from_cstr(".so");
+    rules.module_runtime_prefix = nob_sv_from_cstr("lib");
+    rules.module_runtime_suffix = nob_sv_from_cstr(".so");
+    rules.module_linker_prefix = nob_sv_from_cstr("lib");
+    rules.module_linker_suffix = nob_sv_from_cstr(".so");
+    rules.shared_link_flag = nob_sv_from_cstr("-shared");
+    rules.module_link_flag = nob_sv_from_cstr("-shared");
+    rules.shared_has_soname = true;
+    rules.module_has_no_soname = true;
+    return rules;
+}
+
+static void toolchain_model_apply_platform_rules(struct Eval_Toolchain_Model *model,
+                                                 Toolchain_Platform_Rules rules) {
+    if (!model) return;
+    model->platform_id = rules.platform_id;
+    model->platform_object_format = rules.object_format;
+    model->object_suffix = rules.object_suffix;
+    model->executable_suffix = rules.executable_suffix;
+    model->static_library_prefix = rules.static_prefix;
+    model->static_library_suffix = rules.static_suffix;
+    model->shared_library_prefix = rules.shared_runtime_prefix;
+    model->shared_library_suffix = rules.shared_runtime_suffix;
+    model->shared_linker_prefix = rules.shared_linker_prefix;
+    model->shared_linker_suffix = rules.shared_linker_suffix;
+    model->module_library_prefix = rules.module_runtime_prefix;
+    model->module_library_suffix = rules.module_runtime_suffix;
+    model->module_linker_prefix = rules.module_linker_prefix;
+    model->module_linker_suffix = rules.module_linker_suffix;
+    model->shared_link_flag = rules.shared_link_flag;
+    model->module_link_flag = rules.module_link_flag;
+    model->shared_uses_compiler_driver = rules.shared_uses_compiler_driver;
+    model->module_uses_compiler_driver = rules.module_uses_compiler_driver;
+    model->shared_has_distinct_linker_artifact = rules.shared_has_distinct_linker_artifact;
+    model->module_has_distinct_linker_artifact = rules.module_has_distinct_linker_artifact;
+    model->shared_has_soname = rules.shared_has_soname;
+    model->shared_has_install_name = rules.shared_has_install_name;
+    model->module_has_no_soname = rules.module_has_no_soname;
+}
+
 static void toolchain_model_finalize_platform(EvalExecContext *ctx, struct Eval_Toolchain_Model *model) {
     if (!ctx || !model) return;
 
     model->msvc = (model->c.enabled && eval_sv_eq_ci_lit(model->c.compiler_id, "MSVC")) ||
                   (model->cxx.enabled && eval_sv_eq_ci_lit(model->cxx.compiler_id, "MSVC"));
-    model->mingw = model->target_windows &&
-                   !model->msvc &&
-                   ((model->c.enabled && eval_sv_eq_ci_lit(model->c.compiler_id, "GNU")) ||
-                    (model->cxx.enabled && eval_sv_eq_ci_lit(model->cxx.compiler_id, "GNU")) ||
-                    (model->c.enabled && sv_contains_ascii_ci(model->c.compiler, "mingw")) ||
-                    (model->cxx.enabled && sv_contains_ascii_ci(model->cxx.compiler, "mingw")) ||
-                    (model->c.enabled && sv_contains_ascii_ci(model->c.target_triple, "mingw")) ||
-                    (model->cxx.enabled && sv_contains_ascii_ci(model->cxx.target_triple, "mingw")));
+    bool mingw_hint = !model->msvc &&
+                      ((model->c.enabled && eval_sv_eq_ci_lit(model->c.compiler_abi, "MinGW")) ||
+                       (model->cxx.enabled && eval_sv_eq_ci_lit(model->cxx.compiler_abi, "MinGW")) ||
+                       (model->c.enabled && sv_contains_ascii_ci(model->c.compiler, "mingw")) ||
+                       (model->cxx.enabled && sv_contains_ascii_ci(model->cxx.compiler, "mingw")) ||
+                       (model->c.enabled && sv_contains_ascii_ci(model->c.target_triple, "mingw")) ||
+                       (model->cxx.enabled && sv_contains_ascii_ci(model->cxx.target_triple, "mingw")) ||
+                       (model->c.enabled && sv_contains_ascii_ci(model->c.target_triple, "w64")) ||
+                       (model->cxx.enabled && sv_contains_ascii_ci(model->cxx.target_triple, "w64")));
+    if (mingw_hint && !model->explicit_target_platform && !model->target_windows) {
+        model->target_system_name = nob_sv_from_cstr("Windows");
+        model->target_system_version = nob_sv_from_cstr("");
+        model->target_windows = true;
+        model->target_apple = false;
+        model->target_unix = false;
+        model->cross_compiling = !eval_target_system_is_windows(model->host_system_name);
+    }
+    model->mingw = model->target_windows && mingw_hint;
 
     if (model->sysroot_source.count == 0 && model->sysroot.count > 0) {
         model->sysroot_source = nob_sv_from_cstr("probe");
     }
 
+    Toolchain_Platform_Rules rules = toolchain_platform_rules_for(model);
+    toolchain_model_apply_platform_rules(model, rules);
+
     if (model->msvc) {
-        model->object_suffix = nob_sv_from_cstr(".obj");
-        model->executable_suffix = nob_sv_from_cstr(".exe");
-        model->static_library_prefix = nob_sv_from_cstr("");
-        model->static_library_suffix = nob_sv_from_cstr(".lib");
-        model->shared_library_prefix = nob_sv_from_cstr("");
-        model->shared_library_suffix = nob_sv_from_cstr(".dll");
-        model->module_library_prefix = nob_sv_from_cstr("");
-        model->module_library_suffix = nob_sv_from_cstr(".dll");
         if (model->archive_tool.count == 0 || eval_sv_eq_ci_lit(model->archive_tool_source, "binary-fallback")) {
             model->archive_tool = nob_sv_from_cstr("lib.exe");
             model->archive_tool_source = nob_sv_from_cstr("name-fallback");
@@ -3366,14 +3966,6 @@ static void toolchain_model_finalize_platform(EvalExecContext *ctx, struct Eval_
             model->ranlib_tool_source = nob_sv_from_cstr("name-fallback");
         }
     } else if (model->target_windows) {
-        model->object_suffix = nob_sv_from_cstr(".o");
-        model->executable_suffix = nob_sv_from_cstr(".exe");
-        model->static_library_prefix = nob_sv_from_cstr("lib");
-        model->static_library_suffix = nob_sv_from_cstr(".a");
-        model->shared_library_prefix = nob_sv_from_cstr("lib");
-        model->shared_library_suffix = nob_sv_from_cstr(".dll");
-        model->module_library_prefix = nob_sv_from_cstr("lib");
-        model->module_library_suffix = nob_sv_from_cstr(".dll");
         String_View prefix = toolchain_compiler_prefix_temp(model->c.compiler);
         if (model->archive_tool.count == 0 || eval_sv_eq_ci_lit(model->archive_tool_source, "binary-fallback")) {
             model->archive_tool = prefix.count > 0 ? toolchain_prefixed_tool(ctx, prefix, "ar") : nob_sv_from_cstr("ar");
@@ -3392,14 +3984,6 @@ static void toolchain_model_finalize_platform(EvalExecContext *ctx, struct Eval_
             model->resource_compiler_source = prefix.count > 0 ? nob_sv_from_cstr("name-fallback") : nob_sv_from_cstr("binary-fallback");
         }
     } else if (model->target_apple) {
-        model->object_suffix = nob_sv_from_cstr(".o");
-        model->executable_suffix = nob_sv_from_cstr("");
-        model->static_library_prefix = nob_sv_from_cstr("lib");
-        model->static_library_suffix = nob_sv_from_cstr(".a");
-        model->shared_library_prefix = nob_sv_from_cstr("lib");
-        model->shared_library_suffix = nob_sv_from_cstr(".dylib");
-        model->module_library_prefix = nob_sv_from_cstr("lib");
-        model->module_library_suffix = nob_sv_from_cstr(".so");
         if (model->archive_tool.count == 0) {
             model->archive_tool = nob_sv_from_cstr("ar");
             model->archive_tool_source = nob_sv_from_cstr("binary-fallback");
@@ -3413,14 +3997,6 @@ static void toolchain_model_finalize_platform(EvalExecContext *ctx, struct Eval_
             model->ranlib_tool_source = nob_sv_from_cstr("binary-fallback");
         }
     } else {
-        model->object_suffix = nob_sv_from_cstr(".o");
-        model->executable_suffix = nob_sv_from_cstr("");
-        model->static_library_prefix = nob_sv_from_cstr("lib");
-        model->static_library_suffix = nob_sv_from_cstr(".a");
-        model->shared_library_prefix = nob_sv_from_cstr("lib");
-        model->shared_library_suffix = nob_sv_from_cstr(".so");
-        model->module_library_prefix = nob_sv_from_cstr("lib");
-        model->module_library_suffix = nob_sv_from_cstr(".so");
         if (model->archive_tool.count == 0) {
             model->archive_tool = nob_sv_from_cstr("ar");
             model->archive_tool_source = nob_sv_from_cstr("binary-fallback");
@@ -3435,10 +4011,26 @@ static void toolchain_model_finalize_platform(EvalExecContext *ctx, struct Eval_
         }
     }
 
-    model->c.object_format = model->msvc || model->mingw || model->target_windows
-        ? nob_sv_from_cstr("COFF")
-        : (model->target_apple ? nob_sv_from_cstr("Mach-O") : nob_sv_from_cstr("ELF"));
-    model->cxx.object_format = model->c.object_format;
+    String_View platform_object_format = model->platform_object_format;
+    String_View platform_abi = model->mingw
+        ? nob_sv_from_cstr("MinGW")
+        : (model->msvc ? nob_sv_from_cstr("MSVC") : platform_object_format);
+    if (model->c.enabled && model->c.object_format.count == 0) {
+        model->c.object_format = platform_object_format;
+        model->c.object_format_source = nob_sv_from_cstr("binary-fallback");
+    }
+    if (model->cxx.enabled && model->cxx.object_format.count == 0) {
+        model->cxx.object_format = platform_object_format;
+        model->cxx.object_format_source = nob_sv_from_cstr("binary-fallback");
+    }
+    if (model->c.enabled && model->c.compiler_abi.count == 0) {
+        model->c.compiler_abi = platform_abi;
+        model->c.abi_source = nob_sv_from_cstr("binary-fallback");
+    }
+    if (model->cxx.enabled && model->cxx.compiler_abi.count == 0) {
+        model->cxx.compiler_abi = platform_abi;
+        model->cxx.abi_source = nob_sv_from_cstr("binary-fallback");
+    }
 }
 
 static String_View toolchain_join_list_temp(EvalExecContext *ctx,
@@ -3466,6 +4058,8 @@ static bool toolchain_model_seed_platform_vars(EvalExecContext *ctx, const struc
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("MSVC"), model->msvc ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("MINGW"), model->mingw ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return false;
 
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_PLATFORM_ID"), model->platform_id)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_OBJECT_FORMAT"), model->platform_object_format)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_NAME"), model->target_system_name)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_HOST_SYSTEM_NAME"), model->host_system_name)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSTEM_PROCESSOR"), model->target_system_processor)) return false;
@@ -3479,9 +4073,25 @@ static bool toolchain_model_seed_platform_vars(EvalExecContext *ctx, const struc
                               model->cross_compiling ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE"))) return false;
     if (model->sysroot.count > 0 &&
         !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SYSROOT"), model->sysroot)) return false;
+    if (model->sdkroot.count > 0 &&
+        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_OSX_SYSROOT"), model->sdkroot)) return false;
+    if (model->osx_architectures.count > 0 &&
+        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_OSX_ARCHITECTURES"), model->osx_architectures)) return false;
+    if (model->osx_deployment_target.count > 0 &&
+        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_OSX_DEPLOYMENT_TARGET"), model->osx_deployment_target)) return false;
+    if (model->android_ndk.count > 0 &&
+        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_ANDROID_NDK"), model->android_ndk)) return false;
+    if (model->android_abi.count > 0 &&
+        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_ANDROID_ARCH_ABI"), model->android_abi)) return false;
+    if (model->android_api.count > 0 &&
+        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_ANDROID_API"), model->android_api)) return false;
+    if (model->staging_prefix.count > 0 &&
+        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_STAGING_PREFIX"), model->staging_prefix)) return false;
     if (model->toolchain_file.count > 0 &&
         !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_TOOLCHAIN_FILE"), model->toolchain_file)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_SYSROOT_SOURCE"), model->sysroot_source)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_SDKROOT_SOURCE"), model->sdkroot_source)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_STAGING_PREFIX_SOURCE"), model->staging_prefix_source)) return false;
     return true;
 }
 
@@ -3492,14 +4102,40 @@ static bool toolchain_model_seed_artifact_vars(EvalExecContext *ctx, const struc
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_STATIC_LIBRARY_SUFFIX"), model->static_library_suffix)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SHARED_LIBRARY_PREFIX"), model->shared_library_prefix)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SHARED_LIBRARY_SUFFIX"), model->shared_library_suffix)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_SHARED_LINKER_PREFIX"), model->shared_linker_prefix)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_SHARED_LINKER_SUFFIX"), model->shared_linker_suffix)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SHARED_MODULE_PREFIX"), model->module_library_prefix)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_SHARED_MODULE_SUFFIX"), model->module_library_suffix)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_MODULE_LINKER_PREFIX"), model->module_linker_prefix)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_MODULE_LINKER_SUFFIX"), model->module_linker_suffix)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_SHARED_LINK_FLAG"), model->shared_link_flag)) return false;
+    if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_NOBIFY_MODULE_LINK_FLAG"), model->module_link_flag)) return false;
+    if (!eval_var_set_current(ctx,
+                              nob_sv_from_cstr("CMAKE_NOBIFY_SHARED_DISTINCT_LINKER_ARTIFACT"),
+                              model->shared_has_distinct_linker_artifact ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE"))) return false;
+    if (!eval_var_set_current(ctx,
+                              nob_sv_from_cstr("CMAKE_NOBIFY_MODULE_DISTINCT_LINKER_ARTIFACT"),
+                              model->module_has_distinct_linker_artifact ? nob_sv_from_cstr("TRUE") : nob_sv_from_cstr("FALSE"))) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_AR"), model->archive_tool)) return false;
     if (!eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_RANLIB"), model->ranlib_tool)) return false;
     if (model->link_tool.count > 0 &&
         !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_LINKER"), model->link_tool)) return false;
     if (model->resource_compiler.count > 0 &&
         !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_RC_COMPILER"), model->resource_compiler)) return false;
+    return true;
+}
+
+static bool toolchain_model_seed_configured_language_inputs(EvalExecContext *ctx,
+                                                            const struct Eval_Toolchain_Model *model) {
+    if (!ctx || !model) return false;
+    if (model->c.compiler.count > 0 &&
+        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER"), model->c.compiler)) return false;
+    if (model->cxx.compiler.count > 0 &&
+        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER"), model->cxx.compiler)) return false;
+    if (model->c.target_triple.count > 0 &&
+        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_C_COMPILER_TARGET"), model->c.target_triple)) return false;
+    if (model->cxx.target_triple.count > 0 &&
+        !eval_var_set_current(ctx, nob_sv_from_cstr("CMAKE_CXX_COMPILER_TARGET"), model->cxx.target_triple)) return false;
     return true;
 }
 
@@ -3519,15 +4155,23 @@ static bool toolchain_model_seed_language_vars(EvalExecContext *ctx,
     String_View loaded_key = is_c ? nob_sv_from_cstr("CMAKE_C_COMPILER_LOADED") : nob_sv_from_cstr("CMAKE_CXX_COMPILER_LOADED");
     String_View works_key = is_c ? nob_sv_from_cstr("CMAKE_C_COMPILER_WORKS") : nob_sv_from_cstr("CMAKE_CXX_COMPILER_WORKS");
     String_View output_key = is_c ? nob_sv_from_cstr("CMAKE_C_OUTPUT_EXTENSION") : nob_sv_from_cstr("CMAKE_CXX_OUTPUT_EXTENSION");
+    String_View abi_key = is_c ? nob_sv_from_cstr("CMAKE_C_COMPILER_ABI") : nob_sv_from_cstr("CMAKE_CXX_COMPILER_ABI");
+    String_View object_format_key = is_c ? nob_sv_from_cstr("CMAKE_C_OBJECT_FORMAT") : nob_sv_from_cstr("CMAKE_CXX_OBJECT_FORMAT");
     String_View id_source_key = is_c ? nob_sv_from_cstr("CMAKE_NOBIFY_C_COMPILER_ID_SOURCE") : nob_sv_from_cstr("CMAKE_NOBIFY_CXX_COMPILER_ID_SOURCE");
     String_View version_source_key = is_c ? nob_sv_from_cstr("CMAKE_NOBIFY_C_COMPILER_VERSION_SOURCE") : nob_sv_from_cstr("CMAKE_NOBIFY_CXX_COMPILER_VERSION_SOURCE");
     String_View target_source_key = is_c ? nob_sv_from_cstr("CMAKE_NOBIFY_C_COMPILER_TARGET_SOURCE") : nob_sv_from_cstr("CMAKE_NOBIFY_CXX_COMPILER_TARGET_SOURCE");
+    String_View abi_source_key = is_c ? nob_sv_from_cstr("CMAKE_NOBIFY_C_COMPILER_ABI_SOURCE") : nob_sv_from_cstr("CMAKE_NOBIFY_CXX_COMPILER_ABI_SOURCE");
+    String_View object_format_source_key = is_c ? nob_sv_from_cstr("CMAKE_NOBIFY_C_OBJECT_FORMAT_SOURCE") : nob_sv_from_cstr("CMAKE_NOBIFY_CXX_OBJECT_FORMAT_SOURCE");
+    String_View implicit_include_dirs_key = is_c ? nob_sv_from_cstr("CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES") : nob_sv_from_cstr("CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES");
     String_View implicit_link_dirs_key = is_c ? nob_sv_from_cstr("CMAKE_C_IMPLICIT_LINK_DIRECTORIES") : nob_sv_from_cstr("CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES");
+    String_View implicit_link_libs_key = is_c ? nob_sv_from_cstr("CMAKE_C_IMPLICIT_LINK_LIBRARIES") : nob_sv_from_cstr("CMAKE_CXX_IMPLICIT_LINK_LIBRARIES");
 
     if (!eval_var_set_current(ctx, compiler_key, lang->compiler)) return false;
     if (!eval_var_set_current(ctx, id_key, lang->compiler_id)) return false;
     if (!eval_var_set_current(ctx, version_key, lang->compiler_version)) return false;
     if (lang->target_triple.count > 0 && !eval_var_set_current(ctx, target_key, lang->target_triple)) return false;
+    if (lang->compiler_abi.count > 0 && !eval_var_set_current(ctx, abi_key, lang->compiler_abi)) return false;
+    if (lang->object_format.count > 0 && !eval_var_set_current(ctx, object_format_key, lang->object_format)) return false;
     if (!eval_var_set_current(ctx, loaded_key, lang->compiler_loaded ? nob_sv_from_cstr("1") : nob_sv_from_cstr("0"))) return false;
     if (lang->compiler_works &&
         !eval_var_set_current(ctx, works_key, nob_sv_from_cstr("TRUE"))) return false;
@@ -3535,9 +4179,19 @@ static bool toolchain_model_seed_language_vars(EvalExecContext *ctx,
     if (!eval_var_set_current(ctx, id_source_key, lang->id_source)) return false;
     if (!eval_var_set_current(ctx, version_source_key, lang->version_source)) return false;
     if (!eval_var_set_current(ctx, target_source_key, lang->target_source)) return false;
+    if (!eval_var_set_current(ctx, abi_source_key, lang->abi_source)) return false;
+    if (!eval_var_set_current(ctx, object_format_source_key, lang->object_format_source)) return false;
+    if (arena_arr_len(lang->implicit_include_dirs) > 0) {
+        String_View joined = toolchain_join_list_temp(ctx, lang->implicit_include_dirs, arena_arr_len(lang->implicit_include_dirs), nob_sv_from_cstr(";"));
+        if (eval_should_stop(ctx) || !eval_var_set_current(ctx, implicit_include_dirs_key, joined)) return false;
+    }
     if (arena_arr_len(lang->implicit_link_dirs) > 0) {
         String_View joined = toolchain_join_list_temp(ctx, lang->implicit_link_dirs, arena_arr_len(lang->implicit_link_dirs), nob_sv_from_cstr(";"));
         if (eval_should_stop(ctx) || !eval_var_set_current(ctx, implicit_link_dirs_key, joined)) return false;
+    }
+    if (arena_arr_len(lang->implicit_link_libs) > 0) {
+        String_View joined = toolchain_join_list_temp(ctx, lang->implicit_link_libs, arena_arr_len(lang->implicit_link_libs), nob_sv_from_cstr(";"));
+        if (eval_should_stop(ctx) || !eval_var_set_current(ctx, implicit_link_libs_key, joined)) return false;
     }
     return true;
 }
@@ -3547,14 +4201,17 @@ static bool eval_seed_toolchain_model(EvalExecContext *ctx, const EvalSession_Co
     struct Eval_Toolchain_Model model = {0};
     toolchain_model_init_defaults(ctx, &model);
     if (eval_should_stop(ctx)) return false;
-    toolchain_model_apply_toolchain_file(ctx, &model, cfg);
+    if (!toolchain_model_apply_toolchain_file(ctx, &model, cfg)) {
+        if (ctx->runtime_state.compat_profile != EVAL_PROFILE_PERMISSIVE || eval_should_stop(ctx)) return false;
+    }
     if (eval_should_stop(ctx)) return false;
     toolchain_model_apply_config(ctx, &model, cfg);
     if (eval_should_stop(ctx)) return false;
     toolchain_model_finalize_platform(ctx, &model);
     ctx->toolchain = model;
     return toolchain_model_seed_platform_vars(ctx, &ctx->toolchain) &&
-           toolchain_model_seed_artifact_vars(ctx, &ctx->toolchain);
+           toolchain_model_seed_artifact_vars(ctx, &ctx->toolchain) &&
+           toolchain_model_seed_configured_language_inputs(ctx, &ctx->toolchain);
 }
 
 static Eval_Toolchain_Language_Model *toolchain_model_language_mut(struct Eval_Toolchain_Model *model,
@@ -3735,8 +4392,19 @@ bool eval_toolchain_emit_snapshot(EvalExecContext *ctx) {
     ev.as.toolchain_snapshot.target_system_name = sv_copy_to_event_arena(ctx, model->target_system_name);
     ev.as.toolchain_snapshot.target_system_processor = sv_copy_to_event_arena(ctx, model->target_system_processor);
     ev.as.toolchain_snapshot.target_system_version = sv_copy_to_event_arena(ctx, model->target_system_version);
+    ev.as.toolchain_snapshot.platform_id = sv_copy_to_event_arena(ctx, model->platform_id);
+    ev.as.toolchain_snapshot.platform_object_format = sv_copy_to_event_arena(ctx, model->platform_object_format);
     ev.as.toolchain_snapshot.sysroot = sv_copy_to_event_arena(ctx, model->sysroot);
     ev.as.toolchain_snapshot.sysroot_source = sv_copy_to_event_arena(ctx, model->sysroot_source);
+    ev.as.toolchain_snapshot.sdkroot = sv_copy_to_event_arena(ctx, model->sdkroot);
+    ev.as.toolchain_snapshot.sdkroot_source = sv_copy_to_event_arena(ctx, model->sdkroot_source);
+    ev.as.toolchain_snapshot.osx_architectures = sv_copy_to_event_arena(ctx, model->osx_architectures);
+    ev.as.toolchain_snapshot.osx_deployment_target = sv_copy_to_event_arena(ctx, model->osx_deployment_target);
+    ev.as.toolchain_snapshot.android_abi = sv_copy_to_event_arena(ctx, model->android_abi);
+    ev.as.toolchain_snapshot.android_api = sv_copy_to_event_arena(ctx, model->android_api);
+    ev.as.toolchain_snapshot.android_ndk = sv_copy_to_event_arena(ctx, model->android_ndk);
+    ev.as.toolchain_snapshot.staging_prefix = sv_copy_to_event_arena(ctx, model->staging_prefix);
+    ev.as.toolchain_snapshot.staging_prefix_source = sv_copy_to_event_arena(ctx, model->staging_prefix_source);
     ev.as.toolchain_snapshot.cross_compiling = model->cross_compiling;
     ev.as.toolchain_snapshot.target_windows = model->target_windows;
     ev.as.toolchain_snapshot.target_unix = model->target_unix;
@@ -3751,8 +4419,21 @@ bool eval_toolchain_emit_snapshot(EvalExecContext *ctx) {
     ev.as.toolchain_snapshot.static_library_suffix = sv_copy_to_event_arena(ctx, model->static_library_suffix);
     ev.as.toolchain_snapshot.shared_library_prefix = sv_copy_to_event_arena(ctx, model->shared_library_prefix);
     ev.as.toolchain_snapshot.shared_library_suffix = sv_copy_to_event_arena(ctx, model->shared_library_suffix);
+    ev.as.toolchain_snapshot.shared_linker_prefix = sv_copy_to_event_arena(ctx, model->shared_linker_prefix);
+    ev.as.toolchain_snapshot.shared_linker_suffix = sv_copy_to_event_arena(ctx, model->shared_linker_suffix);
     ev.as.toolchain_snapshot.module_library_prefix = sv_copy_to_event_arena(ctx, model->module_library_prefix);
     ev.as.toolchain_snapshot.module_library_suffix = sv_copy_to_event_arena(ctx, model->module_library_suffix);
+    ev.as.toolchain_snapshot.module_linker_prefix = sv_copy_to_event_arena(ctx, model->module_linker_prefix);
+    ev.as.toolchain_snapshot.module_linker_suffix = sv_copy_to_event_arena(ctx, model->module_linker_suffix);
+    ev.as.toolchain_snapshot.shared_link_flag = sv_copy_to_event_arena(ctx, model->shared_link_flag);
+    ev.as.toolchain_snapshot.module_link_flag = sv_copy_to_event_arena(ctx, model->module_link_flag);
+    ev.as.toolchain_snapshot.shared_uses_compiler_driver = model->shared_uses_compiler_driver;
+    ev.as.toolchain_snapshot.module_uses_compiler_driver = model->module_uses_compiler_driver;
+    ev.as.toolchain_snapshot.shared_has_distinct_linker_artifact = model->shared_has_distinct_linker_artifact;
+    ev.as.toolchain_snapshot.module_has_distinct_linker_artifact = model->module_has_distinct_linker_artifact;
+    ev.as.toolchain_snapshot.shared_has_soname = model->shared_has_soname;
+    ev.as.toolchain_snapshot.shared_has_install_name = model->shared_has_install_name;
+    ev.as.toolchain_snapshot.module_has_no_soname = model->module_has_no_soname;
     ev.as.toolchain_snapshot.archive_tool = sv_copy_to_event_arena(ctx, model->archive_tool);
     ev.as.toolchain_snapshot.archive_tool_source = sv_copy_to_event_arena(ctx, model->archive_tool_source);
     ev.as.toolchain_snapshot.link_tool = sv_copy_to_event_arena(ctx, model->link_tool);

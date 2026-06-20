@@ -2704,6 +2704,87 @@ TEST(codegen_render_darwin_posix_policy_uses_dylib_and_bundle_rules) {
     TEST_PASS();
 }
 
+TEST(codegen_render_android_snapshot_uses_platform_rules_and_sdk_flags) {
+    Arena *arena = arena_create(512 * 1024);
+    Nob_String_Builder sb = {0};
+    String_View generated = {0};
+    const char *script =
+        "project(AndroidSnap C)\n"
+        "add_library(shared SHARED shared.c)\n"
+        "add_library(plugin MODULE plugin.c)\n";
+    Codegen_Test_Config config = {
+        .input_path = "p4_android_src/CMakeLists.txt",
+        .output_path = "p4_android_nob.c",
+        .source_dir = "p4_android_src",
+        .binary_dir = "p4_android_build",
+        .toolchain_file = "p4_android_toolchain.cmake",
+    };
+    ASSERT(arena != NULL);
+    ASSERT(codegen_write_text_file("p4_android_src/p4_android_toolchain.cmake",
+                                   "set(CMAKE_SYSTEM_NAME Android)\n"
+                                   "set(CMAKE_SYSROOT /mock/android-ndk/sysroot)\n"
+                                   "set(CMAKE_ANDROID_NDK /mock/android-ndk)\n"
+                                   "set(CMAKE_ANDROID_ARCH_ABI arm64-v8a)\n"
+                                   "set(CMAKE_ANDROID_API 24)\n"
+                                   "set(CMAKE_C_COMPILER /mock/android-ndk/bin/clang)\n"
+                                   "set(CMAKE_C_COMPILER_TARGET aarch64-linux-android24)\n"));
+    ASSERT(codegen_render_script_with_config(script, &config, &sb));
+    generated = nob_sv_from_parts(sb.items ? sb.items : "", sb.count);
+    ASSERT(codegen_sv_contains(generated, "/mock/android-ndk/bin/clang"));
+    ASSERT(codegen_sv_contains(generated, "--sysroot=/mock/android-ndk/sysroot"));
+    ASSERT(codegen_sv_contains(generated, "--target=aarch64-linux-android24"));
+    ASSERT(codegen_sv_contains(generated, "libshared.so"));
+    ASSERT(codegen_sv_contains(generated, "libplugin.so"));
+    ASSERT(codegen_sv_contains(generated, "\"-shared\""));
+    ASSERT(!codegen_sv_contains(generated, ".dylib"));
+    ASSERT(!codegen_sv_contains(generated, ".dll"));
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
+TEST(codegen_render_ios_snapshot_uses_platform_rules_and_sdk_flags) {
+    Arena *arena = arena_create(512 * 1024);
+    Nob_String_Builder sb = {0};
+    String_View generated = {0};
+    const char *script =
+        "project(IOSSnap C)\n"
+        "add_library(shared SHARED shared.c)\n"
+        "add_library(plugin MODULE plugin.c)\n";
+    Codegen_Test_Config config = {
+        .input_path = "p4_ios_src/CMakeLists.txt",
+        .output_path = "p4_ios_nob.c",
+        .source_dir = "p4_ios_src",
+        .binary_dir = "p4_ios_build",
+        .toolchain_file = "p4_ios_toolchain.cmake",
+    };
+    ASSERT(arena != NULL);
+    ASSERT(codegen_write_text_file("p4_ios_src/p4_ios_toolchain.cmake",
+                                   "set(CMAKE_SYSTEM_NAME iOS)\n"
+                                   "set(CMAKE_OSX_SYSROOT iphoneos)\n"
+                                   "set(CMAKE_OSX_ARCHITECTURES \"arm64;arm64e\")\n"
+                                   "set(CMAKE_OSX_DEPLOYMENT_TARGET 15.0)\n"
+                                   "set(CMAKE_C_COMPILER clang)\n"
+                                   "set(CMAKE_C_COMPILER_TARGET arm64-apple-ios15.0)\n"));
+    ASSERT(codegen_render_script_with_config(script, &config, &sb));
+    generated = nob_sv_from_parts(sb.items ? sb.items : "", sb.count);
+    ASSERT(codegen_sv_contains(generated, "libshared.dylib"));
+    ASSERT(codegen_sv_contains(generated, "libplugin.so"));
+    ASSERT(codegen_sv_contains(generated, "\"-dynamiclib\""));
+    ASSERT(codegen_sv_contains(generated, "\"-bundle\""));
+    ASSERT(codegen_sv_contains(generated, "\"-isysroot\""));
+    ASSERT(codegen_sv_contains(generated, "\"iphoneos\""));
+    ASSERT(codegen_sv_contains(generated, "\"-arch\""));
+    ASSERT(codegen_sv_contains(generated, "\"arm64\""));
+    ASSERT(codegen_sv_contains(generated, "\"arm64e\""));
+    ASSERT(codegen_sv_contains(generated, "-miphoneos-version-min=15.0"));
+    ASSERT(codegen_sv_contains(generated, "--target=arm64-apple-ios15.0"));
+    ASSERT(!codegen_sv_contains(generated, ".dll"));
+    nob_sb_free(sb);
+    arena_destroy(arena);
+    TEST_PASS();
+}
+
 TEST(codegen_render_windows_msvc_policy_plans_dll_import_lib_and_msvc_tools) {
     Arena *arena = arena_create(512 * 1024);
     Nob_String_Builder sb = {0};
@@ -3594,6 +3675,8 @@ void run_codegen_v2_build_tests(int *passed, int *failed, int *skipped) {
     test_codegen_config_mapped_imported_cxx_link_language_comes_from_build_model_query(passed, failed, skipped);
     test_codegen_render_explicit_linux_posix_policy_preserves_linux_artifact_rules(passed, failed, skipped);
     test_codegen_render_darwin_posix_policy_uses_dylib_and_bundle_rules(passed, failed, skipped);
+    test_codegen_render_android_snapshot_uses_platform_rules_and_sdk_flags(passed, failed, skipped);
+    test_codegen_render_ios_snapshot_uses_platform_rules_and_sdk_flags(passed, failed, skipped);
     test_codegen_render_windows_msvc_policy_plans_dll_import_lib_and_msvc_tools(passed, failed, skipped);
     test_codegen_mixed_c_and_cxx_compile_contexts_apply_language_options_and_standard_flags(passed, failed, skipped);
     test_codegen_source_local_properties_and_language_overrides_drive_compile_inputs(passed, failed, skipped);

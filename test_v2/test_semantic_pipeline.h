@@ -23,6 +23,7 @@ typedef struct {
     size_t builder_arena_size;
     size_t validate_arena_size;
     size_t model_arena_size;
+    Eval_Target_Platform_Config target;
 } Test_Semantic_Pipeline_Config;
 
 typedef struct {

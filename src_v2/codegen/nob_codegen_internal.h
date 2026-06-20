@@ -27,6 +27,12 @@ typedef struct {
     String_View link_tool_default;
     String_View shared_link_flag;
     String_View module_link_flag;
+    String_View sdkroot;
+    String_View osx_architectures;
+    String_View osx_deployment_target;
+    String_View android_abi;
+    String_View android_api;
+    String_View android_ndk;
     bool use_compiler_driver_for_executable_link;
     bool use_compiler_driver_for_shared_link;
     bool use_compiler_driver_for_module_link;

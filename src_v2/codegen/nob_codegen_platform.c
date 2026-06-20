@@ -6,6 +6,8 @@ static const char *cg_platform_name(Nob_Codegen_Platform platform) {
         case NOB_CODEGEN_PLATFORM_LINUX: return "linux";
         case NOB_CODEGEN_PLATFORM_DARWIN: return "darwin";
         case NOB_CODEGEN_PLATFORM_WINDOWS: return "windows";
+        case NOB_CODEGEN_PLATFORM_ANDROID: return "android";
+        case NOB_CODEGEN_PLATFORM_IOS: return "ios";
     }
     return "unknown";
 }
@@ -52,6 +54,8 @@ static bool cg_resolve_platform_backend_pair(Nob_Codegen_Platform requested_plat
         switch (platform) {
             case NOB_CODEGEN_PLATFORM_LINUX:
             case NOB_CODEGEN_PLATFORM_DARWIN:
+            case NOB_CODEGEN_PLATFORM_ANDROID:
+            case NOB_CODEGEN_PLATFORM_IOS:
                 backend = NOB_CODEGEN_BACKEND_POSIX;
                 break;
 
@@ -65,7 +69,10 @@ static bool cg_resolve_platform_backend_pair(Nob_Codegen_Platform requested_plat
         }
     }
 
-    if ((platform == NOB_CODEGEN_PLATFORM_LINUX || platform == NOB_CODEGEN_PLATFORM_DARWIN) &&
+    if ((platform == NOB_CODEGEN_PLATFORM_LINUX ||
+         platform == NOB_CODEGEN_PLATFORM_DARWIN ||
+         platform == NOB_CODEGEN_PLATFORM_ANDROID ||
+         platform == NOB_CODEGEN_PLATFORM_IOS) &&
         backend != NOB_CODEGEN_BACKEND_POSIX) {
         nob_log(NOB_ERROR,
                 "codegen: invalid platform/backend pair: %s + %s",
@@ -102,6 +109,8 @@ static bool cg_policy_uses_msvc_command_line(const CG_Context *ctx) {
 
 static Nob_Codegen_Platform cg_platform_from_toolchain_system(String_View system_name) {
     if (nob_sv_eq(system_name, nob_sv_from_cstr("Windows"))) return NOB_CODEGEN_PLATFORM_WINDOWS;
+    if (nob_sv_eq(system_name, nob_sv_from_cstr("Android"))) return NOB_CODEGEN_PLATFORM_ANDROID;
+    if (nob_sv_eq(system_name, nob_sv_from_cstr("iOS"))) return NOB_CODEGEN_PLATFORM_IOS;
     if (nob_sv_eq(system_name, nob_sv_from_cstr("Darwin"))) return NOB_CODEGEN_PLATFORM_DARWIN;
     if (nob_sv_eq(system_name, nob_sv_from_cstr("Linux"))) return NOB_CODEGEN_PLATFORM_LINUX;
     return NOB_CODEGEN_PLATFORM_HOST;
@@ -112,7 +121,9 @@ static void cg_apply_toolchain_snapshot_to_opts(CG_Context *ctx) {
     const Event_Toolchain_Snapshot *tc = ctx->toolchain;
     Nob_Codegen_Platform requested_platform = ctx->opts.target_platform;
     Nob_Codegen_Backend requested_backend = ctx->opts.backend;
-    Nob_Codegen_Platform snapshot_platform = cg_platform_from_toolchain_system(tc->target_system_name);
+    Nob_Codegen_Platform snapshot_platform = tc->platform_id.count > 0
+        ? cg_platform_from_toolchain_system(tc->platform_id)
+        : cg_platform_from_toolchain_system(tc->target_system_name);
     bool snapshot_compatible = false;
     if (ctx->opts.target_platform == NOB_CODEGEN_PLATFORM_HOST) {
         if (snapshot_platform != NOB_CODEGEN_PLATFORM_HOST) ctx->opts.target_platform = snapshot_platform;
@@ -140,7 +151,9 @@ static void cg_apply_toolchain_snapshot_to_opts(CG_Context *ctx) {
 static void cg_apply_toolchain_snapshot_to_policy(CG_Context *ctx) {
     if (!ctx || !ctx->toolchain) return;
     const Event_Toolchain_Snapshot *tc = ctx->toolchain;
-    Nob_Codegen_Platform snapshot_platform = cg_platform_from_toolchain_system(tc->target_system_name);
+    Nob_Codegen_Platform snapshot_platform = tc->platform_id.count > 0
+        ? cg_platform_from_toolchain_system(tc->platform_id)
+        : cg_platform_from_toolchain_system(tc->target_system_name);
     if (snapshot_platform != ctx->policy.platform) return;
     if (ctx->policy.platform == NOB_CODEGEN_PLATFORM_WINDOWS) {
         bool compatible_backend = (tc->msvc && ctx->policy.backend == NOB_CODEGEN_BACKEND_WIN32_MSVC) ||
@@ -156,19 +169,40 @@ static void cg_apply_toolchain_snapshot_to_policy(CG_Context *ctx) {
     if (tc->shared_library_prefix.count > 0 || tc->shared_library_suffix.count > 0) {
         ctx->policy.shared_runtime.prefix = tc->shared_library_prefix;
         ctx->policy.shared_runtime.suffix = tc->shared_library_suffix;
-        if (!tc->msvc) {
-            ctx->policy.shared_linker = ctx->policy.shared_runtime;
-            ctx->policy.shared_has_distinct_linker_artifact = false;
-        }
+    }
+    if (tc->shared_linker_prefix.count > 0 || tc->shared_linker_suffix.count > 0) {
+        ctx->policy.shared_linker.prefix = tc->shared_linker_prefix;
+        ctx->policy.shared_linker.suffix = tc->shared_linker_suffix;
     }
     if (tc->module_library_prefix.count > 0 || tc->module_library_suffix.count > 0) {
         ctx->policy.module_runtime.prefix = tc->module_library_prefix;
         ctx->policy.module_runtime.suffix = tc->module_library_suffix;
-        if (!tc->msvc) {
-            ctx->policy.module_linker = ctx->policy.module_runtime;
-            ctx->policy.module_has_distinct_linker_artifact = false;
-        }
     }
+    if (tc->module_linker_prefix.count > 0 || tc->module_linker_suffix.count > 0) {
+        ctx->policy.module_linker.prefix = tc->module_linker_prefix;
+        ctx->policy.module_linker.suffix = tc->module_linker_suffix;
+    }
+    bool has_platform_rules = tc->platform_id.count > 0 ||
+                              tc->shared_link_flag.count > 0 ||
+                              tc->module_link_flag.count > 0 ||
+                              tc->shared_linker_prefix.count > 0 ||
+                              tc->shared_linker_suffix.count > 0 ||
+                              tc->module_linker_prefix.count > 0 ||
+                              tc->module_linker_suffix.count > 0;
+    if (tc->shared_link_flag.count > 0) ctx->policy.shared_link_flag = tc->shared_link_flag;
+    if (tc->module_link_flag.count > 0) ctx->policy.module_link_flag = tc->module_link_flag;
+    if (has_platform_rules) {
+        ctx->policy.shared_has_distinct_linker_artifact = tc->shared_has_distinct_linker_artifact;
+        ctx->policy.module_has_distinct_linker_artifact = tc->module_has_distinct_linker_artifact;
+        ctx->policy.use_compiler_driver_for_shared_link = tc->shared_uses_compiler_driver;
+        ctx->policy.use_compiler_driver_for_module_link = tc->module_uses_compiler_driver;
+    }
+    ctx->policy.sdkroot = tc->sdkroot;
+    ctx->policy.osx_architectures = tc->osx_architectures;
+    ctx->policy.osx_deployment_target = tc->osx_deployment_target;
+    ctx->policy.android_abi = tc->android_abi;
+    ctx->policy.android_api = tc->android_api;
+    ctx->policy.android_ndk = tc->android_ndk;
     if (tc->c.compiler.count > 0) ctx->policy.c_compiler_default = tc->c.compiler;
     if (tc->cxx.compiler.count > 0) ctx->policy.cxx_compiler_default = tc->cxx.compiler;
     if (tc->archive_tool.count > 0) ctx->policy.archive_tool_default = tc->archive_tool;
@@ -223,8 +257,48 @@ static bool cg_init_backend_policy(CG_Context *ctx) {
             ctx->policy.use_compiler_driver_for_module_link = true;
             break;
 
+        case NOB_CODEGEN_PLATFORM_ANDROID:
+            ctx->policy.platform_id = nob_sv_from_cstr("Android");
+            ctx->policy.executable = cg_artifact_naming("", "");
+            ctx->policy.static_library = cg_artifact_naming("lib", ".a");
+            ctx->policy.shared_runtime = cg_artifact_naming("lib", ".so");
+            ctx->policy.shared_linker = cg_artifact_naming("lib", ".so");
+            ctx->policy.module_runtime = cg_artifact_naming("lib", ".so");
+            ctx->policy.module_linker = cg_artifact_naming("lib", ".so");
+            ctx->policy.object_suffix = nob_sv_from_cstr(".o");
+            ctx->policy.c_compiler_default = nob_sv_from_cstr("cc");
+            ctx->policy.cxx_compiler_default = nob_sv_from_cstr("c++");
+            ctx->policy.archive_tool_default = nob_sv_from_cstr("ar");
+            ctx->policy.link_tool_default = nob_sv_from_cstr("");
+            ctx->policy.shared_link_flag = nob_sv_from_cstr("-shared");
+            ctx->policy.module_link_flag = nob_sv_from_cstr("-shared");
+            ctx->policy.use_compiler_driver_for_executable_link = true;
+            ctx->policy.use_compiler_driver_for_shared_link = true;
+            ctx->policy.use_compiler_driver_for_module_link = true;
+            break;
+
         case NOB_CODEGEN_PLATFORM_DARWIN:
             ctx->policy.platform_id = nob_sv_from_cstr("Darwin");
+            ctx->policy.executable = cg_artifact_naming("", "");
+            ctx->policy.static_library = cg_artifact_naming("lib", ".a");
+            ctx->policy.shared_runtime = cg_artifact_naming("lib", ".dylib");
+            ctx->policy.shared_linker = cg_artifact_naming("lib", ".dylib");
+            ctx->policy.module_runtime = cg_artifact_naming("lib", ".so");
+            ctx->policy.module_linker = cg_artifact_naming("lib", ".so");
+            ctx->policy.object_suffix = nob_sv_from_cstr(".o");
+            ctx->policy.c_compiler_default = nob_sv_from_cstr("cc");
+            ctx->policy.cxx_compiler_default = nob_sv_from_cstr("c++");
+            ctx->policy.archive_tool_default = nob_sv_from_cstr("ar");
+            ctx->policy.link_tool_default = nob_sv_from_cstr("");
+            ctx->policy.shared_link_flag = nob_sv_from_cstr("-dynamiclib");
+            ctx->policy.module_link_flag = nob_sv_from_cstr("-bundle");
+            ctx->policy.use_compiler_driver_for_executable_link = true;
+            ctx->policy.use_compiler_driver_for_shared_link = true;
+            ctx->policy.use_compiler_driver_for_module_link = true;
+            break;
+
+        case NOB_CODEGEN_PLATFORM_IOS:
+            ctx->policy.platform_id = nob_sv_from_cstr("iOS");
             ctx->policy.executable = cg_artifact_naming("", "");
             ctx->policy.static_library = cg_artifact_naming("lib", ".a");
             ctx->policy.shared_runtime = cg_artifact_naming("lib", ".dylib");

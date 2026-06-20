@@ -335,6 +335,13 @@ static bool eval_truthy_constant_only(String_View v, bool *known) {
     return false;
 }
 
+static bool eval_truthy_resolved_value(String_View v) {
+    bool known = false;
+    bool direct = eval_truthy_constant_only(v, &known);
+    if (known) return direct;
+    return v.count > 0;
+}
+
 bool eval_truthy(struct EvalExecContext *ctx, String_View v) {
     bool known = false;
     bool direct = eval_truthy_constant_only(v, &known);
@@ -343,12 +350,12 @@ bool eval_truthy(struct EvalExecContext *ctx, String_View v) {
     if (ctx) {
         String_View macro_val = {0};
         if (eval_macro_bind_get(ctx, v, &macro_val)) {
-            return eval_truthy_constant_only(macro_val, NULL);
+            return eval_truthy_resolved_value(macro_val);
         }
 
         if (eval_var_defined_visible(ctx, v)) {
             String_View var_val = eval_var_get_visible(ctx, v);
-            return eval_truthy_constant_only(var_val, NULL);
+            return eval_truthy_resolved_value(var_val);
         }
     }
 
